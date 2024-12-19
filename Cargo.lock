@@ -454,7 +454,7 @@ checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 [[package]]
 name = "flowistry"
 version = "0.5.41"
-source = "git+https://github.com/brownsys/flowistry?rev=08c4ad9587b3251a8f7c64aa60be31404e6e04c0#08c4ad9587b3251a8f7c64aa60be31404e6e04c0"
+source = "git+https://github.com/brownsys/flowistry?rev=57627ed24802cb76c745118bbc46f83f402a1e88#57627ed24802cb76c745118bbc46f83f402a1e88"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -926,6 +926,7 @@ dependencies = [
  "rustc_utils 0.7.4-nightly-2023-08-25 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_bare",
+ "serde_json",
  "serial_test",
  "simple_logger",
  "strum",
@@ -939,6 +940,7 @@ name = "paralegal-policy"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "autocfg",
  "bitvec",
  "colored 1.9.4",
  "indexical",

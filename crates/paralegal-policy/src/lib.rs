@@ -37,7 +37,7 @@
 //! 3. [`.with_context()`](GraphLocation::with_context) reads and parses the
 //!    graph file, then invokes the provided closure with a [`Context`]. After
 //!    the closure returns it automatically invokes
-//!    [`Context::emit_diagnostics`].
+//!    [`RootContext::emit_diagnostics`].
 //!
 //! For information about how to specify policies see the [`Context`] struct.
 //!
@@ -48,12 +48,14 @@
 //! checker implementation.
 
 #![warn(missing_docs)]
+#![cfg_attr(not(rustc_1_75), feature(return_position_impl_trait_in_trait))]
 
 extern crate core;
 
 use anyhow::{ensure, Result};
 pub use paralegal_spdg;
 use paralegal_spdg::utils::TruncatedHumanTime;
+use paralegal_spdg::STAT_FILE_EXT;
 pub use paralegal_spdg::{
     traverse::EdgeSelection, GlobalNode, IntoIterGlobalNodes, ProgramDescription,
 };
@@ -203,6 +205,12 @@ impl GraphLocation {
         }
     }
 
+    /// Get the path where the analyzzer wrote statistics to. Use this path to
+    /// read a [paralegal_spdg::AnalyzerStats::canonical_read].
+    pub fn stats_path(&self) -> PathBuf {
+        self.path.with_extension(STAT_FILE_EXT)
+    }
+
     /// Use a completely custom path (directory and file name).
     pub fn custom(path: PathBuf) -> Self {
         Self {
@@ -222,7 +230,7 @@ impl GraphLocation {
     /// if they were severe enough.
     pub fn with_context<A>(
         &self,
-        prop: impl FnOnce(Arc<Context>) -> Result<A>,
+        prop: impl FnOnce(Arc<RootContext>) -> Result<A>,
     ) -> Result<PolicyReturn<A>> {
         self.with_context_configured(Default::default(), prop)
     }
@@ -234,7 +242,7 @@ impl GraphLocation {
     pub fn with_context_configured<A>(
         &self,
         config: Config,
-        prop: impl FnOnce(Arc<Context>) -> Result<A>,
+        prop: impl FnOnce(Arc<RootContext>) -> Result<A>,
     ) -> Result<PolicyReturn<A>> {
         let ctx = Arc::new(self.build_context(config)?);
         assert_warning!(
@@ -263,12 +271,12 @@ impl GraphLocation {
     ///
     /// Prefer using [`Self::with_context`] which takes care of emitting any
     /// diagnostic messages after the property is done.
-    pub fn build_context(&self, config: Config) -> Result<Context> {
+    pub fn build_context(&self, config: Config) -> Result<RootContext> {
         let _ = simple_logger::init_with_env();
 
         let deser_started = Instant::now();
         let desc = ProgramDescription::canonical_read(&self.path)?;
-        let mut ctx = Context::new(desc, config);
+        let mut ctx = RootContext::new(desc, config);
         ctx.stats.pdg_construction = self.construction_time;
         ctx.stats.deserialization = Some(deser_started.elapsed());
         Ok(ctx)

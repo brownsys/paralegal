@@ -79,23 +79,60 @@ define_test!(process_nested_if : graph -> {
     assert!(check2.output().influences_next_control(&send.input()));
 });
 
-define_test!(process_if_multiple_statements : graph -> {
-    let get_fn = graph.function("get_user_data");
-    let get = graph.call_site(&get_fn);
-    let check_fn = graph.function("check_user_data");
-    let check = graph.call_site(&check_fn);
-    let modify_fn = graph.function("modify");
-    let modify = graph.call_site(&modify_fn);
-    let send_fn = graph.function("send_user_data");
-    let send = graph.call_site(&send_fn);
+#[test]
+fn process_if_multiple_statements() {
+    InlineTestBuilder::new(stringify!(
+        #[paralegal_flow::marker(sensitive)]
+        struct UserData {
+            pub data: Vec<i64>,
+        }
+        #[paralegal_flow::marker{ sink, arguments = [0] }]
+        fn send_user_data(_user_data: &UserData) {}
 
-    assert!(get.output().flows_to_data(&check.input()));
-    assert!(get.output().flows_to_data(&modify.input()));
-    assert!(modify.output().flows_to_data(&send.input()));
-    assert!(check.output().influences_next_control(&modify.input()));
-    assert!(check.output().influences_next_control(&send.input()));
-    assert!(!modify.output().influences_next_control(&send.input()));
-});
+        #[paralegal_flow::marker{checks, arguments = [0]}]
+        fn check_user_data(user_data: &UserData) -> bool {
+            for i in &user_data.data {
+                if i < &0 {
+                    return false;
+                }
+            }
+            return true;
+        }
+        #[paralegal_flow::marker{ noinline, return }]
+        fn modify(_user_data: &mut UserData) {}
+
+        #[paralegal_flow::marker{source, return}]
+        fn get_user_data() -> UserData {
+            return UserData {
+                data: vec![1, 2, 3],
+            };
+        }
+        fn main() {
+            let mut user_data = get_user_data();
+            if check_user_data(&user_data) {
+                modify(&mut user_data);
+                send_user_data(&user_data);
+            }
+        }
+    ))
+    .check_ctrl(|graph| {
+        let get_fn = graph.function("get_user_data");
+        let get = graph.call_site(&get_fn);
+        let check_fn = graph.function("check_user_data");
+        let check = graph.call_site(&check_fn);
+        let modify_fn = graph.function("modify");
+        let modify = graph.call_site(&modify_fn);
+        let send_fn = graph.function("send_user_data");
+        let send = graph.call_site(&send_fn);
+
+        assert!(get.output().flows_to_data(&check.input()));
+        assert!(get.output().flows_to_data(&modify.input()));
+        assert!(modify.output().flows_to_data(&send.input()));
+        assert!(check.output().influences_next_control(&modify.input()));
+        assert!(check.output().influences_next_control(&send.input()));
+        assert!(!modify.output().influences_next_control(&send.input()));
+    });
+}
 
 define_test!(process_if_not_function_call : graph -> {
     let getx_fn = graph.function("get_x");

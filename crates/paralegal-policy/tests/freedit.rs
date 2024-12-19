@@ -2,7 +2,7 @@ mod helpers;
 
 use anyhow::Result;
 use helpers::Test;
-use paralegal_policy::{assert_error, Diagnostics, EdgeSelection, NodeExt};
+use paralegal_policy::{assert_error, Context, Diagnostics, EdgeSelection, NodeExt};
 use paralegal_spdg::Identifier;
 
 #[test]

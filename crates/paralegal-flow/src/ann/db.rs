@@ -24,7 +24,7 @@ use flowistry_pdg_construction::{
     body_cache::{local_or_remote_paths, BodyCache},
     determine_async,
     encoder::ParalegalDecoder,
-    utils::{is_virtual, try_monomorphize, try_resolve_function},
+    utils::{handle_shims, is_virtual, try_monomorphize, try_resolve_function},
 };
 use paralegal_spdg::Identifier;
 
@@ -43,7 +43,7 @@ use rustc_utils::cache::Cache;
 
 use std::{borrow::Cow, fs::File, io::Read, rc::Rc};
 
-use super::{MarkerMeta, MARKER_META_EXT};
+use super::{MarkerMeta, MarkerRefinement, MARKER_META_EXT};
 
 type ExternalMarkers = HashMap<DefId, Vec<MarkerAnnotation>>;
 
@@ -241,6 +241,11 @@ impl<'tcx> MarkerCtx<'tcx> {
             return self.get_reachable_markers(async_fn).into();
         }
         let expect_resolve = res.is_monomorphized();
+        let variable_markers = mono_body
+            .local_decls
+            .iter()
+            .flat_map(|v| self.deep_type_markers(v.ty))
+            .map(|(_, m)| *m);
         mono_body
             .basic_blocks
             .iter()
@@ -251,6 +256,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                     expect_resolve,
                 )
             })
+            .chain(variable_markers)
             .collect::<HashSet<_>>()
             .into_iter()
             .collect()
@@ -289,7 +295,10 @@ impl<'tcx> MarkerCtx<'tcx> {
                     );
                 return v.into_iter();
             };
-            MaybeMonomorphized::Monomorphized(instance)
+            MaybeMonomorphized::Monomorphized(
+                handle_shims(instance, self.tcx(), param_env)
+                    .map_or(instance, |(shimmed, _)| shimmed),
+            )
         } else {
             MaybeMonomorphized::Plain(def_id)
         };
@@ -639,11 +648,59 @@ fn load_annotations(
         .collect()
 }
 
-type RawExternalMarkers = HashMap<String, Vec<crate::ann::MarkerAnnotation>>;
+#[derive(serde::Deserialize)]
+struct ExternalAnnotationEntry {
+    marker: Option<Identifier>,
+    #[serde(default)]
+    markers: Vec<Identifier>,
+    #[serde(flatten)]
+    refinement: MarkerRefinement,
+    #[serde(default)]
+    refinements: Vec<MarkerRefinement>,
+}
+
+impl ExternalAnnotationEntry {
+    fn flatten(&self) -> impl Iterator<Item = MarkerAnnotation> + '_ {
+        let refinement_iter = self
+            .refinements
+            .iter()
+            .chain(self.refinements.is_empty().then_some(&self.refinement));
+        self.marker
+            .into_iter()
+            .chain(self.markers.iter().copied())
+            .flat_map(move |marker| {
+                refinement_iter
+                    .clone()
+                    .map(move |refinement| MarkerAnnotation {
+                        marker,
+                        refinement: refinement.clone(),
+                    })
+            })
+    }
+
+    fn check_integrity(&self, tcx: TyCtxt, element: DefId) {
+        let merror = if self.marker.is_none() && self.markers.is_empty() {
+            Some("neither")
+        } else if self.marker.is_some() && !self.markers.is_empty() {
+            Some("both")
+        } else {
+            None
+        };
+        if let Some(complaint) = merror {
+            tcx.sess.err(format!("External marker annotation should specify either a 'marker' or a 'markers' field, found {complaint} for {}", tcx.def_path_str(element)));
+        }
+        if !self.refinement.on_self() && !self.refinements.is_empty() {
+            tcx.sess.err(format!("External marker annotation should specify either a single refinement or the 'refinements' field, found both for {}", tcx.def_path_str(element)));
+        }
+    }
+}
+
+type RawExternalMarkers = HashMap<String, Vec<ExternalAnnotationEntry>>;
 
 /// Given the TOML of external annotations we have parsed, resolve the paths
 /// (keys of the map) to [`DefId`]s.
 fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
+    let relaxed = opts.relaxed();
     if let Some(annotation_file) = opts.marker_control().external_annotations() {
         let from_toml: RawExternalMarkers = toml::from_str(
             &std::fs::read_to_string(annotation_file).unwrap_or_else(|_| {
@@ -659,11 +716,16 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
         .unwrap();
         let new_map: ExternalMarkers = from_toml
             .iter()
-            .filter_map(|(path, marker)| {
-                Some((
-                    expect_resolve_string_to_def_id(tcx, path, opts.relaxed())?,
-                    marker.clone(),
-                ))
+            .filter_map(|(path, entries)| {
+                let def_id = expect_resolve_string_to_def_id(tcx, path, relaxed)?;
+                let markers = entries
+                    .iter()
+                    .flat_map(|entry| {
+                        entry.check_integrity(tcx, def_id);
+                        entry.flatten()
+                    })
+                    .collect();
+                Some((def_id, markers))
             })
             .collect();
         new_map

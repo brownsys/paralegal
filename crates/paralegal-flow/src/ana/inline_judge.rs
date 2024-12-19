@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{fmt::Display, rc::Rc};
 
 use flowistry_pdg_construction::{body_cache::BodyCache, CallInfo};
 use paralegal_spdg::{utils::write_sep, Identifier};
@@ -40,6 +40,16 @@ pub enum InlineJudgement {
     UseStub(&'static Stub),
     /// Abstract the call via type signature
     AbstractViaType(&'static str),
+}
+
+impl Display for InlineJudgement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_ref())?;
+        if let Self::AbstractViaType(reason) = self {
+            write!(f, "({reason})")?;
+        }
+        Ok(())
+    }
 }
 
 impl<'tcx> InlineJudge<'tcx> {
@@ -172,8 +182,8 @@ impl<'tcx> SafetyChecker<'tcx> {
     fn err(&self, s: &str, span: Span) {
         let sess = self.tcx.sess;
         let msg = format!(
-            "the call is not safe to abstract as demanded by '{}', because of: {s}",
-            self.reason
+            "the call to {:?} is not safe to abstract as demanded by '{}', because of: {s}",
+            self.resolved, self.reason
         );
         if self.emit_err {
             let mut diagnostic = sess.struct_span_err(span, msg);

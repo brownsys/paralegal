@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use helpers::Test;
-use paralegal_policy::{algo::ahb, assert_error, Context};
+use paralegal_policy::{algo::ahb, assert_error, Context, RootContext};
 use paralegal_spdg::{HashSet, Identifier};
 
 mod helpers;
 
-fn simple_policy(ctx: Arc<Context>) -> Result<()> {
+fn simple_policy(ctx: Arc<RootContext>) -> Result<()> {
     let sources = ctx
         .nodes_marked_any_way(Identifier::new_intern("source"))
         .collect::<Box<_>>();

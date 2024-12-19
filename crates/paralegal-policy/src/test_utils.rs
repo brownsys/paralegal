@@ -1,4 +1,4 @@
-use crate::Context;
+use crate::RootContext;
 use paralegal_flow::test_utils::PreFrg;
 use paralegal_spdg::Endpoint;
 use paralegal_spdg::IntoIterGlobalNodes;
@@ -7,20 +7,20 @@ use paralegal_spdg::{Identifier, InstructionKind, Node as SPDGNode, SPDG};
 use std::sync::Arc;
 use std::sync::OnceLock;
 
-static TEST_CTX: OnceLock<Arc<Context>> = OnceLock::new();
+static TEST_CTX: OnceLock<Arc<RootContext>> = OnceLock::new();
 
-pub fn test_ctx() -> Arc<Context> {
+pub fn test_ctx() -> Arc<RootContext> {
     TEST_CTX
         .get_or_init(|| {
             paralegal_flow::test_utils::run_paralegal_flow_with_flow_graph_dump("tests/test-crate");
             let desc = PreFrg::from_file_at("tests/test-crate").desc;
-            Arc::new(Context::new(desc, Default::default()))
+            Arc::new(RootContext::new(desc, Default::default()))
         })
         .clone()
 }
 
 pub fn get_callsite_or_datasink_node<'a>(
-    ctx: &'a Context,
+    ctx: &'a RootContext,
     controller: Endpoint,
     name: &'a str,
 ) -> NodeCluster {
@@ -29,7 +29,11 @@ pub fn get_callsite_or_datasink_node<'a>(
         .unwrap()
 }
 
-pub fn get_callsite_node<'a>(ctx: &'a Context, controller: Endpoint, name: &'a str) -> NodeCluster {
+pub fn get_callsite_node<'a>(
+    ctx: &'a RootContext,
+    controller: Endpoint,
+    name: &'a str,
+) -> NodeCluster {
     let name = Identifier::new_intern(name);
     let ctrl = &ctx.desc().controllers[&controller];
     let inner = ctrl
@@ -39,7 +43,7 @@ pub fn get_callsite_node<'a>(ctx: &'a Context, controller: Endpoint, name: &'a s
 }
 
 fn is_at_function_call_with_name(
-    ctx: &Context,
+    ctx: &RootContext,
     ctrl: &SPDG,
     name: Identifier,
     node: SPDGNode,
@@ -53,7 +57,7 @@ fn is_at_function_call_with_name(
     )
 }
 
-pub fn get_sink_node<'a>(ctx: &'a Context, controller: Endpoint, name: &'a str) -> NodeCluster {
+pub fn get_sink_node<'a>(ctx: &'a RootContext, controller: Endpoint, name: &'a str) -> NodeCluster {
     let name = Identifier::new_intern(name);
     let ctrl = &ctx.desc().controllers[&controller];
     let inner = ctrl

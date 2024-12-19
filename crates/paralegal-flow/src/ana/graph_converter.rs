@@ -11,7 +11,7 @@ use flowistry_pdg_construction::{
     body_cache::BodyCache,
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
     is_async_trait_fn, match_async_trait_assign,
-    utils::{try_monomorphize, try_resolve_function, type_as_fn},
+    utils::{handle_shims, try_monomorphize, try_resolve_function, type_as_fn},
 };
 use paralegal_spdg::{Node, SPDGStats};
 
@@ -71,11 +71,9 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         target: &'a FnToAnalyze,
     ) -> Result<Self> {
         let local_def_id = target.def_id;
-        let start = Instant::now();
-        let (dep_graph, stats) = Self::create_flowistry_graph(generator, local_def_id)?;
-        generator
-            .stats
-            .record_timed(TimedStat::Flowistry, start.elapsed());
+        let (dep_graph, stats) = generator.stats.measure(TimedStat::Flowistry, || {
+            Self::create_flowistry_graph(generator, local_def_id)
+        })?;
 
         if generator.opts.dbg().dump_flowistry_pdg() {
             dep_graph.generate_graphviz(format!(
@@ -186,6 +184,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 else {
                     return;
                 };
+                debug!("Assigning markers to {:?}", term.kind);
                 let res = self.call_string_resolver.resolve(weight.at);
                 let param_env = self.tcx().param_env(res.def_id());
                 let func =
@@ -193,13 +192,22 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                         .unwrap();
                 let (inst, args) =
                     type_as_fn(self.tcx(), ty_of_const(func.constant().unwrap())).unwrap();
-                let f = try_resolve_function(
+                let mres = try_resolve_function(
                     self.tcx(),
                     inst,
                     self.tcx().param_env(leaf_loc.function),
                     args,
                 )
-                .map_or(inst, |i| i.def_id());
+                .map(|inst| handle_shims(inst, self.tcx(), param_env).map_or(inst, |t| t.0));
+
+                if mres.is_none() {
+                    debug!("Could not resolve {inst:?} properly during marker assignment");
+                } else {
+                    debug!("Function monomorphized to {:?}", mres.unwrap().def_id());
+                }
+
+                let f = mres.map_or(inst, |i| i.def_id());
+
                 self.known_def_ids.extend(Some(f));
 
                 // Question: Could a function with no input produce an

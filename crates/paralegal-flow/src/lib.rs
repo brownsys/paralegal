@@ -47,15 +47,22 @@ extern crate rustc_type_ir;
 
 use ann::dump_markers;
 use args::{ClapArgs, Debugger, LogLevelConfig};
-use desc::{utils::write_sep, ProgramDescription};
+use desc::utils::write_sep;
 
-use flowistry_pdg_construction::body_cache::dump_mir_and_borrowck_facts;
+use flowistry_pdg_construction::body_cache::{dump_mir_and_borrowck_facts, intermediate_out_dir};
 use log::Level;
+use paralegal_spdg::{AnalyzerStats, STAT_FILE_EXT};
 use rustc_middle::ty::TyCtxt;
 use rustc_plugin::CrateFilter;
 
 pub use std::collections::{HashMap, HashSet};
-use std::{fmt::Display, time::Instant};
+use std::{
+    fmt::Display,
+    fs::File,
+    io::BufWriter,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 // This import is sort of special because it comes from the private rustc
 // dependencies and not from our `Cargo.toml`.
@@ -117,58 +124,105 @@ struct ArgWrapper {
     args: ClapArgs,
 }
 
-struct Callbacks {
+struct Callbacks<'a> {
     opts: &'static Args,
-    start: Instant,
     stats: Stats,
+    rustc_second_timer: Option<Instant>,
+    stat_ref: &'a mut Option<AnalyzerStats>,
+    output_location: &'a mut Option<PathBuf>,
+    time: &'a mut DumpStats,
 }
 
 struct NoopCallbacks;
 
 impl rustc_driver::Callbacks for NoopCallbacks {}
 
-impl Callbacks {
-    pub fn run(&self, tcx: TyCtxt) -> anyhow::Result<ProgramDescription> {
-        tcx.sess.abort_if_errors();
-        discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone()).run()
-    }
-
-    pub fn new(opts: &'static Args) -> Self {
+impl<'a> Callbacks<'a> {
+    pub fn new(
+        opts: &'static Args,
+        stat_ref: &'a mut Option<AnalyzerStats>,
+        output_location: &'a mut Option<PathBuf>,
+        time: &'a mut DumpStats,
+    ) -> Self {
         Self {
             opts,
             stats: Default::default(),
-            start: Instant::now(),
+            rustc_second_timer: None,
+            stat_ref,
+            output_location,
+            time,
         }
     }
 }
 
-struct DumpOnlyCallbacks;
+#[derive(serde::Deserialize, serde::Serialize)]
+struct DumpStats {
+    dump_time: Duration,
+    total_time: Duration,
+    tycheck_time: Duration,
+}
 
-impl rustc_driver::Callbacks for DumpOnlyCallbacks {
+impl DumpStats {
+    fn zero() -> Self {
+        Self {
+            dump_time: Duration::ZERO,
+            total_time: Duration::ZERO,
+            tycheck_time: Duration::ZERO,
+        }
+    }
+
+    fn add(&self, other: &Self) -> Self {
+        Self {
+            total_time: self.total_time + other.total_time,
+            dump_time: self.dump_time + other.dump_time,
+            tycheck_time: self.tycheck_time + other.tycheck_time,
+        }
+    }
+}
+
+struct DumpOnlyCallbacks<'a> {
+    time: &'a mut DumpStats,
+    output_location: &'a mut Option<PathBuf>,
+}
+
+const INTERMEDIATE_STAT_EXT: &str = "stats.json";
+
+fn dump_mir_and_update_stats(tcx: TyCtxt, timer: &mut DumpStats) {
+    let (tycheck_time, dump_time) = dump_mir_and_borrowck_facts(tcx);
+    let dump_marker_start = Instant::now();
+    dump_markers(tcx);
+    timer.dump_time = dump_marker_start.elapsed() + dump_time;
+    timer.tycheck_time = tycheck_time;
+}
+
+impl<'a> rustc_driver::Callbacks for DumpOnlyCallbacks<'a> {
     fn after_expansion<'tcx>(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         queries.global_ctxt().unwrap().enter(|tcx| {
-            dump_mir_and_borrowck_facts(tcx);
-            dump_markers(tcx);
+            dump_mir_and_update_stats(tcx, self.time);
+            assert!(self
+                .output_location
+                .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
+                .is_none());
         });
         rustc_driver::Compilation::Continue
     }
 }
 
-impl rustc_driver::Callbacks for Callbacks {
+impl<'a> rustc_driver::Callbacks for Callbacks<'a> {
     fn after_expansion<'tcx>(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
-        queries.global_ctxt().unwrap().enter(|tcx| {
-            dump_mir_and_borrowck_facts(tcx);
-            dump_markers(tcx);
-        });
-        rustc_driver::Compilation::Continue
+        self.stats
+            .record_timed(TimedStat::Rustc, self.stats.elapsed());
+        let compilation = self.run_the_analyzer(queries);
+        self.rustc_second_timer = Some(Instant::now());
+        compilation
     }
 
     // This used to run `after_parsing` but that now makes `tcx.crates()` empty
@@ -180,15 +234,27 @@ impl rustc_driver::Callbacks for Callbacks {
         &mut self,
         _handler: &rustc_session::EarlyErrorHandler,
         _compiler: &rustc_interface::interface::Compiler,
-        queries: &'tcx rustc_interface::Queries<'tcx>,
+        _queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         self.stats
-            .record_timed(TimedStat::Rustc, self.start.elapsed());
-        queries
+            .record_timed(TimedStat::Rustc, self.rustc_second_timer.unwrap().elapsed());
+        rustc_driver::Compilation::Continue
+    }
+}
+
+impl<'a> Callbacks<'a> {
+    fn run_the_analyzer<'tcx>(
+        &mut self,
+        queries: &'tcx rustc_interface::Queries<'tcx>,
+    ) -> rustc_driver::Compilation {
+        let abort = queries
             .global_ctxt()
             .unwrap()
             .enter(|tcx| {
-                let desc = self.run(tcx)?;
+                dump_markers(tcx);
+                tcx.sess.abort_if_errors();
+                let (desc, mut stats) =
+                    discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone()).run()?;
                 info!("All elems walked");
                 tcx.sess.abort_if_errors();
 
@@ -197,21 +263,34 @@ impl rustc_driver::Callbacks for Callbacks {
                     paralegal_spdg::dot::dump(&desc, out).unwrap();
                 }
 
-                let ser = Instant::now();
-                desc.canonical_write(self.opts.result_path()).unwrap();
-                self.stats
-                    .record_timed(TimedStat::Serialization, ser.elapsed());
+                self.stats.measure(TimedStat::Serialization, || {
+                    desc.canonical_write(self.opts.result_path()).unwrap()
+                });
+
+                stats.serialization_time = self.stats.get_timed(TimedStat::Serialization);
 
                 println!("Analysis finished with timing: {}", self.stats);
 
-                anyhow::Ok(if self.opts.abort_after_analysis() {
-                    debug!("Aborting");
-                    rustc_driver::Compilation::Stop
-                } else {
-                    rustc_driver::Compilation::Continue
-                })
+                assert!(self.stat_ref.replace(stats).is_none());
+
+                assert!(self
+                    .output_location
+                    .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
+                    .is_none());
+                anyhow::Ok(self.opts.abort_after_analysis())
             })
-            .unwrap()
+            .unwrap();
+
+        if abort {
+            rustc_driver::Compilation::Stop
+        } else {
+            queries.global_ctxt().unwrap().enter(|tcx| {
+                self.stats.measure(TimedStat::MirEmission, || {
+                    dump_mir_and_update_stats(tcx, self.time);
+                })
+            });
+            rustc_driver::Compilation::Continue
+        }
     }
 }
 
@@ -238,14 +317,22 @@ fn add_to_rustflags(new: impl IntoIterator<Item = String>) -> Result<(), std::en
     Ok(())
 }
 
+#[derive(strum::AsRefStr, PartialEq, Eq)]
 enum CrateHandling {
     JustCompile,
     CompileAndDump,
     Analyze,
 }
 
+struct CrateInfo {
+    name: Option<String>,
+    handling: CrateHandling,
+    #[allow(dead_code)]
+    is_build_script: bool,
+}
+
 /// Also adds and additional features required by the Paralegal build config
-fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>) -> CrateHandling {
+fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>) -> CrateInfo {
     let crate_name = compiler_args
         .iter()
         .enumerate()
@@ -265,8 +352,12 @@ fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>)
         );
     }
 
-    match &crate_name {
-        Some(krate) if krate == "build_script_build" => CrateHandling::JustCompile,
+    let is_build_script = matches!(
+        &crate_name,
+        Some(krate) if krate == "build_script_build"
+    );
+    let handling = match &crate_name {
+        _ if is_build_script => CrateHandling::JustCompile,
         Some(krate)
             if matches!(
                 plugin_args
@@ -281,6 +372,12 @@ fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>)
             CrateHandling::CompileAndDump
         }
         _ => CrateHandling::JustCompile,
+    };
+
+    CrateInfo {
+        name: crate_name,
+        handling,
+        is_build_script,
     }
 }
 
@@ -385,48 +482,91 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         // `log::set_max_level`.
         //println!("compiling {compiler_args:?}");
 
-        let mut callbacks = match how_to_handle_this_crate(&plugin_args, &mut compiler_args) {
-            CrateHandling::JustCompile => {
-                Box::new(NoopCallbacks) as Box<dyn rustc_driver::Callbacks + Send>
-            }
-            CrateHandling::CompileAndDump => {
-                compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
-                Box::new(DumpOnlyCallbacks)
-            }
-            CrateHandling::Analyze => {
-                plugin_args.setup_logging();
+        let mut output_path_location = None;
+        let mut dump_stats = DumpStats::zero();
+        let start = Instant::now();
+        let mut stat_ref = None;
+        let out_path = plugin_args.result_path().to_owned();
 
-                let opts = Box::leak(Box::new(plugin_args));
-
-                const RERUN_VAR: &str = "RERUN_WITH_PROFILER";
-                if let Ok(debugger) = std::env::var(RERUN_VAR) {
-                    info!("Restarting with debugger '{debugger}'");
-                    let mut dsplit = debugger.split(' ');
-                    let mut cmd = std::process::Command::new(dsplit.next().unwrap());
-                    cmd.args(dsplit)
-                        .args(std::env::args())
-                        .env_remove(RERUN_VAR);
-                    std::process::exit(cmd.status().unwrap().code().unwrap_or(0));
+        let info = how_to_handle_this_crate(&plugin_args, &mut compiler_args);
+        println!(
+            "Handling crate {} as {}",
+            info.name.as_ref().map_or("unnamed", String::as_str),
+            info.handling.as_ref()
+        );
+        let result = {
+            let mut callbacks = match info.handling {
+                CrateHandling::JustCompile => {
+                    Box::new(NoopCallbacks) as Box<dyn rustc_driver::Callbacks + Send>
                 }
-
-                compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
-                if opts.verbosity() >= Level::Debug {
-                    compiler_args.push("-Ztrack-diagnostics".to_string());
+                CrateHandling::CompileAndDump => {
+                    compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
+                    Box::new(DumpOnlyCallbacks {
+                        time: &mut dump_stats,
+                        output_location: &mut output_path_location,
+                    })
                 }
+                CrateHandling::Analyze => {
+                    plugin_args.setup_logging();
 
-                if let Some(dbg) = opts.attach_to_debugger() {
-                    dbg.attach()
+                    let opts = Box::leak(Box::new(plugin_args));
+
+                    const RERUN_VAR: &str = "RERUN_WITH_PROFILER";
+                    if let Ok(debugger) = std::env::var(RERUN_VAR) {
+                        info!("Restarting with debugger '{debugger}'");
+                        let mut dsplit = debugger.split(' ');
+                        let mut cmd = std::process::Command::new(dsplit.next().unwrap());
+                        cmd.args(dsplit)
+                            .args(std::env::args())
+                            .env_remove(RERUN_VAR);
+                        std::process::exit(cmd.status().unwrap().code().unwrap_or(0));
+                    }
+
+                    compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
+                    if opts.verbosity() >= Level::Debug {
+                        compiler_args.push("-Ztrack-diagnostics".to_string());
+                    }
+
+                    if let Some(dbg) = opts.attach_to_debugger() {
+                        dbg.attach()
+                    }
+
+                    debug!(
+                        "Arguments: {}",
+                        Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
+                    );
+                    Box::new(Callbacks::new(
+                        opts,
+                        &mut stat_ref,
+                        &mut output_path_location,
+                        &mut dump_stats,
+                    ))
                 }
+            };
 
-                debug!(
-                    "Arguments: {}",
-                    Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
-                );
-                Box::new(Callbacks::new(opts))
-            }
+            rustc_driver::RunCompiler::new(&compiler_args, callbacks.as_mut()).run()
         };
-
-        rustc_driver::RunCompiler::new(&compiler_args, callbacks.as_mut()).run()
+        if info.handling != CrateHandling::JustCompile {
+            let filepath = output_path_location
+                .take()
+                .expect("Output path should be set");
+            dump_stats.total_time = start.elapsed();
+            println!(
+                "Writing statistics for dependency to {}",
+                filepath.display()
+            );
+            let out = BufWriter::new(File::create(filepath).unwrap());
+            serde_json::to_writer(out, &dump_stats).unwrap();
+        }
+        if info.handling == CrateHandling::Analyze {
+            let out = BufWriter::new(File::create(out_path.with_extension(STAT_FILE_EXT)).unwrap());
+            let mut stat = stat_ref.take().expect("stats must have been set");
+            let self_time = start.elapsed();
+            // See ana/mod.rs for explanations as to these adjustments.
+            stat.self_time = self_time;
+            serde_json::to_writer(out, &stat).unwrap();
+        }
+        result
     }
 }
 
@@ -434,7 +574,6 @@ impl Debugger {
     fn attach(self) {
         use std::process::{id, Command};
         use std::thread::sleep;
-        use std::time::Duration;
 
         match self {
             Debugger::CodeLldb => {

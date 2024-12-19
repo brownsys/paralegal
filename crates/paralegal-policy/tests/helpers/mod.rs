@@ -11,7 +11,7 @@ use std::{
 use anyhow::anyhow;
 pub use anyhow::{ensure, Result};
 
-use paralegal_policy::{Context, GraphLocation};
+use paralegal_policy::{GraphLocation, RootContext};
 
 lazy_static::lazy_static! {
     static ref TOOL_BUILT: PathBuf = {
@@ -180,7 +180,7 @@ impl Test {
     }
 
     #[allow(dead_code)]
-    pub fn run(self, test_function: impl FnOnce(Arc<Context>) -> Result<()>) -> Result<()> {
+    pub fn run(self, test_function: impl FnOnce(Arc<RootContext>) -> Result<()>) -> Result<()> {
         self.try_compile()?;
         let ret = GraphLocation::std(&self.tempdir)
             .with_context_configured(self.context_config, test_function)?;

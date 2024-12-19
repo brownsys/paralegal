@@ -20,17 +20,18 @@ use crate::{
 };
 use crate::{Diagnostics, NodeExt};
 
-/// Statistics about the result of running [`crate::Context::always_happens_before`]
-/// that are useful to understand how the property failed.
+/// Statistics about the result of running
+/// [`crate::RootContext::always_happens_before`] that are useful to understand
+/// how the property failed.
 ///
 /// The [`std::fmt::Display`] implementation presents the information in human
 /// readable form.
 ///
 /// Note: Both the number of seen paths and the number of violation paths are
 /// approximations. This is because the traversal terminates when it reaches a
-/// node that was already seen. However it is guaranteed that if there
-/// are any violating paths, then the number of reaching paths reported in this
-/// struct is at least one (e.g. [`Self::holds`] is sound).
+/// node that was already seen. However it is guaranteed that if there are any
+/// violating paths, then the number of reaching paths reported in this struct
+/// is at least one (e.g. [`Self::holds`] is sound).
 ///
 /// The stable API of this struct is [`Self::holds`], [`Self::assert_holds`] and
 /// [`Self::is_vacuous`]. Otherwise the information in this struct and its
@@ -118,7 +119,7 @@ impl AlwaysHappensBefore {
     }
 }
 
-impl crate::Context {
+impl crate::RootContext {
     /// Enforce that on every data flow path from the `starting_points` to `is_terminal` a
     /// node satisfying `is_checkpoint` is passed.
     ///

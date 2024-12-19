@@ -1,12 +1,12 @@
 use anyhow::Result;
 use helpers::Test;
-use paralegal_policy::{assert_error, Context, Diagnostics, EdgeSelection, NodeExt};
+use paralegal_policy::{assert_error, Context, Diagnostics, EdgeSelection, NodeExt, RootContext};
 use paralegal_spdg::{GlobalNode, Identifier};
 use std::sync::Arc;
 
 mod helpers;
 
-fn policy(ctx: Arc<Context>) -> Result<()> {
+fn policy(ctx: Arc<RootContext>) -> Result<()> {
     let m_dangerous = Identifier::new_intern("dangerous");
     let m_sink = Identifier::new_intern("sink");
     let d_tys = ctx.marked_type(m_dangerous);

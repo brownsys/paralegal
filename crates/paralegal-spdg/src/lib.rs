@@ -64,6 +64,9 @@ pub type Function = Identifier;
 /// [`ProgramDescription`].
 pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.o";
 
+/// Extension for output files containing statistics of the analzyer run.
+pub const STAT_FILE_EXT: &str = "stat.json";
+
 #[allow(dead_code)]
 mod ser_localdefid_map {
     use serde::{Deserialize, Serialize};
@@ -321,6 +324,19 @@ pub type TypeInfoMap = HashMap<TypeId, TypeDescription>;
 /// Endpoints with their SPDGs
 pub type ControllerMap = HashMap<Endpoint, SPDG>;
 
+#[doc(hidden)]
+/// How was a given function handled by the analyzer
+#[derive(Serialize, Deserialize, Debug)]
+pub enum FunctionHandling {
+    /// A PDG was generated
+    PDG,
+    /// The function was determined not to assign markers and as a result elided.
+    Elided,
+}
+
+#[doc(hidden)]
+pub type AnalyzedSpans = HashMap<DefId, (Span, FunctionHandling)>;
+
 /// The annotated program dependence graph.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProgramDescription {
@@ -343,15 +359,34 @@ pub struct ProgramDescription {
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
     /// Metadata about the `DefId`s
     pub def_info: HashMap<DefId, DefInfo>,
+    #[doc(hidden)]
+    #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
+    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
+    pub analyzed_spans: AnalyzedSpans,
+}
+
+/// Statistics about a single run of paralegal-flow
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AnalyzerStats {
     /// How many marker annotations were found
     pub marker_annotation_count: u32,
+    /// Total time used for the last analzyer run
+    pub self_time: Duration,
+    /// Time spent dumping MIR
+    pub dump_time: Duration,
+    /// how long the rust typechecker took
+    pub tycheck_time: Duration,
+    /// How long we spent on dependencies
+    pub dep_time: Duration,
     /// How long rustc ran before out plugin executed
     pub rustc_time: Duration,
+    /// How long did it take to serialize the graphs
+    pub serialization_time: Duration,
     /// The number of functions we produced a PDG for
-    pub dedup_functions: u32,
+    pub pdg_functions: u32,
     /// The lines of code corresponding to the functions from
-    /// [`Self::dedup_functions`].
-    pub dedup_locs: u32,
+    /// [`Self::pdg_functions`].
+    pub pdg_locs: u32,
     /// The number of functions we produced PDGs for or we inspected to check
     /// for markers.
     pub seen_functions: u32,
@@ -359,9 +394,6 @@ pub struct ProgramDescription {
     /// [`Self::seen_functions`]. This is the sum of all
     /// `analyzed_locs` of the controllers but deduplicated.
     pub seen_locs: u32,
-    #[doc(hidden)]
-    #[serde(with = "ser_localdefid_map")]
-    pub analyzed_spans: HashMap<LocalDefId, Span>,
 }
 
 /// Metadata about a type

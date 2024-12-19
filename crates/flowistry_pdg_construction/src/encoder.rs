@@ -23,6 +23,7 @@
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
+use std::rc::Rc;
 use std::{num::NonZeroU64, path::PathBuf};
 
 use rustc_const_eval::interpret::AllocId;
@@ -33,7 +34,9 @@ use rustc_serialize::{
     opaque::{FileEncoder, MemDecoder},
     Decodable, Decoder, Encodable, Encoder,
 };
-use rustc_span::{BytePos, FileName, RealFileName, Span, SpanData, SyntaxContext, DUMMY_SP};
+use rustc_span::{
+    BytePos, FileName, RealFileName, SourceFile, Span, SpanData, SyntaxContext, DUMMY_SP,
+};
 use rustc_type_ir::{TyDecoder, TyEncoder};
 
 macro_rules! encoder_methods {
@@ -50,6 +53,7 @@ pub struct ParalegalEncoder<'tcx> {
     file_encoder: FileEncoder,
     type_shorthands: FxHashMap<ty::Ty<'tcx>, usize>,
     predicate_shorthands: FxHashMap<ty::PredicateKind<'tcx>, usize>,
+    filepath_shorthands: FxHashMap<FileName, usize>,
 }
 
 impl<'tcx> ParalegalEncoder<'tcx> {
@@ -60,6 +64,7 @@ impl<'tcx> ParalegalEncoder<'tcx> {
             file_encoder: FileEncoder::new(path).unwrap(),
             type_shorthands: Default::default(),
             predicate_shorthands: Default::default(),
+            filepath_shorthands: Default::default(),
         }
     }
 
@@ -137,6 +142,7 @@ pub struct ParalegalDecoder<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
     mem_decoder: MemDecoder<'a>,
     shorthand_map: FxHashMap<usize, Ty<'tcx>>,
+    file_shorthands: FxHashMap<usize, Rc<SourceFile>>,
 }
 
 impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
@@ -146,6 +152,7 @@ impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
             tcx,
             mem_decoder: MemDecoder::new(buf, 0),
             shorthand_map: Default::default(),
+            file_shorthands: Default::default(),
         }
     }
 }
@@ -285,7 +292,7 @@ impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for SpanData {
         if let FileName::Real(RealFileName::Remapped { local_path, .. }) = &mut name {
             local_path.take();
         }
-        name.encode(s);
+        s.encode_file_name(&name);
 
         let lo = self.lo - source_file.start_pos;
         let len = self.hi - self.lo;
@@ -293,6 +300,81 @@ impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for SpanData {
         len.encode(s);
     }
 }
+
+impl<'tcx> ParalegalEncoder<'tcx> {
+    fn encode_file_name(&mut self, n: &FileName) {
+        if let Some(&idx) = self.filepath_shorthands.get(n) {
+            TAG_ENCODE_REMOTE.encode(self);
+            idx.encode(self);
+        } else {
+            TAG_ENCODE_LOCAL.encode(self);
+            self.filepath_shorthands
+                .insert(n.clone(), self.file_encoder.position());
+            n.encode(self);
+        }
+    }
+}
+
+impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
+    fn decode_file_name(&mut self, crate_num: CrateNum) -> Rc<SourceFile> {
+        let tag = u8::decode(self);
+        let pos = if tag == TAG_ENCODE_REMOTE {
+            let index = usize::decode(self);
+            if let Some(cached) = self.file_shorthands.get(&index) {
+                return cached.clone();
+            }
+            Some(index)
+        } else if tag == TAG_ENCODE_LOCAL {
+            None
+        } else {
+            panic!("Unexpected tag value {tag}");
+        };
+        let (index, file) = if let Some(idx) = pos {
+            (
+                idx,
+                self.with_position(idx, |slf| slf.decode_filename_local(crate_num)),
+            )
+        } else {
+            (self.position(), self.decode_filename_local(crate_num))
+        };
+
+        self.file_shorthands.insert(index, file.clone());
+        file
+    }
+
+    fn decode_filename_local(&mut self, crate_num: CrateNum) -> Rc<SourceFile> {
+        let file_name = FileName::decode(self);
+        let source_map = self.tcx.sess.source_map();
+        let matching_source_files = source_map
+            .files()
+            .iter()
+            .filter(|f| {
+                f.cnum == crate_num && (file_name == f.name || matches!((&file_name, &f.name), (FileName::Real(r), FileName::Real(other)) if {
+                    let before = path_in_real_path(r);
+                    let after = path_in_real_path(other);
+                    after.ends_with(before)
+                }))
+            })
+            .cloned()
+            .collect::<Box<[_]>>();
+        match matching_source_files.as_ref() {
+            [sf] => sf.clone(),
+            [] => match &file_name {
+                FileName::Real(RealFileName::LocalPath(local)) if source_map.file_exists(local) => {
+                    source_map.load_file(local).unwrap()
+                }
+                _ => panic!("Could not load file {}", file_name.prefer_local()),
+            },
+            other => {
+                let names = other.iter().map(|f| &f.name).collect::<Vec<_>>();
+                panic!("Too many matching file names for {file_name:?}: {names:?}")
+            }
+        }
+    }
+}
+
+const TAG_ENCODE_REMOTE: u8 = 0;
+const TAG_ENCODE_LOCAL: u8 = 1;
 
 /// For now this does nothing, simply dropping the context. We don't use it
 /// anyway in our errors.
@@ -327,33 +409,7 @@ impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for SpanData {
         }
         debug_assert_eq!(tag, TAG_VALID_SPAN_FULL);
         let crate_num = CrateNum::decode(d);
-        let file_name = FileName::decode(d);
-        let source_map = d.tcx.sess.source_map();
-        let matching_source_files = source_map
-            .files()
-            .iter()
-            .filter(|f| {
-                f.cnum == crate_num && (file_name == f.name || matches!((&file_name, &f.name), (FileName::Real(r), FileName::Real(other)) if {
-                    let before = path_in_real_path(r);
-                    let after = path_in_real_path(other);
-                    after.ends_with(before)
-                }))
-            })
-            .cloned()
-            .collect::<Box<[_]>>();
-        let source_file = match matching_source_files.as_ref() {
-            [sf] => sf.clone(),
-            [] => match &file_name {
-                FileName::Real(RealFileName::LocalPath(local)) if source_map.file_exists(local) => {
-                    source_map.load_file(local).unwrap()
-                }
-                _ => panic!("Could not load file {}", file_name.prefer_local()),
-            },
-            other => {
-                let names = other.iter().map(|f| &f.name).collect::<Vec<_>>();
-                panic!("Too many matching file names for {file_name:?}: {names:?}")
-            }
-        };
+        let source_file = d.decode_file_name(crate_num);
         let lo = BytePos::decode(d);
         let len = BytePos::decode(d);
         let hi = lo + len;

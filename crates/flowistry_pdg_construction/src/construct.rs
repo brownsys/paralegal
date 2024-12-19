@@ -41,7 +41,7 @@ pub struct MemoPdgConstructor<'tcx> {
     pub(crate) call_change_callback: Option<Rc<dyn CallChangeCallback<'tcx> + 'tcx>>,
     pub(crate) dump_mir: bool,
     pub(crate) async_info: Rc<AsyncInfo>,
-    pub(crate) pdg_cache: PdgCache<'tcx>,
+    pub pdg_cache: PdgCache<'tcx>,
     pub(crate) body_cache: Rc<body_cache::BodyCache<'tcx>>,
 }
 
@@ -429,6 +429,17 @@ impl<'tcx> PartialGraph<'tcx> {
                 );
             }
         }
+        self.edges.extend(
+            constructor
+                .find_control_inputs(location)
+                .into_iter()
+                .flat_map(|(ctrl_src, edge)| {
+                    child_graph
+                        .nodes
+                        .iter()
+                        .map(move |dest| (ctrl_src, *dest, edge))
+                }),
+        );
         self.nodes.extend(child_graph.nodes);
         self.edges.extend(child_graph.edges);
         true

@@ -114,7 +114,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
     /// Driver function. Performs the data collection via visit, then calls
     /// [`Self::analyze`] to construct the Forge friendly description of all
     /// endpoints.
-    pub fn run(mut self) -> Result<ProgramDescription> {
+    pub fn run(mut self) -> Result<(ProgramDescription, AnalyzerStats)> {
         let tcx = self.tcx;
         tcx.hir().visit_all_item_likes_in_crate(&mut self);
         let targets = std::mem::take(&mut self.functions_to_analyze);

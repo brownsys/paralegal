@@ -209,7 +209,10 @@ define_test!(control_flow_tracking_for_non_fn_compound_conditions: graph -> {
     assert!(other_cond.output().influences_ctrl(&read.input()));
 });
 
-define_test!(control_flow_tracking_for_compound_cond_with_fun: graph -> {
+define_test!(control_flow_tracking_for_compound_cond_with_fun
+    skip
+    "https://github.com/brownsys/paralegal/issues/168"
+    : graph -> {
     let cond_input_fn = graph.function("source");
     let cond_input = graph.call_site(&cond_input_fn);
     let other_cond_fn = graph.function("input");
@@ -233,7 +236,10 @@ define_test!(control_flow_tracking_for_compound_cond_with_fun: graph -> {
     // assert!(!cond_input.output().is_neighbor_ctrl(&read.input()));
 });
 
-define_test!(and_desugaring_similar_pattern: graph -> {
+define_test!(and_desugaring_similar_pattern
+    skip
+    "This was for testing async desugaring (https://github.com/brownsys/paralegal/issues/168) but actually this shouldn't work."
+    : graph -> {
     let cond_input_fn = graph.function("input");
     let cond_input = graph.call_site(&cond_input_fn);
     let other_cond_fn = graph.function("source");

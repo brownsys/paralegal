@@ -11,23 +11,28 @@ use crate::{
     discover::FnToAnalyze,
     stats::{Stats, TimedStat},
     utils::*,
-    HashMap, HashSet, LogLevelConfig, MarkerCtx,
+    DumpStats, HashMap, HashSet, LogLevelConfig, MarkerCtx, INTERMEDIATE_STAT_EXT,
 };
 
-use std::{rc::Rc, time::Instant};
+use std::{fs::File, io::BufReader, rc::Rc, time::Instant};
 
 use anyhow::Result;
 use either::Either;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    body_cache::BodyCache, calling_convention::CallingConvention, CallChangeCallback, CallChanges,
-    CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
+    body_cache::{local_or_remote_paths, BodyCache},
+    calling_convention::CallingConvention,
+    utils::is_async,
+    CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
 use inline_judge::InlineJudgement;
 use itertools::Itertools;
 use petgraph::visit::GraphBase;
 
-use rustc_hir::{self as hir, def, def_id::DefId};
+use rustc_hir::{
+    self as hir, def,
+    def_id::{DefId, LOCAL_CRATE},
+};
 use rustc_middle::{
     mir::{Location, Operand},
     ty::{Instance, ParamEnv, TyCtxt},
@@ -38,6 +43,7 @@ mod graph_converter;
 mod inline_judge;
 
 use graph_converter::GraphConverter;
+use std::time::Duration;
 
 pub use self::inline_judge::InlineJudge;
 
@@ -105,7 +111,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
     /// other setup necessary for the flow graph creation.
     ///
     /// Should only be called after the visit.
-    pub fn analyze(&mut self, targets: Vec<FnToAnalyze>) -> Result<ProgramDescription> {
+    pub fn analyze(
+        &mut self,
+        targets: Vec<FnToAnalyze>,
+    ) -> Result<(ProgramDescription, AnalyzerStats)> {
         if let LogLevelConfig::Targeted(s) = self.opts.direct_debug() {
             assert!(
                 targets.iter().any(|target| target.name().as_str() == s),
@@ -150,17 +159,17 @@ impl<'tcx> SPDGGenerator<'tcx> {
         controllers: HashMap<Endpoint, SPDG>,
         mut known_def_ids: HashSet<DefId>,
         _targets: &[FnToAnalyze],
-    ) -> ProgramDescription {
+    ) -> (ProgramDescription, AnalyzerStats) {
         let tcx = self.tcx;
 
         let instruction_info = self.collect_instruction_info(&controllers);
 
-        let inlined_functions = instruction_info
+        let called_functions = instruction_info
             .keys()
             .map(|l| l.function)
             .collect::<HashSet<_>>();
 
-        known_def_ids.extend(&inlined_functions);
+        known_def_ids.extend(&called_functions);
 
         let type_info = self.collect_type_info();
         known_def_ids.extend(type_info.keys());
@@ -169,29 +178,140 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .map(|id| (*id, def_info_for_item(*id, self.marker_ctx(), tcx)))
             .collect();
 
-        let dedup_locs = 0;
-        let dedup_functions = 0;
-        let seen_locs = 0;
-        let seen_functions = 0;
-
         type_info_sanity_check(&controllers, &type_info);
-        ProgramDescription {
-            type_info,
-            instruction_info,
-            controllers,
-            def_info,
-            marker_annotation_count: self
-                .marker_ctx()
+
+        let (stats, analyzed_spans) = self.collect_stats_and_analyzed_spans();
+
+        (
+            ProgramDescription {
+                type_info,
+                instruction_info,
+                controllers,
+                def_info,
+                analyzed_spans,
+            },
+            stats,
+        )
+    }
+
+    fn collect_stats_and_analyzed_spans(&self) -> (AnalyzerStats, AnalyzedSpans) {
+        let tcx = self.tcx;
+
+        // In this we don't have to filter out async functions. They are already
+        // not in it. For the top-level (target) an async function immediately
+        // redirects to its closure and never inserts the parent DefId into the
+        // map. For called async functions we skip inlining and therefore also
+        // do not insert the DefId into the map.
+        let inlined_functions = self
+            .pdg_constructor
+            .pdg_cache
+            .borrow()
+            .keys()
+            .map(|k| k.def.def_id())
+            .collect::<HashSet<_>>();
+
+        let mut seen_locs = 0;
+        let mut seen_functions = 0;
+        let mut pdg_locs = 0;
+        let mut pdg_functions = 0;
+
+        let mctx = self.marker_ctx();
+
+        let analyzed_functions = mctx
+            .functions_seen()
+            .into_iter()
+            .map(|f| f.def_id())
+            // Async functions always show up twice, once as the function
+            // itself, once as the generator. Here we filter out one of those
+            // (the function)
+            .filter(|d| !is_async(tcx, *d))
+            .filter(|f| !mctx.is_marked(f))
+            // It's annoying I have to do this merge here, but what the marker
+            // context sees doesn't contain the targets and not just that but
+            // also if those targets are async, then their closures are also not
+            // contained and lastly if we're not doing adaptive depth then we
+            // need to use the inlined functions anyway so this is just easier.
+            .chain(inlined_functions.iter().copied())
+            .collect::<HashSet<_>>();
+
+        let analyzed_spans = analyzed_functions
+            .into_iter()
+            .map(|f| {
+                let body = self.pdg_constructor.body_for_def_id(f);
+                let span = body_span(tcx, body.body());
+                let pspan = src_loc_for_span(span, tcx);
+                assert!(
+                    pspan.start.line <= pspan.end.line,
+                    "Weird span for {f:?}: {pspan:?}. It was created from {span:?}"
+                );
+                let l = pspan.line_len();
+                assert!(l < 5000, "Span for {f:?} is {l} lines long ({span:?})");
+
+                seen_locs += pspan.line_len();
+                seen_functions += 1;
+
+                let handling = if inlined_functions.contains(&f) {
+                    pdg_locs += pspan.line_len();
+                    pdg_functions += 1;
+                    FunctionHandling::PDG
+                } else {
+                    FunctionHandling::Elided
+                };
+
+                (f, (pspan, handling))
+            })
+            .collect::<AnalyzedSpans>();
+
+        let prior_stats = self.get_prior_stats();
+
+        // A few notes on these stats. We calculate most of them here, because
+        // this is where we easily have access to the information. For example
+        // the included crates, the paths where the intermediate stats are
+        // located and the marker annotations.
+        //
+        // However some pieces of information we don't have and that is how long
+        // *this* run of the analyzer took in total and how long serialziation
+        // took, but we do want to add that to the stats. As a workaround we set
+        // "self_time" and "serialization_time" to 0 and "total_time" to the
+        // accumulated intermediate analyis time. Then, after the serialization
+        // and whatever teardown rustc wants to do is finished we set
+        // "self_time" and increment "total_time". See lib.rs for that.
+        let stats = AnalyzerStats {
+            marker_annotation_count: mctx
                 .all_annotations()
                 .filter_map(|m| m.1.either(Annotation::as_marker, Some))
                 .count() as u32,
             rustc_time: self.stats.get_timed(TimedStat::Rustc),
-            dedup_locs,
-            dedup_functions,
+            pdg_functions,
+            pdg_locs,
             seen_functions,
             seen_locs,
-            analyzed_spans: Default::default(),
-        }
+            self_time: Duration::ZERO,
+            dep_time: prior_stats.total_time,
+            tycheck_time: prior_stats.tycheck_time + self.pdg_constructor.body_cache().timer(),
+            dump_time: prior_stats.dump_time,
+            serialization_time: Duration::ZERO,
+        };
+
+        (stats, analyzed_spans)
+    }
+
+    fn get_prior_stats(&self) -> DumpStats {
+        self.judge
+            .included_crates()
+            .iter()
+            .copied()
+            .filter(|c| *c != LOCAL_CRATE)
+            .map(|c| {
+                let paths = local_or_remote_paths(c, self.tcx, INTERMEDIATE_STAT_EXT);
+
+                let path = paths.iter().find(|p| p.exists()).unwrap_or_else(|| {
+                    panic!("No stats path found for included crate {c:?}, searched {paths:?}")
+                });
+                let rdr = BufReader::new(File::open(path).unwrap());
+                serde_json::from_reader(rdr).unwrap()
+            })
+            .fold(DumpStats::zero(), |s, o| s.add(&o))
     }
 
     /// Create an [`InstructionInfo`] record for each [`GlobalLocation`]
@@ -267,7 +387,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .filter(|(id, _)| def_kind_for_item(*id, self.tcx).is_type())
             .into_grouping_map()
             .fold_with(
-                |id, _| (format!("{id:?}"), vec![], vec![]),
+                |id, _| (*id, vec![], vec![]),
                 |mut desc, _, ann| {
                     match ann {
                         Either::Right(MarkerAnnotation { refinement, marker })
@@ -275,7 +395,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                             refinement,
                             marker,
                         })) => {
-                            assert!(refinement.on_self());
+                            assert!(refinement.on_self(), "Cannot refine a marker on a type (tried assigning refinement {refinement} to {:?})", desc.0);
                             desc.2.push(*marker)
                         }
                         Either::Left(Annotation::OType(id)) => desc.1.push(*id),
@@ -285,11 +405,11 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 },
             )
             .into_iter()
-            .map(|(k, (rendering, otypes, markers))| {
+            .map(|(k, (_, otypes, markers))| {
                 (
                     k,
                     TypeDescription {
-                        rendering,
+                        rendering: format!("{k:?}"),
                         otypes: otypes.into(),
                         markers,
                     },
@@ -513,7 +633,7 @@ impl Stub {
                 }
             };
             CallingConvention::Indirect {
-                once_shim: false,
+                shim: None,
                 closure_arg: clj.clone(),
                 // This is incorrect, but we only support
                 // non-argument closures at the moment so this
@@ -531,7 +651,11 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
     fn on_inline(&self, info: CallInfo<'tcx, '_>) -> CallChanges<'tcx> {
         let changes = CallChanges::default();
 
-        let skip = match self.judge.should_inline(&info) {
+        let judgement = self.judge.should_inline(&info);
+
+        debug!("Judgement for {:?}: {judgement}", info.callee.def_id(),);
+
+        let skip = match judgement {
             InlineJudgement::AbstractViaType(_) => SkipCall::Skip,
             InlineJudgement::UseStub(model) => {
                 if let Ok((instance, calling_convention)) = model.apply(

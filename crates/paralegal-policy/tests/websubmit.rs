@@ -1,8 +1,10 @@
 mod helpers;
 
 use helpers::{Result, Test};
-use paralegal_policy::{algo::ahb, loc, paralegal_spdg, Diagnostics, Marker, NodeExt, NodeQueries};
-use paralegal_spdg::traverse::EdgeSelection;
+use paralegal_policy::{
+    algo::ahb, loc, paralegal_spdg, Context, Diagnostics, Marker, NodeExt, NodeQueries,
+};
+use paralegal_spdg::{traverse::EdgeSelection, IntoIterGlobalNodes};
 macro_rules! marker {
     ($id:ident) => {
         Marker::new_intern(stringify!($id))
@@ -138,6 +140,7 @@ fn email_send_overtaint() -> Result<()> {
                     // scopes for the store
                     let store_scopes = cx
                         .influencers(&sink_callsite, EdgeSelection::Data)
+                        .chain(sink_callsite.iter_global_nodes())
                         .filter(|n| n.has_marker(&cx, marker!(scopes)))
                         .collect::<Vec<_>>();
                     if store_scopes.is_empty() {

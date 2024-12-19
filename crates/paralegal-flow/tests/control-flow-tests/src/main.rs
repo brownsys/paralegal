@@ -36,16 +36,6 @@ fn process_nested_if() {
         }
     }
 }
-
-#[paralegal::analyze]
-fn process_if_multiple_statements() {
-    let mut user_data = get_user_data();
-    if check_user_data(&user_data) {
-        modify(&mut user_data);
-        send_user_data(&user_data);
-    }
-}
-
 #[paralegal::analyze]
 fn process_if_not_function_call() {
     let x = get_x();

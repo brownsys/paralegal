@@ -13,8 +13,8 @@ use rustc_middle::{
         StatementKind, Terminator, TerminatorKind,
     },
     ty::{
-        AssocItemContainer, Binder, EarlyBinder, GenericArg, GenericArgsRef, Instance, List,
-        ParamEnv, Region, Ty, TyCtxt, TyKind,
+        AssocItemContainer, Binder, EarlyBinder, GenericArg, GenericArgsRef, Instance, InstanceDef,
+        List, ParamEnv, Region, Ty, TyCtxt, TyKind,
     },
 };
 use rustc_span::{ErrorGuaranteed, Span};
@@ -339,4 +339,50 @@ pub fn manufacture_substs_for(
         Ok(GenericArg::from(ty))
     });
     tcx.mk_args_from_iter(types)
+}
+
+#[derive(Clone, Copy, Debug, strum::AsRefStr)]
+#[strum(serialize_all = "kebab-case")]
+pub enum ShimType {
+    Once,
+    FnPtr,
+}
+
+pub fn handle_shims<'tcx>(
+    resolved_fn: Instance<'tcx>,
+    tcx: TyCtxt<'tcx>,
+    param_env: ParamEnv<'tcx>,
+) -> Option<(Instance<'tcx>, ShimType)> {
+    match resolved_fn.def {
+        InstanceDef::ClosureOnceShim { .. } => {
+            // Rustc has inserted a call to the shim that maps `Fn` and `FnMut`
+            // instances to an `FnOnce`. This shim has no body itself so we
+            // can't just inline, we must explicitly simulate it's effects by
+            // changing the target function and by setting the calling
+            // convention to that of a shim.
+
+            // Because this is a well defined internal item we can make
+            // assumptions about its generic arguments.
+            let Some((func_a, _rest)) = resolved_fn.args.split_first() else {
+                unreachable!()
+            };
+            let Some((func_t, g)) = type_as_fn(tcx, func_a.expect_ty()) else {
+                unreachable!()
+            };
+            let instance = Instance::expect_resolve(tcx, param_env, func_t, g);
+            Some((instance, ShimType::Once))
+        }
+        InstanceDef::FnPtrShim { .. } => {
+            let Some((func_a, _rest)) = resolved_fn.args.split_first() else {
+                unreachable!()
+            };
+            let Some((func_t, g)) = type_as_fn(tcx, func_a.expect_ty()) else {
+                unreachable!()
+            };
+            let instance = Instance::expect_resolve(tcx, param_env, func_t, g);
+
+            Some((instance, ShimType::FnPtr))
+        }
+        _ => None,
+    }
 }

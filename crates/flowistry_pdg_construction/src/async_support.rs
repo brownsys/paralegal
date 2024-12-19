@@ -138,9 +138,6 @@ fn match_pin_box_dyn_ty(lang_items: &rustc_hir::LanguageItems, t: ty::Ty) -> boo
     let ty::TyKind::Dynamic(pred, _, ty::DynKind::Dyn) = t_a.boxed_ty().kind() else {
         return false;
     };
-    if pred.len() != 2 {
-        return false;
-    }
     pred.iter().any(|p| {
         let ty::ExistentialPredicate::Trait(t) = p.skip_binder() else {
             return false;

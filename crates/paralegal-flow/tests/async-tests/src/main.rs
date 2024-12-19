@@ -1,6 +1,8 @@
 // extern crate async_std;
 // use async_std::prelude::*;
 
+use async_trait::async_trait;
+
 #[paralegal::marker(source)]
 fn get_user_data() -> UserData {
     return UserData {
@@ -218,6 +220,121 @@ async fn return_from_async() -> usize {
 #[paralegal::analyze]
 async fn async_return_from_async() -> usize {
     id_fun(some_input()).await
+}
+
+#[paralegal::marker(is_check, return)]
+async fn perform_check(data: usize) -> Result<(), ()> {
+    if data != 0 {
+        Ok(())
+    } else {
+        Err(())
+    }
+}
+
+#[paralegal::marker(is_sensitive1, return)]
+async fn sensitive_action1(data: usize) {}
+
+#[paralegal::marker(is_sensitive2, return)]
+async fn sensitive_action2(data: usize) {}
+
+#[paralegal::analyze]
+#[tracing::instrument(skip_all)]
+async fn control_flow_overtaint_tracing(condition: bool, data: usize) -> Result<(), ()> {
+    if condition {
+        perform_check(data).await?;
+
+        sensitive_action1(data).await;
+    } else {
+        sensitive_action2(data).await;
+    }
+    Ok(())
+}
+
+#[paralegal::marker(is_check, return)]
+fn perform_check_unasync(data: usize) -> Result<(), ()> {
+    if data != 0 {
+        Ok(())
+    } else {
+        Err(())
+    }
+}
+
+#[paralegal::marker(is_sensitive1, return)]
+fn sensitive_action1_unasync(data: usize) {}
+
+#[paralegal::marker(is_sensitive2, return)]
+fn sensitive_action2_unasync(data: usize) {}
+
+#[paralegal::analyze]
+#[tracing::instrument(skip_all)]
+fn control_flow_overtaint_tracing_unasync(condition: bool, data: usize) -> Result<(), ()> {
+    if condition {
+        perform_check_unasync(data)?;
+
+        sensitive_action1_unasync(data);
+    } else {
+        sensitive_action2_unasync(data);
+    }
+    Ok(())
+}
+
+#[async_trait]
+trait ControlFlowOvertaintAsyncTrait {
+    async fn control_flow_overtaint_async_trait(
+        &self,
+        condition: bool,
+        data: usize,
+    ) -> Result<(), ()>;
+}
+
+struct ControlFlowOvertaintAsyncTraitTestStruct;
+
+#[async_trait]
+impl ControlFlowOvertaintAsyncTrait for ControlFlowOvertaintAsyncTraitTestStruct {
+    #[paralegal::analyze]
+    async fn control_flow_overtaint_async_trait(
+        &self,
+        condition: bool,
+        data: usize,
+    ) -> Result<(), ()> {
+        if condition {
+            perform_check(data).await?;
+
+            sensitive_action1(data).await;
+        } else {
+            sensitive_action2(data).await;
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+trait ControlFlowOvertaintAsyncTraitTracing {
+    async fn control_flow_overtaint_async_trait_tracing(
+        &self,
+        condition: bool,
+        data: usize,
+    ) -> Result<(), ()>;
+}
+
+#[async_trait]
+impl ControlFlowOvertaintAsyncTraitTracing for ControlFlowOvertaintAsyncTraitTestStruct {
+    #[paralegal::analyze]
+    #[tracing::instrument(skip_all)]
+    async fn control_flow_overtaint_async_trait_tracing(
+        &self,
+        condition: bool,
+        data: usize,
+    ) -> Result<(), ()> {
+        if condition {
+            perform_check(data).await?;
+
+            sensitive_action1(data).await;
+        } else {
+            sensitive_action2(data).await;
+        }
+        Ok(())
+    }
 }
 
 fn main() {}

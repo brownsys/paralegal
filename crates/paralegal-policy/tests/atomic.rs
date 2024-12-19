@@ -5,7 +5,9 @@ use std::{collections::HashSet, sync::Arc};
 use helpers::Test;
 
 use anyhow::Result;
-use paralegal_policy::{assert_error, Context, Diagnostics as _, EdgeSelection, NodeExt as _};
+use paralegal_policy::{
+    assert_error, Context, Diagnostics as _, EdgeSelection, NodeExt as _, RootContext,
+};
 use paralegal_spdg::{GlobalNode, Identifier, NodeCluster, SourceUse};
 use petgraph::Outgoing;
 
@@ -19,10 +21,10 @@ macro_rules! marker {
 }
 
 trait NodeExt: Sized {
-    fn is_argument(self, ctx: &Context, num: u8) -> bool;
+    fn is_argument(self, ctx: &RootContext, num: u8) -> bool;
 }
 impl NodeExt for GlobalNode {
-    fn is_argument(self, ctx: &Context, num: u8) -> bool {
+    fn is_argument(self, ctx: &RootContext, num: u8) -> bool {
         ctx.desc().controllers[&self.controller_id()]
             .graph
             .edges_directed(self.local_node(), Outgoing)
@@ -134,7 +136,7 @@ fn not_influenced_by_commit() -> Result<()> {
     test.run(atomic_policy)
 }
 
-fn atomic_policy(ctx: Arc<Context>) -> Result<()> {
+fn atomic_policy(ctx: Arc<RootContext>) -> Result<()> {
     let mut any_sink_reached = false;
     let check_rights = marker!(check_rights);
     for ctx in ctx.controller_contexts() {

@@ -5,11 +5,11 @@ use anyhow::{Context, Ok, Result};
 use cfg_if::cfg_if;
 use std::{
     fs::File,
-    io::{Read, Write},
+    io::{BufReader, BufWriter, Read, Write},
     path::Path,
 };
 
-use crate::ProgramDescription;
+use crate::{AnalyzerStats, ProgramDescription};
 
 cfg_if! {
     if #[cfg(feature = "binenc")] {
@@ -31,7 +31,7 @@ impl ProgramDescription {
     /// Write `self` using the configured serialization format
     pub fn canonical_write(&self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
-        let mut out_file = File::create(path)?;
+        let mut out_file = BufWriter::new(File::create(path)?);
         out_file.write_all(&ser_magic().to_le_bytes())?;
         cfg_if! {
             if #[cfg(feature = "binenc")] {
@@ -60,7 +60,7 @@ impl ProgramDescription {
     /// Read `self` using the configured serialization format
     pub fn canonical_read(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let mut in_file = File::open(path)?;
+        let mut in_file = BufReader::new(File::open(path)?);
         let magic = {
             let mut buf = [0u8; 8];
             in_file.read_exact(&mut buf).context("Reading magic")?;
@@ -73,11 +73,11 @@ impl ProgramDescription {
         cfg_if! {
             if #[cfg(feature = "binenc")] {
                 let read = bincode::deserialize_from(
-                    &in_file,
+                    in_file,
                 );
             } else  {
                 let read = serde_json::from_reader(
-                    &in_file,
+                    in_file,
                 );
             }
         };
@@ -89,5 +89,19 @@ impl ProgramDescription {
                     .display()
             )
         })
+    }
+}
+
+impl AnalyzerStats {
+    /// Read the stats from a file using the default encoding (json)
+    pub fn canonical_read(path: impl AsRef<Path>) -> Result<Self> {
+        let reader = BufReader::new(File::open(path.as_ref())?);
+        Ok(serde_json::from_reader(reader)?)
+    }
+
+    /// Write the stats to a file using the default encoding (json)
+    pub fn canonical_write(&self, path: impl AsRef<Path>) -> Result<()> {
+        let file = BufWriter::new(File::create(path)?);
+        Ok(serde_json::to_writer(file, self)?)
     }
 }

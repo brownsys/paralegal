@@ -9,7 +9,11 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 
-use crate::{async_support::AsyncInfo, local_analysis::CallKind, utils};
+use crate::{
+    async_support::AsyncInfo,
+    local_analysis::CallKind,
+    utils::{self, ShimType},
+};
 
 /// Describes how the formal parameters of a given function call relate to the
 /// actual parameters.
@@ -21,7 +25,7 @@ pub enum CallingConvention<'tcx> {
     /// tuple that contains the actual argument to the call of the closure
     /// function.
     Indirect {
-        once_shim: bool,
+        shim: Option<ShimType>,
         closure_arg: Operand<'tcx>,
         tupled_arguments: Operand<'tcx>,
     },
@@ -72,8 +76,8 @@ impl<'tcx> CallingConvention<'tcx> {
         match kind {
             CallKind::AsyncPoll(poll) => CallingConvention::Async(poll.generator_data),
             CallKind::Direct => CallingConvention::Direct(args.into()),
-            CallKind::Indirect { once_shim } => CallingConvention::Indirect {
-                once_shim: *once_shim,
+            CallKind::Indirect { shim: once_shim } => CallingConvention::Indirect {
+                shim: *once_shim,
                 closure_arg: args[0].clone(),
                 tupled_arguments: args[1].clone(),
             },
@@ -184,13 +188,24 @@ impl<'a, 'tcx> PlaceTranslator<'a, 'tcx> {
             // Map closure captures to the first argument.
             // Map formal parameters to the second argument.
             CallingConvention::Indirect {
-                once_shim,
+                shim,
                 closure_arg,
                 tupled_arguments,
             } => {
-                if child.local.as_usize() == 1 {
+                // Accounting fot FnPtrShim
+                //
+                // The shim gets an extra first argument (the function pointer)
+                // but we replace it with the function iself which doesn't have
+                // that argument, so we need to adjust the indices
+                let local = if matches!(shim, Some(ShimType::FnPtr)) && child.local != RETURN_PLACE
+                {
+                    child.local + 1
+                } else {
+                    child.local
+                };
+                if local.as_usize() == 1 {
                     // Accounting for shims
-                    let next_idx = if *once_shim {
+                    let next_idx = if matches!(shim, Some(ShimType::Once)) {
                         // If this is a once shim then the signature of the
                         // function and its call don't match fully. (We are
                         // calling a closure that takes it's `self` by reference
@@ -214,7 +229,7 @@ impl<'a, 'tcx> PlaceTranslator<'a, 'tcx> {
                 } else {
                     let tuple_arg = tupled_arguments.place()?;
                     let _projection = child.projection.to_vec();
-                    let field = FieldIdx::from_usize(child.local.as_usize() - 2);
+                    let field = FieldIdx::from_usize(local.as_usize() - 2);
                     let field_ty = tuple_arg
                         .ty(self.parent_body, self.tcx)
                         .field_ty(self.tcx, field);
