@@ -20,7 +20,7 @@ default_to_workspace = false
 
 [tasks.install]
 command = "cargo"
-args = ["install", "--locked", "--path", "-f", "crates/paralegal-flow"]
+args = ["install", "--locked", "-f", "--path", "crates/paralegal-flow"]
 
 [tasks.ci-tests]
 description = "The suite of tests we run in CI"
