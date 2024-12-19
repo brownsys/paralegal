@@ -1,0 +1,97 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Checks whether a trait-ref is potentially implementable by a crate."><title>orphan_check_trait_ref in rustc_trait_selection::traits::coherence - Rust</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceSerif4-Bold-a2c9cd1067f8b328.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-47e7ab555ef2818a.css" id="mainThemeStyle"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustc_trait_selection" data-themes="" data-resource-suffix="" data-rustdoc-version="1.74.0-nightly (58eefc33a 2023-08-24)" data-channel="nightly" data-search-js="search-6dfdfced5eff6596.js" data-settings-js="settings-de11bff964e9d4e5.js" data-settings-css="settings-8c76f75bfb6bd192.css" data-theme-light-css="light-b2d31d2efc7e9b67.css" data-theme-dark-css="dark-3388a2fb2ef8066b.css" data-theme-ayu-css="ayu-8c3c66a6cf12cb2f.css" ><script src="../../../static.files/storage-db41da1a38ea3cb8.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../../static.files/main-ef3a2de404864b0b.js"></script><noscript><link rel="stylesheet" media="(prefers-color-scheme:light)" href="../../../static.files/light-b2d31d2efc7e9b67.css"><link rel="stylesheet" media="(prefers-color-scheme:dark)" href="../../../static.files/dark-3388a2fb2ef8066b.css"><link rel="stylesheet" href="../../../static.files/noscript-cffde32267a19fd6.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc fn"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle">&#9776;</button><a class="logo-container" href="../../../rustc_trait_selection/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2></h2></nav><nav class="sidebar"><a class="logo-container" href="../../../rustc_trait_selection/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><div class="sidebar-elems"><h2><a href="index.html">In rustc_trait_selection::traits::coherence</a></h2></div></nav><main><div class="width-limiter"><nav class="sub"><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../../../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="main-heading"><h1>Function <a href="../../index.html">rustc_trait_selection</a>::<wbr><a href="../index.html">traits</a>::<wbr><a href="index.html">coherence</a>::<wbr><a class="fn" href="#">orphan_check_trait_ref</a><button id="copy-path" title="Copy item path to clipboard"><img src="../../../static.files/clipboard-7571035ce49a181d.svg" width="19" height="18" alt="Copy item path"></button></h1><span class="out-of-band"><a class="src" href="../../../src/rustc_trait_selection/traits/coherence.rs.html#672">source</a> · <button id="toggle-all-docs" title="collapse all docs">[<span>&#x2212;</span>]</button></span></div><pre class="rust item-decl"><code>fn orphan_check_trait_ref&lt;'tcx, E: <a class="trait" href="https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html" title="trait core::fmt::Debug">Debug</a>&gt;(
+    trait_ref: <a class="struct" href="../../../rustc_middle/ty/sty/struct.TraitRef.html" title="struct rustc_middle::ty::sty::TraitRef">TraitRef</a>&lt;'tcx&gt;,
+    in_crate: <a class="enum" href="enum.InCrate.html" title="enum rustc_trait_selection::traits::coherence::InCrate">InCrate</a>,
+    lazily_normalize_ty: impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/ops/function/trait.FnMut.html" title="trait core::ops::function::FnMut">FnMut</a>(<a class="struct" href="../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;, E&gt;
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>, <a class="enum" href="enum.OrphanCheckErr.html" title="enum rustc_trait_selection::traits::coherence::OrphanCheckErr">OrphanCheckErr</a>&lt;'tcx&gt;&gt;, E&gt;</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Checks whether a trait-ref is potentially implementable by a crate.</p>
+<p>The current rule is that a trait-ref orphan checks in a crate C:</p>
+<ol>
+<li>Order the parameters in the trait-ref in subst order - Self first,
+others linearly (e.g., <code>&lt;U as Foo&lt;V, W&gt;&gt;</code> is U &lt; V &lt; W).</li>
+<li>Of these type parameters, there is at least one type parameter
+in which, walking the type as a tree, you can reach a type local
+to C where all types in-between are fundamental types. Call the
+first such parameter the “local key parameter”.
+<ul>
+<li>e.g., <code>Box&lt;LocalType&gt;</code> is OK, because you can visit LocalType
+going through <code>Box</code>, which is fundamental.</li>
+<li>similarly, <code>FundamentalPair&lt;Vec&lt;()&gt;, Box&lt;LocalType&gt;&gt;</code> is OK for
+the same reason.</li>
+<li>but (knowing that <code>Vec&lt;T&gt;</code> is non-fundamental, and assuming it’s
+not local), <code>Vec&lt;LocalType&gt;</code> is bad, because <code>Vec&lt;-&gt;</code> is between
+the local type and the type parameter.</li>
+</ul>
+</li>
+<li>Before this local type, no generic type parameter of the impl must
+be reachable through fundamental types.
+<ul>
+<li>e.g. <code>impl&lt;T&gt; Trait&lt;LocalType&gt; for Vec&lt;T&gt;</code> is fine, as <code>Vec</code> is not fundamental.</li>
+<li>while <code>impl&lt;T&gt; Trait&lt;LocalType&gt; for Box&lt;T&gt;</code> results in an error, as <code>T</code> is
+reachable through the fundamental type <code>Box</code>.</li>
+</ul>
+</li>
+<li>Every type in the local key parameter not known in C, going
+through the parameter’s type tree, must appear only as a subtree of
+a type local to C, with only fundamental types between the type
+local to C and the local key parameter.
+<ul>
+<li>e.g., <code>Vec&lt;LocalType&lt;T&gt;&gt;&gt;</code> (or equivalently <code>Box&lt;Vec&lt;LocalType&lt;T&gt;&gt;&gt;</code>)
+is bad, because the only local type with <code>T</code> as a subtree is
+<code>LocalType&lt;T&gt;</code>, and <code>Vec&lt;-&gt;</code> is between it and the type parameter.</li>
+<li>similarly, <code>FundamentalPair&lt;LocalType&lt;T&gt;, T&gt;</code> is bad, because
+the second occurrence of <code>T</code> is not a subtree of <em>any</em> local type.</li>
+<li>however, <code>LocalType&lt;Vec&lt;T&gt;&gt;</code> is OK, because <code>T</code> is a subtree of
+<code>LocalType&lt;Vec&lt;T&gt;&gt;</code>, which is local and has no types between it and
+the type parameter.</li>
+</ul>
+</li>
+</ol>
+<p>The orphan rules actually serve several different purposes:</p>
+<ol>
+<li>
+<p>They enable link-safety - i.e., 2 mutually-unknowing crates (where
+every type local to one crate is unknown in the other) can’t implement
+the same trait-ref. This follows because it can be seen that no such
+type can orphan-check in 2 such crates.</p>
+<p>To check that a local impl follows the orphan rules, we check it in
+InCrate::Local mode, using type parameters for the “generic” types.</p>
+</li>
+<li>
+<p>They ground negative reasoning for coherence. If a user wants to
+write both a conditional blanket impl and a specific impl, we need to
+make sure they do not overlap. For example, if we write</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">impl</span>&lt;T&gt; IntoIterator <span class="kw">for </span>Vec&lt;T&gt;
+<span class="kw">impl</span>&lt;T: Iterator&gt; IntoIterator <span class="kw">for </span>T</code></pre></div>
+<p>We need to be able to prove that <code>Vec&lt;$0&gt;: !Iterator</code> for every type $0.
+We can observe that this holds in the current crate, but we need to make
+sure this will also hold in all unknown crates (both “independent” crates,
+which we need for link-safety, and also child crates, because we don’t want
+child crates to get error for impl conflicts in a <em>dependency</em>).</p>
+<p>For that, we only allow negative reasoning if, for every assignment to the
+inference variables, every unknown crate would get an orphan error if they
+try to implement this trait-ref. To check for this, we use InCrate::Remote
+mode. That is sound because we already know all the impls from known crates.</p>
+</li>
+<li>
+<p>For non-<code>#[fundamental]</code> traits, they guarantee that parent crates can
+add “non-blanket” impls without breaking negative reasoning in dependent
+crates. This is the “rebalancing coherence” (RFC 1023) restriction.</p>
+<p>For that, we only a allow crate to perform negative reasoning on
+non-local-non-<code>#[fundamental]</code> only if there’s a local key parameter as per (2).</p>
+<p>Because we never perform negative reasoning generically (coherence does
+not involve type parameters), this can be interpreted as doing the full
+orphan check (using InCrate::Local mode), substituting non-local known
+types for all inference variables.</p>
+<p>This allows for crates to future-compatibly add impls as long as they
+can’t apply to types with a key parameter in a child crate - applying
+the rules, this basically means that every type parameter in the impl
+must appear behind a non-fundamental type (because this is not a
+type-system requirement, crate owners might also go for “semantic
+future-compatibility” involving things such as sealed traits, but
+the above requirement is sufficient, and is necessary in “open world”
+cases).</p>
+</li>
+</ol>
+<p>Note that this function is never called for types that have both type
+parameters and inference variables.</p>
+</div></details></section></div></main></body></html>

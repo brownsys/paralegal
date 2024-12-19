@@ -1,0 +1,239 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `compiler/rustc_type_ir/src/visit.rs`."><title>visit.rs - source</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceSerif4-Bold-a2c9cd1067f8b328.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../static.files/rustdoc-47e7ab555ef2818a.css" id="mainThemeStyle"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_type_ir" data-themes="" data-resource-suffix="" data-rustdoc-version="1.74.0-nightly (58eefc33a 2023-08-24)" data-channel="nightly" data-search-js="search-6dfdfced5eff6596.js" data-settings-js="settings-de11bff964e9d4e5.js" data-settings-css="settings-8c76f75bfb6bd192.css" data-theme-light-css="light-b2d31d2efc7e9b67.css" data-theme-dark-css="dark-3388a2fb2ef8066b.css" data-theme-ayu-css="ayu-8c3c66a6cf12cb2f.css" ><script src="../../static.files/storage-db41da1a38ea3cb8.js"></script><script defer src="../../static.files/src-script-3280b574d94e47b4.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-ef3a2de404864b0b.js"></script><noscript><link rel="stylesheet" media="(prefers-color-scheme:light)" href="../../static.files/light-b2d31d2efc7e9b67.css"><link rel="stylesheet" media="(prefers-color-scheme:dark)" href="../../static.files/dark-3388a2fb2ef8066b.css"><link rel="stylesheet" href="../../static.files/noscript-cffde32267a19fd6.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"></nav><main><nav class="sub"><a class="sub-logo-container" href="../../rustc_type_ir/index.html"><img class="rust-logo" src="../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<a href="#2" id="2">2</a>
+<a href="#3" id="3">3</a>
+<a href="#4" id="4">4</a>
+<a href="#5" id="5">5</a>
+<a href="#6" id="6">6</a>
+<a href="#7" id="7">7</a>
+<a href="#8" id="8">8</a>
+<a href="#9" id="9">9</a>
+<a href="#10" id="10">10</a>
+<a href="#11" id="11">11</a>
+<a href="#12" id="12">12</a>
+<a href="#13" id="13">13</a>
+<a href="#14" id="14">14</a>
+<a href="#15" id="15">15</a>
+<a href="#16" id="16">16</a>
+<a href="#17" id="17">17</a>
+<a href="#18" id="18">18</a>
+<a href="#19" id="19">19</a>
+<a href="#20" id="20">20</a>
+<a href="#21" id="21">21</a>
+<a href="#22" id="22">22</a>
+<a href="#23" id="23">23</a>
+<a href="#24" id="24">24</a>
+<a href="#25" id="25">25</a>
+<a href="#26" id="26">26</a>
+<a href="#27" id="27">27</a>
+<a href="#28" id="28">28</a>
+<a href="#29" id="29">29</a>
+<a href="#30" id="30">30</a>
+<a href="#31" id="31">31</a>
+<a href="#32" id="32">32</a>
+<a href="#33" id="33">33</a>
+<a href="#34" id="34">34</a>
+<a href="#35" id="35">35</a>
+<a href="#36" id="36">36</a>
+<a href="#37" id="37">37</a>
+<a href="#38" id="38">38</a>
+<a href="#39" id="39">39</a>
+<a href="#40" id="40">40</a>
+<a href="#41" id="41">41</a>
+<a href="#42" id="42">42</a>
+<a href="#43" id="43">43</a>
+<a href="#44" id="44">44</a>
+<a href="#45" id="45">45</a>
+<a href="#46" id="46">46</a>
+<a href="#47" id="47">47</a>
+<a href="#48" id="48">48</a>
+<a href="#49" id="49">49</a>
+<a href="#50" id="50">50</a>
+<a href="#51" id="51">51</a>
+<a href="#52" id="52">52</a>
+<a href="#53" id="53">53</a>
+<a href="#54" id="54">54</a>
+<a href="#55" id="55">55</a>
+<a href="#56" id="56">56</a>
+<a href="#57" id="57">57</a>
+<a href="#58" id="58">58</a>
+<a href="#59" id="59">59</a>
+<a href="#60" id="60">60</a>
+<a href="#61" id="61">61</a>
+<a href="#62" id="62">62</a>
+<a href="#63" id="63">63</a>
+<a href="#64" id="64">64</a>
+<a href="#65" id="65">65</a>
+<a href="#66" id="66">66</a>
+<a href="#67" id="67">67</a>
+<a href="#68" id="68">68</a>
+<a href="#69" id="69">69</a>
+<a href="#70" id="70">70</a>
+<a href="#71" id="71">71</a>
+<a href="#72" id="72">72</a>
+<a href="#73" id="73">73</a>
+<a href="#74" id="74">74</a>
+<a href="#75" id="75">75</a>
+<a href="#76" id="76">76</a>
+<a href="#77" id="77">77</a>
+<a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
+<a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! A visiting traversal mechanism for complex data structures that contain type
+//! information.
+//!
+//! This is a read-only traversal of the data structure.
+//!
+//! This traversal has limited flexibility. Only a small number of &quot;types of
+//! interest&quot; within the complex data structures can receive custom
+//! visitation. These are the ones containing the most important type-related
+//! information, such as `Ty`, `Predicate`, `Region`, and `Const`.
+//!
+//! There are three groups of traits involved in each traversal.
+//! - `TypeVisitable`. This is implemented once for many types, including:
+//!   - Types of interest, for which the methods delegate to the visitor.
+//!   - All other types, including generic containers like `Vec` and `Option`.
+//!     It defines a &quot;skeleton&quot; of how they should be visited.
+//! - `TypeSuperVisitable`. This is implemented only for recursive types of
+//!   interest, and defines the visiting &quot;skeleton&quot; for these types. (This
+//!   excludes `Region` because it is non-recursive, i.e. it never contains
+//!   other types of interest.)
+//!
+//! - `TypeVisitor`. This is implemented for each visitor. This defines how
+//!   types of interest are visited.
+//!
+//! This means each visit is a mixture of (a) generic visiting operations, and (b)
+//! custom visit operations that are specific to the visitor.
+//! - The `TypeVisitable` impls handle most of the traversal, and call into
+//!   `TypeVisitor` when they encounter a type of interest.
+//! - A `TypeVisitor` may call into another `TypeVisitable` impl, because some of
+//!   the types of interest are recursive and can contain other types of interest.
+//! - A `TypeVisitor` may also call into a `TypeSuperVisitable` impl, because each
+//!   visitor might provide custom handling only for some types of interest, or
+//!   only for some variants of each type of interest, and then use default
+//!   traversal for the remaining cases.
+//!
+//! For example, if you have `struct S(Ty, U)` where `S: TypeVisitable` and `U:
+//! TypeVisitable`, and an instance `s = S(ty, u)`, it would be visited like so:
+//! ```text
+//! s.visit_with(visitor) calls
+//! - ty.visit_with(visitor) calls
+//!   - visitor.visit_ty(ty) may call
+//!     - ty.super_visit_with(visitor)
+//! - u.visit_with(visitor)
+//! ```
+</span><span class="kw">use </span><a href="lib.rs.html#42-83"><span class="kw">crate</span>::Interner</a>;
+
+<span class="kw">use </span><a href="https://doc.rust-lang.org/nightly/alloc/fmt/index.html">std::fmt</a>;
+<span class="kw">use </span><a href="https://doc.rust-lang.org/nightly/core/ops/control_flow/enum.ControlFlow.html">std::ops::ControlFlow</a>;
+
+<span class="doccomment">/// This trait is implemented for every type that can be visited,
+/// providing the skeleton of the traversal.
+///
+/// To implement this conveniently, use the derive macro located in
+/// `rustc_macros`.
+</span><span class="kw">pub trait </span><a href="../../rustc_type_ir/visit/trait.TypeVisitable.html">TypeVisitable</a>&lt;I: <a href="lib.rs.html#42-83">Interner</a>&gt;: <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html">fmt::Debug</a> + <a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html">Clone</a> {
+    <span class="doccomment">/// The entry point for visiting. To visit a value `t` with a visitor `v`
+    /// call: `t.visit_with(v)`.
+    ///
+    /// For most types, this just traverses the value, calling `visit_with` on
+    /// each field/element.
+    ///
+    /// For types of interest (such as `Ty`), the implementation of this method
+    /// that calls a visitor method specifically for that type (such as
+    /// `V::visit_ty`). This is where control transfers from `TypeFoldable` to
+    /// `TypeVisitor`.
+    </span><span class="kw">fn </span>visit_with&lt;V: TypeVisitor&lt;I&gt;&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, visitor: <span class="kw-2">&amp;mut </span>V) -&gt; ControlFlow&lt;V::BreakTy&gt;;
+}
+
+<span class="comment">// This trait is implemented for types of interest.
+</span><span class="kw">pub trait </span><a href="../../rustc_type_ir/visit/trait.TypeSuperVisitable.html">TypeSuperVisitable</a>&lt;I: <a href="lib.rs.html#42-83">Interner</a>&gt;: TypeVisitable&lt;I&gt; {
+    <span class="doccomment">/// Provides a default visit for a recursive type of interest. This should
+    /// only be called within `TypeVisitor` methods, when a non-custom
+    /// traversal is desired for the value of the type of interest passed to
+    /// that method. For example, in `MyVisitor::visit_ty(ty)`, it is valid to
+    /// call `ty.super_visit_with(self)`, but any other visiting should be done
+    /// with `xyz.visit_with(self)`.
+    </span><span class="kw">fn </span>super_visit_with&lt;V: TypeVisitor&lt;I&gt;&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, visitor: <span class="kw-2">&amp;mut </span>V) -&gt; ControlFlow&lt;V::BreakTy&gt;;
+}
+
+<span class="doccomment">/// This trait is implemented for every visiting traversal. There is a visit
+/// method defined for every type of interest. Each such method has a default
+/// that recurses into the type&#39;s fields in a non-custom fashion.
+</span><span class="kw">pub trait </span><a href="../../rustc_type_ir/visit/trait.TypeVisitor.html">TypeVisitor</a>&lt;I: <a href="lib.rs.html#42-83">Interner</a>&gt;: <a href="https://doc.rust-lang.org/nightly/core/marker/trait.Sized.html">Sized</a> {
+    <span class="kw">type </span>BreakTy = !;
+
+    <span class="kw">fn </span>visit_binder&lt;T: TypeVisitable&lt;I&gt;&gt;(<span class="kw-2">&amp;mut </span><span class="self">self</span>, t: <span class="kw-2">&amp;</span>I::Binder&lt;T&gt;) -&gt; ControlFlow&lt;<span class="self">Self</span>::BreakTy&gt;
+    <span class="kw">where
+        </span>I::Binder&lt;T&gt;: TypeSuperVisitable&lt;I&gt;,
+    {
+        <a href="#85">t</a>.<a href="#76">super_visit_with</a>(<a class="self" href="#85">self</a>)
+    }
+
+    <span class="kw">fn </span>visit_ty(<span class="kw-2">&amp;mut </span><span class="self">self</span>, t: I::Ty) -&gt; ControlFlow&lt;<span class="self">Self</span>::BreakTy&gt;
+    <span class="kw">where
+        </span>I::Ty: TypeSuperVisitable&lt;I&gt;,
+    {
+        <a href="#92">t</a>.<a href="#76">super_visit_with</a>(<a class="self" href="#92">self</a>)
+    }
+
+    <span class="comment">// The default region visitor is a no-op because `Region` is non-recursive
+    // and has no `super_visit_with` method to call. That also explains the
+    // lack of `I::Region: TypeSuperVisitable&lt;I&gt;` bound.
+    </span><span class="kw">fn </span>visit_region(<span class="kw-2">&amp;mut </span><span class="self">self</span>, _r: I::Region) -&gt; ControlFlow&lt;<span class="self">Self</span>::BreakTy&gt; {
+        ControlFlow::Continue(())
+    }
+
+    <span class="kw">fn </span>visit_const(<span class="kw-2">&amp;mut </span><span class="self">self</span>, c: I::Const) -&gt; ControlFlow&lt;<span class="self">Self</span>::BreakTy&gt;
+    <span class="kw">where
+        </span>I::Const: TypeSuperVisitable&lt;I&gt;,
+    {
+        <a href="#106">c</a>.<a href="#76">super_visit_with</a>(<a class="self" href="#106">self</a>)
+    }
+
+    <span class="kw">fn </span>visit_predicate(<span class="kw-2">&amp;mut </span><span class="self">self</span>, p: I::Predicate) -&gt; ControlFlow&lt;<span class="self">Self</span>::BreakTy&gt;
+    <span class="kw">where
+        </span>I::Predicate: TypeSuperVisitable&lt;I&gt;,
+    {
+        <a href="#113">p</a>.<a href="#76">super_visit_with</a>(<a class="self" href="#113">self</a>)
+    }
+}
+</code></pre></div></section></main></body></html>

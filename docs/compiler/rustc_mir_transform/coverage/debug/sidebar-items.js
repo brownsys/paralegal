@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["NESTED_INDENT","RUSTC_COVERAGE_DEBUG_OPTIONS"],"fn":["bcb_to_string_sections","bool_option_val","counter_format_option_val","debug_options","dump_coverage_graphviz","dump_coverage_spanview","span_viewables"],"struct":["DebugCounter","DebugCounters","DebugOptions","ExpressionFormat","GraphvizData","UsedExpressions"]};

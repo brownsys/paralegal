@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ChainItemKind","CommentPosition"],"fn":["format_chain_item","format_overflow_style","get_block_child_shape","get_visual_style_child_shape","rewrite_chain","trim_tries"],"struct":["Chain","ChainFormatterBlock","ChainFormatterShared","ChainFormatterVisual","ChainItem"],"trait":["ChainFormatter"]};

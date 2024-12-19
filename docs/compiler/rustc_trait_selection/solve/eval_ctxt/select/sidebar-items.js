@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["candidate_should_be_dropped_in_favor_of","rematch_impl","rematch_unsize","structurally_normalize"],"trait":["InferCtxtSelectExt"]};

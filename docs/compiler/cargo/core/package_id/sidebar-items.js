@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"static":["PACKAGE_ID_CACHE"],"struct":["PackageId","PackageIdInner","PackageIdStableHash"]};

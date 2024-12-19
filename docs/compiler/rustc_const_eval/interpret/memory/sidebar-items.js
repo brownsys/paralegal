@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AllocKind","FnVal","MemoryKind"],"struct":["AllocRef","AllocRefMut","Memory"]};

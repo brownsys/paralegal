@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"static":["INVALID_FROM_UTF8","INVALID_FROM_UTF8_UNCHECKED"],"struct":["InvalidFromUtf8"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["TrackedValue","TrackedValueConversionError"],"fn":["compute_drop_ranges","for_each_consumable"],"mod":["cfg_build","cfg_propagate","cfg_visualize","record_consumed_borrow"],"struct":["DropRanges","DropRangesBuilder","NodeInfo","PostOrderId","TrackedValueIndex"]};

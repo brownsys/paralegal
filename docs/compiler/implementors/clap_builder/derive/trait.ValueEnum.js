@@ -1,0 +1,3 @@
+(function() {var implementors = {
+"bootstrap":[["impl ValueEnum for <a class=\"enum\" href=\"bootstrap/flags/enum.Warnings.html\" title=\"enum bootstrap::flags::Warnings\">Warnings</a>"],["impl ValueEnum for <a class=\"enum\" href=\"bootstrap/builder/enum.Kind.html\" title=\"enum bootstrap::builder::Kind\">Kind</a>"],["impl ValueEnum for <a class=\"enum\" href=\"bootstrap/flags/enum.Color.html\" title=\"enum bootstrap::flags::Color\">Color</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

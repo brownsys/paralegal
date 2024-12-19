@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["enforce_mem_discriminant","enforce_mem_variant_count","is_non_enum"],"static":["ENUM_INTRINSICS_NON_ENUMS"],"struct":["EnumIntrinsicsNonEnums"]};

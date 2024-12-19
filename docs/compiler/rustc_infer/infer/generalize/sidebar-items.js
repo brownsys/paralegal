@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["generalize"],"struct":["CombineDelegate","Generalization","Generalizer"],"trait":["GeneralizerDelegate"]};

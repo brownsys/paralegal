@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["GitReference","SourceKind"],"fn":["is_overridden_crates_io_url","url_display"],"static":["SOURCE_ID_CACHE"],"struct":["PrettyRef","SourceId","SourceIdAsUrl","SourceIdInner"]};

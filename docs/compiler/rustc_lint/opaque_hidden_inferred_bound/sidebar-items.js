@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["_DERIVE_rustc_errors_AddToDiagnostic_FOR_AddBound","_DERIVE_rustc_errors_DecorateLint_a_FOR_OpaqueHiddenInferredBoundLint"],"static":["OPAQUE_HIDDEN_INFERRED_BOUND"],"struct":["AddBound","OpaqueHiddenInferredBound","OpaqueHiddenInferredBoundLint"]};

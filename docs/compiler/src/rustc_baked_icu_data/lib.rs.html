@@ -1,0 +1,93 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `compiler/rustc_baked_icu_data/src/lib.rs`."><title>lib.rs - source</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceSerif4-Bold-a2c9cd1067f8b328.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../static.files/rustdoc-47e7ab555ef2818a.css" id="mainThemeStyle"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_baked_icu_data" data-themes="" data-resource-suffix="" data-rustdoc-version="1.74.0-nightly (58eefc33a 2023-08-24)" data-channel="nightly" data-search-js="search-6dfdfced5eff6596.js" data-settings-js="settings-de11bff964e9d4e5.js" data-settings-css="settings-8c76f75bfb6bd192.css" data-theme-light-css="light-b2d31d2efc7e9b67.css" data-theme-dark-css="dark-3388a2fb2ef8066b.css" data-theme-ayu-css="ayu-8c3c66a6cf12cb2f.css" ><script src="../../static.files/storage-db41da1a38ea3cb8.js"></script><script defer src="../../static.files/src-script-3280b574d94e47b4.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-ef3a2de404864b0b.js"></script><noscript><link rel="stylesheet" media="(prefers-color-scheme:light)" href="../../static.files/light-b2d31d2efc7e9b67.css"><link rel="stylesheet" media="(prefers-color-scheme:dark)" href="../../static.files/dark-3388a2fb2ef8066b.css"><link rel="stylesheet" href="../../static.files/noscript-cffde32267a19fd6.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"></nav><main><nav class="sub"><a class="sub-logo-container" href="../../rustc_baked_icu_data/index.html"><img class="rust-logo" src="../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<a href="#2" id="2">2</a>
+<a href="#3" id="3">3</a>
+<a href="#4" id="4">4</a>
+<a href="#5" id="5">5</a>
+<a href="#6" id="6">6</a>
+<a href="#7" id="7">7</a>
+<a href="#8" id="8">8</a>
+<a href="#9" id="9">9</a>
+<a href="#10" id="10">10</a>
+<a href="#11" id="11">11</a>
+<a href="#12" id="12">12</a>
+<a href="#13" id="13">13</a>
+<a href="#14" id="14">14</a>
+<a href="#15" id="15">15</a>
+<a href="#16" id="16">16</a>
+<a href="#17" id="17">17</a>
+<a href="#18" id="18">18</a>
+<a href="#19" id="19">19</a>
+<a href="#20" id="20">20</a>
+<a href="#21" id="21">21</a>
+<a href="#22" id="22">22</a>
+<a href="#23" id="23">23</a>
+<a href="#24" id="24">24</a>
+<a href="#25" id="25">25</a>
+<a href="#26" id="26">26</a>
+<a href="#27" id="27">27</a>
+<a href="#28" id="28">28</a>
+<a href="#29" id="29">29</a>
+<a href="#30" id="30">30</a>
+<a href="#31" id="31">31</a>
+<a href="#32" id="32">32</a>
+<a href="#33" id="33">33</a>
+<a href="#34" id="34">34</a>
+<a href="#35" id="35">35</a>
+<a href="#36" id="36">36</a>
+<a href="#37" id="37">37</a>
+<a href="#38" id="38">38</a>
+<a href="#39" id="39">39</a>
+<a href="#40" id="40">40</a>
+<a href="#41" id="41">41</a>
+<a href="#42" id="42">42</a>
+<a href="#43" id="43">43</a>
+<a href="#44" id="44">44</a>
+<a href="#45" id="45">45</a>
+<a href="#46" id="46">46</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! This crate contains pre-baked ICU4X data, generated by `icu4x-datagen`. The tool
+//! fetches locale data from CLDR and transforms them into const code in statics that
+//! ICU4X can load, via databake. `lib.rs` in this crate is manually written, but all
+//! other code is generated.
+//!
+//! This crate can be regenerated when there&#39;s a new CLDR version, though that is unlikely
+//! to result in changes in most cases (currently this only covers list formatting data, which
+//! is rather stable). It may need to be regenerated when updating ICU4X versions, especially
+//! across major versions, in case it fails to compile after an update.
+//!
+//! It must be regenerated when adding new locales to Rust, or if Rust&#39;s usage of ICU4X
+//! grows to need more kinds of data.
+//!
+//! To regenerate the data, run this command:
+//!
+//! ```text
+//! icu4x-datagen -W --pretty --fingerprint --use-separate-crates \
+//! --format mod -l en es fr it ja pt ru tr zh zh-Hans zh-Hant \
+//! -k list/and@1 fallback/likelysubtags@1 fallback/parents@1 fallback/supplement/co@1 \
+//! --cldr-tag latest --icuexport-tag latest -o src/data
+//! ```
+</span><span class="attr">#![allow(elided_lifetimes_in_paths)]
+
+</span><span class="kw">mod </span><a href="../../rustc_baked_icu_data/data/index.html">data</a> {
+    <span class="macro">include!</span>(<span class="string">&quot;data/mod.rs&quot;</span>);
+    <span class="macro">include!</span>(<span class="string">&quot;data/any.rs&quot;</span>);
+}
+
+<span class="kw">pub use </span><a href="data/mod.rs.html#121">data::BakedDataProvider</a>;
+
+<span class="kw">pub const fn </span><a href="../../rustc_baked_icu_data/fn.baked_data_provider.html">baked_data_provider</a>() -&gt; <a href="data/mod.rs.html#121">BakedDataProvider</a> {
+    <a href="data/mod.rs.html#121">data::BakedDataProvider</a>
+}
+
+<span class="kw">pub mod </span><a href="../../rustc_baked_icu_data/supported_locales/index.html">supported_locales</a> {
+    <span class="kw">pub const </span><a href="../../rustc_baked_icu_data/supported_locales/constant.EN.html">EN</a>: <a href="https://docs.rs/icu_locid/1.2.0/icu_locid/locale/struct.Locale.html">icu_locid::Locale</a> = <a class="macro" href="https://docs.rs/icu_locid/1.2.0/icu_locid/macro.locale.html">icu_locid::locale!</a>(<span class="string">&quot;en&quot;</span>);
+    <span class="kw">pub const </span><a href="../../rustc_baked_icu_data/supported_locales/constant.ES.html">ES</a>: <a href="https://docs.rs/icu_locid/1.2.0/icu_locid/locale/struct.Locale.html">icu_locid::Locale</a> = <a class="macro" href="https://docs.rs/icu_locid/1.2.0/icu_locid/macro.locale.html">icu_locid::locale!</a>(<span class="string">&quot;es&quot;</span>);
+    <span class="kw">pub const </span><a href="../../rustc_baked_icu_data/supported_locales/constant.FR.html">FR</a>: <a href="https://docs.rs/icu_locid/1.2.0/icu_locid/locale/struct.Locale.html">icu_locid::Locale</a> = <a class="macro" href="https://docs.rs/icu_locid/1.2.0/icu_locid/macro.locale.html">icu_locid::locale!</a>(<span class="string">&quot;fr&quot;</span>);
+    <span class="kw">pub const </span><a href="../../rustc_baked_icu_data/supported_locales/constant.IT.html">IT</a>: <a href="https://docs.rs/icu_locid/1.2.0/icu_locid/locale/struct.Locale.html">icu_locid::Locale</a> = <a class="macro" href="https://docs.rs/icu_locid/1.2.0/icu_locid/macro.locale.html">icu_locid::locale!</a>(<span class="string">&quot;it&quot;</span>);
+    <span class="kw">pub const </span><a href="../../rustc_baked_icu_data/supported_locales/constant.JA.html">JA</a>: <a href="https://docs.rs/icu_locid/1.2.0/icu_locid/locale/struct.Locale.html">icu_locid::Locale</a> = <a class="macro" href="https://docs.rs/icu_locid/1.2.0/icu_locid/macro.locale.html">icu_locid::locale!</a>(<span class="string">&quot;ja&quot;</span>);
+    <span class="kw">pub const </span><a href="../../rustc_baked_icu_data/supported_locales/constant.PT.html">PT</a>: <a href="https://docs.rs/icu_locid/1.2.0/icu_locid/locale/struct.Locale.html">icu_locid::Locale</a> = <a class="macro" href="https://docs.rs/icu_locid/1.2.0/icu_locid/macro.locale.html">icu_locid::locale!</a>(<span class="string">&quot;pt&quot;</span>);
+    <span class="kw">pub const </span><a href="../../rustc_baked_icu_data/supported_locales/constant.RU.html">RU</a>: <a href="https://docs.rs/icu_locid/1.2.0/icu_locid/locale/struct.Locale.html">icu_locid::Locale</a> = <a class="macro" href="https://docs.rs/icu_locid/1.2.0/icu_locid/macro.locale.html">icu_locid::locale!</a>(<span class="string">&quot;ru&quot;</span>);
+    <span class="kw">pub const </span><a href="../../rustc_baked_icu_data/supported_locales/constant.TR.html">TR</a>: <a href="https://docs.rs/icu_locid/1.2.0/icu_locid/locale/struct.Locale.html">icu_locid::Locale</a> = <a class="macro" href="https://docs.rs/icu_locid/1.2.0/icu_locid/macro.locale.html">icu_locid::locale!</a>(<span class="string">&quot;tr&quot;</span>);
+    <span class="kw">pub const </span><a href="../../rustc_baked_icu_data/supported_locales/constant.ZH_HANS.html">ZH_HANS</a>: <a href="https://docs.rs/icu_locid/1.2.0/icu_locid/locale/struct.Locale.html">icu_locid::Locale</a> = <a class="macro" href="https://docs.rs/icu_locid/1.2.0/icu_locid/macro.locale.html">icu_locid::locale!</a>(<span class="string">&quot;zh-Hans&quot;</span>);
+    <span class="kw">pub const </span><a href="../../rustc_baked_icu_data/supported_locales/constant.ZH_HANT.html">ZH_HANT</a>: <a href="https://docs.rs/icu_locid/1.2.0/icu_locid/locale/struct.Locale.html">icu_locid::Locale</a> = <a class="macro" href="https://docs.rs/icu_locid/1.2.0/icu_locid/macro.locale.html">icu_locid::locale!</a>(<span class="string">&quot;zh-Hant&quot;</span>);
+}
+</code></pre></div></section></main></body></html>

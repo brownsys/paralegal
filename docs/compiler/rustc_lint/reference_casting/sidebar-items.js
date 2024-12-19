@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["is_cast_from_const_to_mut","is_operation_we_care_about"],"static":["INVALID_REFERENCE_CASTING"],"struct":["InvalidReferenceCasting"]};

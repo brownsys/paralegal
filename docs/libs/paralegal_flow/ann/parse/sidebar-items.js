@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"externcrate":["nom"],"fn":["ann_match_fn","assert_identifier","assert_token","delimited","dict","identifier","integer","integer_list","lit","match_exception","one","one_token","otype_ann_match","refinements_parser","tiny_bitset"],"struct":["I","Symbols"],"type":["Integer","R"]};

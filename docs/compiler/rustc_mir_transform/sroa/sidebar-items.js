@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["compute_flattening","escaping_locals","replace_flattened_locals"],"struct":["ReplacementMap","ReplacementVisitor","ScalarReplacementOfAggregates"]};

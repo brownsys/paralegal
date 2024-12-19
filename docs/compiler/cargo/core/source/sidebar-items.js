@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["GitReference","MaybePackage","QueryKind"],"mod":["source_id"],"struct":["SourceId","SourceMap"],"trait":["Source"]};

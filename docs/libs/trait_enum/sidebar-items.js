@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"macro":["trait_enum"],"trait":["Deref","DerefMut"]};

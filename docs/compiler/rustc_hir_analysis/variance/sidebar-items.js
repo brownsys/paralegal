@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["crate_variances","provide","variance_of_opaque","variances_of"],"mod":["constraints","solve","terms","test","xform"]};

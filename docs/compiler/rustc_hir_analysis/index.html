@@ -1,0 +1,84 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="typeck"><title>rustc_hir_analysis - Rust</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/SourceSerif4-Bold-a2c9cd1067f8b328.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../static.files/rustdoc-47e7ab555ef2818a.css" id="mainThemeStyle"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="rustc_hir_analysis" data-themes="" data-resource-suffix="" data-rustdoc-version="1.74.0-nightly (58eefc33a 2023-08-24)" data-channel="nightly" data-search-js="search-6dfdfced5eff6596.js" data-settings-js="settings-de11bff964e9d4e5.js" data-settings-css="settings-8c76f75bfb6bd192.css" data-theme-light-css="light-b2d31d2efc7e9b67.css" data-theme-dark-css="dark-3388a2fb2ef8066b.css" data-theme-ayu-css="ayu-8c3c66a6cf12cb2f.css" ><script src="../static.files/storage-db41da1a38ea3cb8.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-ef3a2de404864b0b.js"></script><noscript><link rel="stylesheet" media="(prefers-color-scheme:light)" href="../static.files/light-b2d31d2efc7e9b67.css"><link rel="stylesheet" media="(prefers-color-scheme:dark)" href="../static.files/dark-3388a2fb2ef8066b.css"><link rel="stylesheet" href="../static.files/noscript-cffde32267a19fd6.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle">&#9776;</button><a class="logo-container" href="../rustc_hir_analysis/index.html"><img class="rust-logo" src="../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2></h2></nav><nav class="sidebar"><a class="logo-container" href="../rustc_hir_analysis/index.html"><img class="rust-logo" src="../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2 class="location"><a href="#">Crate rustc_hir_analysis</a></h2><div class="sidebar-elems"><ul class="block"><li class="version">Version 1.74.0-nightly	(58eefc33a	2023-08-24)</li><li><a id="all-types" href="all.html">All Items</a></li></ul><section><ul class="block"><li><a href="#modules">Modules</a></li><li><a href="#statics">Statics</a></li><li><a href="#functions">Functions</a></li></ul></section></div></nav><main><div class="width-limiter"><nav class="sub"><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="main-heading"><h1>Crate <a class="mod" href="#">rustc_hir_analysis</a><button id="copy-path" title="Copy item path to clipboard"><img src="../static.files/clipboard-7571035ce49a181d.svg" width="19" height="18" alt="Copy item path"></button></h1><span class="out-of-band"><a class="src" href="../src/rustc_hir_analysis/lib.rs.html#1-290">source</a> · <button id="toggle-all-docs" title="collapse all docs">[<span>&#x2212;</span>]</button></span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><h2 id="typeck"><a href="#typeck">typeck</a></h2>
+<p>The type checker is responsible for:</p>
+<ol>
+<li>Determining the type of each expression.</li>
+<li>Resolving methods and traits.</li>
+<li>Guaranteeing that most type rules are met. (“Most?”, you say, “why most?”
+Well, dear reader, read on.)</li>
+</ol>
+<p>The main entry point is <a href="fn.check_crate.html" title="fn rustc_hir_analysis::check_crate"><code>check_crate()</code></a>. Type checking operates in
+several major phases:</p>
+<ol>
+<li>
+<p>The collect phase first passes over all items and determines their
+type, without examining their “innards”.</p>
+</li>
+<li>
+<p>Variance inference then runs to compute the variance of each parameter.</p>
+</li>
+<li>
+<p>Coherence checks for overlapping or orphaned impls.</p>
+</li>
+<li>
+<p>Finally, the check phase then checks function bodies and so forth.
+Within the check phase, we check each function body one at a time
+(bodies of function expressions are checked as part of the
+containing function). Inference is used to supply types wherever
+they are unknown. The actual checking of a function itself has
+several phases (check, regionck, writeback), as discussed in the
+documentation for the <a href="check/index.html" title="mod rustc_hir_analysis::check"><code>check</code></a> module.</p>
+</li>
+</ol>
+<p>The type checker is defined into various submodules which are documented
+independently:</p>
+<ul>
+<li>
+<p>astconv: converts the AST representation of types
+into the <code>ty</code> representation.</p>
+</li>
+<li>
+<p>collect: computes the types of each top-level item and enters them into
+the <code>tcx.types</code> table for later use.</p>
+</li>
+<li>
+<p>coherence: enforces coherence rules, builds some tables.</p>
+</li>
+<li>
+<p>variance: variance inference</p>
+</li>
+<li>
+<p>outlives: outlives inference</p>
+</li>
+<li>
+<p>check: walks over function bodies and type checks them, inferring types for
+local variables, type parameters, etc as necessary.</p>
+</li>
+<li>
+<p>infer: finds the types to use for each type variable such that
+all subtyping and assignment constraints are met. In essence, the check
+module specifies the constraints, and the infer module solves them.</p>
+</li>
+</ul>
+<h3 id="note"><a href="#note">Note</a></h3>
+<p>This API is completely unstable and subject to change.</p>
+</div></details><h2 id="modules" class="small-section-header"><a href="#modules">Modules</a></h2><ul class="item-table"><li><div class="item-name"><a class="mod" href="astconv/index.html" title="mod rustc_hir_analysis::astconv">astconv</a></div><div class="desc docblock-short">Conversion from AST representation of types to the <code>ty.rs</code> representation.
+The main routine here is <code>ast_ty_to_ty()</code>; each use is parameterized by an
+instance of <code>AstConv</code>.</div></li><li><div class="item-name"><a class="mod" href="autoderef/index.html" title="mod rustc_hir_analysis::autoderef">autoderef</a></div></li><li><div class="item-name"><a class="mod" href="bounds/index.html" title="mod rustc_hir_analysis::bounds">bounds</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Bounds are restrictions applied to some types after they’ve been converted into the
+<code>ty</code> form from the HIR.</div></li><li><div class="item-name"><a class="mod" href="check/index.html" title="mod rustc_hir_analysis::check">check</a></div><div class="desc docblock-short">typeck: check phase</div></li><li><div class="item-name"><a class="mod" href="check_unused/index.html" title="mod rustc_hir_analysis::check_unused">check_unused</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="mod" href="coherence/index.html" title="mod rustc_hir_analysis::coherence">coherence</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="mod" href="collect/index.html" title="mod rustc_hir_analysis::collect">collect</a></div><div class="desc docblock-short">“Collection” is the process of determining the type and other external
+details of each item in Rust. Collection is specifically concerned
+with <em>inter-procedural</em> things – for example, for a function
+definition, collection will figure out the type and signature of the
+function, but it will not visit the <em>body</em> of the function in any way,
+nor examine type annotations on local variables (that’s the job of
+type <em>checking</em>).</div></li><li><div class="item-name"><a class="mod" href="constrained_generic_params/index.html" title="mod rustc_hir_analysis::constrained_generic_params">constrained_generic_params</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="mod" href="errors/index.html" title="mod rustc_hir_analysis::errors">errors</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Errors emitted by <code>rustc_hir_analysis</code>.</div></li><li><div class="item-name"><a class="mod" href="hir_wf_check/index.html" title="mod rustc_hir_analysis::hir_wf_check">hir_wf_check</a></div></li><li><div class="item-name"><a class="mod" href="impl_wf_check/index.html" title="mod rustc_hir_analysis::impl_wf_check">impl_wf_check</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">This pass enforces various “well-formedness constraints” on impls.
+Logically, it is part of wfcheck – but we do it early so that we
+can stop compilation afterwards, since part of the trait matching
+infrastructure gets very grumpy if these conditions don’t hold. In
+particular, if there are type parameters that are not part of the
+impl, then coherence will report strange inference ambiguity
+errors; if impls have duplicate items, we get misleading
+specialization errors. These things can (and probably should) be
+fixed, but for the moment it’s easier to do these checks early.</div></li><li><div class="item-name"><a class="mod" href="outlives/index.html" title="mod rustc_hir_analysis::outlives">outlives</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="mod" href="structured_errors/index.html" title="mod rustc_hir_analysis::structured_errors">structured_errors</a></div></li><li><div class="item-name"><a class="mod" href="variance/index.html" title="mod rustc_hir_analysis::variance">variance</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Module for inferring the variance of type and lifetime parameters. See the <a href="https://rustc-dev-guide.rust-lang.org/variance.html">rustc dev guide</a>
+chapter for more info.</div></li></ul><h2 id="statics" class="small-section-header"><a href="#statics">Statics</a></h2><ul class="item-table"><li><div class="item-name"><a class="static" href="static.DEFAULT_LOCALE_RESOURCE.html" title="static rustc_hir_analysis::DEFAULT_LOCALE_RESOURCE">DEFAULT_LOCALE_RESOURCE</a></div><div class="desc docblock-short">Raw content of Fluent resource for this crate, generated by <code>fluent_messages</code> macro,
+imported by <code>rustc_driver</code> to include all crates’ resources in one bundle.</div></li></ul><h2 id="functions" class="small-section-header"><a href="#functions">Functions</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.check_crate.html" title="fn rustc_hir_analysis::check_crate">check_crate</a></div></li><li><div class="item-name"><a class="fn" href="fn.hir_trait_to_predicates.html" title="fn rustc_hir_analysis::hir_trait_to_predicates">hir_trait_to_predicates</a></div></li><li><div class="item-name"><a class="fn" href="fn.hir_ty_to_ty.html" title="fn rustc_hir_analysis::hir_ty_to_ty">hir_ty_to_ty</a></div><div class="desc docblock-short">A quasi-deprecated helper used in rustdoc and clippy to get
+the type from a HIR node.</div></li><li><div class="item-name"><a class="fn" href="fn.provide.html" title="fn rustc_hir_analysis::provide">provide</a></div></li><li><div class="item-name"><a class="fn" href="fn.require_c_abi_if_c_variadic.html" title="fn rustc_hir_analysis::require_c_abi_if_c_variadic">require_c_abi_if_c_variadic</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.require_same_types.html" title="fn rustc_hir_analysis::require_same_types">require_same_types</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul></section></div></main></body></html>

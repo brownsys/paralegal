@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"static":["NOOP_METHOD_CALL","SUSPICIOUS_DOUBLE_REF_OP"],"struct":["NoopMethodCall"]};

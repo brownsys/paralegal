@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["compute_regions","dump_annotation","dump_mir_results","for_each_region_constraint","populate_polonius_move_facts","replace_regions_in_mir"],"struct":["NllOutput"],"trait":["ConstraintDescription"],"type":["PoloniusOutput"]};

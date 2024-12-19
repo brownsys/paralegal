@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["PROPAGATE_DOC_CFG"],"fn":["propagate_doc_cfg"],"struct":["CfgPropagator"]};

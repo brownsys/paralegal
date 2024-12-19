@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["BROKEN_CODE_ENV_INTERNAL","EDITION_ENV_INTERNAL","FIX_ENV_INTERNAL","IDIOMS_ENV_INTERNAL"],"fn":["check_resolver_change","check_version_control","exit_with","fix","fix_exec_rustc","fix_get_proxy_lock_addr","log_failed_fix","report_maybe_diesel","rustfix_and_fix","rustfix_crate"],"struct":["FixArgs","FixOptions","FixedCrate","FixedFile"]};

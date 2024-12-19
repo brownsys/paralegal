@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ArchiveEntry"],"fn":["get_native_object_symbols","io_error_context","try_extract_macho_fat_archive","try_filter_fat_archs"],"struct":["ArArchiveBuilder"],"trait":["ArchiveBuilder","ArchiveBuilderBuilder"]};

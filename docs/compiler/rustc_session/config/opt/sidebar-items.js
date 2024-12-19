@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["flag_s","flagmulti_s","longer","multi","multi_s","opt","opt_s","stable","unstable"],"type":["R","S"]};

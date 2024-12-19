@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AliasKind","ConstKind","DynKind","RegionKind","TyKind"],"fn":["const_kind_discriminant","regionkind_discriminant","tykind_discriminant"]};

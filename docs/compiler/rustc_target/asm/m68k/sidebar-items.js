@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["M68kInlineAsmReg","M68kInlineAsmRegClass"],"fn":["fill_reg_map","regclass_map"]};

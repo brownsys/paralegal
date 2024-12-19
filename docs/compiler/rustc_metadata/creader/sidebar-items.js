@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["LoadResult","LoadedMacro"],"fn":["alloc_error_handler_spans","global_allocator_spans","load_dylib"],"struct":["CStore","CrateDump","CrateLoader","CrateMetadataRef","Library"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["ArtifactNotification","Diagnostic","DiagnosticCode","DiagnosticSpan","DiagnosticSpanLine","DiagnosticSpanMacroExpansion","FutureBreakageItem","FutureIncompatReport","JsonEmitter","UnusedExterns"]};

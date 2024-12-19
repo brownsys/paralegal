@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["annotation_type_for_level","source_string"],"struct":["AnnotateSnippetEmitterWriter"]};

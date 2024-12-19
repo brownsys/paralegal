@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["MaybePackage","WorkspaceConfig"],"fn":["find_workspace_root","resolve_relative_path"],"mod":["compiler","dependency","features","manifest","package","package_id","package_id_spec","profiles","registry","resolver","shell","source","summary","workspace"],"struct":["PackageIdSpec","Workspace","WorkspaceRootConfig"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check_crate","hir_trait_to_predicates","hir_ty_to_ty","provide","require_c_abi_if_c_variadic","require_same_types"],"mod":["astconv","autoderef","bounds","check","check_unused","coherence","collect","constrained_generic_params","errors","hir_wf_check","impl_wf_check","outlives","structured_errors","variance"],"static":["DEFAULT_LOCALE_RESOURCE"]};

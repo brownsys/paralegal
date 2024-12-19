@@ -1,0 +1,397 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="API documentation for the Rust `TypeErrCtxtExt` trait in crate `rustc_trait_selection`."><title>TypeErrCtxtExt in rustc_trait_selection::traits::error_reporting::suggestions - Rust</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/SourceSerif4-Bold-a2c9cd1067f8b328.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-47e7ab555ef2818a.css" id="mainThemeStyle"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="rustc_trait_selection" data-themes="" data-resource-suffix="" data-rustdoc-version="1.74.0-nightly (58eefc33a 2023-08-24)" data-channel="nightly" data-search-js="search-6dfdfced5eff6596.js" data-settings-js="settings-de11bff964e9d4e5.js" data-settings-css="settings-8c76f75bfb6bd192.css" data-theme-light-css="light-b2d31d2efc7e9b67.css" data-theme-dark-css="dark-3388a2fb2ef8066b.css" data-theme-ayu-css="ayu-8c3c66a6cf12cb2f.css" ><script src="../../../../static.files/storage-db41da1a38ea3cb8.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../../../static.files/main-ef3a2de404864b0b.js"></script><noscript><link rel="stylesheet" media="(prefers-color-scheme:light)" href="../../../../static.files/light-b2d31d2efc7e9b67.css"><link rel="stylesheet" media="(prefers-color-scheme:dark)" href="../../../../static.files/dark-3388a2fb2ef8066b.css"><link rel="stylesheet" href="../../../../static.files/noscript-cffde32267a19fd6.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc trait"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle">&#9776;</button><a class="logo-container" href="../../../../rustc_trait_selection/index.html"><img class="rust-logo" src="../../../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2></h2></nav><nav class="sidebar"><a class="logo-container" href="../../../../rustc_trait_selection/index.html"><img class="rust-logo" src="../../../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2 class="location"><a href="#">TypeErrCtxtExt</a></h2><div class="sidebar-elems"><section><h3><a href="#required-methods">Required Methods</a></h3><ul class="block"><li><a href="#tymethod.check_for_binding_assigned_block_without_tail_expression">check_for_binding_assigned_block_without_tail_expression</a></li><li><a href="#tymethod.extract_callable_info">extract_callable_info</a></li><li><a href="#tymethod.get_closure_name">get_closure_name</a></li><li><a href="#tymethod.maybe_note_obligation_cause_for_async_await">maybe_note_obligation_cause_for_async_await</a></li><li><a href="#tymethod.note_conflicting_closure_bounds">note_conflicting_closure_bounds</a></li><li><a href="#tymethod.note_function_argument_obligation">note_function_argument_obligation</a></li><li><a href="#tymethod.note_obligation_cause_code">note_obligation_cause_code</a></li><li><a href="#tymethod.note_obligation_cause_for_async_await">note_obligation_cause_for_async_await</a></li><li><a href="#tymethod.point_at_chain">point_at_chain</a></li><li><a href="#tymethod.point_at_returns_when_relevant">point_at_returns_when_relevant</a></li><li><a href="#tymethod.probe_assoc_types_at_expr">probe_assoc_types_at_expr</a></li><li><a href="#tymethod.report_closure_arg_mismatch">report_closure_arg_mismatch</a></li><li><a href="#tymethod.return_type_span">return_type_span</a></li><li><a href="#tymethod.suggest_add_clone_to_arg">suggest_add_clone_to_arg</a></li><li><a href="#tymethod.suggest_add_reference_to_arg">suggest_add_reference_to_arg</a></li><li><a href="#tymethod.suggest_await_before_try">suggest_await_before_try</a></li><li><a href="#tymethod.suggest_borrowing_for_object_cast">suggest_borrowing_for_object_cast</a></li><li><a href="#tymethod.suggest_change_mut">suggest_change_mut</a></li><li><a href="#tymethod.suggest_convert_to_slice">suggest_convert_to_slice</a></li><li><a href="#tymethod.suggest_dereferences">suggest_dereferences</a></li><li><a href="#tymethod.suggest_dereferencing_index">suggest_dereferencing_index</a></li><li><a href="#tymethod.suggest_derive">suggest_derive</a></li><li><a href="#tymethod.suggest_floating_point_literal">suggest_floating_point_literal</a></li><li><a href="#tymethod.suggest_fn_call">suggest_fn_call</a></li><li><a href="#tymethod.suggest_fully_qualified_path">suggest_fully_qualified_path</a></li><li><a href="#tymethod.suggest_impl_trait">suggest_impl_trait</a></li><li><a href="#tymethod.suggest_option_method_if_applicable">suggest_option_method_if_applicable</a></li><li><a href="#tymethod.suggest_remove_await">suggest_remove_await</a></li><li><a href="#tymethod.suggest_remove_reference">suggest_remove_reference</a></li><li><a href="#tymethod.suggest_restricting_param_bound">suggest_restricting_param_bound</a></li><li><a href="#tymethod.suggest_semicolon_removal">suggest_semicolon_removal</a></li></ul><h3><a href="#implementors">Implementors</a></h3></section><h2><a href="index.html">In rustc_trait_selection::traits::error_reporting::suggestions</a></h2></div></nav><main><div class="width-limiter"><nav class="sub"><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../../../../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../../../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="main-heading"><h1>Trait <a href="../../../index.html">rustc_trait_selection</a>::<wbr><a href="../../index.html">traits</a>::<wbr><a href="../index.html">error_reporting</a>::<wbr><a href="index.html">suggestions</a>::<wbr><a class="trait" href="#">TypeErrCtxtExt</a><button id="copy-path" title="Copy item path to clipboard"><img src="../../../../static.files/clipboard-7571035ce49a181d.svg" width="19" height="18" alt="Copy item path"></button></h1><span class="out-of-band"><a class="src" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#174-409">source</a> · <button id="toggle-all-docs" title="collapse all docs">[<span>&#x2212;</span>]</button></span></div><pre class="rust item-decl"><code>pub trait TypeErrCtxtExt&lt;'tcx&gt; {
+<details class="toggle type-contents-toggle"><summary class="hideme"><span>Show 31 methods</span></summary>    // Required methods
+    fn <a href="#tymethod.suggest_restricting_param_bound" class="fn">suggest_restricting_param_bound</a>(
+        &amp;self,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;,
+        associated_item: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;(&amp;'static <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>, <a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;)&gt;,
+        body_id: <a class="struct" href="../../../../rustc_span/def_id/struct.LocalDefId.html" title="struct rustc_span::def_id::LocalDefId">LocalDefId</a>
+    );
+<span class="item-spacer"></span>    fn <a href="#tymethod.suggest_dereferences" class="fn">suggest_dereferences</a>(
+        &amp;self,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+    ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>;
+<span class="item-spacer"></span>    fn <a href="#tymethod.get_closure_name" class="fn">get_closure_name</a>(
+        &amp;self,
+        def_id: <a class="struct" href="../../../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a>,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        msg: <a class="enum" href="https://doc.rust-lang.org/nightly/alloc/borrow/enum.Cow.html" title="enum alloc::borrow::Cow">Cow</a>&lt;'static, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>&gt;
+    ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="../../../../rustc_span/symbol/struct.Symbol.html" title="struct rustc_span::symbol::Symbol">Symbol</a>&gt;;
+<span class="item-spacer"></span>    fn <a href="#tymethod.suggest_fn_call" class="fn">suggest_fn_call</a>(
+        &amp;self,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+    ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>;
+<span class="item-spacer"></span>    fn <a href="#tymethod.check_for_binding_assigned_block_without_tail_expression" class="fn">check_for_binding_assigned_block_without_tail_expression</a>(
+        &amp;self,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+    );
+<span class="item-spacer"></span>    fn <a href="#tymethod.suggest_add_clone_to_arg" class="fn">suggest_add_clone_to_arg</a>(
+        &amp;self,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+    ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>;
+<span class="item-spacer"></span>    fn <a href="#tymethod.extract_callable_info" class="fn">extract_callable_info</a>(
+        &amp;self,
+        body_id: <a class="struct" href="../../../../rustc_span/def_id/struct.LocalDefId.html" title="struct rustc_span::def_id::LocalDefId">LocalDefId</a>,
+        param_env: <a class="struct" href="../../../../rustc_middle/ty/struct.ParamEnv.html" title="struct rustc_middle::ty::ParamEnv">ParamEnv</a>&lt;'tcx&gt;,
+        found: <a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;
+    ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;(<a class="enum" href="../enum.DefIdOrName.html" title="enum rustc_trait_selection::traits::error_reporting::DefIdOrName">DefIdOrName</a>, <a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;, <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;&gt;)&gt;;
+<span class="item-spacer"></span>    fn <a href="#tymethod.suggest_add_reference_to_arg" class="fn">suggest_add_reference_to_arg</a>(
+        &amp;self,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;,
+        has_custom_message: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>
+    ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>;
+<span class="item-spacer"></span>    fn <a href="#tymethod.suggest_borrowing_for_object_cast" class="fn">suggest_borrowing_for_object_cast</a>(
+        &amp;self,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+        self_ty: <a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;,
+        object_ty: <a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;
+    );
+<span class="item-spacer"></span>    fn <a href="#tymethod.suggest_remove_reference" class="fn">suggest_remove_reference</a>(
+        &amp;self,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+    ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>;
+<span class="item-spacer"></span>    fn <a href="#tymethod.suggest_remove_await" class="fn">suggest_remove_await</a>(
+        &amp;self,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>
+    );
+<span class="item-spacer"></span>    fn <a href="#tymethod.suggest_change_mut" class="fn">suggest_change_mut</a>(
+        &amp;self,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+    );
+<span class="item-spacer"></span>    fn <a href="#tymethod.suggest_semicolon_removal" class="fn">suggest_semicolon_removal</a>(
+        &amp;self,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        span: <a class="struct" href="../../../../rustc_span/span_encoding/struct.Span.html" title="struct rustc_span::span_encoding::Span">Span</a>,
+        trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+    ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>;
+<span class="item-spacer"></span>    fn <a href="#tymethod.return_type_span" class="fn">return_type_span</a>(
+        &amp;self,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;
+    ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="../../../../rustc_span/span_encoding/struct.Span.html" title="struct rustc_span::span_encoding::Span">Span</a>&gt;;
+<span class="item-spacer"></span>    fn <a href="#tymethod.suggest_impl_trait" class="fn">suggest_impl_trait</a>(
+        &amp;self,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+        trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+    ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>;
+<span class="item-spacer"></span>    fn <a href="#tymethod.point_at_returns_when_relevant" class="fn">point_at_returns_when_relevant</a>(
+        &amp;self,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic_builder/struct.DiagnosticBuilder.html" title="struct rustc_errors::diagnostic_builder::DiagnosticBuilder">DiagnosticBuilder</a>&lt;'tcx, <a class="struct" href="../../../../rustc_span/struct.ErrorGuaranteed.html" title="struct rustc_span::ErrorGuaranteed">ErrorGuaranteed</a>&gt;,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;
+    );
+<span class="item-spacer"></span>    fn <a href="#tymethod.report_closure_arg_mismatch" class="fn">report_closure_arg_mismatch</a>(
+        &amp;self,
+        span: <a class="struct" href="../../../../rustc_span/span_encoding/struct.Span.html" title="struct rustc_span::span_encoding::Span">Span</a>,
+        found_span: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="../../../../rustc_span/span_encoding/struct.Span.html" title="struct rustc_span::span_encoding::Span">Span</a>&gt;,
+        found: <a class="type" href="../../../../rustc_middle/ty/sty/type.PolyTraitRef.html" title="type rustc_middle::ty::sty::PolyTraitRef">PolyTraitRef</a>&lt;'tcx&gt;,
+        expected: <a class="type" href="../../../../rustc_middle/ty/sty/type.PolyTraitRef.html" title="type rustc_middle::ty::sty::PolyTraitRef">PolyTraitRef</a>&lt;'tcx&gt;,
+        cause: &amp;<a class="enum" href="../../enum.ObligationCauseCode.html" title="enum rustc_trait_selection::traits::ObligationCauseCode">ObligationCauseCode</a>&lt;'tcx&gt;,
+        found_node: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="enum" href="../../../../rustc_hir/hir/enum.Node.html" title="enum rustc_hir::hir::Node">Node</a>&lt;'_&gt;&gt;,
+        param_env: <a class="struct" href="../../../../rustc_middle/ty/struct.ParamEnv.html" title="struct rustc_middle::ty::ParamEnv">ParamEnv</a>&lt;'tcx&gt;
+    ) -&gt; <a class="struct" href="../../../../rustc_errors/diagnostic_builder/struct.DiagnosticBuilder.html" title="struct rustc_errors::diagnostic_builder::DiagnosticBuilder">DiagnosticBuilder</a>&lt;'tcx, <a class="struct" href="../../../../rustc_span/struct.ErrorGuaranteed.html" title="struct rustc_span::ErrorGuaranteed">ErrorGuaranteed</a>&gt;;
+<span class="item-spacer"></span>    fn <a href="#tymethod.note_conflicting_closure_bounds" class="fn">note_conflicting_closure_bounds</a>(
+        &amp;self,
+        cause: &amp;<a class="enum" href="../../enum.ObligationCauseCode.html" title="enum rustc_trait_selection::traits::ObligationCauseCode">ObligationCauseCode</a>&lt;'tcx&gt;,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic_builder/struct.DiagnosticBuilder.html" title="struct rustc_errors::diagnostic_builder::DiagnosticBuilder">DiagnosticBuilder</a>&lt;'tcx, <a class="struct" href="../../../../rustc_span/struct.ErrorGuaranteed.html" title="struct rustc_span::ErrorGuaranteed">ErrorGuaranteed</a>&gt;
+    );
+<span class="item-spacer"></span>    fn <a href="#tymethod.suggest_fully_qualified_path" class="fn">suggest_fully_qualified_path</a>(
+        &amp;self,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        item_def_id: <a class="struct" href="../../../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a>,
+        span: <a class="struct" href="../../../../rustc_span/span_encoding/struct.Span.html" title="struct rustc_span::span_encoding::Span">Span</a>,
+        trait_ref: <a class="struct" href="../../../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a>
+    );
+<span class="item-spacer"></span>    fn <a href="#tymethod.maybe_note_obligation_cause_for_async_await" class="fn">maybe_note_obligation_cause_for_async_await</a>(
+        &amp;self,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;
+    ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>;
+<span class="item-spacer"></span>    fn <a href="#tymethod.note_obligation_cause_for_async_await" class="fn">note_obligation_cause_for_async_await</a>(
+        &amp;self,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        interior_or_upvar_span: <a class="enum" href="enum.GeneratorInteriorOrUpvar.html" title="enum rustc_trait_selection::traits::error_reporting::suggestions::GeneratorInteriorOrUpvar">GeneratorInteriorOrUpvar</a>,
+        is_async: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>,
+        outer_generator: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="../../../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a>&gt;,
+        trait_pred: <a class="struct" href="../../../../rustc_middle/ty/struct.TraitPredicate.html" title="struct rustc_middle::ty::TraitPredicate">TraitPredicate</a>&lt;'tcx&gt;,
+        target_ty: <a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;,
+        typeck_results: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;&amp;<a class="struct" href="../../../../rustc_middle/ty/typeck_results/struct.TypeckResults.html" title="struct rustc_middle::ty::typeck_results::TypeckResults">TypeckResults</a>&lt;'tcx&gt;&gt;,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+        next_code: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;&amp;<a class="enum" href="../../enum.ObligationCauseCode.html" title="enum rustc_trait_selection::traits::ObligationCauseCode">ObligationCauseCode</a>&lt;'tcx&gt;&gt;
+    );
+<span class="item-spacer"></span>    fn <a href="#tymethod.note_obligation_cause_code" class="fn">note_obligation_cause_code</a>&lt;T&gt;(
+        &amp;self,
+        body_id: <a class="struct" href="../../../../rustc_span/def_id/struct.LocalDefId.html" title="struct rustc_span::def_id::LocalDefId">LocalDefId</a>,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        predicate: T,
+        param_env: <a class="struct" href="../../../../rustc_middle/ty/struct.ParamEnv.html" title="struct rustc_middle::ty::ParamEnv">ParamEnv</a>&lt;'tcx&gt;,
+        cause_code: &amp;<a class="enum" href="../../enum.ObligationCauseCode.html" title="enum rustc_trait_selection::traits::ObligationCauseCode">ObligationCauseCode</a>&lt;'tcx&gt;,
+        obligated_types: &amp;mut <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;&gt;,
+        seen_requirements: &amp;mut FxHashSet&lt;<a class="struct" href="../../../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a>&gt;
+    )
+       <span class="where">where T: <a class="trait" href="../../../../rustc_middle/ty/trait.ToPredicate.html" title="trait rustc_middle::ty::ToPredicate">ToPredicate</a>&lt;'tcx&gt;</span>;
+<span class="item-spacer"></span>    fn <a href="#tymethod.suggest_await_before_try" class="fn">suggest_await_before_try</a>(
+        &amp;self,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+        trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;,
+        span: <a class="struct" href="../../../../rustc_span/span_encoding/struct.Span.html" title="struct rustc_span::span_encoding::Span">Span</a>
+    );
+<span class="item-spacer"></span>    fn <a href="#tymethod.suggest_floating_point_literal" class="fn">suggest_floating_point_literal</a>(
+        &amp;self,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        trait_ref: &amp;<a class="type" href="../../../../rustc_middle/ty/sty/type.PolyTraitRef.html" title="type rustc_middle::ty::sty::PolyTraitRef">PolyTraitRef</a>&lt;'tcx&gt;
+    );
+<span class="item-spacer"></span>    fn <a href="#tymethod.suggest_derive" class="fn">suggest_derive</a>(
+        &amp;self,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+    );
+<span class="item-spacer"></span>    fn <a href="#tymethod.suggest_dereferencing_index" class="fn">suggest_dereferencing_index</a>(
+        &amp;self,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+    );
+<span class="item-spacer"></span>    fn <a href="#tymethod.suggest_option_method_if_applicable" class="fn">suggest_option_method_if_applicable</a>(
+        &amp;self,
+        failed_pred: <a class="struct" href="../../../../rustc_middle/ty/struct.Predicate.html" title="struct rustc_middle::ty::Predicate">Predicate</a>&lt;'tcx&gt;,
+        param_env: <a class="struct" href="../../../../rustc_middle/ty/struct.ParamEnv.html" title="struct rustc_middle::ty::ParamEnv">ParamEnv</a>&lt;'tcx&gt;,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        expr: &amp;<a class="struct" href="../../../../rustc_hir/hir/struct.Expr.html" title="struct rustc_hir::hir::Expr">Expr</a>&lt;'_&gt;
+    );
+<span class="item-spacer"></span>    fn <a href="#tymethod.note_function_argument_obligation" class="fn">note_function_argument_obligation</a>(
+        &amp;self,
+        body_id: <a class="struct" href="../../../../rustc_span/def_id/struct.LocalDefId.html" title="struct rustc_span::def_id::LocalDefId">LocalDefId</a>,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        arg_hir_id: <a class="struct" href="../../../../rustc_hir/hir_id/struct.HirId.html" title="struct rustc_hir::hir_id::HirId">HirId</a>,
+        parent_code: &amp;<a class="enum" href="../../enum.ObligationCauseCode.html" title="enum rustc_trait_selection::traits::ObligationCauseCode">ObligationCauseCode</a>&lt;'tcx&gt;,
+        param_env: <a class="struct" href="../../../../rustc_middle/ty/struct.ParamEnv.html" title="struct rustc_middle::ty::ParamEnv">ParamEnv</a>&lt;'tcx&gt;,
+        predicate: <a class="struct" href="../../../../rustc_middle/ty/struct.Predicate.html" title="struct rustc_middle::ty::Predicate">Predicate</a>&lt;'tcx&gt;,
+        call_hir_id: <a class="struct" href="../../../../rustc_hir/hir_id/struct.HirId.html" title="struct rustc_hir::hir_id::HirId">HirId</a>
+    );
+<span class="item-spacer"></span>    fn <a href="#tymethod.point_at_chain" class="fn">point_at_chain</a>(
+        &amp;self,
+        expr: &amp;<a class="struct" href="../../../../rustc_hir/hir/struct.Expr.html" title="struct rustc_hir::hir::Expr">Expr</a>&lt;'_&gt;,
+        typeck_results: &amp;<a class="struct" href="../../../../rustc_middle/ty/typeck_results/struct.TypeckResults.html" title="struct rustc_middle::ty::typeck_results::TypeckResults">TypeckResults</a>&lt;'tcx&gt;,
+        type_diffs: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="enum" href="../../../../rustc_middle/ty/error/enum.TypeError.html" title="enum rustc_middle::ty::error::TypeError">TypeError</a>&lt;'tcx&gt;&gt;,
+        param_env: <a class="struct" href="../../../../rustc_middle/ty/struct.ParamEnv.html" title="struct rustc_middle::ty::ParamEnv">ParamEnv</a>&lt;'tcx&gt;,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>
+    );
+<span class="item-spacer"></span>    fn <a href="#tymethod.probe_assoc_types_at_expr" class="fn">probe_assoc_types_at_expr</a>(
+        &amp;self,
+        type_diffs: &amp;[<a class="enum" href="../../../../rustc_middle/ty/error/enum.TypeError.html" title="enum rustc_middle::ty::error::TypeError">TypeError</a>&lt;'tcx&gt;],
+        span: <a class="struct" href="../../../../rustc_span/span_encoding/struct.Span.html" title="struct rustc_span::span_encoding::Span">Span</a>,
+        prev_ty: <a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;,
+        body_id: <a class="struct" href="../../../../rustc_hir/hir_id/struct.HirId.html" title="struct rustc_hir::hir_id::HirId">HirId</a>,
+        param_env: <a class="struct" href="../../../../rustc_middle/ty/struct.ParamEnv.html" title="struct rustc_middle::ty::ParamEnv">ParamEnv</a>&lt;'tcx&gt;
+    ) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;(<a class="struct" href="../../../../rustc_span/span_encoding/struct.Span.html" title="struct rustc_span::span_encoding::Span">Span</a>, (<a class="struct" href="../../../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a>, <a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;))&gt;&gt;;
+<span class="item-spacer"></span>    fn <a href="#tymethod.suggest_convert_to_slice" class="fn">suggest_convert_to_slice</a>(
+        &amp;self,
+        err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+        obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+        trait_ref: <a class="type" href="../../../../rustc_middle/ty/sty/type.PolyTraitRef.html" title="type rustc_middle::ty::sty::PolyTraitRef">PolyTraitRef</a>&lt;'tcx&gt;,
+        candidate_impls: &amp;[<a class="struct" href="../struct.ImplCandidate.html" title="struct rustc_trait_selection::traits::error_reporting::ImplCandidate">ImplCandidate</a>&lt;'tcx&gt;],
+        span: <a class="struct" href="../../../../rustc_span/span_encoding/struct.Span.html" title="struct rustc_span::span_encoding::Span">Span</a>
+    );
+</details>}</code></pre><h2 id="required-methods" class="small-section-header">Required Methods<a href="#required-methods" class="anchor">§</a></h2><div class="methods"><section id="tymethod.suggest_restricting_param_bound" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#175-181">source</a><h4 class="code-header">fn <a href="#tymethod.suggest_restricting_param_bound" class="fn">suggest_restricting_param_bound</a>(
+    &amp;self,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;,
+    associated_item: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;(&amp;'static <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>, <a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;)&gt;,
+    body_id: <a class="struct" href="../../../../rustc_span/def_id/struct.LocalDefId.html" title="struct rustc_span::def_id::LocalDefId">LocalDefId</a>
+)</h4></section><section id="tymethod.suggest_dereferences" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#183-188">source</a><h4 class="code-header">fn <a href="#tymethod.suggest_dereferences" class="fn">suggest_dereferences</a>(
+    &amp;self,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></h4></section><section id="tymethod.get_closure_name" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#190-195">source</a><h4 class="code-header">fn <a href="#tymethod.get_closure_name" class="fn">get_closure_name</a>(
+    &amp;self,
+    def_id: <a class="struct" href="../../../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a>,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    msg: <a class="enum" href="https://doc.rust-lang.org/nightly/alloc/borrow/enum.Cow.html" title="enum alloc::borrow::Cow">Cow</a>&lt;'static, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>&gt;
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="../../../../rustc_span/symbol/struct.Symbol.html" title="struct rustc_span::symbol::Symbol">Symbol</a>&gt;</h4></section><section id="tymethod.suggest_fn_call" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#197-202">source</a><h4 class="code-header">fn <a href="#tymethod.suggest_fn_call" class="fn">suggest_fn_call</a>(
+    &amp;self,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></h4></section><section id="tymethod.check_for_binding_assigned_block_without_tail_expression" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#204-209">source</a><h4 class="code-header">fn <a href="#tymethod.check_for_binding_assigned_block_without_tail_expression" class="fn">check_for_binding_assigned_block_without_tail_expression</a>(
+    &amp;self,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+)</h4></section><section id="tymethod.suggest_add_clone_to_arg" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#211-216">source</a><h4 class="code-header">fn <a href="#tymethod.suggest_add_clone_to_arg" class="fn">suggest_add_clone_to_arg</a>(
+    &amp;self,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></h4></section><section id="tymethod.extract_callable_info" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#218-223">source</a><h4 class="code-header">fn <a href="#tymethod.extract_callable_info" class="fn">extract_callable_info</a>(
+    &amp;self,
+    body_id: <a class="struct" href="../../../../rustc_span/def_id/struct.LocalDefId.html" title="struct rustc_span::def_id::LocalDefId">LocalDefId</a>,
+    param_env: <a class="struct" href="../../../../rustc_middle/ty/struct.ParamEnv.html" title="struct rustc_middle::ty::ParamEnv">ParamEnv</a>&lt;'tcx&gt;,
+    found: <a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;(<a class="enum" href="../enum.DefIdOrName.html" title="enum rustc_trait_selection::traits::error_reporting::DefIdOrName">DefIdOrName</a>, <a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;, <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;&gt;)&gt;</h4></section><section id="tymethod.suggest_add_reference_to_arg" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#225-231">source</a><h4 class="code-header">fn <a href="#tymethod.suggest_add_reference_to_arg" class="fn">suggest_add_reference_to_arg</a>(
+    &amp;self,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;,
+    has_custom_message: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>
+) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></h4></section><section id="tymethod.suggest_borrowing_for_object_cast" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#233-239">source</a><h4 class="code-header">fn <a href="#tymethod.suggest_borrowing_for_object_cast" class="fn">suggest_borrowing_for_object_cast</a>(
+    &amp;self,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+    self_ty: <a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;,
+    object_ty: <a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;
+)</h4></section><section id="tymethod.suggest_remove_reference" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#241-246">source</a><h4 class="code-header">fn <a href="#tymethod.suggest_remove_reference" class="fn">suggest_remove_reference</a>(
+    &amp;self,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></h4></section><section id="tymethod.suggest_remove_await" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#248">source</a><h4 class="code-header">fn <a href="#tymethod.suggest_remove_await" class="fn">suggest_remove_await</a>(
+    &amp;self,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>
+)</h4></section><section id="tymethod.suggest_change_mut" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#250-255">source</a><h4 class="code-header">fn <a href="#tymethod.suggest_change_mut" class="fn">suggest_change_mut</a>(
+    &amp;self,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+)</h4></section><section id="tymethod.suggest_semicolon_removal" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#257-263">source</a><h4 class="code-header">fn <a href="#tymethod.suggest_semicolon_removal" class="fn">suggest_semicolon_removal</a>(
+    &amp;self,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    span: <a class="struct" href="../../../../rustc_span/span_encoding/struct.Span.html" title="struct rustc_span::span_encoding::Span">Span</a>,
+    trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></h4></section><section id="tymethod.return_type_span" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#265">source</a><h4 class="code-header">fn <a href="#tymethod.return_type_span" class="fn">return_type_span</a>(
+    &amp;self,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="../../../../rustc_span/span_encoding/struct.Span.html" title="struct rustc_span::span_encoding::Span">Span</a>&gt;</h4></section><section id="tymethod.suggest_impl_trait" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#267-272">source</a><h4 class="code-header">fn <a href="#tymethod.suggest_impl_trait" class="fn">suggest_impl_trait</a>(
+    &amp;self,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+    trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></h4></section><section id="tymethod.point_at_returns_when_relevant" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#274-278">source</a><h4 class="code-header">fn <a href="#tymethod.point_at_returns_when_relevant" class="fn">point_at_returns_when_relevant</a>(
+    &amp;self,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic_builder/struct.DiagnosticBuilder.html" title="struct rustc_errors::diagnostic_builder::DiagnosticBuilder">DiagnosticBuilder</a>&lt;'tcx, <a class="struct" href="../../../../rustc_span/struct.ErrorGuaranteed.html" title="struct rustc_span::ErrorGuaranteed">ErrorGuaranteed</a>&gt;,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;
+)</h4></section><section id="tymethod.report_closure_arg_mismatch" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#280-289">source</a><h4 class="code-header">fn <a href="#tymethod.report_closure_arg_mismatch" class="fn">report_closure_arg_mismatch</a>(
+    &amp;self,
+    span: <a class="struct" href="../../../../rustc_span/span_encoding/struct.Span.html" title="struct rustc_span::span_encoding::Span">Span</a>,
+    found_span: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="../../../../rustc_span/span_encoding/struct.Span.html" title="struct rustc_span::span_encoding::Span">Span</a>&gt;,
+    found: <a class="type" href="../../../../rustc_middle/ty/sty/type.PolyTraitRef.html" title="type rustc_middle::ty::sty::PolyTraitRef">PolyTraitRef</a>&lt;'tcx&gt;,
+    expected: <a class="type" href="../../../../rustc_middle/ty/sty/type.PolyTraitRef.html" title="type rustc_middle::ty::sty::PolyTraitRef">PolyTraitRef</a>&lt;'tcx&gt;,
+    cause: &amp;<a class="enum" href="../../enum.ObligationCauseCode.html" title="enum rustc_trait_selection::traits::ObligationCauseCode">ObligationCauseCode</a>&lt;'tcx&gt;,
+    found_node: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="enum" href="../../../../rustc_hir/hir/enum.Node.html" title="enum rustc_hir::hir::Node">Node</a>&lt;'_&gt;&gt;,
+    param_env: <a class="struct" href="../../../../rustc_middle/ty/struct.ParamEnv.html" title="struct rustc_middle::ty::ParamEnv">ParamEnv</a>&lt;'tcx&gt;
+) -&gt; <a class="struct" href="../../../../rustc_errors/diagnostic_builder/struct.DiagnosticBuilder.html" title="struct rustc_errors::diagnostic_builder::DiagnosticBuilder">DiagnosticBuilder</a>&lt;'tcx, <a class="struct" href="../../../../rustc_span/struct.ErrorGuaranteed.html" title="struct rustc_span::ErrorGuaranteed">ErrorGuaranteed</a>&gt;</h4></section><section id="tymethod.note_conflicting_closure_bounds" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#291-295">source</a><h4 class="code-header">fn <a href="#tymethod.note_conflicting_closure_bounds" class="fn">note_conflicting_closure_bounds</a>(
+    &amp;self,
+    cause: &amp;<a class="enum" href="../../enum.ObligationCauseCode.html" title="enum rustc_trait_selection::traits::ObligationCauseCode">ObligationCauseCode</a>&lt;'tcx&gt;,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic_builder/struct.DiagnosticBuilder.html" title="struct rustc_errors::diagnostic_builder::DiagnosticBuilder">DiagnosticBuilder</a>&lt;'tcx, <a class="struct" href="../../../../rustc_span/struct.ErrorGuaranteed.html" title="struct rustc_span::ErrorGuaranteed">ErrorGuaranteed</a>&gt;
+)</h4></section><section id="tymethod.suggest_fully_qualified_path" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#297-303">source</a><h4 class="code-header">fn <a href="#tymethod.suggest_fully_qualified_path" class="fn">suggest_fully_qualified_path</a>(
+    &amp;self,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    item_def_id: <a class="struct" href="../../../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a>,
+    span: <a class="struct" href="../../../../rustc_span/span_encoding/struct.Span.html" title="struct rustc_span::span_encoding::Span">Span</a>,
+    trait_ref: <a class="struct" href="../../../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a>
+)</h4></section><section id="tymethod.maybe_note_obligation_cause_for_async_await" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#305-309">source</a><h4 class="code-header">fn <a href="#tymethod.maybe_note_obligation_cause_for_async_await" class="fn">maybe_note_obligation_cause_for_async_await</a>(
+    &amp;self,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;
+) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></h4></section><section id="tymethod.note_obligation_cause_for_async_await" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#311-322">source</a><h4 class="code-header">fn <a href="#tymethod.note_obligation_cause_for_async_await" class="fn">note_obligation_cause_for_async_await</a>(
+    &amp;self,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    interior_or_upvar_span: <a class="enum" href="enum.GeneratorInteriorOrUpvar.html" title="enum rustc_trait_selection::traits::error_reporting::suggestions::GeneratorInteriorOrUpvar">GeneratorInteriorOrUpvar</a>,
+    is_async: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>,
+    outer_generator: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="../../../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a>&gt;,
+    trait_pred: <a class="struct" href="../../../../rustc_middle/ty/struct.TraitPredicate.html" title="struct rustc_middle::ty::TraitPredicate">TraitPredicate</a>&lt;'tcx&gt;,
+    target_ty: <a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;,
+    typeck_results: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;&amp;<a class="struct" href="../../../../rustc_middle/ty/typeck_results/struct.TypeckResults.html" title="struct rustc_middle::ty::typeck_results::TypeckResults">TypeckResults</a>&lt;'tcx&gt;&gt;,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+    next_code: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;&amp;<a class="enum" href="../../enum.ObligationCauseCode.html" title="enum rustc_trait_selection::traits::ObligationCauseCode">ObligationCauseCode</a>&lt;'tcx&gt;&gt;
+)</h4></section><section id="tymethod.note_obligation_cause_code" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#324-334">source</a><h4 class="code-header">fn <a href="#tymethod.note_obligation_cause_code" class="fn">note_obligation_cause_code</a>&lt;T&gt;(
+    &amp;self,
+    body_id: <a class="struct" href="../../../../rustc_span/def_id/struct.LocalDefId.html" title="struct rustc_span::def_id::LocalDefId">LocalDefId</a>,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    predicate: T,
+    param_env: <a class="struct" href="../../../../rustc_middle/ty/struct.ParamEnv.html" title="struct rustc_middle::ty::ParamEnv">ParamEnv</a>&lt;'tcx&gt;,
+    cause_code: &amp;<a class="enum" href="../../enum.ObligationCauseCode.html" title="enum rustc_trait_selection::traits::ObligationCauseCode">ObligationCauseCode</a>&lt;'tcx&gt;,
+    obligated_types: &amp;mut <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;&gt;,
+    seen_requirements: &amp;mut FxHashSet&lt;<a class="struct" href="../../../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a>&gt;
+)<span class="where fmt-newline">where
+    T: <a class="trait" href="../../../../rustc_middle/ty/trait.ToPredicate.html" title="trait rustc_middle::ty::ToPredicate">ToPredicate</a>&lt;'tcx&gt;,</span></h4></section><details class="toggle method-toggle" open><summary><section id="tymethod.suggest_await_before_try" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#337-343">source</a><h4 class="code-header">fn <a href="#tymethod.suggest_await_before_try" class="fn">suggest_await_before_try</a>(
+    &amp;self,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+    trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;,
+    span: <a class="struct" href="../../../../rustc_span/span_encoding/struct.Span.html" title="struct rustc_span::span_encoding::Span">Span</a>
+)</h4></section></summary><div class="docblock"><p>Suggest to await before try: future? =&gt; future.await?</p>
+</div></details><section id="tymethod.suggest_floating_point_literal" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#345-350">source</a><h4 class="code-header">fn <a href="#tymethod.suggest_floating_point_literal" class="fn">suggest_floating_point_literal</a>(
+    &amp;self,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    trait_ref: &amp;<a class="type" href="../../../../rustc_middle/ty/sty/type.PolyTraitRef.html" title="type rustc_middle::ty::sty::PolyTraitRef">PolyTraitRef</a>&lt;'tcx&gt;
+)</h4></section><section id="tymethod.suggest_derive" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#352-357">source</a><h4 class="code-header">fn <a href="#tymethod.suggest_derive" class="fn">suggest_derive</a>(
+    &amp;self,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+)</h4></section><section id="tymethod.suggest_dereferencing_index" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#359-364">source</a><h4 class="code-header">fn <a href="#tymethod.suggest_dereferencing_index" class="fn">suggest_dereferencing_index</a>(
+    &amp;self,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    trait_pred: <a class="type" href="../../../../rustc_middle/ty/type.PolyTraitPredicate.html" title="type rustc_middle::ty::PolyTraitPredicate">PolyTraitPredicate</a>&lt;'tcx&gt;
+)</h4></section><section id="tymethod.suggest_option_method_if_applicable" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#366-372">source</a><h4 class="code-header">fn <a href="#tymethod.suggest_option_method_if_applicable" class="fn">suggest_option_method_if_applicable</a>(
+    &amp;self,
+    failed_pred: <a class="struct" href="../../../../rustc_middle/ty/struct.Predicate.html" title="struct rustc_middle::ty::Predicate">Predicate</a>&lt;'tcx&gt;,
+    param_env: <a class="struct" href="../../../../rustc_middle/ty/struct.ParamEnv.html" title="struct rustc_middle::ty::ParamEnv">ParamEnv</a>&lt;'tcx&gt;,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    expr: &amp;<a class="struct" href="../../../../rustc_hir/hir/struct.Expr.html" title="struct rustc_hir::hir::Expr">Expr</a>&lt;'_&gt;
+)</h4></section><section id="tymethod.note_function_argument_obligation" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#374-383">source</a><h4 class="code-header">fn <a href="#tymethod.note_function_argument_obligation" class="fn">note_function_argument_obligation</a>(
+    &amp;self,
+    body_id: <a class="struct" href="../../../../rustc_span/def_id/struct.LocalDefId.html" title="struct rustc_span::def_id::LocalDefId">LocalDefId</a>,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    arg_hir_id: <a class="struct" href="../../../../rustc_hir/hir_id/struct.HirId.html" title="struct rustc_hir::hir_id::HirId">HirId</a>,
+    parent_code: &amp;<a class="enum" href="../../enum.ObligationCauseCode.html" title="enum rustc_trait_selection::traits::ObligationCauseCode">ObligationCauseCode</a>&lt;'tcx&gt;,
+    param_env: <a class="struct" href="../../../../rustc_middle/ty/struct.ParamEnv.html" title="struct rustc_middle::ty::ParamEnv">ParamEnv</a>&lt;'tcx&gt;,
+    predicate: <a class="struct" href="../../../../rustc_middle/ty/struct.Predicate.html" title="struct rustc_middle::ty::Predicate">Predicate</a>&lt;'tcx&gt;,
+    call_hir_id: <a class="struct" href="../../../../rustc_hir/hir_id/struct.HirId.html" title="struct rustc_hir::hir_id::HirId">HirId</a>
+)</h4></section><section id="tymethod.point_at_chain" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#384-391">source</a><h4 class="code-header">fn <a href="#tymethod.point_at_chain" class="fn">point_at_chain</a>(
+    &amp;self,
+    expr: &amp;<a class="struct" href="../../../../rustc_hir/hir/struct.Expr.html" title="struct rustc_hir::hir::Expr">Expr</a>&lt;'_&gt;,
+    typeck_results: &amp;<a class="struct" href="../../../../rustc_middle/ty/typeck_results/struct.TypeckResults.html" title="struct rustc_middle::ty::typeck_results::TypeckResults">TypeckResults</a>&lt;'tcx&gt;,
+    type_diffs: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="enum" href="../../../../rustc_middle/ty/error/enum.TypeError.html" title="enum rustc_middle::ty::error::TypeError">TypeError</a>&lt;'tcx&gt;&gt;,
+    param_env: <a class="struct" href="../../../../rustc_middle/ty/struct.ParamEnv.html" title="struct rustc_middle::ty::ParamEnv">ParamEnv</a>&lt;'tcx&gt;,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>
+)</h4></section><section id="tymethod.probe_assoc_types_at_expr" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#392-399">source</a><h4 class="code-header">fn <a href="#tymethod.probe_assoc_types_at_expr" class="fn">probe_assoc_types_at_expr</a>(
+    &amp;self,
+    type_diffs: &amp;[<a class="enum" href="../../../../rustc_middle/ty/error/enum.TypeError.html" title="enum rustc_middle::ty::error::TypeError">TypeError</a>&lt;'tcx&gt;],
+    span: <a class="struct" href="../../../../rustc_span/span_encoding/struct.Span.html" title="struct rustc_span::span_encoding::Span">Span</a>,
+    prev_ty: <a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;,
+    body_id: <a class="struct" href="../../../../rustc_hir/hir_id/struct.HirId.html" title="struct rustc_hir::hir_id::HirId">HirId</a>,
+    param_env: <a class="struct" href="../../../../rustc_middle/ty/struct.ParamEnv.html" title="struct rustc_middle::ty::ParamEnv">ParamEnv</a>&lt;'tcx&gt;
+) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;(<a class="struct" href="../../../../rustc_span/span_encoding/struct.Span.html" title="struct rustc_span::span_encoding::Span">Span</a>, (<a class="struct" href="../../../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a>, <a class="struct" href="../../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;))&gt;&gt;</h4></section><section id="tymethod.suggest_convert_to_slice" class="method"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#401-408">source</a><h4 class="code-header">fn <a href="#tymethod.suggest_convert_to_slice" class="fn">suggest_convert_to_slice</a>(
+    &amp;self,
+    err: &amp;mut <a class="struct" href="../../../../rustc_errors/diagnostic/struct.Diagnostic.html" title="struct rustc_errors::diagnostic::Diagnostic">Diagnostic</a>,
+    obligation: &amp;<a class="type" href="../../type.PredicateObligation.html" title="type rustc_trait_selection::traits::PredicateObligation">PredicateObligation</a>&lt;'tcx&gt;,
+    trait_ref: <a class="type" href="../../../../rustc_middle/ty/sty/type.PolyTraitRef.html" title="type rustc_middle::ty::sty::PolyTraitRef">PolyTraitRef</a>&lt;'tcx&gt;,
+    candidate_impls: &amp;[<a class="struct" href="../struct.ImplCandidate.html" title="struct rustc_trait_selection::traits::error_reporting::ImplCandidate">ImplCandidate</a>&lt;'tcx&gt;],
+    span: <a class="struct" href="../../../../rustc_span/span_encoding/struct.Span.html" title="struct rustc_span::span_encoding::Span">Span</a>
+)</h4></section></div><h2 id="implementors" class="small-section-header">Implementors<a href="#implementors" class="anchor">§</a></h2><div id="implementors-list"><section id="impl-TypeErrCtxtExt%3C'tcx%3E-for-TypeErrCtxt%3C'_,+'tcx%3E" class="impl"><a class="src rightside" href="../../../../src/rustc_trait_selection/traits/error_reporting/suggestions.rs.html#541-4023">source</a><a href="#impl-TypeErrCtxtExt%3C'tcx%3E-for-TypeErrCtxt%3C'_,+'tcx%3E" class="anchor">§</a><h3 class="code-header">impl&lt;'tcx&gt; <a class="trait" href="trait.TypeErrCtxtExt.html" title="trait rustc_trait_selection::traits::error_reporting::suggestions::TypeErrCtxtExt">TypeErrCtxtExt</a>&lt;'tcx&gt; for <a class="struct" href="../../../infer/error_reporting/struct.TypeErrCtxt.html" title="struct rustc_trait_selection::infer::error_reporting::TypeErrCtxt">TypeErrCtxt</a>&lt;'_, 'tcx&gt;</h3></section></div><script src="../../../../implementors/rustc_trait_selection/traits/error_reporting/suggestions/trait.TypeErrCtxtExt.js" data-ignore-extern-crates="rustc_infer" async></script></section></div></main></body></html>

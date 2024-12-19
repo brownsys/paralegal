@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["dylink_registrar","load_plugin","load_plugins"],"type":["PluginRegistrarFn"]};

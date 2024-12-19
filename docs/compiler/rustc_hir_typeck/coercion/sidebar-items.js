@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Expressions"],"fn":["coerce_mutbls","identity","simple","success"],"struct":["Coerce","CoerceMany","CollectRetsVisitor"],"trait":["AsCoercionSite"],"type":["CoerceResult","DynamicCoerceMany"]};

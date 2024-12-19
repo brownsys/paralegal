@@ -1,0 +1,3 @@
+(function() {var implementors = {
+"rustc_errors":[["impl <a class=\"trait\" href=\"https://docs.rs/termcolor/1.2.0/termcolor/trait.WriteColor.html\" title=\"trait termcolor::WriteColor\">WriteColor</a> for <a class=\"struct\" href=\"rustc_errors/emitter/struct.Buffy.html\" title=\"struct rustc_errors::emitter::Buffy\">Buffy</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

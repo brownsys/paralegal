@@ -1,0 +1,65 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/cargo/core/mod.rs`."><title>mod.rs - source</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceSerif4-Bold-a2c9cd1067f8b328.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-47e7ab555ef2818a.css" id="mainThemeStyle"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="cargo" data-themes="" data-resource-suffix="" data-rustdoc-version="1.74.0-nightly (58eefc33a 2023-08-24)" data-channel="nightly" data-search-js="search-6dfdfced5eff6596.js" data-settings-js="settings-de11bff964e9d4e5.js" data-settings-css="settings-8c76f75bfb6bd192.css" data-theme-light-css="light-b2d31d2efc7e9b67.css" data-theme-dark-css="dark-3388a2fb2ef8066b.css" data-theme-ayu-css="ayu-8c3c66a6cf12cb2f.css" ><script src="../../../static.files/storage-db41da1a38ea3cb8.js"></script><script defer src="../../../static.files/src-script-3280b574d94e47b4.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-ef3a2de404864b0b.js"></script><noscript><link rel="stylesheet" media="(prefers-color-scheme:light)" href="../../../static.files/light-b2d31d2efc7e9b67.css"><link rel="stylesheet" media="(prefers-color-scheme:dark)" href="../../../static.files/dark-3388a2fb2ef8066b.css"><link rel="stylesheet" href="../../../static.files/noscript-cffde32267a19fd6.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"></nav><main><nav class="sub"><a class="sub-logo-container" href="../../../cargo/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../../../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<a href="#2" id="2">2</a>
+<a href="#3" id="3">3</a>
+<a href="#4" id="4">4</a>
+<a href="#5" id="5">5</a>
+<a href="#6" id="6">6</a>
+<a href="#7" id="7">7</a>
+<a href="#8" id="8">8</a>
+<a href="#9" id="9">9</a>
+<a href="#10" id="10">10</a>
+<a href="#11" id="11">11</a>
+<a href="#12" id="12">12</a>
+<a href="#13" id="13">13</a>
+<a href="#14" id="14">14</a>
+<a href="#15" id="15">15</a>
+<a href="#16" id="16">16</a>
+<a href="#17" id="17">17</a>
+<a href="#18" id="18">18</a>
+<a href="#19" id="19">19</a>
+<a href="#20" id="20">20</a>
+<a href="#21" id="21">21</a>
+<a href="#22" id="22">22</a>
+<a href="#23" id="23">23</a>
+<a href="#24" id="24">24</a>
+<a href="#25" id="25">25</a>
+<a href="#26" id="26">26</a>
+<a href="#27" id="27">27</a>
+<a href="#28" id="28">28</a>
+<a href="#29" id="29">29</a>
+<a href="#30" id="30">30</a>
+<a href="#31" id="31">31</a>
+<a href="#32" id="32">32</a>
+</pre></div><pre class="rust"><code><span class="kw">pub use </span><a href="dependency.rs.html#21-23"><span class="self">self</span>::dependency::Dependency</a>;
+<span class="kw">pub use </span><span class="self">self</span>::features::{<a href="features.rs.html#713-755">CliUnstable</a>, <a href="features.rs.html#201-208">Edition</a>, <a href="features.rs.html#488-494">Feature</a>, <a href="features.rs.html#424-486">Features</a>};
+<span class="kw">pub use </span><span class="self">self</span>::manifest::{<a href="manifest.rs.html#24-27">EitherManifest</a>, <a href="manifest.rs.html#83-91">VirtualManifest</a>};
+<span class="kw">pub use </span><span class="self">self</span>::manifest::{<a href="manifest.rs.html#42-68">Manifest</a>, <a href="manifest.rs.html#202-204">Target</a>, <a href="manifest.rs.html#119-127">TargetKind</a>};
+<span class="kw">pub use </span><span class="self">self</span>::package::{<a href="package.rs.html#53-55">Package</a>, <a href="package.rs.html#303-312">PackageSet</a>};
+<span class="kw">pub use </span><a href="package_id.rs.html#21-23"><span class="self">self</span>::package_id::PackageId</a>;
+<span class="kw">pub use </span><a href="package_id_spec.rs.html#25-29"><span class="self">self</span>::package_id_spec::PackageIdSpec</a>;
+<span class="kw">pub use </span><a href="registry.rs.html#17-36"><span class="self">self</span>::registry::Registry</a>;
+<span class="kw">pub use </span><span class="self">self</span>::resolver::{<a href="resolver/resolve.rs.html#16-47">Resolve</a>, <a href="resolver/resolve.rs.html#68-89">ResolveVersion</a>};
+<span class="kw">pub use </span><span class="self">self</span>::shell::{<a href="shell.rs.html#50-59">Shell</a>, <a href="shell.rs.html#42-46">Verbosity</a>};
+<span class="kw">pub use </span><span class="self">self</span>::source::{<a href="source/source_id.rs.html#82-92">GitReference</a>, <a href="source/mod.rs.html#181-194">QueryKind</a>, <a href="source/mod.rs.html#46-177">Source</a>, <a href="source/source_id.rs.html#35-37">SourceId</a>, <a href="source/mod.rs.html#358-360">SourceMap</a>};
+<span class="kw">pub use </span><span class="self">self</span>::summary::{<a href="summary.rs.html#430">FeatureMap</a>, <a href="summary.rs.html#361-375">FeatureValue</a>, <a href="summary.rs.html#17-19">Summary</a>};
+<span class="kw">pub use </span><span class="self">self</span>::workspace::{
+    <a href="workspace.rs.html#1726-1735">find_workspace_root</a>, <a href="workspace.rs.html#1698-1723">resolve_relative_path</a>, <a href="workspace.rs.html#111-114">MaybePackage</a>, <a href="workspace.rs.html#37-100">Workspace</a>, <a href="workspace.rs.html#118-126">WorkspaceConfig</a>,
+    <a href="workspace.rs.html#170-177">WorkspaceRootConfig</a>,
+};
+<span class="kw">pub use </span><a href="../util/toml/mod.rs.html#1565-1596"><span class="kw">crate</span>::util::toml::InheritableFields</a>;
+
+<span class="kw">pub mod </span><a href="compiler/mod.rs.html#1-1795">compiler</a>;
+<span class="kw">pub mod </span><a href="dependency.rs.html#1-642">dependency</a>;
+<span class="kw">pub mod </span><a href="features.rs.html#1-1230">features</a>;
+<span class="kw">pub mod </span><a href="manifest.rs.html#1-1029">manifest</a>;
+<span class="kw">pub mod </span><a href="package.rs.html#1-1193">package</a>;
+<span class="kw">pub mod </span><a href="package_id.rs.html#1-299">package_id</a>;
+<span class="kw">mod </span><a href="package_id_spec.rs.html#1-432">package_id_spec</a>;
+<span class="kw">pub mod </span><a href="profiles.rs.html#1-1348">profiles</a>;
+<span class="kw">pub mod </span><a href="registry.rs.html#1-937">registry</a>;
+<span class="kw">pub mod </span><a href="resolver/mod.rs.html#1-1152">resolver</a>;
+<span class="kw">pub mod </span><a href="shell.rs.html#1-630">shell</a>;
+<span class="kw">pub mod </span><a href="source/mod.rs.html#1-412">source</a>;
+<span class="kw">pub mod </span><a href="summary.rs.html#1-491">summary</a>;
+<span class="kw">mod </span><a href="workspace.rs.html#1-1834">workspace</a>;
+</code></pre></div></section></main></body></html>

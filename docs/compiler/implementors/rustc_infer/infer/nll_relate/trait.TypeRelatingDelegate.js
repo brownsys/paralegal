@@ -1,0 +1,4 @@
+(function() {var implementors = {
+"rustc_borrowck":[["impl&lt;'tcx&gt; <a class=\"trait\" href=\"rustc_infer/infer/nll_relate/trait.TypeRelatingDelegate.html\" title=\"trait rustc_infer::infer::nll_relate::TypeRelatingDelegate\">TypeRelatingDelegate</a>&lt;'tcx&gt; for <a class=\"struct\" href=\"rustc_borrowck/type_check/relate_tys/struct.NllTypeRelatingDelegate.html\" title=\"struct rustc_borrowck::type_check::relate_tys::NllTypeRelatingDelegate\">NllTypeRelatingDelegate</a>&lt;'_, '_, 'tcx&gt;"]],
+"rustc_infer":[]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

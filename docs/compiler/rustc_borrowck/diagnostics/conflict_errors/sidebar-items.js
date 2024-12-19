@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AnnotatedBorrowFnSignature","StorageDeadOrDrop"],"struct":["ConditionVisitor","MoveSite","ReferencedStatementsVisitor"]};

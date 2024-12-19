@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["tidy_error"],"macro":["t","tidy_error"],"mod":["alphabetical","bins","debug_artifacts","deps","edition","error_codes","ext_tool_checks","extdeps","features","fluent_alphabetical","mir_opt_tests","pal","primitive_docs","rustdoc_gui_tests","style","target_specific_tests","tests_placement","ui_tests","unit_tests","unstable_book","walk","x_version"]};

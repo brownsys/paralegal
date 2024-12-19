@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["RegionElement"],"fn":["location_set_str","region_value_str"],"struct":["LivenessValues","PlaceholderIndex","PlaceholderIndices","PointIndex","RegionValueElements","RegionValues"],"trait":["ToElementIndex"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["MaybeMonomorphized"],"fn":["load_annotations","resolve_external_markers"],"struct":["ExternalAnnotationEntry","MarkerCtx","MarkerDatabase"],"type":["ExternalMarkers","RawExternalMarkers","TypeMarkerElem","TypeMarkers"]};

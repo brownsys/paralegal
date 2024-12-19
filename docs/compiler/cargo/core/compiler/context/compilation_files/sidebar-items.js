@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["METADATA_VERSION"],"fn":["compute_metadata","hash_rustc_version","metadata_of","should_use_metadata"],"struct":["CompilationFiles","MetaInfo","Metadata","OutputFile"]};

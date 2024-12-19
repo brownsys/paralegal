@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["find_anon_type","find_param_with_region","suggest_adding_lifetime_params","suggest_new_region_bound"],"mod":["find_anon_type"],"struct":["HirTraitObjectVisitor","NiceRegionError","TraitObjectVisitor"]};

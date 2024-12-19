@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["InnerAttrForbiddenReason","InnerAttrPolicy","OuterAttributeType"],"fn":["is_complete"]};

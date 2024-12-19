@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FileMatch"],"fn":["current_dll_path","get_or_default_sysroot","make_target_lib_path","sysroot_candidates"],"struct":["FileSearch"]};

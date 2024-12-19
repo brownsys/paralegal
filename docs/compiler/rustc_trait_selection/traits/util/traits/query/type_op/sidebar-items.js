@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["AscribeUserType","Eq","Normalize","ProvePredicate","Subtype"]};

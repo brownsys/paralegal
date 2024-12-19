@@ -1,0 +1,299 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Tracks changes to determine if something needs to be recompiled."><title>cargo::core::compiler::fingerprint - Rust</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/SourceSerif4-Bold-a2c9cd1067f8b328.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-47e7ab555ef2818a.css" id="mainThemeStyle"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="cargo" data-themes="" data-resource-suffix="" data-rustdoc-version="1.74.0-nightly (58eefc33a 2023-08-24)" data-channel="nightly" data-search-js="search-6dfdfced5eff6596.js" data-settings-js="settings-de11bff964e9d4e5.js" data-settings-css="settings-8c76f75bfb6bd192.css" data-theme-light-css="light-b2d31d2efc7e9b67.css" data-theme-dark-css="dark-3388a2fb2ef8066b.css" data-theme-ayu-css="ayu-8c3c66a6cf12cb2f.css" ><script src="../../../../static.files/storage-db41da1a38ea3cb8.js"></script><script defer src="../../../../static.files/main-ef3a2de404864b0b.js"></script><noscript><link rel="stylesheet" media="(prefers-color-scheme:light)" href="../../../../static.files/light-b2d31d2efc7e9b67.css"><link rel="stylesheet" media="(prefers-color-scheme:dark)" href="../../../../static.files/dark-3388a2fb2ef8066b.css"><link rel="stylesheet" href="../../../../static.files/noscript-cffde32267a19fd6.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle">&#9776;</button><a class="logo-container" href="../../../../cargo/index.html"><img class="rust-logo" src="../../../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2></h2></nav><nav class="sidebar"><a class="logo-container" href="../../../../cargo/index.html"><img class="rust-logo" src="../../../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2 class="location"><a href="#">Module fingerprint</a></h2><div class="sidebar-elems"><section><ul class="block"><li><a href="#reexports">Re-exports</a></li><li><a href="#modules">Modules</a></li><li><a href="#structs">Structs</a></li><li><a href="#enums">Enums</a></li><li><a href="#functions">Functions</a></li></ul></section></div></nav><main><div class="width-limiter"><nav class="sub"><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../../../../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../../../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="main-heading"><h1>Module <a href="../../../index.html">cargo</a>::<wbr><a href="../../index.html">core</a>::<wbr><a href="../index.html">compiler</a>::<wbr><a class="mod" href="#">fingerprint</a><button id="copy-path" title="Copy item path to clipboard"><img src="../../../../static.files/clipboard-7571035ce49a181d.svg" width="19" height="18" alt="Copy item path"></button></h1><span class="out-of-band"><a class="src" href="../../../../src/cargo/core/compiler/fingerprint/mod.rs.html#1-2211">source</a> · <button id="toggle-all-docs" title="collapse all docs">[<span>&#x2212;</span>]</button></span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Tracks changes to determine if something needs to be recompiled.</p>
+<p>This module implements change-tracking so that Cargo can know whether or
+not something needs to be recompiled. A Cargo <a href="../unit/struct.Unit.html" title="struct cargo::core::compiler::unit::Unit"><code>Unit</code></a> can be either “dirty”
+(needs to be recompiled) or “fresh” (it does not need to be recompiled).</p>
+<h3 id="mechanisms-affecting-freshness"><a href="#mechanisms-affecting-freshness">Mechanisms affecting freshness</a></h3>
+<p>There are several mechanisms that influence a Unit’s freshness:</p>
+<ul>
+<li>
+<p>The <a href="struct.Fingerprint.html" title="struct cargo::core::compiler::fingerprint::Fingerprint"><code>Fingerprint</code></a> is a hash, saved to the filesystem in the
+<code>.fingerprint</code> directory, that tracks information about the Unit. If the
+fingerprint is missing (such as the first time the unit is being
+compiled), then the unit is dirty. If any of the fingerprint fields
+change (like the name of the source file), then the Unit is considered
+dirty.</p>
+<p>The <code>Fingerprint</code> also tracks the fingerprints of all its dependencies,
+so a change in a dependency will propagate the “dirty” status up.</p>
+</li>
+<li>
+<p>Filesystem mtime tracking is also used to check if a unit is dirty.
+See the section below on “Mtime comparison” for more details. There
+are essentially two parts to mtime tracking:</p>
+<ol>
+<li>The mtime of a Unit’s output files is compared to the mtime of all
+its dependencies’ output file mtimes (see
+<a href="struct.Fingerprint.html#method.check_filesystem" title="method cargo::core::compiler::fingerprint::Fingerprint::check_filesystem"><code>check_filesystem</code></a>). If any output is missing, or is
+older than a dependency’s output, then the unit is dirty.</li>
+<li>The mtime of a Unit’s source files is compared to the mtime of its
+dep-info file in the fingerprint directory (see <a href="fn.find_stale_file.html" title="fn cargo::core::compiler::fingerprint::find_stale_file"><code>find_stale_file</code></a>).
+The dep-info file is used as an anchor to know when the last build of
+the unit was done. See the “dep-info files” section below for more
+details. If any input files are missing, or are newer than the
+dep-info, then the unit is dirty.</li>
+</ol>
+</li>
+</ul>
+<p>Note: Fingerprinting is not a perfect solution. Filesystem mtime tracking
+is notoriously imprecise and problematic. Only a small part of the
+environment is captured. This is a balance of performance, simplicity, and
+completeness. Sandboxing, hashing file contents, tracking every file
+access, environment variable, and network operation would ensure more
+reliable and reproducible builds at the cost of being complex, slow, and
+platform-dependent.</p>
+<h3 id="fingerprints-and-metadata"><a href="#fingerprints-and-metadata">Fingerprints and Metadata</a></h3>
+<p>The <a href="../context/compilation_files/struct.Metadata.html" title="struct cargo::core::compiler::context::compilation_files::Metadata"><code>Metadata</code></a> hash is a hash added to the output filenames to isolate
+each unit. See its documentationfor more details.
+NOTE: Not all output files are isolated via filename hashes (like dylibs).
+The fingerprint directory uses a hash, but sometimes units share the same
+fingerprint directory (when they don’t have Metadata) so care should be
+taken to handle this!</p>
+<p>Fingerprints and Metadata are similar, and track some of the same things.
+The Metadata contains information that is required to keep Units separate.
+The Fingerprint includes additional information that should cause a
+recompile, but it is desired to reuse the same filenames. A comparison
+of what is tracked:</p>
+<div><table><thead><tr><th>Value</th><th>Fingerprint</th><th>Metadata</th></tr></thead><tbody>
+<tr><td>rustc</td><td>✓</td><td>✓</td></tr>
+<tr><td><a href="../../profiles/struct.Profile.html" title="struct cargo::core::profiles::Profile"><code>Profile</code></a></td><td>✓</td><td>✓</td></tr>
+<tr><td><code>cargo rustc</code> extra args</td><td>✓</td><td>✓</td></tr>
+<tr><td><a href="../build_config/enum.CompileMode.html" title="enum cargo::core::compiler::build_config::CompileMode"><code>CompileMode</code></a></td><td>✓</td><td>✓</td></tr>
+<tr><td>Target Name</td><td>✓</td><td>✓</td></tr>
+<tr><td>TargetKind (bin/lib/etc.)</td><td>✓</td><td>✓</td></tr>
+<tr><td>Enabled Features</td><td>✓</td><td>✓</td></tr>
+<tr><td>Immediate dependency’s hashes</td><td>✓<sup id="fnref1"><a href="#fn1">1</a></sup></td><td>✓</td></tr>
+<tr><td><a href="../compile_kind/enum.CompileKind.html" title="enum cargo::core::compiler::compile_kind::CompileKind"><code>CompileKind</code></a> (host/target)</td><td>✓</td><td>✓</td></tr>
+<tr><td>__CARGO_DEFAULT_LIB_METADATA<sup id="fnref2"><a href="#fn2">2</a></sup></td><td></td><td>✓</td></tr>
+<tr><td>package_id</td><td></td><td>✓</td></tr>
+<tr><td>authors, description, homepage, repo</td><td>✓</td><td></td></tr>
+<tr><td>Target src path relative to ws</td><td>✓</td><td></td></tr>
+<tr><td>Target flags (test/bench/for_host/edition)</td><td>✓</td><td></td></tr>
+<tr><td>-C incremental=… flag</td><td>✓</td><td></td></tr>
+<tr><td>mtime of sources</td><td>✓<sup id="fnref3"><a href="#fn3">3</a></sup></td><td></td></tr>
+<tr><td>RUSTFLAGS/RUSTDOCFLAGS</td><td>✓</td><td></td></tr>
+<tr><td><a href="../lto/enum.Lto.html" title="enum cargo::core::compiler::lto::Lto"><code>Lto</code></a> flags</td><td>✓</td><td>✓</td></tr>
+<tr><td>config settings<sup id="fnref4"><a href="#fn4">4</a></sup></td><td>✓</td><td></td></tr>
+<tr><td>is_std</td><td></td><td>✓</td></tr>
+<tr><td><code>[lints]</code> table<sup id="fnref5"><a href="#fn5">5</a></sup></td><td>✓</td><td></td></tr>
+</tbody></table>
+</div>
+<p>When deciding what should go in the Metadata vs the Fingerprint, consider
+that some files (like dylibs) do not have a hash in their filename. Thus,
+if a value changes, only the fingerprint will detect the change (consider,
+for example, swapping between different features). Fields that are only in
+Metadata generally aren’t relevant to the fingerprint because they
+fundamentally change the output (like target vs host changes the directory
+where it is emitted).</p>
+<h3 id="fingerprint-files"><a href="#fingerprint-files">Fingerprint files</a></h3>
+<p>Fingerprint information is stored in the
+<code>target/{debug,release}/.fingerprint/</code> directory. Each Unit is stored in a
+separate directory. Each Unit directory contains:</p>
+<ul>
+<li>A file with a 16 hex-digit hash. This is the Fingerprint hash, used for
+quick loading and comparison.</li>
+<li>A <code>.json</code> file that contains details about the Fingerprint. This is only
+used to log details about <em>why</em> a fingerprint is considered dirty.
+<code>CARGO_LOG=cargo::core::compiler::fingerprint=trace cargo build</code> can be
+used to display this log information.</li>
+<li>A “dep-info” file which is a translation of rustc’s <code>*.d</code> dep-info files
+to a Cargo-specific format that tweaks file names and is optimized for
+reading quickly.</li>
+<li>An <code>invoked.timestamp</code> file whose filesystem mtime is updated every time
+the Unit is built. This is used for capturing the time when the build
+starts, to detect if files are changed in the middle of the build. See
+below for more details.</li>
+</ul>
+<p>Note that some units are a little different. A Unit for <em>running</em> a build
+script or for <code>rustdoc</code> does not have a dep-info file (it’s not
+applicable). Build script <code>invoked.timestamp</code> files are in the build
+output directory.</p>
+<h3 id="fingerprint-calculation"><a href="#fingerprint-calculation">Fingerprint calculation</a></h3>
+<p>After the list of Units has been calculated, the Units are added to the
+<a href="../job_queue/struct.JobQueue.html" title="struct cargo::core::compiler::job_queue::JobQueue"><code>JobQueue</code></a>. As each one is added, the fingerprint is calculated, and the
+dirty/fresh status is recorded. A closure is used to update the fingerprint
+on-disk when the Unit successfully finishes. The closure will recompute the
+Fingerprint based on the updated information. If the Unit fails to compile,
+the fingerprint is not updated.</p>
+<p>Fingerprints are cached in the <a href="../context/struct.Context.html" title="struct cargo::core::compiler::context::Context"><code>Context</code></a>. This makes computing
+Fingerprints faster, but also is necessary for properly updating
+dependency information. Since a Fingerprint includes the Fingerprints of
+all dependencies, when it is updated, by using <code>Arc</code> clones, it
+automatically picks up the updates to its dependencies.</p>
+<h4 id="dep-info-files"><a href="#dep-info-files">dep-info files</a></h4>
+<p>Cargo has several kinds of “dep info” files:</p>
+<ul>
+<li>dep-info files generated by <code>rustc</code>.</li>
+<li>Fingerprint dep-info files translated from the first one.</li>
+<li>dep-info for external build system integration.</li>
+<li>Unstable <code>-Zbinary-dep-depinfo</code>.</li>
+</ul>
+<h5 id="rustc-dep-info-files"><a href="#rustc-dep-info-files"><code>rustc</code> dep-info files</a></h5>
+<p>Cargo passes the <code>--emit=dep-info</code> flag to <code>rustc</code> so that <code>rustc</code> will
+generate a “dep info” file (with the <code>.d</code> extension). This is a
+Makefile-like syntax that includes all of the source files used to build
+the crate. This file is used by Cargo to know which files to check to see
+if the crate will need to be rebuilt. Example:</p>
+<div class="example-wrap"><pre class="language-makefile"><code>/path/to/target/debug/deps/cargo-b6219d178925203d: src/bin/main.rs src/bin/cargo/cli.rs # … etc.
+</code></pre></div><h5 id="fingerprint-dep-info-files"><a href="#fingerprint-dep-info-files">Fingerprint dep-info files</a></h5>
+<p>After <code>rustc</code> exits successfully, Cargo will read the first kind of dep
+info file and translate it into a binary format that is stored in the
+fingerprint directory (<a href="fn.translate_dep_info.html" title="fn cargo::core::compiler::fingerprint::translate_dep_info"><code>translate_dep_info</code></a>).</p>
+<p>These are used to quickly scan for any changed files. The mtime of the
+fingerprint dep-info file itself is used as the reference for comparing the
+source files to determine if any of the source files have been modified
+(see <a href="#mtime-comparison">below</a> for more detail).</p>
+<p>Note that Cargo parses the special <code># env-var:...</code> comments in dep-info
+files to learn about environment variables that the rustc compile depends on.
+Cargo then later uses this to trigger a recompile if a referenced env var
+changes (even if the source didn’t change).</p>
+<h5 id="dep-info-files-for-build-system-integration"><a href="#dep-info-files-for-build-system-integration">dep-info files for build system integration.</a></h5>
+<p>There is also a third dep-info file. Cargo will extend the file created by
+rustc with some additional information and saves this into the output
+directory. This is intended for build system integration. See the
+<a href="../output_depinfo/fn.output_depinfo.html" title="fn cargo::core::compiler::output_depinfo::output_depinfo"><code>output_depinfo</code></a> function for more detail.</p>
+<h5 id="-zbinary-dep-depinfo"><a href="#-zbinary-dep-depinfo">-Zbinary-dep-depinfo</a></h5>
+<p><code>rustc</code> has an experimental flag <code>-Zbinary-dep-depinfo</code>. This causes
+<code>rustc</code> to include binary files (like rlibs) in the dep-info file. This is
+primarily to support rustc development, so that Cargo can check the
+implicit dependency to the standard library (which lives in the sysroot).
+We want Cargo to recompile whenever the standard library rlib/dylibs
+change, and this is a generic mechanism to make that work.</p>
+<h4 id="mtime-comparison"><a href="#mtime-comparison">Mtime comparison</a></h4>
+<p>The use of modification timestamps is the most common way a unit will be
+determined to be dirty or fresh between builds. There are many subtle
+issues and edge cases with mtime comparisons. This gives a high-level
+overview, but you’ll need to read the code for the gritty details. Mtime
+handling is different for different unit kinds. The different styles are
+driven by the <a href="struct.Fingerprint.html#structfield.local" title="field cargo::core::compiler::fingerprint::Fingerprint::local"><code>Fingerprint::local</code></a> field, which is set based on the unit
+kind.</p>
+<p>The status of whether or not the mtime is “stale” or “up-to-date” is
+stored in <a href="struct.Fingerprint.html#structfield.fs_status" title="field cargo::core::compiler::fingerprint::Fingerprint::fs_status"><code>Fingerprint::fs_status</code></a>.</p>
+<p>All units will compare the mtime of its newest output file with the mtimes
+of the outputs of all its dependencies. If any output file is missing,
+then the unit is stale. If any dependency is newer, the unit is stale.</p>
+<h5 id="normal-package-mtime-handling"><a href="#normal-package-mtime-handling">Normal package mtime handling</a></h5>
+<p><a href="enum.LocalFingerprint.html#variant.CheckDepInfo" title="variant cargo::core::compiler::fingerprint::LocalFingerprint::CheckDepInfo"><code>LocalFingerprint::CheckDepInfo</code></a> is used for checking the mtime of
+packages. It compares the mtime of the input files (the source files) to
+the mtime of the dep-info file (which is written last after a build is
+finished). If the dep-info is missing, the unit is stale (it has never
+been built). The list of input files comes from the dep-info file. See the
+section above for details on dep-info files.</p>
+<p>Also note that although registry and git packages use <a href="enum.LocalFingerprint.html#variant.CheckDepInfo" title="variant cargo::core::compiler::fingerprint::LocalFingerprint::CheckDepInfo"><code>CheckDepInfo</code></a>, none
+of their source files are included in the dep-info (see
+<a href="fn.translate_dep_info.html" title="fn cargo::core::compiler::fingerprint::translate_dep_info"><code>translate_dep_info</code></a>), so for those kinds no mtime checking is done
+(unless <code>-Zbinary-dep-depinfo</code> is used). Repository and git packages are
+static, so there is no need to check anything.</p>
+<p>When a build is complete, the mtime of the dep-info file in the
+fingerprint directory is modified to rewind it to the time when the build
+started. This is done by creating an <code>invoked.timestamp</code> file when the
+build starts to capture the start time. The mtime is rewound to the start
+to handle the case where the user modifies a source file while a build is
+running. Cargo can’t know whether or not the file was included in the
+build, so it takes a conservative approach of assuming the file was <em>not</em>
+included, and it should be rebuilt during the next build.</p>
+<h5 id="rustdoc-mtime-handling"><a href="#rustdoc-mtime-handling">Rustdoc mtime handling</a></h5>
+<p>Rustdoc does not emit a dep-info file, so Cargo currently has a relatively
+simple system for detecting rebuilds. <a href="enum.LocalFingerprint.html#variant.Precalculated" title="variant cargo::core::compiler::fingerprint::LocalFingerprint::Precalculated"><code>LocalFingerprint::Precalculated</code></a> is
+used for rustdoc units. For registry packages, this is the package
+version. For git packages, it is the git hash. For path packages, it is
+the a string of the mtime of the newest file in the package.</p>
+<p>There are some known bugs with how this works, so it should be improved at
+some point.</p>
+<h5 id="build-script-mtime-handling"><a href="#build-script-mtime-handling">Build script mtime handling</a></h5>
+<p>Build script mtime handling runs in different modes. There is the “old
+style” where the build script does not emit any <code>rerun-if</code> directives. In
+this mode, Cargo will use <a href="enum.LocalFingerprint.html#variant.Precalculated" title="variant cargo::core::compiler::fingerprint::LocalFingerprint::Precalculated"><code>LocalFingerprint::Precalculated</code></a>. See the
+“rustdoc” section above how it works.</p>
+<p>In the new-style, each <code>rerun-if</code> directive is translated to the
+corresponding <a href="enum.LocalFingerprint.html" title="enum cargo::core::compiler::fingerprint::LocalFingerprint"><code>LocalFingerprint</code></a> variant. The <a href="enum.LocalFingerprint.html#variant.RerunIfChanged" title="variant cargo::core::compiler::fingerprint::LocalFingerprint::RerunIfChanged"><code>RerunIfChanged</code></a> variant
+compares the mtime of the given filenames against the mtime of the
+“output” file.</p>
+<p>Similar to normal units, the build script “output” file mtime is rewound
+to the time just before the build script is executed to handle mid-build
+modifications.</p>
+<h3 id="considerations-for-inclusion-in-a-fingerprint"><a href="#considerations-for-inclusion-in-a-fingerprint">Considerations for inclusion in a fingerprint</a></h3>
+<p>Over time we’ve realized a few items which historically were included in
+fingerprint hashings should not actually be included. Examples are:</p>
+<ul>
+<li>
+<p>Modification time values. We strive to never include a modification time
+inside a <code>Fingerprint</code> to get hashed into an actual value. While
+theoretically fine to do, in practice this causes issues with common
+applications like Docker. Docker, after a layer is built, will zero out
+the nanosecond part of all filesystem modification times. This means that
+the actual modification time is different for all build artifacts, which
+if we tracked the actual values of modification times would cause
+unnecessary recompiles. To fix this we instead only track paths which are
+relevant. These paths are checked dynamically to see if they’re up to
+date, and the modification time doesn’t make its way into the fingerprint
+hash.</p>
+</li>
+<li>
+<p>Absolute path names. We strive to maintain a property where if you rename
+a project directory Cargo will continue to preserve all build artifacts
+and reuse the cache. This means that we can’t ever hash an absolute path
+name. Instead we always hash relative path names and the “root” is passed
+in at runtime dynamically. Some of this is best effort, but the general
+idea is that we assume all accesses within a crate stay within that
+crate.</p>
+</li>
+</ul>
+<p>These are pretty tricky to test for unfortunately, but we should have a good
+test suite nowadays and lord knows Cargo gets enough testing in the wild!</p>
+<h3 id="build-scripts"><a href="#build-scripts">Build scripts</a></h3>
+<p>The <em>running</em> of a build script (<a href="../build_config/enum.CompileMode.html#variant.RunCustomBuild" title="variant cargo::core::compiler::build_config::CompileMode::RunCustomBuild"><code>CompileMode::RunCustomBuild</code></a>) is treated
+significantly different than all other Unit kinds. It has its own function
+for calculating the Fingerprint (<a href="fn.calculate_run_custom_build.html" title="fn cargo::core::compiler::fingerprint::calculate_run_custom_build"><code>calculate_run_custom_build</code></a>) and has some
+unique considerations. It does not track the same information as a normal
+Unit. The information tracked depends on the <code>rerun-if-changed</code> and
+<code>rerun-if-env-changed</code> statements produced by the build script. If the
+script does not emit either of these statements, the Fingerprint runs in
+“old style” mode where an mtime change of <em>any</em> file in the package will
+cause the build script to be re-run. Otherwise, the fingerprint <em>only</em>
+tracks the individual “rerun-if” items listed by the build script.</p>
+<p>The “rerun-if” statements from a <em>previous</em> build are stored in the build
+output directory in a file called <code>output</code>. Cargo parses this file when
+the Unit for that build script is prepared for the <a href="../job_queue/struct.JobQueue.html" title="struct cargo::core::compiler::job_queue::JobQueue"><code>JobQueue</code></a>. The
+Fingerprint code can then use that information to compute the Fingerprint
+and compare against the old fingerprint hash.</p>
+<p>Care must be taken with build script Fingerprints because the
+<a href="struct.Fingerprint.html#structfield.local" title="field cargo::core::compiler::fingerprint::Fingerprint::local"><code>Fingerprint::local</code></a> value may be changed after the build script runs
+(such as if the build script adds or removes “rerun-if” items).</p>
+<p>Another complication is if a build script is overridden. In that case, the
+fingerprint is the hash of the output of the override.</p>
+<h3 id="special-considerations"><a href="#special-considerations">Special considerations</a></h3>
+<p>Registry dependencies do not track the mtime of files. This is because
+registry dependencies are not expected to change (if a new version is
+used, the Package ID will change, causing a rebuild). Cargo currently
+partially works with Docker caching. When a Docker image is built, it has
+normal mtime information. However, when a step is cached, the nanosecond
+portions of all files is zeroed out. Currently this works, but care must
+be taken for situations like these.</p>
+<p>HFS on macOS only supports 1 second timestamps. This causes a significant
+number of problems, particularly with Cargo’s testsuite which does rapid
+builds in succession. Other filesystems have various degrees of
+resolution.</p>
+<p>Various weird filesystems (such as network filesystems) also can cause
+complications. Network filesystems may track the time on the server
+(except when the time is set manually such as with
+<code>filetime::set_file_times</code>). Not all filesystems support modifying the
+mtime.</p>
+<p>See the <a href="https://github.com/rust-lang/cargo/issues?q=is%3Aissue+is%3Aopen+label%3AA-rebuild-detection"><code>A-rebuild-detection</code></a> label on the issue tracker for more.</p>
+<div class="footnotes"><hr><ol><li id="fn1"><p>Build script and bin dependencies are not included.&nbsp;<a href="#fnref1">↩</a></p></li><li id="fn2"><p><code>__CARGO_DEFAULT_LIB_METADATA</code> is set by rustbuild to embed the
+release channel (bootstrap/stable/beta/nightly) in libstd.&nbsp;<a href="#fnref2">↩</a></p></li><li id="fn3"><p>See below for details on mtime tracking.&nbsp;<a href="#fnref3">↩</a></p></li><li id="fn4"><p>Config settings that are not otherwise captured anywhere else.
+Currently, this is only <code>doc.extern-map</code>.&nbsp;<a href="#fnref4">↩</a></p></li><li id="fn5"><p>Via <a href="../../manifest/struct.Manifest.html#method.lint_rustflags" title="method cargo::core::manifest::Manifest::lint_rustflags"><code>Manifest::lint_rustflags</code></a>&nbsp;<a href="#fnref5">↩</a></p></li></ol></div></div></details><h2 id="reexports" class="small-section-header"><a href="#reexports">Re-exports</a></h2><ul class="item-table"><li><div class="item-name" id="reexport.DirtyReason"><code>pub use dirty_reason::<a class="enum" href="dirty_reason/enum.DirtyReason.html" title="enum cargo::core::compiler::fingerprint::dirty_reason::DirtyReason">DirtyReason</a>;</code></div></li></ul><h2 id="modules" class="small-section-header"><a href="#modules">Modules</a></h2><ul class="item-table"><li><div class="item-name"><a class="mod" href="dirty_reason/index.html" title="mod cargo::core::compiler::fingerprint::dirty_reason">dirty_reason</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="structs" class="small-section-header"><a href="#structs">Structs</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.DepFingerprint.html" title="struct cargo::core::compiler::fingerprint::DepFingerprint">DepFingerprint</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Dependency edge information for fingerprints. This is generated for each
+dependency and is stored in a <a href="struct.Fingerprint.html" title="struct cargo::core::compiler::fingerprint::Fingerprint"><code>Fingerprint</code></a>.</div></li><li><div class="item-name"><a class="struct" href="struct.EncodedDepInfo.html" title="struct cargo::core::compiler::fingerprint::EncodedDepInfo">EncodedDepInfo</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Same as <a href="struct.RustcDepInfo.html" title="struct cargo::core::compiler::fingerprint::RustcDepInfo"><code>RustcDepInfo</code></a> except avoids absolute paths as much as possible to
+allow moving around the target directory.</div></li><li><div class="item-name"><a class="struct" href="struct.Fingerprint.html" title="struct cargo::core::compiler::fingerprint::Fingerprint">Fingerprint</a></div><div class="desc docblock-short">A fingerprint can be considered to be a “short string” representing the
+state of a world for a package.</div></li><li><div class="item-name"><a class="struct" href="struct.RustcDepInfo.html" title="struct cargo::core::compiler::fingerprint::RustcDepInfo">RustcDepInfo</a></div><div class="desc docblock-short">The representation of the <code>.d</code> dep-info file generated by rustc</div></li></ul><h2 id="enums" class="small-section-header"><a href="#enums">Enums</a></h2><ul class="item-table"><li><div class="item-name"><a class="enum" href="enum.DepInfoPathType.html" title="enum cargo::core::compiler::fingerprint::DepInfoPathType">DepInfoPathType</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Tells the associated path in <a href="struct.EncodedDepInfo.html#structfield.files" title="field cargo::core::compiler::fingerprint::EncodedDepInfo::files"><code>EncodedDepInfo::files</code></a> is relative to package root,
+target root, or absolute.</div></li><li><div class="item-name"><a class="enum" href="enum.FsStatus.html" title="enum cargo::core::compiler::fingerprint::FsStatus">FsStatus</a></div><div class="desc docblock-short">Indication of the status on the filesystem for a particular unit.</div></li><li><div class="item-name"><a class="enum" href="enum.LocalFingerprint.html" title="enum cargo::core::compiler::fingerprint::LocalFingerprint">LocalFingerprint</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">A <code>LocalFingerprint</code> represents something that we use to detect direct
+changes to a <code>Fingerprint</code>.</div></li><li><div class="item-name"><a class="enum" href="enum.StaleItem.html" title="enum cargo::core::compiler::fingerprint::StaleItem">StaleItem</a></div><div class="desc docblock-short">See <a href="enum.FsStatus.html#variant.StaleItem" title="variant cargo::core::compiler::fingerprint::FsStatus::StaleItem"><code>FsStatus::StaleItem</code></a>.</div></li></ul><h2 id="functions" class="small-section-header"><a href="#functions">Functions</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.build_script_local_fingerprints.html" title="fn cargo::core::compiler::fingerprint::build_script_local_fingerprints">build_script_local_fingerprints</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Get ready to compute the <a href="enum.LocalFingerprint.html" title="enum cargo::core::compiler::fingerprint::LocalFingerprint"><code>LocalFingerprint</code></a> values
+for a <a href="../build_config/enum.CompileMode.html#variant.RunCustomBuild" title="variant cargo::core::compiler::build_config::CompileMode::RunCustomBuild"><code>RunCustomBuild</code></a> unit.</div></li><li><div class="item-name"><a class="fn" href="fn.build_script_override_fingerprint.html" title="fn cargo::core::compiler::fingerprint::build_script_override_fingerprint">build_script_override_fingerprint</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Create a <a href="enum.LocalFingerprint.html" title="enum cargo::core::compiler::fingerprint::LocalFingerprint"><code>LocalFingerprint</code></a> for an overridden build script.
+Returns None if it is not overridden.</div></li><li><div class="item-name"><a class="fn" href="fn.calculate.html" title="fn cargo::core::compiler::fingerprint::calculate">calculate</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Calculates the fingerprint for a <a href="../unit/struct.Unit.html" title="struct cargo::core::compiler::unit::Unit"><code>Unit</code></a>.</div></li><li><div class="item-name"><a class="fn" href="fn.calculate_normal.html" title="fn cargo::core::compiler::fingerprint::calculate_normal">calculate_normal</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Calculate a fingerprint for a “normal” unit, or anything that’s not a build
+script. This is an internal helper of <a href="fn.calculate.html" title="fn cargo::core::compiler::fingerprint::calculate"><code>calculate</code></a>, don’t call directly.</div></li><li><div class="item-name"><a class="fn" href="fn.calculate_run_custom_build.html" title="fn cargo::core::compiler::fingerprint::calculate_run_custom_build">calculate_run_custom_build</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Calculate a fingerprint for an “execute a build script” unit.  This is an
+internal helper of <a href="fn.calculate.html" title="fn cargo::core::compiler::fingerprint::calculate"><code>calculate</code></a>, don’t call directly.</div></li><li><div class="item-name"><a class="fn" href="fn.compare_old_fingerprint.html" title="fn cargo::core::compiler::fingerprint::compare_old_fingerprint">compare_old_fingerprint</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Reads the value from the old fingerprint hash file and compare.</div></li><li><div class="item-name"><a class="fn" href="fn.dep_info_loc.html" title="fn cargo::core::compiler::fingerprint::dep_info_loc">dep_info_loc</a></div><div class="desc docblock-short">Returns the location that the dep-info file will show up at
+for the <a href="../unit/struct.Unit.html" title="struct cargo::core::compiler::unit::Unit"><code>Unit</code></a> specified.</div></li><li><div class="item-name"><a class="fn" href="fn.find_stale_file.html" title="fn cargo::core::compiler::fingerprint::find_stale_file">find_stale_file</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">The <code>reference</code> file is considered as “stale” if any file from <code>paths</code> has a newer mtime.</div></li><li><div class="item-name"><a class="fn" href="fn.local_fingerprints_deps.html" title="fn cargo::core::compiler::fingerprint::local_fingerprints_deps">local_fingerprints_deps</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Compute the <a href="enum.LocalFingerprint.html" title="enum cargo::core::compiler::fingerprint::LocalFingerprint"><code>LocalFingerprint</code></a> values for a <a href="../build_config/enum.CompileMode.html#variant.RunCustomBuild" title="variant cargo::core::compiler::build_config::CompileMode::RunCustomBuild"><code>RunCustomBuild</code></a> unit for
+non-overridden new-style build scripts only. This is only used when <code>deps</code>
+is already known to have a nonempty <code>rerun-if-*</code> somewhere.</div></li><li><div class="item-name"><a class="fn" href="fn.log_compare.html" title="fn cargo::core::compiler::fingerprint::log_compare">log_compare</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Logs the result of fingerprint comparison.</div></li><li><div class="item-name"><a class="fn" href="fn.parse_dep_info.html" title="fn cargo::core::compiler::fingerprint::parse_dep_info">parse_dep_info</a></div><div class="desc docblock-short">Parses Cargo’s internal <a href="struct.EncodedDepInfo.html" title="struct cargo::core::compiler::fingerprint::EncodedDepInfo"><code>EncodedDepInfo</code></a> structure that was previously
+serialized to disk.</div></li><li><div class="item-name"><a class="fn" href="fn.parse_rustc_dep_info.html" title="fn cargo::core::compiler::fingerprint::parse_rustc_dep_info">parse_rustc_dep_info</a></div><div class="desc docblock-short">Parse the <code>.d</code> dep-info file generated by rustc.</div></li><li><div class="item-name"><a class="fn" href="fn.pkg_fingerprint.html" title="fn cargo::core::compiler::fingerprint::pkg_fingerprint">pkg_fingerprint</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Calcuates the fingerprint of a unit thats contains no dep-info files.</div></li><li><div class="item-name"><a class="fn" href="fn.prepare_init.html" title="fn cargo::core::compiler::fingerprint::prepare_init">prepare_init</a></div><div class="desc docblock-short">Prepare for work when a package starts to build</div></li><li><div class="item-name"><a class="fn" href="fn.prepare_target.html" title="fn cargo::core::compiler::fingerprint::prepare_target">prepare_target</a></div><div class="desc docblock-short">Determines if a <a href="../unit/struct.Unit.html" title="struct cargo::core::compiler::unit::Unit"><code>Unit</code></a> is up-to-date, and if not prepares necessary work to
+update the persisted fingerprint.</div></li><li><div class="item-name"><a class="fn" href="fn.target_root.html" title="fn cargo::core::compiler::fingerprint::target_root">target_root</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Returns an absolute path that target directory.
+All paths are rewritten to be relative to this.</div></li><li><div class="item-name"><a class="fn" href="fn.translate_dep_info.html" title="fn cargo::core::compiler::fingerprint::translate_dep_info">translate_dep_info</a></div><div class="desc docblock-short">Parses the dep-info file coming out of rustc into a Cargo-specific format.</div></li><li><div class="item-name"><a class="fn" href="fn.write_fingerprint.html" title="fn cargo::core::compiler::fingerprint::write_fingerprint">write_fingerprint</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Writes the short fingerprint hash value to <code>&lt;loc&gt;</code>
+and logs detailed JSON information to <code>&lt;loc&gt;.json</code>.</div></li></ul></section></div></main></body></html>

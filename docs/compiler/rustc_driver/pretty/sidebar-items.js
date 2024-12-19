@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["print_after_hir_lowering","print_after_parsing"]};

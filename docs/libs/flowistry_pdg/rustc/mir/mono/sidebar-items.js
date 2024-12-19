@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["InstantiationMode","Linkage","MonoItem","Visibility"],"struct":["CodegenUnit","CodegenUnitNameBuilder","MonoItemData"]};

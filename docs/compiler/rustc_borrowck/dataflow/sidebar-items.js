@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["calculate_borrows_out_of_scope_at_location"],"macro":["impl_visitable"],"struct":["BorrowIndex","BorrowckAnalyses","Borrows","OutOfScopePrecomputer"],"type":["BorrowckFlowState","BorrowckResults"]};

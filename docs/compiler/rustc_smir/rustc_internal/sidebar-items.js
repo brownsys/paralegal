@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["adt_def","alias_def","br_named_def","closure_def","crate_item","crate_num","fn_def","foreign_def","generator_def","impl_def","item_def_id","opaque","param_def","run","trait_def","with_tables"],"struct":["CrateNum","DefId"],"type":["Opaque"]};

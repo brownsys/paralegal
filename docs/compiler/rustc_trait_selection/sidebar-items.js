@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["errors","infer","solve","traits"],"static":["DEFAULT_LOCALE_RESOURCE"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["OpenMode"],"fn":["amend_authentication_hints","cargo_config_to_gitoxide_overrides","open_repo","reinitialize","translate_progress_to_bar","with_retry_and_progress"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["COMMENT","COMPILE_FLAGS_HEADER","LLVM_COMPONENTS_HEADER"],"fn":["check","iter_header"],"struct":["RevisionInfo"]};

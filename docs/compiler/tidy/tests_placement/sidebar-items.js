@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ALLOWED_PATH","FORBIDDEN_PATH"],"fn":["check"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["iter"],"struct":["VecLinkedListIterator"],"trait":["LinkElem","Links"]};

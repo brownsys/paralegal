@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["collection_impls","leb128","opaque","serialize"],"trait":["Decodable","Decoder","Encodable","Encoder"]};

@@ -1,0 +1,254 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Generate files suitable for use with Graphviz"><title>rustc_graphviz - Rust</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/SourceSerif4-Bold-a2c9cd1067f8b328.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../static.files/rustdoc-47e7ab555ef2818a.css" id="mainThemeStyle"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="rustc_graphviz" data-themes="" data-resource-suffix="" data-rustdoc-version="1.74.0-nightly (58eefc33a 2023-08-24)" data-channel="nightly" data-search-js="search-6dfdfced5eff6596.js" data-settings-js="settings-de11bff964e9d4e5.js" data-settings-css="settings-8c76f75bfb6bd192.css" data-theme-light-css="light-b2d31d2efc7e9b67.css" data-theme-dark-css="dark-3388a2fb2ef8066b.css" data-theme-ayu-css="ayu-8c3c66a6cf12cb2f.css" ><script src="../static.files/storage-db41da1a38ea3cb8.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-ef3a2de404864b0b.js"></script><noscript><link rel="stylesheet" media="(prefers-color-scheme:light)" href="../static.files/light-b2d31d2efc7e9b67.css"><link rel="stylesheet" media="(prefers-color-scheme:dark)" href="../static.files/dark-3388a2fb2ef8066b.css"><link rel="stylesheet" href="../static.files/noscript-cffde32267a19fd6.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle">&#9776;</button><a class="logo-container" href="../rustc_graphviz/index.html"><img class="rust-logo" src="../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2></h2></nav><nav class="sidebar"><a class="logo-container" href="../rustc_graphviz/index.html"><img class="rust-logo" src="../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2 class="location"><a href="#">Crate rustc_graphviz</a></h2><div class="sidebar-elems"><ul class="block"><li class="version">Version 1.74.0-nightly	(58eefc33a	2023-08-24)</li><li><a id="all-types" href="all.html">All Items</a></li></ul><section><ul class="block"><li><a href="#structs">Structs</a></li><li><a href="#enums">Enums</a></li><li><a href="#traits">Traits</a></li><li><a href="#functions">Functions</a></li><li><a href="#types">Type Aliases</a></li></ul></section></div></nav><main><div class="width-limiter"><nav class="sub"><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="main-heading"><h1>Crate <a class="mod" href="#">rustc_graphviz</a><button id="copy-path" title="Copy item path to clipboard"><img src="../static.files/clipboard-7571035ce49a181d.svg" width="19" height="18" alt="Copy item path"></button></h1><span class="out-of-band"><a class="src" href="../src/rustc_graphviz/lib.rs.html#1-699">source</a> · <button id="toggle-all-docs" title="collapse all docs">[<span>&#x2212;</span>]</button></span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Generate files suitable for use with <a href="https://www.graphviz.org/">Graphviz</a></p>
+<p>The <code>render</code> function generates output (e.g., an <code>output.dot</code> file) for
+use with <a href="https://www.graphviz.org/">Graphviz</a> by walking a labeled
+graph. (Graphviz can then automatically lay out the nodes and edges
+of the graph, and also optionally render the graph as an image or
+other <a href="https://www.graphviz.org/docs/outputs">output formats</a>, such as SVG.)</p>
+<p>Rather than impose some particular graph data structure on clients,
+this library exposes two traits that clients can implement on their
+own structs before handing them over to the rendering function.</p>
+<p>Note: This library does not yet provide access to the full
+expressiveness of the <a href="https://www.graphviz.org/doc/info/lang.html">DOT language</a>.
+For example, there are many <a href="https://www.graphviz.org/doc/info/attrs.html">attributes</a>
+related to providing layout hints (e.g., left-to-right versus top-down, which
+algorithm to use, etc). The current intention of this library is to
+emit a human-readable .dot file with very regular structure suitable
+for easy post-processing.</p>
+<h2 id="examples"><a href="#examples">Examples</a></h2>
+<p>The first example uses a very simple graph representation: a list of
+pairs of ints, representing the edges (the node set is implicit).
+Each node label is derived directly from the int representing the node,
+while the edge labels are all empty strings.</p>
+<p>This example also illustrates how to use <code>Cow&lt;[T]&gt;</code> to return
+an owned vector or a borrowed slice as appropriate: we construct the
+node vector from scratch, but borrow the edge list (rather than
+constructing a copy of all the edges from scratch).</p>
+<p>The output from this example renders five nodes, with the first four
+forming a diamond-shaped acyclic graph and then pointing to the fifth
+which is cyclic.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="attr">#![feature(rustc_private)]
+
+</span><span class="kw">use </span>std::io::Write;
+<span class="kw">use </span>rustc_graphviz <span class="kw">as </span>dot;
+
+<span class="kw">type </span>Nd = isize;
+<span class="kw">type </span>Ed = (isize,isize);
+<span class="kw">struct </span>Edges(Vec&lt;Ed&gt;);
+
+<span class="kw">pub fn </span>render_to&lt;W: Write&gt;(output: <span class="kw-2">&amp;mut </span>W) {
+    <span class="kw">let </span>edges = Edges(<span class="macro">vec!</span>[(<span class="number">0</span>,<span class="number">1</span>), (<span class="number">0</span>,<span class="number">2</span>), (<span class="number">1</span>,<span class="number">3</span>), (<span class="number">2</span>,<span class="number">3</span>), (<span class="number">3</span>,<span class="number">4</span>), (<span class="number">4</span>,<span class="number">4</span>)]);
+    dot::render(<span class="kw-2">&amp;</span>edges, output).unwrap()
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>&gt; dot::Labeller&lt;<span class="lifetime">&#39;a</span>&gt; <span class="kw">for </span>Edges {
+    <span class="kw">type </span>Node = Nd;
+    <span class="kw">type </span>Edge = Ed;
+    <span class="kw">fn </span>graph_id(<span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="self">self</span>) -&gt; dot::Id&lt;<span class="lifetime">&#39;a</span>&gt; { dot::Id::new(<span class="string">&quot;example1&quot;</span>).unwrap() }
+
+    <span class="kw">fn </span>node_id(<span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="self">self</span>, n: <span class="kw-2">&amp;</span>Nd) -&gt; dot::Id&lt;<span class="lifetime">&#39;a</span>&gt; {
+        dot::Id::new(<span class="macro">format!</span>(<span class="string">&quot;N{}&quot;</span>, <span class="kw-2">*</span>n)).unwrap()
+    }
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>&gt; dot::GraphWalk&lt;<span class="lifetime">&#39;a</span>&gt; <span class="kw">for </span>Edges {
+    <span class="kw">type </span>Node = Nd;
+    <span class="kw">type </span>Edge = Ed;
+    <span class="kw">fn </span>nodes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; dot::Nodes&lt;<span class="lifetime">&#39;a</span>,Nd&gt; {
+        <span class="comment">// (assumes that |N| \approxeq |E|)
+        </span><span class="kw">let </span><span class="kw-2">&amp;</span>Edges(<span class="kw-2">ref </span>v) = <span class="self">self</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>nodes = Vec::with_capacity(v.len());
+        <span class="kw">for </span><span class="kw-2">&amp;</span>(s,t) <span class="kw">in </span>v {
+            nodes.push(s); nodes.push(t);
+        }
+        nodes.sort();
+        nodes.dedup();
+        nodes.into()
+    }
+
+    <span class="kw">fn </span>edges(<span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="self">self</span>) -&gt; dot::Edges&lt;<span class="lifetime">&#39;a</span>,Ed&gt; {
+        <span class="kw">let </span><span class="kw-2">&amp;</span>Edges(<span class="kw-2">ref </span>edges) = <span class="self">self</span>;
+        (<span class="kw-2">&amp;</span>edges[..]).into()
+    }
+
+    <span class="kw">fn </span>source(<span class="kw-2">&amp;</span><span class="self">self</span>, e: <span class="kw-2">&amp;</span>Ed) -&gt; Nd { <span class="kw">let </span><span class="kw-2">&amp;</span>(s,<span class="kw">_</span>) = e; s }
+
+    <span class="kw">fn </span>target(<span class="kw-2">&amp;</span><span class="self">self</span>, e: <span class="kw-2">&amp;</span>Ed) -&gt; Nd { <span class="kw">let </span><span class="kw-2">&amp;</span>(<span class="kw">_</span>,t) = e; t }
+}
+</code></pre></div>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">pub fn </span>main() {
+    <span class="kw">use </span>std::fs::File;
+    <span class="kw">let </span><span class="kw-2">mut </span>f = File::create(<span class="string">&quot;example1.dot&quot;</span>).unwrap();
+    render_to(<span class="kw-2">&amp;mut </span>f)
+}</code></pre></div>
+<p>Output from first example (in <code>example1.dot</code>):</p>
+<div class="example-wrap"><pre class="language-dot"><code>digraph example1 {
+    N0[label=&quot;N0&quot;];
+    N1[label=&quot;N1&quot;];
+    N2[label=&quot;N2&quot;];
+    N3[label=&quot;N3&quot;];
+    N4[label=&quot;N4&quot;];
+    N0 -&gt; N1[label=&quot;&quot;];
+    N0 -&gt; N2[label=&quot;&quot;];
+    N1 -&gt; N3[label=&quot;&quot;];
+    N2 -&gt; N3[label=&quot;&quot;];
+    N3 -&gt; N4[label=&quot;&quot;];
+    N4 -&gt; N4[label=&quot;&quot;];
+}
+</code></pre></div>
+<p>The second example illustrates using <code>node_label</code> and <code>edge_label</code> to
+add labels to the nodes and edges in the rendered graph. The graph
+here carries both <code>nodes</code> (the label text to use for rendering a
+particular node), and <code>edges</code> (again a list of <code>(source,target)</code>
+indices).</p>
+<p>This example also illustrates how to use a type (in this case the edge
+type) that shares substructure with the graph: the edge type here is a
+direct reference to the <code>(source,target)</code> pair stored in the graph’s
+internal vector (rather than passing around a copy of the pair
+itself). Note that this implies that <code>fn edges(&amp;'a self)</code> must
+construct a fresh <code>Vec&lt;&amp;'a (usize,usize)&gt;</code> from the <code>Vec&lt;(usize,usize)&gt;</code>
+edges stored in <code>self</code>.</p>
+<p>Since both the set of nodes and the set of edges are always
+constructed from scratch via iterators, we use the <code>collect()</code> method
+from the <code>Iterator</code> trait to collect the nodes and edges into freshly
+constructed growable <code>Vec</code> values (rather than using <code>Cow</code> as in the
+first example above).</p>
+<p>The output from this example renders four nodes that make up the
+Hasse-diagram for the subsets of the set <code>{x, y}</code>. Each edge is
+labeled with the ⊆ character (specified using the HTML character
+entity <code>&amp;sube</code>).</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="attr">#![feature(rustc_private)]
+
+</span><span class="kw">use </span>std::io::Write;
+<span class="kw">use </span>rustc_graphviz <span class="kw">as </span>dot;
+
+<span class="kw">type </span>Nd = usize;
+<span class="kw">type </span>Ed&lt;<span class="lifetime">&#39;a</span>&gt; = <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>(usize, usize);
+<span class="kw">struct </span>Graph { nodes: Vec&lt;<span class="kw-2">&amp;</span><span class="lifetime">&#39;static </span>str&gt;, edges: Vec&lt;(usize,usize)&gt; }
+
+<span class="kw">pub fn </span>render_to&lt;W: Write&gt;(output: <span class="kw-2">&amp;mut </span>W) {
+    <span class="kw">let </span>nodes = <span class="macro">vec!</span>[<span class="string">&quot;{x,y}&quot;</span>,<span class="string">&quot;{x}&quot;</span>,<span class="string">&quot;{y}&quot;</span>,<span class="string">&quot;{}&quot;</span>];
+    <span class="kw">let </span>edges = <span class="macro">vec!</span>[(<span class="number">0</span>,<span class="number">1</span>), (<span class="number">0</span>,<span class="number">2</span>), (<span class="number">1</span>,<span class="number">3</span>), (<span class="number">2</span>,<span class="number">3</span>)];
+    <span class="kw">let </span>graph = Graph { nodes: nodes, edges: edges };
+
+    dot::render(<span class="kw-2">&amp;</span>graph, output).unwrap()
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>&gt; dot::Labeller&lt;<span class="lifetime">&#39;a</span>&gt; <span class="kw">for </span>Graph {
+    <span class="kw">type </span>Node = Nd;
+    <span class="kw">type </span>Edge = Ed&lt;<span class="lifetime">&#39;a</span>&gt;;
+    <span class="kw">fn </span>graph_id(<span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="self">self</span>) -&gt; dot::Id&lt;<span class="lifetime">&#39;a</span>&gt; { dot::Id::new(<span class="string">&quot;example2&quot;</span>).unwrap() }
+    <span class="kw">fn </span>node_id(<span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="self">self</span>, n: <span class="kw-2">&amp;</span>Nd) -&gt; dot::Id&lt;<span class="lifetime">&#39;a</span>&gt; {
+        dot::Id::new(<span class="macro">format!</span>(<span class="string">&quot;N{}&quot;</span>, n)).unwrap()
+    }
+    <span class="kw">fn </span>node_label(<span class="kw-2">&amp;</span><span class="self">self</span>, n: <span class="kw-2">&amp;</span>Nd) -&gt; dot::LabelText&lt;<span class="lifetime">&#39;_</span>&gt; {
+        dot::LabelText::LabelStr(<span class="self">self</span>.nodes[<span class="kw-2">*</span>n].into())
+    }
+    <span class="kw">fn </span>edge_label(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="kw">_</span>: <span class="kw-2">&amp;</span>Ed&lt;<span class="lifetime">&#39;_</span>&gt;) -&gt; dot::LabelText&lt;<span class="lifetime">&#39;_</span>&gt; {
+        dot::LabelText::LabelStr(<span class="string">&quot;&amp;sube;&quot;</span>.into())
+    }
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>&gt; dot::GraphWalk&lt;<span class="lifetime">&#39;a</span>&gt; <span class="kw">for </span>Graph {
+    <span class="kw">type </span>Node = Nd;
+    <span class="kw">type </span>Edge = Ed&lt;<span class="lifetime">&#39;a</span>&gt;;
+    <span class="kw">fn </span>nodes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; dot::Nodes&lt;<span class="lifetime">&#39;a</span>,Nd&gt; { (<span class="number">0</span>..<span class="self">self</span>.nodes.len()).collect() }
+    <span class="kw">fn </span>edges(<span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="self">self</span>) -&gt; dot::Edges&lt;<span class="lifetime">&#39;a</span>,Ed&lt;<span class="lifetime">&#39;a</span>&gt;&gt; { <span class="self">self</span>.edges.iter().collect() }
+    <span class="kw">fn </span>source(<span class="kw-2">&amp;</span><span class="self">self</span>, e: <span class="kw-2">&amp;</span>Ed&lt;<span class="lifetime">&#39;_</span>&gt;) -&gt; Nd { <span class="kw">let </span>&amp; <span class="kw-2">&amp;</span>(s,<span class="kw">_</span>) = e; s }
+    <span class="kw">fn </span>target(<span class="kw-2">&amp;</span><span class="self">self</span>, e: <span class="kw-2">&amp;</span>Ed&lt;<span class="lifetime">&#39;_</span>&gt;) -&gt; Nd { <span class="kw">let </span>&amp; <span class="kw-2">&amp;</span>(<span class="kw">_</span>,t) = e; t }
+}
+</code></pre></div>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">pub fn </span>main() {
+    <span class="kw">use </span>std::fs::File;
+    <span class="kw">let </span><span class="kw-2">mut </span>f = File::create(<span class="string">&quot;example2.dot&quot;</span>).unwrap();
+    render_to(<span class="kw-2">&amp;mut </span>f)
+}</code></pre></div>
+<p>The third example is similar to the second, except now each node and
+edge now carries a reference to the string label for each node as well
+as that node’s index. (This is another illustration of how to share
+structure with the graph itself, and why one might want to do so.)</p>
+<p>The output from this example is the same as the second example: the
+Hasse-diagram for the subsets of the set <code>{x, y}</code>.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="attr">#![feature(rustc_private)]
+
+</span><span class="kw">use </span>std::io::Write;
+<span class="kw">use </span>rustc_graphviz <span class="kw">as </span>dot;
+
+<span class="kw">type </span>Nd&lt;<span class="lifetime">&#39;a</span>&gt; = (usize, <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>str);
+<span class="kw">type </span>Ed&lt;<span class="lifetime">&#39;a</span>&gt; = (Nd&lt;<span class="lifetime">&#39;a</span>&gt;, Nd&lt;<span class="lifetime">&#39;a</span>&gt;);
+<span class="kw">struct </span>Graph { nodes: Vec&lt;<span class="kw-2">&amp;</span><span class="lifetime">&#39;static </span>str&gt;, edges: Vec&lt;(usize,usize)&gt; }
+
+<span class="kw">pub fn </span>render_to&lt;W: Write&gt;(output: <span class="kw-2">&amp;mut </span>W) {
+    <span class="kw">let </span>nodes = <span class="macro">vec!</span>[<span class="string">&quot;{x,y}&quot;</span>,<span class="string">&quot;{x}&quot;</span>,<span class="string">&quot;{y}&quot;</span>,<span class="string">&quot;{}&quot;</span>];
+    <span class="kw">let </span>edges = <span class="macro">vec!</span>[(<span class="number">0</span>,<span class="number">1</span>), (<span class="number">0</span>,<span class="number">2</span>), (<span class="number">1</span>,<span class="number">3</span>), (<span class="number">2</span>,<span class="number">3</span>)];
+    <span class="kw">let </span>graph = Graph { nodes: nodes, edges: edges };
+
+    dot::render(<span class="kw-2">&amp;</span>graph, output).unwrap()
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>&gt; dot::Labeller&lt;<span class="lifetime">&#39;a</span>&gt; <span class="kw">for </span>Graph {
+    <span class="kw">type </span>Node = Nd&lt;<span class="lifetime">&#39;a</span>&gt;;
+    <span class="kw">type </span>Edge = Ed&lt;<span class="lifetime">&#39;a</span>&gt;;
+    <span class="kw">fn </span>graph_id(<span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="self">self</span>) -&gt; dot::Id&lt;<span class="lifetime">&#39;a</span>&gt; { dot::Id::new(<span class="string">&quot;example3&quot;</span>).unwrap() }
+    <span class="kw">fn </span>node_id(<span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="self">self</span>, n: <span class="kw-2">&amp;</span>Nd&lt;<span class="lifetime">&#39;a</span>&gt;) -&gt; dot::Id&lt;<span class="lifetime">&#39;a</span>&gt; {
+        dot::Id::new(<span class="macro">format!</span>(<span class="string">&quot;N{}&quot;</span>, n.<span class="number">0</span>)).unwrap()
+    }
+    <span class="kw">fn </span>node_label(<span class="kw-2">&amp;</span><span class="self">self</span>, n: <span class="kw-2">&amp;</span>Nd&lt;<span class="lifetime">&#39;_</span>&gt;) -&gt; dot::LabelText&lt;<span class="lifetime">&#39;_</span>&gt; {
+        <span class="kw">let </span><span class="kw-2">&amp;</span>(i, <span class="kw">_</span>) = n;
+        dot::LabelText::LabelStr(<span class="self">self</span>.nodes[i].into())
+    }
+    <span class="kw">fn </span>edge_label(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="kw">_</span>: <span class="kw-2">&amp;</span>Ed&lt;<span class="lifetime">&#39;_</span>&gt;) -&gt; dot::LabelText&lt;<span class="lifetime">&#39;_</span>&gt; {
+        dot::LabelText::LabelStr(<span class="string">&quot;&amp;sube;&quot;</span>.into())
+    }
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>&gt; dot::GraphWalk&lt;<span class="lifetime">&#39;a</span>&gt; <span class="kw">for </span>Graph {
+    <span class="kw">type </span>Node = Nd&lt;<span class="lifetime">&#39;a</span>&gt;;
+    <span class="kw">type </span>Edge = Ed&lt;<span class="lifetime">&#39;a</span>&gt;;
+    <span class="kw">fn </span>nodes(<span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="self">self</span>) -&gt; dot::Nodes&lt;<span class="lifetime">&#39;a</span>,Nd&lt;<span class="lifetime">&#39;a</span>&gt;&gt; {
+        <span class="self">self</span>.nodes.iter().map(|s| <span class="kw-2">&amp;</span>s[..]).enumerate().collect()
+    }
+    <span class="kw">fn </span>edges(<span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span><span class="self">self</span>) -&gt; dot::Edges&lt;<span class="lifetime">&#39;a</span>,Ed&lt;<span class="lifetime">&#39;a</span>&gt;&gt; {
+        <span class="self">self</span>.edges.iter()
+            .map(|<span class="kw-2">&amp;</span>(i,j)|((i, <span class="kw-2">&amp;</span><span class="self">self</span>.nodes[i][..]),
+                          (j, <span class="kw-2">&amp;</span><span class="self">self</span>.nodes[j][..])))
+            .collect()
+    }
+    <span class="kw">fn </span>source(<span class="kw-2">&amp;</span><span class="self">self</span>, e: <span class="kw-2">&amp;</span>Ed&lt;<span class="lifetime">&#39;a</span>&gt;) -&gt; Nd&lt;<span class="lifetime">&#39;a</span>&gt; { <span class="kw">let </span><span class="kw-2">&amp;</span>(s,<span class="kw">_</span>) = e; s }
+    <span class="kw">fn </span>target(<span class="kw-2">&amp;</span><span class="self">self</span>, e: <span class="kw-2">&amp;</span>Ed&lt;<span class="lifetime">&#39;a</span>&gt;) -&gt; Nd&lt;<span class="lifetime">&#39;a</span>&gt; { <span class="kw">let </span><span class="kw-2">&amp;</span>(<span class="kw">_</span>,t) = e; t }
+}
+</code></pre></div>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">pub fn </span>main() {
+    <span class="kw">use </span>std::fs::File;
+    <span class="kw">let </span><span class="kw-2">mut </span>f = File::create(<span class="string">&quot;example3.dot&quot;</span>).unwrap();
+    render_to(<span class="kw-2">&amp;mut </span>f)
+}</code></pre></div>
+<h2 id="references"><a href="#references">References</a></h2>
+<ul>
+<li>
+<p><a href="https://www.graphviz.org/">Graphviz</a></p>
+</li>
+<li>
+<p><a href="https://www.graphviz.org/doc/info/lang.html">DOT language</a></p>
+</li>
+</ul>
+</div></details><h2 id="structs" class="small-section-header"><a href="#structs">Structs</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.Id.html" title="struct rustc_graphviz::Id">Id</a></div><div class="desc docblock-short"><code>Id</code> is a Graphviz <code>ID</code>.</div></li></ul><h2 id="enums" class="small-section-header"><a href="#enums">Enums</a></h2><ul class="item-table"><li><div class="item-name"><a class="enum" href="enum.LabelText.html" title="enum rustc_graphviz::LabelText">LabelText</a></div><div class="desc docblock-short">The text for a graphviz label on a node or edge.</div></li><li><div class="item-name"><a class="enum" href="enum.RenderOption.html" title="enum rustc_graphviz::RenderOption">RenderOption</a></div></li><li><div class="item-name"><a class="enum" href="enum.Style.html" title="enum rustc_graphviz::Style">Style</a></div><div class="desc docblock-short">The style for a node or edge.
+See <a href="https://www.graphviz.org/docs/attr-types/style/">https://www.graphviz.org/docs/attr-types/style/</a> for descriptions.
+Note that some of these are not valid for edges.</div></li></ul><h2 id="traits" class="small-section-header"><a href="#traits">Traits</a></h2><ul class="item-table"><li><div class="item-name"><a class="trait" href="trait.GraphWalk.html" title="trait rustc_graphviz::GraphWalk">GraphWalk</a></div><div class="desc docblock-short">GraphWalk is an abstraction over a directed graph = (nodes,edges)
+made up of node handles <code>N</code> and edge handles <code>E</code>, where each <code>E</code>
+can be mapped to its source and target nodes.</div></li><li><div class="item-name"><a class="trait" href="trait.Labeller.html" title="trait rustc_graphviz::Labeller">Labeller</a></div><div class="desc docblock-short">Each instance of a type that implements <code>Label&lt;C&gt;</code> maps to a
+unique identifier with respect to <code>C</code>, which is used to identify
+it in the generated .dot file. They can also provide more
+elaborate (and non-unique) label text that is used in the graphviz
+rendered output.
+The graph instance is responsible for providing the DOT compatible
+identifiers for the nodes and (optionally) rendered labels for the nodes and
+edges, as well as an identifier for the graph itself.</div></li></ul><h2 id="functions" class="small-section-header"><a href="#functions">Functions</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.escape_html.html" title="fn rustc_graphviz::escape_html">escape_html</a></div><div class="desc docblock-short">Escape tags in such a way that it is suitable for inclusion in a
+Graphviz HTML label.</div></li><li><div class="item-name"><a class="fn" href="fn.render.html" title="fn rustc_graphviz::render">render</a></div><div class="desc docblock-short">Renders directed graph <code>g</code> into the writer <code>w</code> in DOT syntax.
+(Simple wrapper around <code>render_opts</code> that passes a default set of options.)</div></li><li><div class="item-name"><a class="fn" href="fn.render_opts.html" title="fn rustc_graphviz::render_opts">render_opts</a></div><div class="desc docblock-short">Renders directed graph <code>g</code> into the writer <code>w</code> in DOT syntax.
+(Main entry point for the library.)</div></li></ul><h2 id="types" class="small-section-header"><a href="#types">Type Aliases</a></h2><ul class="item-table"><li><div class="item-name"><a class="type" href="type.Edges.html" title="type rustc_graphviz::Edges">Edges</a></div></li><li><div class="item-name"><a class="type" href="type.Nodes.html" title="type rustc_graphviz::Nodes">Nodes</a></div></li></ul></section></div></main></body></html>

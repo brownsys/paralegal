@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ConstParamTyImplementationError","CopyImplementationError","InfringingFieldsReason"],"fn":["all_fields_implement_trait","check_tys_might_be_eq","type_allowed_to_implement_const_param_ty","type_allowed_to_implement_copy"]};

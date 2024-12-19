@@ -1,0 +1,3 @@
+(function() {var implementors = {
+"cargo":[["impl <a class=\"trait\" href=\"https://docs.rs/serde/1.0.171/serde/de/trait.Error.html\" title=\"trait serde::de::Error\">Error</a> for <a class=\"struct\" href=\"cargo/util/config/struct.ConfigError.html\" title=\"struct cargo::util::config::ConfigError\">ConfigError</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

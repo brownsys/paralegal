@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["emit_unstable_in_stable_error","is_int_bool_or_char","place_as_reborrow"],"struct":["Checker","Qualifs"],"type":["QualifResults"]};

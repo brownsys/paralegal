@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["RegionResolutionError","VarValue"],"fn":["resolve"],"struct":["LexicalRegionResolutions","LexicalResolver","RegionAndOrigin"],"type":["RegionGraph"]};

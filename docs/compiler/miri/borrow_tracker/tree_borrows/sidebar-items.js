@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["inner_ptr_of_unique"],"mod":["diagnostics","perms","tree","unimap"],"struct":["NewPermission"],"trait":["EvalContextExt","EvalContextPrivExt"],"type":["AllocState"]};

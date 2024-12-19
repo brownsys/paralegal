@@ -1,0 +1,3 @@
+(function() {var implementors = {
+"rustc_borrowck":[["impl <a class=\"trait\" href=\"rustc_data_structures/vec_linked_list/trait.LinkElem.html\" title=\"trait rustc_data_structures::vec_linked_list::LinkElem\">LinkElem</a> for <a class=\"struct\" href=\"rustc_borrowck/type_check/liveness/local_use_map/struct.Appearance.html\" title=\"struct rustc_borrowck::type_check::liveness::local_use_map::Appearance\">Appearance</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

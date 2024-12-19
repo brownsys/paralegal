@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["ensure_monomorphic_enough"]};

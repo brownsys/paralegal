@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["add_generics_and_bounds_as_types","build_index","get_fn_inputs_and_outputs","get_function_type_for_search","get_index_type","get_index_type_id"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["fully_moved_locals","propagate_ssa"],"struct":["CopyProp","Replacer"]};

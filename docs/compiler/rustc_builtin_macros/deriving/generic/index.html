@@ -1,0 +1,134 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Some code that abstracts away much of the boilerplate of writing `derive` instances for traits. Among other things it manages getting access to the fields of the 4 different sorts of structs and enum variants, as well as creating the method and impl ast instances."><title>rustc_builtin_macros::deriving::generic - Rust</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceSerif4-Bold-a2c9cd1067f8b328.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-47e7ab555ef2818a.css" id="mainThemeStyle"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustc_builtin_macros" data-themes="" data-resource-suffix="" data-rustdoc-version="1.74.0-nightly (58eefc33a 2023-08-24)" data-channel="nightly" data-search-js="search-6dfdfced5eff6596.js" data-settings-js="settings-de11bff964e9d4e5.js" data-settings-css="settings-8c76f75bfb6bd192.css" data-theme-light-css="light-b2d31d2efc7e9b67.css" data-theme-dark-css="dark-3388a2fb2ef8066b.css" data-theme-ayu-css="ayu-8c3c66a6cf12cb2f.css" ><script src="../../../static.files/storage-db41da1a38ea3cb8.js"></script><script defer src="../../../static.files/main-ef3a2de404864b0b.js"></script><noscript><link rel="stylesheet" media="(prefers-color-scheme:light)" href="../../../static.files/light-b2d31d2efc7e9b67.css"><link rel="stylesheet" media="(prefers-color-scheme:dark)" href="../../../static.files/dark-3388a2fb2ef8066b.css"><link rel="stylesheet" href="../../../static.files/noscript-cffde32267a19fd6.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle">&#9776;</button><a class="logo-container" href="../../../rustc_builtin_macros/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2></h2></nav><nav class="sidebar"><a class="logo-container" href="../../../rustc_builtin_macros/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2 class="location"><a href="#">Module generic</a></h2><div class="sidebar-elems"><section><ul class="block"><li><a href="#modules">Modules</a></li><li><a href="#structs">Structs</a></li><li><a href="#enums">Enums</a></li><li><a href="#functions">Functions</a></li><li><a href="#types">Type Aliases</a></li></ul></section></div></nav><main><div class="width-limiter"><nav class="sub"><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../../../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="main-heading"><h1>Module <a href="../../index.html">rustc_builtin_macros</a>::<wbr><a href="../index.html">deriving</a>::<wbr><a class="mod" href="#">generic</a><button id="copy-path" title="Copy item path to clipboard"><img src="../../../static.files/clipboard-7571035ce49a181d.svg" width="19" height="18" alt="Copy item path"></button></h1><span class="out-of-band"><a class="src" href="../../../src/rustc_builtin_macros/deriving/generic/mod.rs.html#1-1691">source</a> · <button id="toggle-all-docs" title="collapse all docs">[<span>&#x2212;</span>]</button></span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Some code that abstracts away much of the boilerplate of writing
+<code>derive</code> instances for traits. Among other things it manages getting
+access to the fields of the 4 different sorts of structs and enum
+variants, as well as creating the method and impl ast instances.</p>
+<p>Supported features (fairly exhaustive):</p>
+<ul>
+<li>Methods taking any number of parameters of any type, and returning
+any type, other than vectors, bottom and closures.</li>
+<li>Generating <code>impl</code>s for types with type parameters and lifetimes
+(e.g., <code>Option&lt;T&gt;</code>), the parameters are automatically given the
+current trait as a bound. (This includes separate type parameters
+and lifetimes for methods.)</li>
+<li>Additional bounds on the type parameters (<code>TraitDef.additional_bounds</code>)</li>
+</ul>
+<p>The most important thing for implementors is the <code>Substructure</code> and
+<code>SubstructureFields</code> objects. The latter groups 5 possibilities of the
+arguments:</p>
+<ul>
+<li><code>Struct</code>, when <code>Self</code> is a struct (including tuple structs, e.g
+<code>struct T(i32, char)</code>).</li>
+<li><code>EnumMatching</code>, when <code>Self</code> is an enum and all the arguments are the
+same variant of the enum (e.g., <code>Some(1)</code>, <code>Some(3)</code> and <code>Some(4)</code>)</li>
+<li><code>EnumTag</code> when <code>Self</code> is an enum, for comparing the enum tags.</li>
+<li><code>StaticEnum</code> and <code>StaticStruct</code> for static methods, where the type
+being derived upon is either an enum or struct respectively. (Any
+argument with type Self is just grouped among the non-self
+arguments.)</li>
+</ul>
+<p>In the first two cases, the values from the corresponding fields in
+all the arguments are grouped together.</p>
+<p>The non-static cases have <code>Option&lt;ident&gt;</code> in several places associated
+with field <code>expr</code>s. This represents the name of the field it is
+associated with. It is only not <code>None</code> when the associated field has
+an identifier in the source code. For example, the <code>x</code>s in the
+following snippet</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">struct </span>A { x : i32 }
+
+<span class="kw">struct </span>B(i32);
+
+<span class="kw">enum </span>C {
+    C0(i32),
+    C1 { x: i32 }
+}</code></pre></div>
+<p>The <code>i32</code>s in <code>B</code> and <code>C0</code> don’t have an identifier, so the
+<code>Option&lt;ident&gt;</code>s would be <code>None</code> for them.</p>
+<p>In the static cases, the structure is summarized, either into the just
+spans of the fields or a list of spans and the field idents (for tuple
+structs and record structs, respectively), or a list of these, for
+enums (one for each variant). For empty struct and empty enum
+variants, it is represented as a count of 0.</p>
+<h2 id="cs-functions"><a href="#cs-functions">“<code>cs</code>” functions</a></h2>
+<p>The <code>cs_...</code> functions (“combine substructure”) are designed to
+make life easier by providing some pre-made recipes for common
+threads; mostly calling the function being derived on all the
+arguments and then combining them back together in some way (or
+letting the user chose that). They are not meant to be the only
+way to handle the structures that this code creates.</p>
+<h2 id="examples"><a href="#examples">Examples</a></h2>
+<p>The following simplified <code>PartialEq</code> is used for in-code examples:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">trait </span>PartialEq {
+    <span class="kw">fn </span>eq(<span class="kw-2">&amp;</span><span class="self">self</span>, other: <span class="kw-2">&amp;</span><span class="self">Self</span>) -&gt; bool;
+}
+<span class="kw">impl </span>PartialEq <span class="kw">for </span>i32 {
+    <span class="kw">fn </span>eq(<span class="kw-2">&amp;</span><span class="self">self</span>, other: <span class="kw-2">&amp;</span>i32) -&gt; bool {
+        <span class="kw-2">*</span><span class="self">self </span>== <span class="kw-2">*</span>other
+    }
+}</code></pre></div>
+<p>Some examples of the values of <code>SubstructureFields</code> follow, using the
+above <code>PartialEq</code>, <code>A</code>, <code>B</code> and <code>C</code>.</p>
+<h3 id="structs"><a href="#structs">Structs</a></h3>
+<p>When generating the <code>expr</code> for the <code>A</code> impl, the <code>SubstructureFields</code> is</p>
+<div class="example-wrap"><pre class="language-{.text}"><code>Struct(vec![FieldInfo {
+           span: &lt;span of x&gt;
+           name: Some(&lt;ident of x&gt;),
+           self_: &lt;expr for &amp;self.x&gt;,
+           other: vec![&lt;expr for &amp;other.x]
+         }])
+</code></pre></div>
+<p>For the <code>B</code> impl, called with <code>B(a)</code> and <code>B(b)</code>,</p>
+<div class="example-wrap"><pre class="language-{.text}"><code>Struct(vec![FieldInfo {
+          span: &lt;span of `i32`&gt;,
+          name: None,
+          self_: &lt;expr for &amp;a&gt;
+          other: vec![&lt;expr for &amp;b&gt;]
+         }])
+</code></pre></div><h3 id="enums"><a href="#enums">Enums</a></h3>
+<p>When generating the <code>expr</code> for a call with <code>self == C0(a)</code> and <code>other == C0(b)</code>, the SubstructureFields is</p>
+<div class="example-wrap"><pre class="language-{.text}"><code>EnumMatching(0, &lt;ast::Variant for C0&gt;,
+             vec![FieldInfo {
+                span: &lt;span of i32&gt;
+                name: None,
+                self_: &lt;expr for &amp;a&gt;,
+                other: vec![&lt;expr for &amp;b&gt;]
+              }])
+</code></pre></div>
+<p>For <code>C1 {x}</code> and <code>C1 {x}</code>,</p>
+<div class="example-wrap"><pre class="language-{.text}"><code>EnumMatching(1, &lt;ast::Variant for C1&gt;,
+             vec![FieldInfo {
+                span: &lt;span of x&gt;
+                name: Some(&lt;ident of x&gt;),
+                self_: &lt;expr for &amp;self.x&gt;,
+                other: vec![&lt;expr for &amp;other.x&gt;]
+               }])
+</code></pre></div>
+<p>For the tags,</p>
+<div class="example-wrap"><pre class="language-{.text}"><code>EnumTag(
+    &amp;[&lt;ident of self tag&gt;, &lt;ident of other tag&gt;], &lt;expr to combine with&gt;)
+</code></pre></div>
+<p>Note that this setup doesn’t allow for the brute-force “match every variant
+against every other variant” approach, which is bad because it produces a
+quadratic amount of code (see #15375).</p>
+<h3 id="static"><a href="#static">Static</a></h3>
+<p>A static method on the types above would result in,</p>
+<div class="example-wrap"><pre class="language-{.text}"><code>StaticStruct(&lt;ast::VariantData of A&gt;, Named(vec![(&lt;ident of x&gt;, &lt;span of x&gt;)]))
+
+StaticStruct(&lt;ast::VariantData of B&gt;, Unnamed(vec![&lt;span of x&gt;]))
+
+StaticEnum(&lt;ast::EnumDef of C&gt;,
+           vec![(&lt;ident of C0&gt;, &lt;span of C0&gt;, Unnamed(vec![&lt;span of i32&gt;])),
+                (&lt;ident of C1&gt;, &lt;span of C1&gt;, Named(vec![(&lt;ident of x&gt;, &lt;span of x&gt;)]))])
+</code></pre></div></div></details><h2 id="reexports" class="small-section-header"><a href="#reexports">Re-exports</a></h2><ul class="item-table"><li><div class="item-name"><code>pub use <a class="enum" href="enum.StaticFields.html" title="enum rustc_builtin_macros::deriving::generic::StaticFields">StaticFields</a>::*;</code></div></li><li><div class="item-name"><code>pub use <a class="enum" href="enum.SubstructureFields.html" title="enum rustc_builtin_macros::deriving::generic::SubstructureFields">SubstructureFields</a>::*;</code></div></li></ul><h2 id="modules" class="small-section-header"><a href="#modules">Modules</a></h2><ul class="item-table"><li><div class="item-name"><a class="mod" href="ty/index.html" title="mod rustc_builtin_macros::deriving::generic::ty">ty</a></div><div class="desc docblock-short">A mini version of ast::Ty, which is easier to use, and features an explicit <code>Self</code> type to use
+when specifying impls to be derived.</div></li></ul><h2 id="structs-1" class="small-section-header"><a href="#structs-1">Structs</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.BlockOrExpr.html" title="struct rustc_builtin_macros::deriving::generic::BlockOrExpr">BlockOrExpr</a></div><div class="desc docblock-short">The code snippets built up for derived code are sometimes used as blocks
+(e.g. in a function body) and sometimes used as expressions (e.g. in a match
+arm). This structure avoids committing to either form until necessary,
+avoiding the insertion of any unnecessary blocks.</div></li><li><div class="item-name"><a class="struct" href="struct.FieldInfo.html" title="struct rustc_builtin_macros::deriving::generic::FieldInfo">FieldInfo</a></div><div class="desc docblock-short">Summary of the relevant parts of a struct/enum field.</div></li><li><div class="item-name"><a class="struct" href="struct.MethodDef.html" title="struct rustc_builtin_macros::deriving::generic::MethodDef">MethodDef</a></div></li><li><div class="item-name"><a class="struct" href="struct.Substructure.html" title="struct rustc_builtin_macros::deriving::generic::Substructure">Substructure</a></div><div class="desc docblock-short">All the data about the data structure/method being derived upon.</div></li><li><div class="item-name"><a class="struct" href="struct.TraitDef.html" title="struct rustc_builtin_macros::deriving::generic::TraitDef">TraitDef</a></div></li><li><div class="item-name"><a class="struct" href="struct.TypeParameter.html" title="struct rustc_builtin_macros::deriving::generic::TypeParameter">TypeParameter</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="enums-1" class="small-section-header"><a href="#enums-1">Enums</a></h2><ul class="item-table"><li><div class="item-name"><a class="enum" href="enum.CsFold.html" title="enum rustc_builtin_macros::deriving::generic::CsFold">CsFold</a></div><div class="desc docblock-short">The function passed to <code>cs_fold</code> is called repeatedly with a value of this
+type. It describes one part of the code generation. The result is always an
+expression.</div></li><li><div class="item-name"><a class="enum" href="enum.FieldlessVariantsStrategy.html" title="enum rustc_builtin_macros::deriving::generic::FieldlessVariantsStrategy">FieldlessVariantsStrategy</a></div><div class="desc docblock-short">How to handle fieldless enum variants.</div></li><li><div class="item-name"><a class="enum" href="enum.StaticFields.html" title="enum rustc_builtin_macros::deriving::generic::StaticFields">StaticFields</a></div><div class="desc docblock-short">Fields for a static method</div></li><li><div class="item-name"><a class="enum" href="enum.SubstructureFields.html" title="enum rustc_builtin_macros::deriving::generic::SubstructureFields">SubstructureFields</a></div><div class="desc docblock-short">A summary of the possible sets of fields.</div></li></ul><h2 id="functions" class="small-section-header"><a href="#functions">Functions</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.combine_substructure.html" title="fn rustc_builtin_macros::deriving::generic::combine_substructure">combine_substructure</a></div></li><li><div class="item-name"><a class="fn" href="fn.cs_fold.html" title="fn rustc_builtin_macros::deriving::generic::cs_fold">cs_fold</a></div><div class="desc docblock-short">Folds over fields, combining the expressions for each field in a sequence.
+Statics may not be folded over.</div></li><li><div class="item-name"><a class="fn" href="fn.find_type_parameters.html" title="fn rustc_builtin_macros::deriving::generic::find_type_parameters">find_type_parameters</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">This method helps to extract all the type parameters referenced from a
+type. For a type parameter <code>&lt;T&gt;</code>, it looks for either a <code>TyPath</code> that
+is not global and starts with <code>T</code>, or a <code>TyQPath</code>.
+Also include bound generic params from the input type.</div></li></ul><h2 id="types" class="small-section-header"><a href="#types">Type Aliases</a></h2><ul class="item-table"><li><div class="item-name"><a class="type" href="type.CombineSubstructureFunc.html" title="type rustc_builtin_macros::deriving::generic::CombineSubstructureFunc">CombineSubstructureFunc</a></div><div class="desc docblock-short">Combine the values of all the fields together. The last argument is
+all the fields of all the structures.</div></li></ul></section></div></main></body></html>

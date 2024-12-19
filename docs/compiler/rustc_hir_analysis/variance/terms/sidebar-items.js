@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["VarianceTerm"],"fn":["determine_parameters_to_be_inferred","lang_items"],"struct":["InferredIndex","TermsContext"],"type":["VarianceTermPtr"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["current","pct_idle"],"struct":["State"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["UseKind"],"struct":["ConstrainOpaqueTypeRegionVisitor","OpaqueTypeDecl","OpaqueTypeStorage","OpaqueTypeTable"],"type":["OpaqueTypeMap"]};

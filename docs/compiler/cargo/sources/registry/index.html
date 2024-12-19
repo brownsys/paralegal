@@ -1,0 +1,149 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="A `Source` for registry-based packages."><title>cargo::sources::registry - Rust</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceSerif4-Bold-a2c9cd1067f8b328.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-47e7ab555ef2818a.css" id="mainThemeStyle"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="cargo" data-themes="" data-resource-suffix="" data-rustdoc-version="1.74.0-nightly (58eefc33a 2023-08-24)" data-channel="nightly" data-search-js="search-6dfdfced5eff6596.js" data-settings-js="settings-de11bff964e9d4e5.js" data-settings-css="settings-8c76f75bfb6bd192.css" data-theme-light-css="light-b2d31d2efc7e9b67.css" data-theme-dark-css="dark-3388a2fb2ef8066b.css" data-theme-ayu-css="ayu-8c3c66a6cf12cb2f.css" ><script src="../../../static.files/storage-db41da1a38ea3cb8.js"></script><script defer src="../../../static.files/main-ef3a2de404864b0b.js"></script><noscript><link rel="stylesheet" media="(prefers-color-scheme:light)" href="../../../static.files/light-b2d31d2efc7e9b67.css"><link rel="stylesheet" media="(prefers-color-scheme:dark)" href="../../../static.files/dark-3388a2fb2ef8066b.css"><link rel="stylesheet" href="../../../static.files/noscript-cffde32267a19fd6.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle">&#9776;</button><a class="logo-container" href="../../../cargo/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2></h2></nav><nav class="sidebar"><a class="logo-container" href="../../../cargo/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><h2 class="location"><a href="#">Module registry</a></h2><div class="sidebar-elems"><section><ul class="block"><li><a href="#modules">Modules</a></li><li><a href="#structs">Structs</a></li><li><a href="#enums">Enums</a></li><li><a href="#constants">Constants</a></li><li><a href="#traits">Traits</a></li><li><a href="#functions">Functions</a></li></ul></section></div></nav><main><div class="width-limiter"><nav class="sub"><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../../../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="main-heading"><h1>Module <a href="../../index.html">cargo</a>::<wbr><a href="../index.html">sources</a>::<wbr><a class="mod" href="#">registry</a><button id="copy-path" title="Copy item path to clipboard"><img src="../../../static.files/clipboard-7571035ce49a181d.svg" width="19" height="18" alt="Copy item path"></button></h1><span class="out-of-band"><a class="src" href="../../../src/cargo/sources/registry/mod.rs.html#1-953">source</a> · <button id="toggle-all-docs" title="collapse all docs">[<span>&#x2212;</span>]</button></span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>A <code>Source</code> for registry-based packages.</p>
+<h2 id="whats-a-registry"><a href="#whats-a-registry">What’s a Registry?</a></h2>
+<p><a href="https://doc.rust-lang.org/nightly/cargo/reference/registries.html">Registries</a> are central locations where packages can be uploaded to,
+discovered, and searched for. The purpose of a registry is to have a
+location that serves as permanent storage for versions of a crate over time.</p>
+<p>Compared to git sources (see <a href="../git/source/struct.GitSource.html" title="struct cargo::sources::git::source::GitSource"><code>GitSource</code></a>), a registry provides many
+packages as well as many versions simultaneously. Git sources can also
+have commits deleted through rebasings where registries cannot have their
+versions deleted.</p>
+<p>In Cargo, <a href="trait.RegistryData.html" title="trait cargo::sources::registry::RegistryData"><code>RegistryData</code></a> is an abstraction over each kind of actual
+registry, and <a href="struct.RegistrySource.html" title="struct cargo::sources::registry::RegistrySource"><code>RegistrySource</code></a> connects those implementations to
+<a href="../../core/source/trait.Source.html" title="trait cargo::core::source::Source"><code>Source</code></a> trait. Two prominent features these abstractions provide are</p>
+<ul>
+<li>A way to query the metadata of a package from a registry. The metadata
+comes from the index.</li>
+<li>A way to download package contents (a.k.a source files) that are required
+when building the package itself.</li>
+</ul>
+<p>We’ll cover each functionality later.</p>
+<h2 id="different-kinds-of-registries"><a href="#different-kinds-of-registries">Different Kinds of Registries</a></h2>
+<p>Cargo provides multiple kinds of registries. Each of them serves the index
+and package contents in a slightly different way. Namely,</p>
+<ul>
+<li><a href="local/struct.LocalRegistry.html" title="struct cargo::sources::registry::local::LocalRegistry"><code>LocalRegistry</code></a> — Serves the index and package contents entirely on
+a local filesystem.</li>
+<li><a href="remote/struct.RemoteRegistry.html" title="struct cargo::sources::registry::remote::RemoteRegistry"><code>RemoteRegistry</code></a> — Serves the index ahead of time from a Git
+repository, and package contents are downloaded as needed.</li>
+<li><a href="http_remote/struct.HttpRegistry.html" title="struct cargo::sources::registry::http_remote::HttpRegistry"><code>HttpRegistry</code></a> — Serves both the index and package contents on demand
+over a HTTP-based registry API. This is the default starting from 1.70.0.</li>
+</ul>
+<p>Each registry has its own <a href="trait.RegistryData.html" title="trait cargo::sources::registry::RegistryData"><code>RegistryData</code></a> implementation, and can be
+created from either <a href="struct.RegistrySource.html#method.local" title="associated function cargo::sources::registry::RegistrySource::local"><code>RegistrySource::local</code></a> or <a href="struct.RegistrySource.html#method.remote" title="associated function cargo::sources::registry::RegistrySource::remote"><code>RegistrySource::remote</code></a>.</p>
+<h2 id="the-index-of-a-registry"><a href="#the-index-of-a-registry">The Index of a Registry</a></h2>
+<p>One of the major difficulties with a registry is that hosting so many
+packages may quickly run into performance problems when dealing with
+dependency graphs. It’s infeasible for cargo to download the entire contents
+of the registry just to resolve one package’s dependencies, for example. As
+a result, cargo needs some efficient method of querying what packages are
+available on a registry, what versions are available, and what the
+dependencies for each version is.</p>
+<p>To solve the problem, a registry must provide an index of package metadata.
+The index of a registry is essentially an easily query-able version of the
+registry’s database for a list of versions of a package as well as a list
+of dependencies for each version. The exact format of the index is
+described later.</p>
+<p>See the <a href="index/index.html" title="mod cargo::sources::registry::index"><code>index</code></a> module for topics about the management, parsing, caching,
+and versioning for the on-disk index.</p>
+<h3 id="the-format-of-the-index"><a href="#the-format-of-the-index">The Format of The Index</a></h3>
+<p>The index is a store for the list of versions for all packages known, so its
+format on disk is optimized slightly to ensure that <code>ls registry</code> doesn’t
+produce a list of all packages ever known. The index also wants to ensure
+that there’s not a million files which may actually end up hitting
+filesystem limits at some point. To this end, a few decisions were made
+about the format of the registry:</p>
+<ol>
+<li>Each crate will have one file corresponding to it. Each version for a
+crate will just be a line in this file (see <a href="index/struct.IndexPackage.html" title="struct cargo::sources::registry::index::IndexPackage"><code>IndexPackage</code></a> for its
+representation).</li>
+<li>There will be two tiers of directories for crate names, under which
+crates corresponding to those tiers will be located.
+(See <a href="../../../cargo_util/registry/fn.make_dep_path.html" title="fn cargo_util::registry::make_dep_path"><code>cargo_util::registry::make_dep_path</code></a> for the implementation of
+this layout hierarchy.)</li>
+</ol>
+<p>As an example, this is an example hierarchy of an index:</p>
+<div class="example-wrap"><pre class="language-notrust"><code>.
+├── 3
+│   └── u
+│       └── url
+├── bz
+│   └── ip
+│       └── bzip2
+├── config.json
+├── en
+│   └── co
+│       └── encoding
+└── li
+    ├── bg
+    │   └── libgit2
+    └── nk
+        └── link-config
+</code></pre></div>
+<p>The root of the index contains a <code>config.json</code> file with a few entries
+corresponding to the registry (see <a href="struct.RegistryConfig.html" title="struct cargo::sources::registry::RegistryConfig"><code>RegistryConfig</code></a> below).</p>
+<p>Otherwise, there are three numbered directories (1, 2, 3) for crates with
+names 1, 2, and 3 characters in length. The 1/2 directories simply have the
+crate files underneath them, while the 3 directory is sharded by the first
+letter of the crate name.</p>
+<p>Otherwise the top-level directory contains many two-letter directory names,
+each of which has many sub-folders with two letters. At the end of all these
+are the actual crate files themselves.</p>
+<p>The purpose of this layout is to hopefully cut down on <code>ls</code> sizes as well as
+efficient lookup based on the crate name itself.</p>
+<p>See <a href="https://doc.rust-lang.org/nightly/cargo/reference/registry-index.html">The Cargo Book: Registry Index</a> for the public
+interface on the index format.</p>
+<h3 id="the-index-files"><a href="#the-index-files">The Index Files</a></h3>
+<p>Each file in the index is the history of one crate over time. Each line in
+the file corresponds to one version of a crate, stored in JSON format (see
+the <a href="index/struct.IndexPackage.html" title="struct cargo::sources::registry::index::IndexPackage"><code>IndexPackage</code></a> structure).</p>
+<p>As new versions are published, new lines are appended to this file. <strong>The
+only modifications to this file that should happen over time are yanks of a
+particular version.</strong></p>
+<h2 id="downloading-packages"><a href="#downloading-packages">Downloading Packages</a></h2>
+<p>The purpose of the index was to provide an efficient method to resolve the
+dependency graph for a package. After resolution has been performed, we need
+to download the contents of packages so we can read the full manifest and
+build the source code.</p>
+<p>To accomplish this, <a href="trait.RegistryData.html#tymethod.download" title="method cargo::sources::registry::RegistryData::download"><code>RegistryData::download</code></a> will “make” an HTTP request
+per-package requested to download tarballs into a local cache. These
+tarballs will then be unpacked into a destination folder.</p>
+<p>Note that because versions uploaded to the registry are frozen forever that
+the HTTP download and unpacking can all be skipped if the version has
+already been downloaded and unpacked. This caching allows us to only
+download a package when absolutely necessary.</p>
+<h2 id="filesystem-hierarchy"><a href="#filesystem-hierarchy">Filesystem Hierarchy</a></h2>
+<p>Overall, the <code>$HOME/.cargo</code> looks like this when talking about the registry
+(remote registries, specifically):</p>
+<div class="example-wrap"><pre class="language-notrust"><code># A folder under which all registry metadata is hosted (similar to
+# $HOME/.cargo/git)
+$HOME/.cargo/registry/
+
+    # For each registry that cargo knows about (keyed by hostname + hash)
+    # there is a folder which is the checked out version of the index for
+    # the registry in this location. Note that this is done so cargo can
+    # support multiple registries simultaneously
+    index/
+        registry1-&lt;hash&gt;/
+        registry2-&lt;hash&gt;/
+        ...
+
+    # This folder is a cache for all downloaded tarballs (`.crate` file)
+    # from a registry. Once downloaded and verified, a tarball never changes.
+    cache/
+        registry1-&lt;hash&gt;/&lt;pkg&gt;-&lt;version&gt;.crate
+        ...
+
+    # Location in which all tarballs are unpacked. Each tarball is known to
+    # be frozen after downloading, so transitively this folder is also
+    # frozen once its unpacked (it&#39;s never unpacked again)
+    # CAVEAT: They are not read-only. See rust-lang/cargo#9455.
+    src/
+        registry1-&lt;hash&gt;/&lt;pkg&gt;-&lt;version&gt;/...
+        ...
+</code></pre></div></div></details><h2 id="modules" class="small-section-header"><a href="#modules">Modules</a></h2><ul class="item-table"><li><div class="item-name"><a class="mod" href="download/index.html" title="mod cargo::sources::registry::download">download</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Shared download logic between <a href="http_remote/struct.HttpRegistry.html" title="struct cargo::sources::registry::http_remote::HttpRegistry"><code>HttpRegistry</code></a> and <a href="remote/struct.RemoteRegistry.html" title="struct cargo::sources::registry::remote::RemoteRegistry"><code>RemoteRegistry</code></a>.</div></li><li><div class="item-name"><a class="mod" href="http_remote/index.html" title="mod cargo::sources::registry::http_remote">http_remote</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Access to a HTTP-based crate registry. See <a href="http_remote/struct.HttpRegistry.html" title="struct cargo::sources::registry::http_remote::HttpRegistry"><code>HttpRegistry</code></a> for details.</div></li><li><div class="item-name"><a class="mod" href="index/index.html" title="mod cargo::sources::registry::index">index</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Management of the index of a registry source.</div></li><li><div class="item-name"><a class="mod" href="local/index.html" title="mod cargo::sources::registry::local">local</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Access to a regstiry on the local filesystem. See <a href="local/struct.LocalRegistry.html" title="struct cargo::sources::registry::local::LocalRegistry"><code>LocalRegistry</code></a> for more.</div></li><li><div class="item-name"><a class="mod" href="remote/index.html" title="mod cargo::sources::registry::remote">remote</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Access to a Git index based registry. See <a href="remote/struct.RemoteRegistry.html" title="struct cargo::sources::registry::remote::RemoteRegistry"><code>RemoteRegistry</code></a> for details.</div></li></ul><h2 id="structs" class="small-section-header"><a href="#structs">Structs</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.LockMetadata.html" title="struct cargo::sources::registry::LockMetadata">LockMetadata</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">The content inside <code>.cargo-ok</code>.
+See <a href="struct.RegistrySource.html#method.unpack_package" title="method cargo::sources::registry::RegistrySource::unpack_package"><code>RegistrySource::unpack_package</code></a> for more.</div></li><li><div class="item-name"><a class="struct" href="struct.RegistryConfig.html" title="struct cargo::sources::registry::RegistryConfig">RegistryConfig</a></div><div class="desc docblock-short">The <a href="https://doc.rust-lang.org/nightly/cargo/reference/registry-index.html#index-configuration"><code>config.json</code></a> file stored in the index.</div></li><li><div class="item-name"><a class="struct" href="struct.RegistrySource.html" title="struct cargo::sources::registry::RegistrySource">RegistrySource</a></div><div class="desc docblock-short">A <a href="../../core/source/trait.Source.html" title="trait cargo::core::source::Source"><code>Source</code></a> implementation for a local or a remote registry.</div></li></ul><h2 id="enums" class="small-section-header"><a href="#enums">Enums</a></h2><ul class="item-table"><li><div class="item-name"><a class="enum" href="enum.LoadResponse.html" title="enum cargo::sources::registry::LoadResponse">LoadResponse</a></div><div class="desc docblock-short">Result from loading data from a registry.</div></li><li><div class="item-name"><a class="enum" href="enum.MaybeLock.html" title="enum cargo::sources::registry::MaybeLock">MaybeLock</a></div><div class="desc docblock-short">The status of <a href="trait.RegistryData.html#tymethod.download" title="method cargo::sources::registry::RegistryData::download"><code>RegistryData::download</code></a> which indicates if a <code>.crate</code>
+file has already been downloaded, or if not then the URL to download.</div></li></ul><h2 id="constants" class="small-section-header"><a href="#constants">Constants</a></h2><ul class="item-table"><li><div class="item-name"><a class="constant" href="constant.CRATES_IO_DOMAIN.html" title="constant cargo::sources::registry::CRATES_IO_DOMAIN">CRATES_IO_DOMAIN</a></div></li><li><div class="item-name"><a class="constant" href="constant.CRATES_IO_HTTP_INDEX.html" title="constant cargo::sources::registry::CRATES_IO_HTTP_INDEX">CRATES_IO_HTTP_INDEX</a></div></li><li><div class="item-name"><a class="constant" href="constant.CRATES_IO_INDEX.html" title="constant cargo::sources::registry::CRATES_IO_INDEX">CRATES_IO_INDEX</a></div></li><li><div class="item-name"><a class="constant" href="constant.CRATES_IO_REGISTRY.html" title="constant cargo::sources::registry::CRATES_IO_REGISTRY">CRATES_IO_REGISTRY</a></div></li><li><div class="item-name"><a class="constant" href="constant.PACKAGE_SOURCE_LOCK.html" title="constant cargo::sources::registry::PACKAGE_SOURCE_LOCK">PACKAGE_SOURCE_LOCK</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">The <code>.cargo-ok</code> file is used to track if the source is already unpacked.
+See <a href="struct.RegistrySource.html#method.unpack_package" title="method cargo::sources::registry::RegistrySource::unpack_package"><code>RegistrySource::unpack_package</code></a> for more.</div></li></ul><h2 id="traits" class="small-section-header"><a href="#traits">Traits</a></h2><ul class="item-table"><li><div class="item-name"><a class="trait" href="trait.RegistryData.html" title="trait cargo::sources::registry::RegistryData">RegistryData</a></div><div class="desc docblock-short">An abstract interface to handle both a local and and remote registry.</div></li></ul><h2 id="functions" class="small-section-header"><a href="#functions">Functions</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.max_unpack_size.html" title="fn cargo::sources::registry::max_unpack_size">max_unpack_size</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Get the maximum upack size that Cargo permits
+based on a given <code>size</code> of your compressed file.</div></li><li><div class="item-name"><a class="fn" href="fn.set_mask.html" title="fn cargo::sources::registry::set_mask">set_mask</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Set the current <a href="https://man7.org/linux/man-pages/man2/umask.2.html"><code>umask</code></a> value for the given tarball. No-op on non-Unix
+platforms.</div></li><li><div class="item-name"><a class="fn" href="fn.short_name.html" title="fn cargo::sources::registry::short_name">short_name</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Generates a unique name for <a href="../../core/source/source_id/struct.SourceId.html" title="struct cargo::core::source::source_id::SourceId"><code>SourceId</code></a> to have a unique path to put their
+index files.</div></li></ul></section></div></main></body></html>

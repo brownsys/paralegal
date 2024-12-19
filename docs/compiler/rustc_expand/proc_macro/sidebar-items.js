@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["exec_strategy"],"struct":["AttrProcMacro","BangProcMacro","CrossbeamMessagePipe","DeriveProcMacro"]};

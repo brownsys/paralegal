@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["gather_moves"],"struct":["Gatherer","MoveDataBuilder"],"type":["MoveDat"]};

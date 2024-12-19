@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CheckRegions","ExplicitSelf","NotUniqueParam"],"fn":["fold_list","is_doc_hidden","is_doc_notable_trait","is_intrinsic","is_trivially_const_drop","needs_drop_components","provide","reveal_opaque_types_in_bounds"],"struct":["AlwaysRequiresDrop","Discr","OpaqueTypeExpander"],"trait":["IntTypeExt"]};

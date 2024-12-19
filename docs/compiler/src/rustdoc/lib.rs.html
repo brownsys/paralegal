@@ -1,0 +1,1715 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/librustdoc/lib.rs`."><title>lib.rs - source</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceSerif4-Bold-a2c9cd1067f8b328.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2"><link rel="stylesheet" href="../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../static.files/rustdoc-47e7ab555ef2818a.css" id="mainThemeStyle"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustdoc" data-themes="" data-resource-suffix="" data-rustdoc-version="1.74.0-nightly (58eefc33a 2023-08-24)" data-channel="nightly" data-search-js="search-6dfdfced5eff6596.js" data-settings-js="settings-de11bff964e9d4e5.js" data-settings-css="settings-8c76f75bfb6bd192.css" data-theme-light-css="light-b2d31d2efc7e9b67.css" data-theme-dark-css="dark-3388a2fb2ef8066b.css" data-theme-ayu-css="ayu-8c3c66a6cf12cb2f.css" ><script src="../../static.files/storage-db41da1a38ea3cb8.js"></script><script defer src="../../static.files/src-script-3280b574d94e47b4.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-ef3a2de404864b0b.js"></script><noscript><link rel="stylesheet" media="(prefers-color-scheme:light)" href="../../static.files/light-b2d31d2efc7e9b67.css"><link rel="stylesheet" media="(prefers-color-scheme:dark)" href="../../static.files/dark-3388a2fb2ef8066b.css"><link rel="stylesheet" href="../../static.files/noscript-cffde32267a19fd6.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"></nav><main><nav class="sub"><a class="sub-logo-container" href="../../rustdoc/index.html"><img class="rust-logo" src="../../static.files/rust-logo-151179464ae7ed46.svg" alt="logo"></a><form class="search-form"><span></span><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><a href="../../help.html">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<a href="#2" id="2">2</a>
+<a href="#3" id="3">3</a>
+<a href="#4" id="4">4</a>
+<a href="#5" id="5">5</a>
+<a href="#6" id="6">6</a>
+<a href="#7" id="7">7</a>
+<a href="#8" id="8">8</a>
+<a href="#9" id="9">9</a>
+<a href="#10" id="10">10</a>
+<a href="#11" id="11">11</a>
+<a href="#12" id="12">12</a>
+<a href="#13" id="13">13</a>
+<a href="#14" id="14">14</a>
+<a href="#15" id="15">15</a>
+<a href="#16" id="16">16</a>
+<a href="#17" id="17">17</a>
+<a href="#18" id="18">18</a>
+<a href="#19" id="19">19</a>
+<a href="#20" id="20">20</a>
+<a href="#21" id="21">21</a>
+<a href="#22" id="22">22</a>
+<a href="#23" id="23">23</a>
+<a href="#24" id="24">24</a>
+<a href="#25" id="25">25</a>
+<a href="#26" id="26">26</a>
+<a href="#27" id="27">27</a>
+<a href="#28" id="28">28</a>
+<a href="#29" id="29">29</a>
+<a href="#30" id="30">30</a>
+<a href="#31" id="31">31</a>
+<a href="#32" id="32">32</a>
+<a href="#33" id="33">33</a>
+<a href="#34" id="34">34</a>
+<a href="#35" id="35">35</a>
+<a href="#36" id="36">36</a>
+<a href="#37" id="37">37</a>
+<a href="#38" id="38">38</a>
+<a href="#39" id="39">39</a>
+<a href="#40" id="40">40</a>
+<a href="#41" id="41">41</a>
+<a href="#42" id="42">42</a>
+<a href="#43" id="43">43</a>
+<a href="#44" id="44">44</a>
+<a href="#45" id="45">45</a>
+<a href="#46" id="46">46</a>
+<a href="#47" id="47">47</a>
+<a href="#48" id="48">48</a>
+<a href="#49" id="49">49</a>
+<a href="#50" id="50">50</a>
+<a href="#51" id="51">51</a>
+<a href="#52" id="52">52</a>
+<a href="#53" id="53">53</a>
+<a href="#54" id="54">54</a>
+<a href="#55" id="55">55</a>
+<a href="#56" id="56">56</a>
+<a href="#57" id="57">57</a>
+<a href="#58" id="58">58</a>
+<a href="#59" id="59">59</a>
+<a href="#60" id="60">60</a>
+<a href="#61" id="61">61</a>
+<a href="#62" id="62">62</a>
+<a href="#63" id="63">63</a>
+<a href="#64" id="64">64</a>
+<a href="#65" id="65">65</a>
+<a href="#66" id="66">66</a>
+<a href="#67" id="67">67</a>
+<a href="#68" id="68">68</a>
+<a href="#69" id="69">69</a>
+<a href="#70" id="70">70</a>
+<a href="#71" id="71">71</a>
+<a href="#72" id="72">72</a>
+<a href="#73" id="73">73</a>
+<a href="#74" id="74">74</a>
+<a href="#75" id="75">75</a>
+<a href="#76" id="76">76</a>
+<a href="#77" id="77">77</a>
+<a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
+<a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a>
+<a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
+<a href="#210" id="210">210</a>
+<a href="#211" id="211">211</a>
+<a href="#212" id="212">212</a>
+<a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
+<a href="#218" id="218">218</a>
+<a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a>
+<a href="#224" id="224">224</a>
+<a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
+<a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
+<a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
+<a href="#347" id="347">347</a>
+<a href="#348" id="348">348</a>
+<a href="#349" id="349">349</a>
+<a href="#350" id="350">350</a>
+<a href="#351" id="351">351</a>
+<a href="#352" id="352">352</a>
+<a href="#353" id="353">353</a>
+<a href="#354" id="354">354</a>
+<a href="#355" id="355">355</a>
+<a href="#356" id="356">356</a>
+<a href="#357" id="357">357</a>
+<a href="#358" id="358">358</a>
+<a href="#359" id="359">359</a>
+<a href="#360" id="360">360</a>
+<a href="#361" id="361">361</a>
+<a href="#362" id="362">362</a>
+<a href="#363" id="363">363</a>
+<a href="#364" id="364">364</a>
+<a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
+<a href="#377" id="377">377</a>
+<a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a>
+<a href="#382" id="382">382</a>
+<a href="#383" id="383">383</a>
+<a href="#384" id="384">384</a>
+<a href="#385" id="385">385</a>
+<a href="#386" id="386">386</a>
+<a href="#387" id="387">387</a>
+<a href="#388" id="388">388</a>
+<a href="#389" id="389">389</a>
+<a href="#390" id="390">390</a>
+<a href="#391" id="391">391</a>
+<a href="#392" id="392">392</a>
+<a href="#393" id="393">393</a>
+<a href="#394" id="394">394</a>
+<a href="#395" id="395">395</a>
+<a href="#396" id="396">396</a>
+<a href="#397" id="397">397</a>
+<a href="#398" id="398">398</a>
+<a href="#399" id="399">399</a>
+<a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a>
+<a href="#411" id="411">411</a>
+<a href="#412" id="412">412</a>
+<a href="#413" id="413">413</a>
+<a href="#414" id="414">414</a>
+<a href="#415" id="415">415</a>
+<a href="#416" id="416">416</a>
+<a href="#417" id="417">417</a>
+<a href="#418" id="418">418</a>
+<a href="#419" id="419">419</a>
+<a href="#420" id="420">420</a>
+<a href="#421" id="421">421</a>
+<a href="#422" id="422">422</a>
+<a href="#423" id="423">423</a>
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a>
+<a href="#430" id="430">430</a>
+<a href="#431" id="431">431</a>
+<a href="#432" id="432">432</a>
+<a href="#433" id="433">433</a>
+<a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
+<a href="#436" id="436">436</a>
+<a href="#437" id="437">437</a>
+<a href="#438" id="438">438</a>
+<a href="#439" id="439">439</a>
+<a href="#440" id="440">440</a>
+<a href="#441" id="441">441</a>
+<a href="#442" id="442">442</a>
+<a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
+<a href="#453" id="453">453</a>
+<a href="#454" id="454">454</a>
+<a href="#455" id="455">455</a>
+<a href="#456" id="456">456</a>
+<a href="#457" id="457">457</a>
+<a href="#458" id="458">458</a>
+<a href="#459" id="459">459</a>
+<a href="#460" id="460">460</a>
+<a href="#461" id="461">461</a>
+<a href="#462" id="462">462</a>
+<a href="#463" id="463">463</a>
+<a href="#464" id="464">464</a>
+<a href="#465" id="465">465</a>
+<a href="#466" id="466">466</a>
+<a href="#467" id="467">467</a>
+<a href="#468" id="468">468</a>
+<a href="#469" id="469">469</a>
+<a href="#470" id="470">470</a>
+<a href="#471" id="471">471</a>
+<a href="#472" id="472">472</a>
+<a href="#473" id="473">473</a>
+<a href="#474" id="474">474</a>
+<a href="#475" id="475">475</a>
+<a href="#476" id="476">476</a>
+<a href="#477" id="477">477</a>
+<a href="#478" id="478">478</a>
+<a href="#479" id="479">479</a>
+<a href="#480" id="480">480</a>
+<a href="#481" id="481">481</a>
+<a href="#482" id="482">482</a>
+<a href="#483" id="483">483</a>
+<a href="#484" id="484">484</a>
+<a href="#485" id="485">485</a>
+<a href="#486" id="486">486</a>
+<a href="#487" id="487">487</a>
+<a href="#488" id="488">488</a>
+<a href="#489" id="489">489</a>
+<a href="#490" id="490">490</a>
+<a href="#491" id="491">491</a>
+<a href="#492" id="492">492</a>
+<a href="#493" id="493">493</a>
+<a href="#494" id="494">494</a>
+<a href="#495" id="495">495</a>
+<a href="#496" id="496">496</a>
+<a href="#497" id="497">497</a>
+<a href="#498" id="498">498</a>
+<a href="#499" id="499">499</a>
+<a href="#500" id="500">500</a>
+<a href="#501" id="501">501</a>
+<a href="#502" id="502">502</a>
+<a href="#503" id="503">503</a>
+<a href="#504" id="504">504</a>
+<a href="#505" id="505">505</a>
+<a href="#506" id="506">506</a>
+<a href="#507" id="507">507</a>
+<a href="#508" id="508">508</a>
+<a href="#509" id="509">509</a>
+<a href="#510" id="510">510</a>
+<a href="#511" id="511">511</a>
+<a href="#512" id="512">512</a>
+<a href="#513" id="513">513</a>
+<a href="#514" id="514">514</a>
+<a href="#515" id="515">515</a>
+<a href="#516" id="516">516</a>
+<a href="#517" id="517">517</a>
+<a href="#518" id="518">518</a>
+<a href="#519" id="519">519</a>
+<a href="#520" id="520">520</a>
+<a href="#521" id="521">521</a>
+<a href="#522" id="522">522</a>
+<a href="#523" id="523">523</a>
+<a href="#524" id="524">524</a>
+<a href="#525" id="525">525</a>
+<a href="#526" id="526">526</a>
+<a href="#527" id="527">527</a>
+<a href="#528" id="528">528</a>
+<a href="#529" id="529">529</a>
+<a href="#530" id="530">530</a>
+<a href="#531" id="531">531</a>
+<a href="#532" id="532">532</a>
+<a href="#533" id="533">533</a>
+<a href="#534" id="534">534</a>
+<a href="#535" id="535">535</a>
+<a href="#536" id="536">536</a>
+<a href="#537" id="537">537</a>
+<a href="#538" id="538">538</a>
+<a href="#539" id="539">539</a>
+<a href="#540" id="540">540</a>
+<a href="#541" id="541">541</a>
+<a href="#542" id="542">542</a>
+<a href="#543" id="543">543</a>
+<a href="#544" id="544">544</a>
+<a href="#545" id="545">545</a>
+<a href="#546" id="546">546</a>
+<a href="#547" id="547">547</a>
+<a href="#548" id="548">548</a>
+<a href="#549" id="549">549</a>
+<a href="#550" id="550">550</a>
+<a href="#551" id="551">551</a>
+<a href="#552" id="552">552</a>
+<a href="#553" id="553">553</a>
+<a href="#554" id="554">554</a>
+<a href="#555" id="555">555</a>
+<a href="#556" id="556">556</a>
+<a href="#557" id="557">557</a>
+<a href="#558" id="558">558</a>
+<a href="#559" id="559">559</a>
+<a href="#560" id="560">560</a>
+<a href="#561" id="561">561</a>
+<a href="#562" id="562">562</a>
+<a href="#563" id="563">563</a>
+<a href="#564" id="564">564</a>
+<a href="#565" id="565">565</a>
+<a href="#566" id="566">566</a>
+<a href="#567" id="567">567</a>
+<a href="#568" id="568">568</a>
+<a href="#569" id="569">569</a>
+<a href="#570" id="570">570</a>
+<a href="#571" id="571">571</a>
+<a href="#572" id="572">572</a>
+<a href="#573" id="573">573</a>
+<a href="#574" id="574">574</a>
+<a href="#575" id="575">575</a>
+<a href="#576" id="576">576</a>
+<a href="#577" id="577">577</a>
+<a href="#578" id="578">578</a>
+<a href="#579" id="579">579</a>
+<a href="#580" id="580">580</a>
+<a href="#581" id="581">581</a>
+<a href="#582" id="582">582</a>
+<a href="#583" id="583">583</a>
+<a href="#584" id="584">584</a>
+<a href="#585" id="585">585</a>
+<a href="#586" id="586">586</a>
+<a href="#587" id="587">587</a>
+<a href="#588" id="588">588</a>
+<a href="#589" id="589">589</a>
+<a href="#590" id="590">590</a>
+<a href="#591" id="591">591</a>
+<a href="#592" id="592">592</a>
+<a href="#593" id="593">593</a>
+<a href="#594" id="594">594</a>
+<a href="#595" id="595">595</a>
+<a href="#596" id="596">596</a>
+<a href="#597" id="597">597</a>
+<a href="#598" id="598">598</a>
+<a href="#599" id="599">599</a>
+<a href="#600" id="600">600</a>
+<a href="#601" id="601">601</a>
+<a href="#602" id="602">602</a>
+<a href="#603" id="603">603</a>
+<a href="#604" id="604">604</a>
+<a href="#605" id="605">605</a>
+<a href="#606" id="606">606</a>
+<a href="#607" id="607">607</a>
+<a href="#608" id="608">608</a>
+<a href="#609" id="609">609</a>
+<a href="#610" id="610">610</a>
+<a href="#611" id="611">611</a>
+<a href="#612" id="612">612</a>
+<a href="#613" id="613">613</a>
+<a href="#614" id="614">614</a>
+<a href="#615" id="615">615</a>
+<a href="#616" id="616">616</a>
+<a href="#617" id="617">617</a>
+<a href="#618" id="618">618</a>
+<a href="#619" id="619">619</a>
+<a href="#620" id="620">620</a>
+<a href="#621" id="621">621</a>
+<a href="#622" id="622">622</a>
+<a href="#623" id="623">623</a>
+<a href="#624" id="624">624</a>
+<a href="#625" id="625">625</a>
+<a href="#626" id="626">626</a>
+<a href="#627" id="627">627</a>
+<a href="#628" id="628">628</a>
+<a href="#629" id="629">629</a>
+<a href="#630" id="630">630</a>
+<a href="#631" id="631">631</a>
+<a href="#632" id="632">632</a>
+<a href="#633" id="633">633</a>
+<a href="#634" id="634">634</a>
+<a href="#635" id="635">635</a>
+<a href="#636" id="636">636</a>
+<a href="#637" id="637">637</a>
+<a href="#638" id="638">638</a>
+<a href="#639" id="639">639</a>
+<a href="#640" id="640">640</a>
+<a href="#641" id="641">641</a>
+<a href="#642" id="642">642</a>
+<a href="#643" id="643">643</a>
+<a href="#644" id="644">644</a>
+<a href="#645" id="645">645</a>
+<a href="#646" id="646">646</a>
+<a href="#647" id="647">647</a>
+<a href="#648" id="648">648</a>
+<a href="#649" id="649">649</a>
+<a href="#650" id="650">650</a>
+<a href="#651" id="651">651</a>
+<a href="#652" id="652">652</a>
+<a href="#653" id="653">653</a>
+<a href="#654" id="654">654</a>
+<a href="#655" id="655">655</a>
+<a href="#656" id="656">656</a>
+<a href="#657" id="657">657</a>
+<a href="#658" id="658">658</a>
+<a href="#659" id="659">659</a>
+<a href="#660" id="660">660</a>
+<a href="#661" id="661">661</a>
+<a href="#662" id="662">662</a>
+<a href="#663" id="663">663</a>
+<a href="#664" id="664">664</a>
+<a href="#665" id="665">665</a>
+<a href="#666" id="666">666</a>
+<a href="#667" id="667">667</a>
+<a href="#668" id="668">668</a>
+<a href="#669" id="669">669</a>
+<a href="#670" id="670">670</a>
+<a href="#671" id="671">671</a>
+<a href="#672" id="672">672</a>
+<a href="#673" id="673">673</a>
+<a href="#674" id="674">674</a>
+<a href="#675" id="675">675</a>
+<a href="#676" id="676">676</a>
+<a href="#677" id="677">677</a>
+<a href="#678" id="678">678</a>
+<a href="#679" id="679">679</a>
+<a href="#680" id="680">680</a>
+<a href="#681" id="681">681</a>
+<a href="#682" id="682">682</a>
+<a href="#683" id="683">683</a>
+<a href="#684" id="684">684</a>
+<a href="#685" id="685">685</a>
+<a href="#686" id="686">686</a>
+<a href="#687" id="687">687</a>
+<a href="#688" id="688">688</a>
+<a href="#689" id="689">689</a>
+<a href="#690" id="690">690</a>
+<a href="#691" id="691">691</a>
+<a href="#692" id="692">692</a>
+<a href="#693" id="693">693</a>
+<a href="#694" id="694">694</a>
+<a href="#695" id="695">695</a>
+<a href="#696" id="696">696</a>
+<a href="#697" id="697">697</a>
+<a href="#698" id="698">698</a>
+<a href="#699" id="699">699</a>
+<a href="#700" id="700">700</a>
+<a href="#701" id="701">701</a>
+<a href="#702" id="702">702</a>
+<a href="#703" id="703">703</a>
+<a href="#704" id="704">704</a>
+<a href="#705" id="705">705</a>
+<a href="#706" id="706">706</a>
+<a href="#707" id="707">707</a>
+<a href="#708" id="708">708</a>
+<a href="#709" id="709">709</a>
+<a href="#710" id="710">710</a>
+<a href="#711" id="711">711</a>
+<a href="#712" id="712">712</a>
+<a href="#713" id="713">713</a>
+<a href="#714" id="714">714</a>
+<a href="#715" id="715">715</a>
+<a href="#716" id="716">716</a>
+<a href="#717" id="717">717</a>
+<a href="#718" id="718">718</a>
+<a href="#719" id="719">719</a>
+<a href="#720" id="720">720</a>
+<a href="#721" id="721">721</a>
+<a href="#722" id="722">722</a>
+<a href="#723" id="723">723</a>
+<a href="#724" id="724">724</a>
+<a href="#725" id="725">725</a>
+<a href="#726" id="726">726</a>
+<a href="#727" id="727">727</a>
+<a href="#728" id="728">728</a>
+<a href="#729" id="729">729</a>
+<a href="#730" id="730">730</a>
+<a href="#731" id="731">731</a>
+<a href="#732" id="732">732</a>
+<a href="#733" id="733">733</a>
+<a href="#734" id="734">734</a>
+<a href="#735" id="735">735</a>
+<a href="#736" id="736">736</a>
+<a href="#737" id="737">737</a>
+<a href="#738" id="738">738</a>
+<a href="#739" id="739">739</a>
+<a href="#740" id="740">740</a>
+<a href="#741" id="741">741</a>
+<a href="#742" id="742">742</a>
+<a href="#743" id="743">743</a>
+<a href="#744" id="744">744</a>
+<a href="#745" id="745">745</a>
+<a href="#746" id="746">746</a>
+<a href="#747" id="747">747</a>
+<a href="#748" id="748">748</a>
+<a href="#749" id="749">749</a>
+<a href="#750" id="750">750</a>
+<a href="#751" id="751">751</a>
+<a href="#752" id="752">752</a>
+<a href="#753" id="753">753</a>
+<a href="#754" id="754">754</a>
+<a href="#755" id="755">755</a>
+<a href="#756" id="756">756</a>
+<a href="#757" id="757">757</a>
+<a href="#758" id="758">758</a>
+<a href="#759" id="759">759</a>
+<a href="#760" id="760">760</a>
+<a href="#761" id="761">761</a>
+<a href="#762" id="762">762</a>
+<a href="#763" id="763">763</a>
+<a href="#764" id="764">764</a>
+<a href="#765" id="765">765</a>
+<a href="#766" id="766">766</a>
+<a href="#767" id="767">767</a>
+<a href="#768" id="768">768</a>
+<a href="#769" id="769">769</a>
+<a href="#770" id="770">770</a>
+<a href="#771" id="771">771</a>
+<a href="#772" id="772">772</a>
+<a href="#773" id="773">773</a>
+<a href="#774" id="774">774</a>
+<a href="#775" id="775">775</a>
+<a href="#776" id="776">776</a>
+<a href="#777" id="777">777</a>
+<a href="#778" id="778">778</a>
+<a href="#779" id="779">779</a>
+<a href="#780" id="780">780</a>
+<a href="#781" id="781">781</a>
+<a href="#782" id="782">782</a>
+<a href="#783" id="783">783</a>
+<a href="#784" id="784">784</a>
+<a href="#785" id="785">785</a>
+<a href="#786" id="786">786</a>
+<a href="#787" id="787">787</a>
+<a href="#788" id="788">788</a>
+<a href="#789" id="789">789</a>
+<a href="#790" id="790">790</a>
+<a href="#791" id="791">791</a>
+<a href="#792" id="792">792</a>
+<a href="#793" id="793">793</a>
+<a href="#794" id="794">794</a>
+<a href="#795" id="795">795</a>
+<a href="#796" id="796">796</a>
+<a href="#797" id="797">797</a>
+<a href="#798" id="798">798</a>
+<a href="#799" id="799">799</a>
+<a href="#800" id="800">800</a>
+<a href="#801" id="801">801</a>
+<a href="#802" id="802">802</a>
+<a href="#803" id="803">803</a>
+<a href="#804" id="804">804</a>
+<a href="#805" id="805">805</a>
+<a href="#806" id="806">806</a>
+<a href="#807" id="807">807</a>
+<a href="#808" id="808">808</a>
+<a href="#809" id="809">809</a>
+<a href="#810" id="810">810</a>
+<a href="#811" id="811">811</a>
+<a href="#812" id="812">812</a>
+<a href="#813" id="813">813</a>
+<a href="#814" id="814">814</a>
+<a href="#815" id="815">815</a>
+<a href="#816" id="816">816</a>
+<a href="#817" id="817">817</a>
+<a href="#818" id="818">818</a>
+<a href="#819" id="819">819</a>
+<a href="#820" id="820">820</a>
+<a href="#821" id="821">821</a>
+<a href="#822" id="822">822</a>
+<a href="#823" id="823">823</a>
+<a href="#824" id="824">824</a>
+<a href="#825" id="825">825</a>
+<a href="#826" id="826">826</a>
+<a href="#827" id="827">827</a>
+<a href="#828" id="828">828</a>
+<a href="#829" id="829">829</a>
+<a href="#830" id="830">830</a>
+<a href="#831" id="831">831</a>
+<a href="#832" id="832">832</a>
+<a href="#833" id="833">833</a>
+<a href="#834" id="834">834</a>
+<a href="#835" id="835">835</a>
+<a href="#836" id="836">836</a>
+<a href="#837" id="837">837</a>
+<a href="#838" id="838">838</a>
+<a href="#839" id="839">839</a>
+<a href="#840" id="840">840</a>
+<a href="#841" id="841">841</a>
+<a href="#842" id="842">842</a>
+<a href="#843" id="843">843</a>
+<a href="#844" id="844">844</a>
+<a href="#845" id="845">845</a>
+<a href="#846" id="846">846</a>
+<a href="#847" id="847">847</a>
+<a href="#848" id="848">848</a>
+<a href="#849" id="849">849</a>
+<a href="#850" id="850">850</a>
+<a href="#851" id="851">851</a>
+<a href="#852" id="852">852</a>
+<a href="#853" id="853">853</a>
+<a href="#854" id="854">854</a>
+<a href="#855" id="855">855</a>
+<a href="#856" id="856">856</a>
+<a href="#857" id="857">857</a>
+</pre></div><pre class="rust"><code><span class="attr">#![doc(
+    html_root_url = <span class="string">&quot;https://doc.rust-lang.org/nightly/&quot;</span>,
+    html_playground_url = <span class="string">&quot;https://play.rust-lang.org/&quot;
+</span>)]
+#![feature(rustc_private)]
+#![feature(array_methods)]
+#![feature(assert_matches)]
+#![feature(box_patterns)]
+#![feature(impl_trait_in_assoc_type)]
+#![feature(iter_intersperse)]
+#![feature(lazy_cell)]
+#![feature(let_chains)]
+#![feature(never_type)]
+#![feature(round_char_boundary)]
+#![feature(test)]
+#![feature(type_alias_impl_trait)]
+#![feature(type_ascription)]
+#![recursion_limit = <span class="string">&quot;256&quot;</span>]
+#![warn(rustc::internal)]
+#![allow(clippy::collapsible_if, clippy::collapsible_else_if)]
+#![allow(rustc::potential_query_instability)]
+
+</span><span class="kw">extern crate </span>thin_vec;
+<span class="attr">#[macro_use]
+</span><span class="kw">extern crate </span>tracing;
+
+<span class="comment">// N.B. these need `extern crate` even in 2018 edition
+// because they&#39;re loaded implicitly from the sysroot.
+// The reason they&#39;re loaded from the sysroot is because
+// the rustdoc artifacts aren&#39;t stored in rustc&#39;s cargo target directory.
+// So if `rustc` was specified in Cargo.toml, this would spuriously rebuild crates.
+//
+// Dependencies listed in Cargo.toml do not need `extern crate`.
+
+</span><span class="kw">extern crate </span>pulldown_cmark;
+<span class="kw">extern crate </span>rustc_abi;
+<span class="kw">extern crate </span>rustc_ast;
+<span class="kw">extern crate </span>rustc_ast_pretty;
+<span class="kw">extern crate </span>rustc_attr;
+<span class="kw">extern crate </span>rustc_const_eval;
+<span class="kw">extern crate </span>rustc_data_structures;
+<span class="kw">extern crate </span>rustc_driver;
+<span class="kw">extern crate </span>rustc_errors;
+<span class="kw">extern crate </span>rustc_expand;
+<span class="kw">extern crate </span>rustc_feature;
+<span class="kw">extern crate </span>rustc_hir;
+<span class="kw">extern crate </span>rustc_hir_analysis;
+<span class="kw">extern crate </span>rustc_hir_pretty;
+<span class="kw">extern crate </span>rustc_index;
+<span class="kw">extern crate </span>rustc_infer;
+<span class="kw">extern crate </span>rustc_interface;
+<span class="kw">extern crate </span>rustc_lexer;
+<span class="kw">extern crate </span>rustc_lint;
+<span class="kw">extern crate </span>rustc_lint_defs;
+<span class="kw">extern crate </span>rustc_macros;
+<span class="kw">extern crate </span>rustc_metadata;
+<span class="kw">extern crate </span>rustc_middle;
+<span class="kw">extern crate </span>rustc_parse;
+<span class="kw">extern crate </span>rustc_passes;
+<span class="kw">extern crate </span>rustc_resolve;
+<span class="kw">extern crate </span>rustc_serialize;
+<span class="kw">extern crate </span>rustc_session;
+<span class="kw">extern crate </span>rustc_span;
+<span class="kw">extern crate </span>rustc_target;
+<span class="kw">extern crate </span>rustc_trait_selection;
+<span class="kw">extern crate </span>test;
+
+<span class="comment">// See docs in https://github.com/rust-lang/rust/blob/master/compiler/rustc/src/main.rs
+// about jemalloc.
+</span><span class="attr">#[cfg(feature = <span class="string">&quot;jemalloc&quot;</span>)]
+</span><span class="kw">extern crate </span>jemalloc_sys;
+
+<span class="kw">use </span>std::env::{<a class="self" href="https://doc.rust-lang.org/nightly/std/env/index.html">self</a>, <a href="https://doc.rust-lang.org/nightly/std/env/enum.VarError.html">VarError</a>};
+<span class="kw">use </span>std::io::{<a class="self" href="https://doc.rust-lang.org/nightly/std/io/index.html">self</a>, <a href="https://doc.rust-lang.org/nightly/std/io/stdio/trait.IsTerminal.html">IsTerminal</a>};
+<span class="kw">use </span><a href="https://doc.rust-lang.org/nightly/std/process/index.html">std::process</a>;
+
+<span class="kw">use </span><a href="../../rustc_driver_impl/fn.abort_on_err.html">rustc_driver::abort_on_err</a>;
+<span class="kw">use </span><a href="../../rustc_span/struct.ErrorGuaranteed.html">rustc_errors::ErrorGuaranteed</a>;
+<span class="kw">use </span><a href="../../rustc_interface/interface/index.html">rustc_interface::interface</a>;
+<span class="kw">use </span><a href="../../rustc_middle/ty/context/struct.TyCtxt.html">rustc_middle::ty::TyCtxt</a>;
+<span class="kw">use </span>rustc_session::config::{<a href="../../rustc_session/config/fn.make_crate_type_option.html">make_crate_type_option</a>, <a href="../../rustc_session/config/enum.ErrorOutputType.html">ErrorOutputType</a>, <a href="../../rustc_session/config/struct.RustcOptGroup.html">RustcOptGroup</a>};
+<span class="kw">use </span>rustc_session::{<a href="https://docs.rs/getopts/0.2.20/getopts/index.html">getopts</a>, <a href="../../rustc_session/session/struct.EarlyErrorHandler.html">EarlyErrorHandler</a>};
+
+<span class="kw">use </span><a href="clean/utils.rs.html#591"><span class="kw">crate</span>::clean::utils::DOC_RUST_LANG_ORG_CHANNEL</a>;
+
+<span class="doccomment">/// A macro to create a FxHashMap.
+///
+/// Example:
+///
+/// ```ignore(cannot-test-this-because-non-exported-macro)
+/// let letters = map!{&quot;a&quot; =&gt; &quot;b&quot;, &quot;c&quot; =&gt; &quot;d&quot;};
+/// ```
+///
+/// Trailing commas are allowed.
+/// Commas between elements are required (even if the expression is a block).
+</span><span class="macro">macro_rules! </span><a href="../../rustdoc/macro.map.html">map</a> {
+    ($( <span class="macro-nonterminal">$key</span>: expr =&gt; <span class="macro-nonterminal">$val</span>: expr ),* $(,)<span class="kw-2">*</span>) =&gt; {{
+        <span class="kw">let </span><span class="kw-2">mut </span>map = ::rustc_data_structures::fx::FxHashMap::default();
+        $( map.insert(<span class="macro-nonterminal">$key</span>, <span class="macro-nonterminal">$val</span>); )*
+        map
+    }}
+}
+
+<span class="kw">mod </span><a href="clean/mod.rs.html#1-2977">clean</a>;
+<span class="kw">mod </span><a href="config.rs.html#1-835">config</a>;
+<span class="kw">mod </span><a href="core.rs.html#1-522">core</a>;
+<span class="kw">mod </span><a href="docfs.rs.html#1-92">docfs</a>;
+<span class="kw">mod </span><a href="doctest.rs.html#1-1308">doctest</a>;
+<span class="kw">mod </span><a href="error.rs.html#1-59">error</a>;
+<span class="kw">mod </span><a href="externalfiles.rs.html#1-109">externalfiles</a>;
+<span class="kw">mod </span><a href="fold.rs.html#1-107">fold</a>;
+<span class="kw">mod </span><a href="formats/mod.rs.html#1-95">formats</a>;
+<span class="comment">// used by the error-index generator, so it needs to be public
+</span><span class="kw">pub mod </span><a href="html/mod.rs.html#1-15">html</a>;
+<span class="kw">mod </span><a href="json/mod.rs.html#1-294">json</a>;
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span><a href="lint.rs.html#1-235">lint</a>;
+<span class="kw">mod </span><a href="markdown.rs.html#1-161">markdown</a>;
+<span class="kw">mod </span><a href="passes/mod.rs.html#1-203">passes</a>;
+<span class="kw">mod </span><a href="scrape_examples.rs.html#1-364">scrape_examples</a>;
+<span class="kw">mod </span><a href="theme.rs.html#1-252">theme</a>;
+<span class="kw">mod </span><a href="visit.rs.html#1-72">visit</a>;
+<span class="kw">mod </span><a href="visit_ast.rs.html#1-620">visit_ast</a>;
+<span class="kw">mod </span><a href="visit_lib.rs.html#1-75">visit_lib</a>;
+
+<span class="kw">pub fn </span><a href="../../rustdoc/fn.main.html">main</a>() {
+    <span class="comment">// See docs in https://github.com/rust-lang/rust/blob/master/compiler/rustc/src/main.rs
+    // about jemalloc.
+    </span><span class="attr">#[cfg(feature = <span class="string">&quot;jemalloc&quot;</span>)]
+    </span>{
+        <span class="kw">use </span>std::os::raw::{c_int, c_void};
+
+        <span class="attr">#[used]
+        </span><span class="kw">static </span>_F1: <span class="kw">unsafe extern </span><span class="string">&quot;C&quot; </span><span class="kw">fn</span>(usize, usize) -&gt; <span class="kw-2">*mut </span>c_void = jemalloc_sys::calloc;
+        <span class="attr">#[used]
+        </span><span class="kw">static </span>_F2: <span class="kw">unsafe extern </span><span class="string">&quot;C&quot; </span><span class="kw">fn</span>(<span class="kw-2">*mut *mut </span>c_void, usize, usize) -&gt; c_int =
+            jemalloc_sys::posix_memalign;
+        <span class="attr">#[used]
+        </span><span class="kw">static </span>_F3: <span class="kw">unsafe extern </span><span class="string">&quot;C&quot; </span><span class="kw">fn</span>(usize, usize) -&gt; <span class="kw-2">*mut </span>c_void = jemalloc_sys::aligned_alloc;
+        <span class="attr">#[used]
+        </span><span class="kw">static </span>_F4: <span class="kw">unsafe extern </span><span class="string">&quot;C&quot; </span><span class="kw">fn</span>(usize) -&gt; <span class="kw-2">*mut </span>c_void = jemalloc_sys::malloc;
+        <span class="attr">#[used]
+        </span><span class="kw">static </span>_F5: <span class="kw">unsafe extern </span><span class="string">&quot;C&quot; </span><span class="kw">fn</span>(<span class="kw-2">*mut </span>c_void, usize) -&gt; <span class="kw-2">*mut </span>c_void = jemalloc_sys::realloc;
+        <span class="attr">#[used]
+        </span><span class="kw">static </span>_F6: <span class="kw">unsafe extern </span><span class="string">&quot;C&quot; </span><span class="kw">fn</span>(<span class="kw-2">*mut </span>c_void) = jemalloc_sys::free;
+
+        <span class="attr">#[cfg(target_os = <span class="string">&quot;macos&quot;</span>)]
+        </span>{
+            <span class="kw">extern </span><span class="string">&quot;C&quot; </span>{
+                <span class="kw">fn </span>_rjem_je_zone_register();
+            }
+
+            <span class="attr">#[used]
+            </span><span class="kw">static </span>_F7: <span class="kw">unsafe extern </span><span class="string">&quot;C&quot; </span><span class="kw">fn</span>() = _rjem_je_zone_register;
+        }
+    }
+
+    <span class="kw">let </span><span class="kw-2">mut </span>handler = EarlyErrorHandler::new(ErrorOutputType::default());
+
+    rustc_driver::install_ice_hook(
+        <span class="string">&quot;https://github.com/rust-lang/rust/issues/new\
+    ?labels=C-bug%2C+I-ICE%2C+T-rustdoc&amp;template=ice.md&quot;</span>,
+        |<span class="kw">_</span>| (),
+    );
+
+    <span class="comment">// When using CI artifacts with `download-rustc`, tracing is unconditionally built
+    // with `--features=static_max_level_info`, which disables almost all rustdoc logging. To avoid
+    // this, compile our own version of `tracing` that logs all levels.
+    // NOTE: this compiles both versions of tracing unconditionally, because
+    // - The compile time hit is not that bad, especially compared to rustdoc&#39;s incremental times, and
+    // - Otherwise, there&#39;s no warning that logging is being ignored when `download-rustc` is enabled
+    // NOTE: The reason this doesn&#39;t show double logging when `download-rustc = false` and
+    // `debug_logging = true` is because all rustc logging goes to its version of tracing (the one
+    // in the sysroot), and all of rustdoc&#39;s logging goes to its version (the one in Cargo.toml).
+
+    </span><a href="#189-218">init_logging</a>(<span class="kw-2">&amp;</span><a href="#157">handler</a>);
+    rustc_driver::init_env_logger(<span class="kw-2">&amp;</span><a href="#157">handler</a>, <span class="string">&quot;RUSTDOC_LOG&quot;</span>);
+
+    <span class="kw">let </span>exit_code = rustc_driver::catch_with_exit_code(|| <span class="kw">match </span><a href="#220-231">get_args</a>(<span class="kw-2">&amp;</span><a href="#157">handler</a>) {
+        <span class="prelude-val">Some</span>(args) =&gt; <a href="#710-857">main_args</a>(<span class="kw-2">&amp;mut </span><a href="#157">handler</a>, <span class="kw-2">&amp;</span><a href="#179">args</a>),
+        <span class="kw">_ </span>=&gt;
+        {
+            <span class="attr">#[allow(deprecated)]
+            </span><span class="prelude-val">Err</span>(ErrorGuaranteed::unchecked_claim_error_was_emitted())
+        }
+    });
+    <a href="https://doc.rust-lang.org/nightly/std/process/fn.exit.html">process::exit</a>(<a href="#178">exit_code</a>);
+}
+
+<span class="kw">fn </span><a href="../../rustdoc/fn.init_logging.html">init_logging</a>(handler: <span class="kw-2">&amp;</span><a href="../../rustc_session/session/struct.EarlyErrorHandler.html">EarlyErrorHandler</a>) {
+    <span class="kw">let </span>color_logs = <span class="kw">match </span>std::env::var(<span class="string">&quot;RUSTDOC_LOG_COLOR&quot;</span>).as_deref() {
+        <span class="prelude-val">Ok</span>(<span class="string">&quot;always&quot;</span>) =&gt; <span class="bool-val">true</span>,
+        <span class="prelude-val">Ok</span>(<span class="string">&quot;never&quot;</span>) =&gt; <span class="bool-val">false</span>,
+        <span class="prelude-val">Ok</span>(<span class="string">&quot;auto&quot;</span>) | <span class="prelude-val">Err</span>(VarError::NotPresent) =&gt; io::stdout().<a href="https://doc.rust-lang.org/nightly/std/io/stdio/trait.IsTerminal.html">is_terminal</a>(),
+        <span class="prelude-val">Ok</span>(value) =&gt; <a href="#189">handler</a>.early_error(<a class="macro" href="https://doc.rust-lang.org/nightly/alloc/macro.format.html">format!</a>(
+            <span class="string">&quot;invalid log color value &#39;{value}&#39;: expected one of always, never, or auto&quot;</span>,
+        )),
+        <span class="prelude-val">Err</span>(VarError::NotUnicode(value)) =&gt; <a href="#189">handler</a>.early_error(<a class="macro" href="https://doc.rust-lang.org/nightly/alloc/macro.format.html">format!</a>(
+            <span class="string">&quot;invalid log color value &#39;{}&#39;: expected one of always, never, or auto&quot;</span>,
+            value.to_string_lossy()
+        )),
+    };
+    <span class="kw">let </span>filter = tracing_subscriber::EnvFilter::from_env(<span class="string">&quot;RUSTDOC_LOG&quot;</span>);
+    <span class="kw">let </span>layer = tracing_tree::HierarchicalLayer::default()
+        .with_writer(io::stderr)
+        .with_indent_lines(<span class="bool-val">true</span>)
+        .with_ansi(<a href="#190">color_logs</a>)
+        .with_targets(<span class="bool-val">true</span>)
+        .with_wraparound(<span class="number">10</span>)
+        .with_verbose_exit(<span class="bool-val">true</span>)
+        .with_verbose_entry(<span class="bool-val">true</span>)
+        .with_indent_amount(<span class="number">2</span>);
+    <span class="attr">#[cfg(all(parallel_compiler, debug_assertions))]
+    </span><span class="kw">let </span>layer = layer.with_thread_ids(<span class="bool-val">true</span>).with_thread_names(<span class="bool-val">true</span>);
+
+    <span class="kw">use </span>tracing_subscriber::layer::SubscriberExt;
+    <span class="kw">let </span>subscriber = tracing_subscriber::Registry::default().with(<a href="#202">filter</a>).with(<a href="#203">layer</a>);
+    tracing::subscriber::set_global_default(<a href="#216">subscriber</a>).unwrap();
+}
+
+<span class="kw">fn </span><a href="../../rustdoc/fn.get_args.html">get_args</a>(handler: <span class="kw-2">&amp;</span><a href="../../rustc_session/session/struct.EarlyErrorHandler.html">EarlyErrorHandler</a>) -&gt; <span class="prelude-ty">Option</span>&lt;Vec&lt;<a href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html">String</a>&gt;&gt; {
+    env::args_os()
+        .<a href="https://doc.rust-lang.org/nightly/core/iter/traits/iterator/trait.Iterator.html">enumerate</a>()
+        .<a href="https://doc.rust-lang.org/nightly/core/iter/traits/iterator/trait.Iterator.html">map</a>(|(i, arg)| {
+            <a href="#223">arg</a>.into_string()
+                .map_err(|arg| {
+                    <a href="#220">handler</a>.early_warn(<a class="macro" href="https://doc.rust-lang.org/nightly/alloc/macro.format.html">format!</a>(<span class="string">&quot;Argument {i} is not valid Unicode: {arg:?}&quot;</span>));
+                })
+                .ok()
+        })
+        .<a href="https://doc.rust-lang.org/nightly/core/iter/traits/iterator/trait.Iterator.html">collect</a>()
+}
+
+<span class="kw">fn </span><a href="../../rustdoc/fn.opts.html">opts</a>() -&gt; Vec&lt;<a href="../../rustc_session/config/struct.RustcOptGroup.html">RustcOptGroup</a>&gt; {
+    <span class="kw">let </span>stable: <span class="kw">fn</span>(<span class="kw">_</span>, <span class="kw">fn</span>(<span class="kw-2">&amp;mut </span><a href="https://docs.rs/getopts/0.2.20/getopts/struct.Options.html">getopts::Options</a>) -&gt; <span class="kw-2">&amp;mut </span><span class="kw">_</span>) -&gt; <span class="kw">_ </span>= RustcOptGroup::stable;
+    <span class="kw">let </span>unstable: <span class="kw">fn</span>(<span class="kw">_</span>, <span class="kw">fn</span>(<span class="kw-2">&amp;mut </span><a href="https://docs.rs/getopts/0.2.20/getopts/struct.Options.html">getopts::Options</a>) -&gt; <span class="kw-2">&amp;mut </span><span class="kw">_</span>) -&gt; <span class="kw">_ </span>= RustcOptGroup::unstable;
+    <a class="macro" href="https://doc.rust-lang.org/nightly/alloc/macro.vec.html">vec!</a>[
+        stable(<span class="string">&quot;h&quot;</span>, |o| o.optflagmulti(<span class="string">&quot;h&quot;</span>, <span class="string">&quot;help&quot;</span>, <span class="string">&quot;show this help message&quot;</span>)),
+        stable(<span class="string">&quot;V&quot;</span>, |o| o.optflagmulti(<span class="string">&quot;V&quot;</span>, <span class="string">&quot;version&quot;</span>, <span class="string">&quot;print rustdoc&#39;s version&quot;</span>)),
+        stable(<span class="string">&quot;v&quot;</span>, |o| o.optflagmulti(<span class="string">&quot;v&quot;</span>, <span class="string">&quot;verbose&quot;</span>, <span class="string">&quot;use verbose output&quot;</span>)),
+        stable(<span class="string">&quot;w&quot;</span>, |o| o.optopt(<span class="string">&quot;w&quot;</span>, <span class="string">&quot;output-format&quot;</span>, <span class="string">&quot;the output type to write&quot;</span>, <span class="string">&quot;[html]&quot;</span>)),
+        stable(<span class="string">&quot;output&quot;</span>, |o| {
+            o.optopt(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;output&quot;</span>,
+                <span class="string">&quot;Which directory to place the output. \
+                 This option is deprecated, use --out-dir instead.&quot;</span>,
+                <span class="string">&quot;PATH&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;o&quot;</span>, |o| o.optopt(<span class="string">&quot;o&quot;</span>, <span class="string">&quot;out-dir&quot;</span>, <span class="string">&quot;which directory to place the output&quot;</span>, <span class="string">&quot;PATH&quot;</span>)),
+        stable(<span class="string">&quot;crate-name&quot;</span>, |o| {
+            o.optopt(<span class="string">&quot;&quot;</span>, <span class="string">&quot;crate-name&quot;</span>, <span class="string">&quot;specify the name of this crate&quot;</span>, <span class="string">&quot;NAME&quot;</span>)
+        }),
+        make_crate_type_option(),
+        stable(<span class="string">&quot;L&quot;</span>, |o| {
+            o.optmulti(<span class="string">&quot;L&quot;</span>, <span class="string">&quot;library-path&quot;</span>, <span class="string">&quot;directory to add to crate search path&quot;</span>, <span class="string">&quot;DIR&quot;</span>)
+        }),
+        stable(<span class="string">&quot;cfg&quot;</span>, |o| o.optmulti(<span class="string">&quot;&quot;</span>, <span class="string">&quot;cfg&quot;</span>, <span class="string">&quot;pass a --cfg to rustc&quot;</span>, <span class="string">&quot;&quot;</span>)),
+        unstable(<span class="string">&quot;check-cfg&quot;</span>, |o| o.optmulti(<span class="string">&quot;&quot;</span>, <span class="string">&quot;check-cfg&quot;</span>, <span class="string">&quot;pass a --check-cfg to rustc&quot;</span>, <span class="string">&quot;&quot;</span>)),
+        stable(<span class="string">&quot;extern&quot;</span>, |o| o.optmulti(<span class="string">&quot;&quot;</span>, <span class="string">&quot;extern&quot;</span>, <span class="string">&quot;pass an --extern to rustc&quot;</span>, <span class="string">&quot;NAME[=PATH]&quot;</span>)),
+        unstable(<span class="string">&quot;extern-html-root-url&quot;</span>, |o| {
+            o.optmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;extern-html-root-url&quot;</span>,
+                <span class="string">&quot;base URL to use for dependencies; for example, \
+                 \&quot;std=/doc\&quot; links std::vec::Vec to /doc/std/vec/struct.Vec.html&quot;</span>,
+                <span class="string">&quot;NAME=URL&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;extern-html-root-takes-precedence&quot;</span>, |o| {
+            o.optflagmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;extern-html-root-takes-precedence&quot;</span>,
+                <span class="string">&quot;give precedence to `--extern-html-root-url`, not `html_root_url`&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;C&quot;</span>, |o| {
+            o.optmulti(<span class="string">&quot;C&quot;</span>, <span class="string">&quot;codegen&quot;</span>, <span class="string">&quot;pass a codegen option to rustc&quot;</span>, <span class="string">&quot;OPT[=VALUE]&quot;</span>)
+        }),
+        stable(<span class="string">&quot;document-private-items&quot;</span>, |o| {
+            o.optflagmulti(<span class="string">&quot;&quot;</span>, <span class="string">&quot;document-private-items&quot;</span>, <span class="string">&quot;document private items&quot;</span>)
+        }),
+        unstable(<span class="string">&quot;document-hidden-items&quot;</span>, |o| {
+            o.optflagmulti(<span class="string">&quot;&quot;</span>, <span class="string">&quot;document-hidden-items&quot;</span>, <span class="string">&quot;document items that have doc(hidden)&quot;</span>)
+        }),
+        stable(<span class="string">&quot;test&quot;</span>, |o| o.optflagmulti(<span class="string">&quot;&quot;</span>, <span class="string">&quot;test&quot;</span>, <span class="string">&quot;run code examples as tests&quot;</span>)),
+        stable(<span class="string">&quot;test-args&quot;</span>, |o| {
+            o.optmulti(<span class="string">&quot;&quot;</span>, <span class="string">&quot;test-args&quot;</span>, <span class="string">&quot;arguments to pass to the test runner&quot;</span>, <span class="string">&quot;ARGS&quot;</span>)
+        }),
+        stable(<span class="string">&quot;test-run-directory&quot;</span>, |o| {
+            o.optopt(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;test-run-directory&quot;</span>,
+                <span class="string">&quot;The working directory in which to run tests&quot;</span>,
+                <span class="string">&quot;PATH&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;target&quot;</span>, |o| o.optopt(<span class="string">&quot;&quot;</span>, <span class="string">&quot;target&quot;</span>, <span class="string">&quot;target triple to document&quot;</span>, <span class="string">&quot;TRIPLE&quot;</span>)),
+        stable(<span class="string">&quot;markdown-css&quot;</span>, |o| {
+            o.optmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;markdown-css&quot;</span>,
+                <span class="string">&quot;CSS files to include via &lt;link&gt; in a rendered Markdown file&quot;</span>,
+                <span class="string">&quot;FILES&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;html-in-header&quot;</span>, |o| {
+            o.optmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;html-in-header&quot;</span>,
+                <span class="string">&quot;files to include inline in the &lt;head&gt; section of a rendered Markdown file \
+                 or generated documentation&quot;</span>,
+                <span class="string">&quot;FILES&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;html-before-content&quot;</span>, |o| {
+            o.optmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;html-before-content&quot;</span>,
+                <span class="string">&quot;files to include inline between &lt;body&gt; and the content of a rendered \
+                 Markdown file or generated documentation&quot;</span>,
+                <span class="string">&quot;FILES&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;html-after-content&quot;</span>, |o| {
+            o.optmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;html-after-content&quot;</span>,
+                <span class="string">&quot;files to include inline between the content and &lt;/body&gt; of a rendered \
+                 Markdown file or generated documentation&quot;</span>,
+                <span class="string">&quot;FILES&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;markdown-before-content&quot;</span>, |o| {
+            o.optmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;markdown-before-content&quot;</span>,
+                <span class="string">&quot;files to include inline between &lt;body&gt; and the content of a rendered \
+                 Markdown file or generated documentation&quot;</span>,
+                <span class="string">&quot;FILES&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;markdown-after-content&quot;</span>, |o| {
+            o.optmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;markdown-after-content&quot;</span>,
+                <span class="string">&quot;files to include inline between the content and &lt;/body&gt; of a rendered \
+                 Markdown file or generated documentation&quot;</span>,
+                <span class="string">&quot;FILES&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;markdown-playground-url&quot;</span>, |o| {
+            o.optopt(<span class="string">&quot;&quot;</span>, <span class="string">&quot;markdown-playground-url&quot;</span>, <span class="string">&quot;URL to send code snippets to&quot;</span>, <span class="string">&quot;URL&quot;</span>)
+        }),
+        stable(<span class="string">&quot;markdown-no-toc&quot;</span>, |o| {
+            o.optflagmulti(<span class="string">&quot;&quot;</span>, <span class="string">&quot;markdown-no-toc&quot;</span>, <span class="string">&quot;don&#39;t include table of contents&quot;</span>)
+        }),
+        stable(<span class="string">&quot;e&quot;</span>, |o| {
+            o.optopt(
+                <span class="string">&quot;e&quot;</span>,
+                <span class="string">&quot;extend-css&quot;</span>,
+                <span class="string">&quot;To add some CSS rules with a given file to generate doc with your \
+                 own theme. However, your theme might break if the rustdoc&#39;s generated HTML \
+                 changes, so be careful!&quot;</span>,
+                <span class="string">&quot;PATH&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;Z&quot;</span>, |o| {
+            o.optmulti(<span class="string">&quot;Z&quot;</span>, <span class="string">&quot;&quot;</span>, <span class="string">&quot;unstable / perma-unstable options (only on nightly build)&quot;</span>, <span class="string">&quot;FLAG&quot;</span>)
+        }),
+        stable(<span class="string">&quot;sysroot&quot;</span>, |o| o.optopt(<span class="string">&quot;&quot;</span>, <span class="string">&quot;sysroot&quot;</span>, <span class="string">&quot;Override the system root&quot;</span>, <span class="string">&quot;PATH&quot;</span>)),
+        unstable(<span class="string">&quot;playground-url&quot;</span>, |o| {
+            o.optopt(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;playground-url&quot;</span>,
+                <span class="string">&quot;URL to send code snippets to, may be reset by --markdown-playground-url \
+                 or `#![doc(html_playground_url=...)]`&quot;</span>,
+                <span class="string">&quot;URL&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;display-doctest-warnings&quot;</span>, |o| {
+            o.optflagmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;display-doctest-warnings&quot;</span>,
+                <span class="string">&quot;show warnings that originate in doctests&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;crate-version&quot;</span>, |o| {
+            o.optopt(<span class="string">&quot;&quot;</span>, <span class="string">&quot;crate-version&quot;</span>, <span class="string">&quot;crate version to print into documentation&quot;</span>, <span class="string">&quot;VERSION&quot;</span>)
+        }),
+        unstable(<span class="string">&quot;sort-modules-by-appearance&quot;</span>, |o| {
+            o.optflagmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;sort-modules-by-appearance&quot;</span>,
+                <span class="string">&quot;sort modules by where they appear in the program, rather than alphabetically&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;default-theme&quot;</span>, |o| {
+            o.optopt(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;default-theme&quot;</span>,
+                <span class="string">&quot;Set the default theme. THEME should be the theme name, generally lowercase. \
+                 If an unknown default theme is specified, the builtin default is used. \
+                 The set of themes, and the rustdoc built-in default, are not stable.&quot;</span>,
+                <span class="string">&quot;THEME&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;default-setting&quot;</span>, |o| {
+            o.optmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;default-setting&quot;</span>,
+                <span class="string">&quot;Default value for a rustdoc setting (used when \&quot;rustdoc-SETTING\&quot; is absent \
+                 from web browser Local Storage). If VALUE is not supplied, \&quot;true\&quot; is used. \
+                 Supported SETTINGs and VALUEs are not documented and not stable.&quot;</span>,
+                <span class="string">&quot;SETTING[=VALUE]&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;theme&quot;</span>, |o| {
+            o.optmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;theme&quot;</span>,
+                <span class="string">&quot;additional themes which will be added to the generated docs&quot;</span>,
+                <span class="string">&quot;FILES&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;check-theme&quot;</span>, |o| {
+            o.optmulti(<span class="string">&quot;&quot;</span>, <span class="string">&quot;check-theme&quot;</span>, <span class="string">&quot;check if given theme is valid&quot;</span>, <span class="string">&quot;FILES&quot;</span>)
+        }),
+        unstable(<span class="string">&quot;resource-suffix&quot;</span>, |o| {
+            o.optopt(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;resource-suffix&quot;</span>,
+                <span class="string">&quot;suffix to add to CSS and JavaScript files, e.g., \&quot;light.css\&quot; will become \
+                 \&quot;light-suffix.css\&quot;&quot;</span>,
+                <span class="string">&quot;PATH&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;edition&quot;</span>, |o| {
+            o.optopt(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;edition&quot;</span>,
+                <span class="string">&quot;edition to use when compiling rust code (default: 2015)&quot;</span>,
+                <span class="string">&quot;EDITION&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;color&quot;</span>, |o| {
+            o.optopt(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;color&quot;</span>,
+                <span class="string">&quot;Configure coloring of output:
+                                          auto   = colorize, if output goes to a tty (default);
+                                          always = always colorize output;
+                                          never  = never colorize output&quot;</span>,
+                <span class="string">&quot;auto|always|never&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;error-format&quot;</span>, |o| {
+            o.optopt(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;error-format&quot;</span>,
+                <span class="string">&quot;How errors and other messages are produced&quot;</span>,
+                <span class="string">&quot;human|json|short&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;diagnostic-width&quot;</span>, |o| {
+            o.optopt(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;diagnostic-width&quot;</span>,
+                <span class="string">&quot;Provide width of the output for truncated error messages&quot;</span>,
+                <span class="string">&quot;WIDTH&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;json&quot;</span>, |o| {
+            o.optopt(<span class="string">&quot;&quot;</span>, <span class="string">&quot;json&quot;</span>, <span class="string">&quot;Configure the structure of JSON diagnostics&quot;</span>, <span class="string">&quot;CONFIG&quot;</span>)
+        }),
+        stable(<span class="string">&quot;allow&quot;</span>, |o| o.optmulti(<span class="string">&quot;A&quot;</span>, <span class="string">&quot;allow&quot;</span>, <span class="string">&quot;Set lint allowed&quot;</span>, <span class="string">&quot;LINT&quot;</span>)),
+        stable(<span class="string">&quot;warn&quot;</span>, |o| o.optmulti(<span class="string">&quot;W&quot;</span>, <span class="string">&quot;warn&quot;</span>, <span class="string">&quot;Set lint warnings&quot;</span>, <span class="string">&quot;LINT&quot;</span>)),
+        stable(<span class="string">&quot;force-warn&quot;</span>, |o| o.optmulti(<span class="string">&quot;&quot;</span>, <span class="string">&quot;force-warn&quot;</span>, <span class="string">&quot;Set lint force-warn&quot;</span>, <span class="string">&quot;LINT&quot;</span>)),
+        stable(<span class="string">&quot;deny&quot;</span>, |o| o.optmulti(<span class="string">&quot;D&quot;</span>, <span class="string">&quot;deny&quot;</span>, <span class="string">&quot;Set lint denied&quot;</span>, <span class="string">&quot;LINT&quot;</span>)),
+        stable(<span class="string">&quot;forbid&quot;</span>, |o| o.optmulti(<span class="string">&quot;F&quot;</span>, <span class="string">&quot;forbid&quot;</span>, <span class="string">&quot;Set lint forbidden&quot;</span>, <span class="string">&quot;LINT&quot;</span>)),
+        stable(<span class="string">&quot;cap-lints&quot;</span>, |o| {
+            o.optmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;cap-lints&quot;</span>,
+                <span class="string">&quot;Set the most restrictive lint level. \
+                 More restrictive lints are capped at this \
+                 level. By default, it is at `forbid` level.&quot;</span>,
+                <span class="string">&quot;LEVEL&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;index-page&quot;</span>, |o| {
+            o.optopt(<span class="string">&quot;&quot;</span>, <span class="string">&quot;index-page&quot;</span>, <span class="string">&quot;Markdown file to be used as index page&quot;</span>, <span class="string">&quot;PATH&quot;</span>)
+        }),
+        unstable(<span class="string">&quot;enable-index-page&quot;</span>, |o| {
+            o.optflagmulti(<span class="string">&quot;&quot;</span>, <span class="string">&quot;enable-index-page&quot;</span>, <span class="string">&quot;To enable generation of the index page&quot;</span>)
+        }),
+        unstable(<span class="string">&quot;static-root-path&quot;</span>, |o| {
+            o.optopt(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;static-root-path&quot;</span>,
+                <span class="string">&quot;Path string to force loading static files from in output pages. \
+                 If not set, uses combinations of &#39;../&#39; to reach the documentation root.&quot;</span>,
+                <span class="string">&quot;PATH&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;disable-per-crate-search&quot;</span>, |o| {
+            o.optflagmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;disable-per-crate-search&quot;</span>,
+                <span class="string">&quot;disables generating the crate selector on the search box&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;persist-doctests&quot;</span>, |o| {
+            o.optopt(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;persist-doctests&quot;</span>,
+                <span class="string">&quot;Directory to persist doctest executables into&quot;</span>,
+                <span class="string">&quot;PATH&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;show-coverage&quot;</span>, |o| {
+            o.optflagmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;show-coverage&quot;</span>,
+                <span class="string">&quot;calculate percentage of public items with documentation&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;enable-per-target-ignores&quot;</span>, |o| {
+            o.optflagmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;enable-per-target-ignores&quot;</span>,
+                <span class="string">&quot;parse ignore-foo for ignoring doctests on a per-target basis&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;runtool&quot;</span>, |o| {
+            o.optopt(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;runtool&quot;</span>,
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;The tool to run tests with when building for a different target than host&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;runtool-arg&quot;</span>, |o| {
+            o.optmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;runtool-arg&quot;</span>,
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;One (of possibly many) arguments to pass to the runtool&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;test-builder&quot;</span>, |o| {
+            o.optopt(<span class="string">&quot;&quot;</span>, <span class="string">&quot;test-builder&quot;</span>, <span class="string">&quot;The rustc-like binary to use as the test builder&quot;</span>, <span class="string">&quot;PATH&quot;</span>)
+        }),
+        unstable(<span class="string">&quot;check&quot;</span>, |o| o.optflagmulti(<span class="string">&quot;&quot;</span>, <span class="string">&quot;check&quot;</span>, <span class="string">&quot;Run rustdoc checks&quot;</span>)),
+        unstable(<span class="string">&quot;generate-redirect-map&quot;</span>, |o| {
+            o.optflagmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;generate-redirect-map&quot;</span>,
+                <span class="string">&quot;Generate JSON file at the top level instead of generating HTML redirection files&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;emit&quot;</span>, |o| {
+            o.optmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;emit&quot;</span>,
+                <span class="string">&quot;Comma separated list of types of output for rustdoc to emit&quot;</span>,
+                <span class="string">&quot;[unversioned-shared-resources,toolchain-shared-resources,invocation-specific]&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;no-run&quot;</span>, |o| {
+            o.optflagmulti(<span class="string">&quot;&quot;</span>, <span class="string">&quot;no-run&quot;</span>, <span class="string">&quot;Compile doctests without running them&quot;</span>)
+        }),
+        unstable(<span class="string">&quot;show-type-layout&quot;</span>, |o| {
+            o.optflagmulti(<span class="string">&quot;&quot;</span>, <span class="string">&quot;show-type-layout&quot;</span>, <span class="string">&quot;Include the memory layout of types in the docs&quot;</span>)
+        }),
+        unstable(<span class="string">&quot;nocapture&quot;</span>, |o| {
+            o.optflag(<span class="string">&quot;&quot;</span>, <span class="string">&quot;nocapture&quot;</span>, <span class="string">&quot;Don&#39;t capture stdout and stderr of tests&quot;</span>)
+        }),
+        unstable(<span class="string">&quot;generate-link-to-definition&quot;</span>, |o| {
+            o.optflag(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;generate-link-to-definition&quot;</span>,
+                <span class="string">&quot;Make the identifiers in the HTML source code pages navigable&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;scrape-examples-output-path&quot;</span>, |o| {
+            o.optopt(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;scrape-examples-output-path&quot;</span>,
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;collect function call information and output at the given path&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;scrape-examples-target-crate&quot;</span>, |o| {
+            o.optmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;scrape-examples-target-crate&quot;</span>,
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;collect function call information for functions from the target crate&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;scrape-tests&quot;</span>, |o| {
+            o.optflag(<span class="string">&quot;&quot;</span>, <span class="string">&quot;scrape-tests&quot;</span>, <span class="string">&quot;Include test code when scraping examples&quot;</span>)
+        }),
+        unstable(<span class="string">&quot;with-examples&quot;</span>, |o| {
+            o.optmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;with-examples&quot;</span>,
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;path to function call information (for displaying examples in the documentation)&quot;</span>,
+            )
+        }),
+        <span class="comment">// deprecated / removed options
+        </span>unstable(<span class="string">&quot;disable-minification&quot;</span>, |o| o.optflagmulti(<span class="string">&quot;&quot;</span>, <span class="string">&quot;disable-minification&quot;</span>, <span class="string">&quot;removed&quot;</span>)),
+        stable(<span class="string">&quot;plugin-path&quot;</span>, |o| {
+            o.optmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;plugin-path&quot;</span>,
+                <span class="string">&quot;removed, see issue #44136 &lt;https://github.com/rust-lang/rust/issues/44136&gt; \
+                for more information&quot;</span>,
+                <span class="string">&quot;DIR&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;passes&quot;</span>, |o| {
+            o.optmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;passes&quot;</span>,
+                <span class="string">&quot;removed, see issue #44136 &lt;https://github.com/rust-lang/rust/issues/44136&gt; \
+                for more information&quot;</span>,
+                <span class="string">&quot;PASSES&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;plugins&quot;</span>, |o| {
+            o.optmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;plugins&quot;</span>,
+                <span class="string">&quot;removed, see issue #44136 &lt;https://github.com/rust-lang/rust/issues/44136&gt; \
+                for more information&quot;</span>,
+                <span class="string">&quot;PLUGINS&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;no-default&quot;</span>, |o| {
+            o.optflagmulti(
+                <span class="string">&quot;&quot;</span>,
+                <span class="string">&quot;no-defaults&quot;</span>,
+                <span class="string">&quot;removed, see issue #44136 &lt;https://github.com/rust-lang/rust/issues/44136&gt; \
+                for more information&quot;</span>,
+            )
+        }),
+        stable(<span class="string">&quot;r&quot;</span>, |o| {
+            o.optopt(
+                <span class="string">&quot;r&quot;</span>,
+                <span class="string">&quot;input-format&quot;</span>,
+                <span class="string">&quot;removed, see issue #44136 &lt;https://github.com/rust-lang/rust/issues/44136&gt; \
+                for more information&quot;</span>,
+                <span class="string">&quot;[rust]&quot;</span>,
+            )
+        }),
+        unstable(<span class="string">&quot;html-no-source&quot;</span>, |o| {
+            o.optflag(<span class="string">&quot;&quot;</span>, <span class="string">&quot;html-no-source&quot;</span>, <span class="string">&quot;Disable HTML source code pages generation&quot;</span>)
+        }),
+    ]
+}
+
+<span class="kw">fn </span><a href="../../rustdoc/fn.usage.html">usage</a>(argv0: <span class="kw-2">&amp;</span><a href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>) {
+    <span class="kw">let </span><span class="kw-2">mut </span>options = getopts::Options::new();
+    <span class="kw">for </span>option <span class="kw">in </span>opts() {
+        (option.apply)(<span class="kw-2">&amp;mut </span>options);
+    }
+    <a class="macro" href="https://doc.rust-lang.org/nightly/std/macro.println.html">println!</a>(<span class="string">&quot;{}&quot;</span>, options.usage(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">&quot;{argv0} [options] &lt;input&gt;&quot;</span>)));
+    <a class="macro" href="https://doc.rust-lang.org/nightly/std/macro.println.html">println!</a>(<span class="string">&quot;    @path               Read newline separated options from `path`\n&quot;</span>);
+    <a class="macro" href="https://doc.rust-lang.org/nightly/std/macro.println.html">println!</a>(
+        <span class="string">&quot;More information available at {DOC_RUST_LANG_ORG_CHANNEL}/rustdoc/what-is-rustdoc.html&quot;</span>,
+    );
+}
+
+<span class="doccomment">/// A result type used by several functions under `main()`.
+</span><span class="kw">type </span><a href="../../rustdoc/type.MainResult.html">MainResult</a> = <span class="prelude-ty">Result</span>&lt;(), <a href="../../rustc_span/struct.ErrorGuaranteed.html">ErrorGuaranteed</a>&gt;;
+
+<span class="kw">fn </span><a href="../../rustdoc/fn.wrap_return.html">wrap_return</a>(diag: <span class="kw-2">&amp;</span><a href="../../rustc_errors/struct.Handler.html">rustc_errors::Handler</a>, res: <span class="prelude-ty">Result</span>&lt;(), <a href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html">String</a>&gt;) -&gt; <a href="#678">MainResult</a> {
+    <span class="kw">match </span><a href="#680">res</a> {
+        <span class="prelude-val">Ok</span>(()) =&gt; <a href="#680">diag</a>.has_errors().map_or(<span class="prelude-val">Ok</span>(()), <span class="prelude-val">Err</span>),
+        <span class="prelude-val">Err</span>(err) =&gt; {
+            <span class="kw">let </span>reported = <a href="#680">diag</a>.struct_err(<a href="#683">err</a>).emit();
+            <span class="prelude-val">Err</span>(<a href="#684">reported</a>)
+        }
+    }
+}
+
+<span class="kw">fn </span><a href="../../rustdoc/fn.run_renderer.html">run_renderer</a>&lt;<span class="lifetime">&#39;tcx</span>, T: formats::FormatRenderer&lt;<span class="lifetime">&#39;tcx</span>&gt;&gt;(
+    krate: <a href="clean/types.rs.html#110-114">clean::Crate</a>,
+    renderopts: <a href="config.rs.html#210-278">config::RenderOptions</a>,
+    cache: <a href="formats/cache.rs.html#29-132">formats::cache::Cache</a>,
+    tcx: TyCtxt&lt;<span class="lifetime">&#39;tcx</span>&gt;,
+) -&gt; <a href="#678">MainResult</a> {
+    <span class="kw">match </span>formats::run_format::&lt;T&gt;(<a href="#691">krate</a>, <a href="#692">renderopts</a>, <a href="#693">cache</a>, <a href="#694">tcx</a>) {
+        <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <a href="#694">tcx</a>.sess.has_errors().map_or(<span class="prelude-val">Ok</span>(()), <span class="prelude-val">Err</span>),
+        <span class="prelude-val">Err</span>(e) =&gt; {
+            <span class="kw">let </span><span class="kw-2">mut </span>msg =
+                <a href="#694">tcx</a>.sess.struct_err(<a class="macro" href="https://doc.rust-lang.org/nightly/alloc/macro.format.html">format!</a>(<span class="string">&quot;couldn&#39;t generate documentation: {}&quot;</span>, e.error));
+            <span class="kw">let </span>file = <a href="#698">e</a>.file.display().<a href="https://doc.rust-lang.org/nightly/alloc/string/trait.ToString.html">to_string</a>();
+            <span class="kw">if </span>!file.is_empty() {
+                <a href="#699">msg</a>.note(<a class="macro" href="https://doc.rust-lang.org/nightly/alloc/macro.format.html">format!</a>(<span class="string">&quot;failed to create or modify \&quot;{file}\&quot;&quot;</span>));
+            }
+            <span class="prelude-val">Err</span>(<a href="#699">msg</a>.emit())
+        }
+    }
+}
+
+<span class="kw">fn </span><a href="../../rustdoc/fn.main_args.html">main_args</a>(handler: <span class="kw-2">&amp;mut </span><a href="../../rustc_session/session/struct.EarlyErrorHandler.html">EarlyErrorHandler</a>, at_args: <span class="kw-2">&amp;</span>[<a href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html">String</a>]) -&gt; <a href="#678">MainResult</a> {
+    <span class="comment">// Throw away the first argument, the name of the binary.
+    // In case of at_args being empty, as might be the case by
+    // passing empty argument array to execve under some platforms,
+    // just use an empty slice.
+    //
+    // This situation was possible before due to arg_expand_all being
+    // called before removing the argument, enabling a crash by calling
+    // the compiler with @empty_file as argv[0] and no more arguments.
+    </span><span class="kw">let </span>at_args = <a href="#710">at_args</a>.get(<span class="number">1</span>..).unwrap_or_default();
+
+    <span class="kw">let </span>args = rustc_driver::args::arg_expand_all(<a href="#710">handler</a>, <a href="#719">at_args</a>);
+
+    <span class="kw">let </span><span class="kw-2">mut </span>options = getopts::Options::new();
+    <span class="kw">for </span>option <span class="kw">in </span>opts() {
+        (option.apply)(<span class="kw-2">&amp;mut </span>options);
+    }
+    <span class="kw">let </span>matches = <span class="kw">match </span><a href="#723">options</a>.parse(<span class="kw-2">&amp;</span><a href="#721">args</a>) {
+        <span class="prelude-val">Ok</span>(m) =&gt; <a href="#728">m</a>,
+        <span class="prelude-val">Err</span>(err) =&gt; {
+            <a href="#710">handler</a>.early_error(<a href="#729">err</a>.<a href="https://doc.rust-lang.org/nightly/alloc/string/trait.ToString.html">to_string</a>());
+        }
+    };
+
+    <span class="comment">// Note that we discard any distinction between different non-zero exit
+    // codes from `from_matches` here.
+    </span><span class="kw">let </span>(options, render_options) = <span class="kw">match </span>config::Options::from_matches(<a href="#710">handler</a>, <span class="kw-2">&amp;</span><a href="#727">matches</a>, <a href="#721">args</a>) {
+        <span class="prelude-val">Ok</span>(opts) =&gt; <a href="#737">opts</a>,
+        <span class="prelude-val">Err</span>(code) =&gt; {
+            <span class="kw">return if </span>code == <span class="number">0 </span>{
+                <span class="prelude-val">Ok</span>(())
+            } <span class="kw">else </span>{
+                <span class="attr">#[allow(deprecated)]
+                </span><span class="prelude-val">Err</span>(ErrorGuaranteed::unchecked_claim_error_was_emitted())
+            };
+        }
+    };
+
+    <span class="kw">let </span>diag = <a href="core.rs.html#126-173">core::new_handler</a>(
+        <a href="#736">options</a>.error_format,
+        <span class="prelude-val">None</span>,
+        <a href="#736">options</a>.diagnostic_width,
+        <span class="kw-2">&amp;</span><a href="#736">options</a>.unstable_opts,
+    );
+
+    <span class="kw">match </span>(<a href="#736">options</a>.should_test, <a href="#736">options</a>.<a href="config.rs.html#781-783">markdown_input</a>()) {
+        (<span class="bool-val">true</span>, <span class="bool-val">true</span>) =&gt; <span class="kw">return </span><a href="#680-688">wrap_return</a>(<span class="kw-2">&amp;</span><a href="#748">diag</a>, <a href="markdown.rs.html#140-161">markdown::test</a>(<a href="#736">options</a>)),
+        (<span class="bool-val">true</span>, <span class="bool-val">false</span>) =&gt; <span class="kw">return </span><a href="doctest.rs.html#47-206">doctest::run</a>(<a href="#736">options</a>),
+        (<span class="bool-val">false</span>, <span class="bool-val">true</span>) =&gt; {
+            <span class="kw">let </span>input = <a href="#736">options</a>.input.<a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html">clone</a>();
+            <span class="kw">let </span>edition = <a href="#736">options</a>.edition;
+            <span class="kw">let </span>config = <a href="core.rs.html#176-295">core::create_config</a>(<a href="#710">handler</a>, <a href="#736">options</a>, <span class="kw-2">&amp;</span><a href="#736">render_options</a>);
+
+            <span class="comment">// `markdown::render` can invoke `doctest::make_test`, which
+            // requires session globals and a thread pool, so we use
+            // `run_compiler`.
+            </span><span class="kw">return </span><a href="#680-688">wrap_return</a>(
+                <span class="kw-2">&amp;</span><a href="#748">diag</a>,
+                interface::run_compiler(<a href="#761">config</a>, |_compiler| {
+                    <a href="markdown.rs.html#40-137">markdown::render</a>(<span class="kw-2">&amp;</span><a href="#759">input</a>, <a href="#736">render_options</a>, <a href="#760">edition</a>)
+                }),
+            );
+        }
+        (<span class="bool-val">false</span>, <span class="bool-val">false</span>) =&gt; {}
+    }
+
+    <span class="comment">// need to move these items separately because we lose them by the time the closure is called,
+    // but we can&#39;t create the Handler ahead of time because it&#39;s not Send
+    </span><span class="kw">let </span>show_coverage = <a href="#736">options</a>.show_coverage;
+    <span class="kw">let </span>run_check = <a href="#736">options</a>.run_check;
+
+    <span class="comment">// First, parse the crate and extract all relevant information.
+    </span><a class="macro" href="https://docs.rs/tracing/0.1.37/tracing/macro.info.html">info!</a>(<span class="string">&quot;starting to run rustc&quot;</span>);
+
+    <span class="comment">// Interpret the input file as a rust source file, passing it through the
+    // compiler all the way through the analysis passes. The rustdoc output is
+    // then generated from the cleaned AST of the crate. This runs all the
+    // plug/cleaning passes.
+    </span><span class="kw">let </span>crate_version = <a href="#736">options</a>.crate_version.<a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html">clone</a>();
+
+    <span class="kw">let </span>output_format = <a href="#736">options</a>.output_format;
+    <span class="kw">let </span>scrape_examples_options = <a href="#736">options</a>.scrape_examples_options.<a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html">clone</a>();
+    <span class="kw">let </span>bin_crate = <a href="#736">options</a>.bin_crate;
+
+    <span class="kw">let </span>config = <a href="core.rs.html#176-295">core::create_config</a>(<a href="#710">handler</a>, <a href="#736">options</a>, <span class="kw-2">&amp;</span><a href="#736">render_options</a>);
+
+    interface::run_compiler(<a href="#794">config</a>, |compiler| {
+        <span class="kw">let </span>sess = <a href="#796">compiler</a>.session();
+
+        <span class="kw">if </span>sess.opts.describe_lints {
+            <span class="kw">let </span><span class="kw-2">mut </span>lint_store = rustc_lint::new_lint_store(<a href="#797">sess</a>.enable_internal_lints());
+            <span class="kw">let </span>registered_lints = <span class="kw">if let </span><span class="prelude-val">Some</span>(register_lints) = <a href="#796">compiler</a>.register_lints() {
+                <a href="#801">register_lints</a>(<a href="#797">sess</a>, <span class="kw-2">&amp;mut </span><a href="#800">lint_store</a>);
+                <span class="bool-val">true
+            </span>} <span class="kw">else </span>{
+                <span class="bool-val">false
+            </span>};
+            rustc_driver::describe_lints(<a href="#797">sess</a>, <span class="kw-2">&amp;</span><a href="#800">lint_store</a>, <a href="#801">registered_lints</a>);
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+        }
+
+        <a href="#796">compiler</a>.enter(|queries| {
+            <span class="kw">let </span><span class="kw-2">mut </span>gcx = <a href="../../rustc_driver_impl/fn.abort_on_err.html">abort_on_err</a>(<a href="#811">queries</a>.global_ctxt(), <a href="#797">sess</a>);
+            <span class="kw">if </span>sess.diagnostic().has_errors_or_lint_errors().is_some() {
+                <a href="#797">sess</a>.fatal(<span class="string">&quot;Compilation failed, aborting rustdoc&quot;</span>);
+            }
+
+            <a href="#812">gcx</a>.enter(|tcx| {
+                <span class="kw">let </span>(krate, render_opts, <span class="kw-2">mut </span>cache) = <a href="#797">sess</a>.time(<span class="string">&quot;run_global_ctxt&quot;</span>, || {
+                    <a href="core.rs.html#297-447">core::run_global_ctxt</a>(<a href="#817">tcx</a>, <a href="#778">show_coverage</a>, <a href="#736">render_options</a>, <a href="#790">output_format</a>)
+                });
+                <a class="macro" href="https://docs.rs/tracing/0.1.37/tracing/macro.info.html">info!</a>(<span class="string">&quot;finished with rustc&quot;</span>);
+
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(options) = <a href="#791">scrape_examples_options</a> {
+                    <span class="kw">return </span><a href="scrape_examples.rs.html#275-338">scrape_examples::run</a>(
+                        <a href="#818">krate</a>,
+                        <a href="#818">render_opts</a>,
+                        <a href="#818">cache</a>,
+                        <a href="#817">tcx</a>,
+                        <a href="#823">options</a>,
+                        <a href="#792">bin_crate</a>,
+                    );
+                }
+
+                <a href="#818">cache</a>.crate_version = <a href="#788">crate_version</a>;
+
+                <span class="kw">if </span>show_coverage {
+                    <span class="comment">// if we ran coverage, bail early, we don&#39;t need to also generate docs at this point
+                    // (also we didn&#39;t load in any of the useful passes)
+                    </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                } <span class="kw">else if </span>run_check {
+                    <span class="comment">// Since we&#39;re in &quot;check&quot; mode, no need to generate anything beyond this point.
+                    </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                }
+
+                <a class="macro" href="https://docs.rs/tracing/0.1.37/tracing/macro.info.html">info!</a>(<span class="string">&quot;going to format&quot;</span>);
+                <span class="kw">match </span><a href="#790">output_format</a> {
+                    <a href="config.rs.html#37">config::OutputFormat::Html</a> =&gt; <a href="#797">sess</a>.time(<span class="string">&quot;render_html&quot;</span>, || {
+                        run_renderer::&lt;html::render::Context&lt;<span class="lifetime">&#39;_</span>&gt;&gt;(<a href="#818">krate</a>, <a href="#818">render_opts</a>, <a href="#818">cache</a>, <a href="#817">tcx</a>)
+                    }),
+                    <a href="config.rs.html#35">config::OutputFormat::Json</a> =&gt; <a href="#797">sess</a>.time(<span class="string">&quot;render_json&quot;</span>, || {
+                        run_renderer::&lt;json::JsonRenderer&lt;<span class="lifetime">&#39;_</span>&gt;&gt;(<a href="#818">krate</a>, <a href="#818">render_opts</a>, <a href="#818">cache</a>, <a href="#817">tcx</a>)
+                    }),
+                }
+            })
+        })
+    })
+}
+</code></pre></div></section></main></body></html>

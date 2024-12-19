@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Ambiguity"],"fn":["recompute_applicable_impls"]};

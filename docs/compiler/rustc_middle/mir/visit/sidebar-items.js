@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["MutatingUseContext","NonMutatingUseContext","NonUseContext","PlaceContext","TyContext"],"macro":["basic_blocks","basic_blocks_iter","extra_body_methods","make_mir_visitor","super_body","visit_place_fns"],"trait":["MirVisitable","MutVisitor","Visitor"]};

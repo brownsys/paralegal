@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["emit_unused_generic_params_error","mark_used_by_default_parameters","provide","should_polymorphize","unused_generic_params"],"struct":["MarkUsedGenericParams"]};
