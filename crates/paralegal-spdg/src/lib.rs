@@ -23,6 +23,8 @@ pub(crate) mod rustc {
 extern crate rustc_macros;
 #[cfg(feature = "rustc")]
 extern crate rustc_serialize;
+#[cfg(feature = "rustc")]
+extern crate rustc_span;
 
 extern crate strum;
 
@@ -271,7 +273,7 @@ impl Span {
 }
 
 /// Metadata on a function call.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
 pub struct FunctionCallInfo {
     /// Has this call been inlined
     pub is_inlined: bool,
@@ -281,9 +283,7 @@ pub struct FunctionCallInfo {
 }
 
 /// The type of instructions we may encounter
-#[derive(
-    Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq, strum::EnumIs,
-)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq, strum::EnumIs)]
 pub enum InstructionKind {
     /// Some type of statement
     Statement,

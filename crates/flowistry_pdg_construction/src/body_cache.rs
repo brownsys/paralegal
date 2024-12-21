@@ -20,6 +20,7 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 
+use rustc_type_ir::RegionVid;
 use rustc_utils::cache::Cache;
 
 use crate::encoder::{decode_from_file, encode_to_file};
@@ -41,7 +42,7 @@ impl<'tcx> CachedBody<'tcx> {
         let mut body_with_facts = rustc_borrowck::consumers::get_body_with_borrowck_facts(
             tcx,
             local_def_id,
-            ConsumerOptions::RegionInferenceContext,
+            ConsumerOptions::PoloniusInputFacts,
         );
 
         clean_undecodable_data_from_body(&mut body_with_facts.body);
@@ -50,9 +51,11 @@ impl<'tcx> CachedBody<'tcx> {
             body: body_with_facts.body,
             input_facts: FlowistryFacts {
                 subset_base: body_with_facts
-                    .region_inference_context
-                    .outlives_constraints()
-                    .map(|constraint| (constraint.sup, constraint.sub))
+                    .input_facts
+                    .expect("polonius input must exist")
+                    .subset_base
+                    .iter()
+                    .map(|&(v1, v2, _)| (v1.into(), v2.into()))
                     .collect(),
             },
         }
@@ -64,16 +67,7 @@ impl<'tcx> FlowistryInput<'tcx, 'tcx> for &'tcx CachedBody<'tcx> {
         &self.body
     }
 
-    fn input_facts_subset_base(
-        self,
-    ) -> Box<
-        dyn Iterator<
-                Item = (
-                    <RustcFacts as FactTypes>::Origin,
-                    <RustcFacts as FactTypes>::Origin,
-                ),
-            > + 'tcx,
-    > {
+    fn input_facts_subset_base(self) -> Box<dyn Iterator<Item = (RegionVid, RegionVid)> + 'tcx> {
         Box::new(self.input_facts.subset_base.iter().copied())
     }
 }
@@ -82,10 +76,7 @@ impl<'tcx> FlowistryInput<'tcx, 'tcx> for &'tcx CachedBody<'tcx> {
 /// needs.
 #[derive(Debug, Encodable, Decodable)]
 pub struct FlowistryFacts {
-    pub subset_base: Vec<(
-        <RustcFacts as FactTypes>::Origin,
-        <RustcFacts as FactTypes>::Origin,
-    )>,
+    pub subset_base: Vec<(RegionVid, RegionVid)>,
 }
 
 pub type LocationIndex = <RustcFacts as FactTypes>::Point;
@@ -122,7 +113,7 @@ impl<'tcx> BodyCache<'tcx> {
     /// Returns `None` if the policy forbids loading from this crate.
     pub fn get(&self, key: DefId) -> &'tcx CachedBody<'tcx> {
         let body = if let Some(local) = key.as_local() {
-            self.local_cache.get(local.local_def_index, |_| {
+            self.local_cache.get(&local.local_def_index, |_| {
                 let start = Instant::now();
                 let res = CachedBody::retrieve(self.tcx, local);
                 *self.timer.borrow_mut() += start.elapsed();
@@ -130,7 +121,7 @@ impl<'tcx> BodyCache<'tcx> {
             })
         } else {
             self.cache
-                .get(key.krate, |_| load_body_and_facts(self.tcx, key.krate))
+                .get(&key.krate, |_| load_body_and_facts(self.tcx, key.krate))
                 .get(&key.index)
                 .expect("Invariant broken, body for this is should exist")
         };

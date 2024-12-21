@@ -25,6 +25,7 @@ flowistry_pdg = { version = "0.1.0", path = "../flowistry_pdg", features = [
 flowistry = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 strum = { workspace = true }
+#rustc-hash = { version = "=2.1.0" }
 
 [dev-dependencies]
 rustc_utils = { workspace = true, features = ["indexical", "test"] }

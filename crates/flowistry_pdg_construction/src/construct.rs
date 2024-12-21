@@ -7,15 +7,15 @@ use petgraph::graph::DiGraph;
 
 use flowistry_pdg::{CallString, GlobalLocation};
 
-use df::{AnalysisDomain, Results, ResultsVisitor};
+use df::{Results, ResultsVisitor};
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{visit::Visitor, AggregateKind, Location, Place, Rvalue, Terminator, TerminatorKind},
-    ty::{Instance, TyCtxt},
+    ty::{Instance, TyCtxt, TypingEnv},
 };
-use rustc_mir_dataflow::{self as df};
+use rustc_mir_dataflow as df;
 
 use rustc_utils::cache::Cache;
 
@@ -95,7 +95,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         let resolution = try_resolve_function(
             self.tcx,
             function.to_def_id(),
-            self.tcx.param_env_reveal_all_normalized(function),
+            TypingEnv::post_analysis(self.tcx, function.to_def_id()),
             generics,
         )
         .unwrap();
@@ -111,7 +111,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         &'a self,
         resolution: Instance<'tcx>,
     ) -> Option<&'a PartialGraph<'tcx>> {
-        self.pdg_cache.get_maybe_recursive(resolution, |_| {
+        self.pdg_cache.get_maybe_recursive(&resolution, |_| {
             let g = LocalAnalysis::new(self, resolution).construct_partial();
             trace!("Computed new for {resolution:?}");
             g.check_invariants();
@@ -172,15 +172,13 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
 
 type LocalAnalysisResults<'tcx, 'mir> = Results<'tcx, &'mir LocalAnalysis<'tcx, 'mir>>;
 
-impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, LocalAnalysisResults<'tcx, 'mir>>
+impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, &'mir LocalAnalysis<'tcx, 'mir>>
     for PartialGraph<'tcx>
 {
-    type FlowState = <&'mir LocalAnalysis<'tcx, 'mir> as AnalysisDomain<'tcx>>::Domain;
-
-    fn visit_statement_before_primary_effect(
+    fn visit_after_early_statement_effect(
         &mut self,
-        results: &LocalAnalysisResults<'tcx, 'mir>,
-        state: &Self::FlowState,
+        results: &mut LocalAnalysisResults<'tcx, 'mir>,
+        state: &InstructionState<'tcx>,
         statement: &'mir rustc_middle::mir::Statement<'tcx>,
         location: Location,
     ) {
@@ -205,10 +203,10 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, LocalAnalysisResults<'tcx, 'mir>>
     /// with the reachable places yet. So this ordering means we can reuse the
     /// same logic but just have to run it twice for every non-inlined function
     /// call site.
-    fn visit_terminator_before_primary_effect(
+    fn visit_after_early_terminator_effect(
         &mut self,
-        results: &LocalAnalysisResults<'tcx, 'mir>,
-        state: &Self::FlowState,
+        results: &mut LocalAnalysisResults<'tcx, 'mir>,
+        state: &InstructionState<'tcx>,
         terminator: &'mir rustc_middle::mir::Terminator<'tcx>,
         location: Location,
     ) {
@@ -249,10 +247,10 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, LocalAnalysisResults<'tcx, 'mir>>
         arg_vis.visit_terminator(terminator, location);
     }
 
-    fn visit_terminator_after_primary_effect(
+    fn visit_after_primary_terminator_effect(
         &mut self,
-        results: &LocalAnalysisResults<'tcx, 'mir>,
-        state: &Self::FlowState,
+        results: &mut LocalAnalysisResults<'tcx, 'mir>,
+        state: &InstructionState<'tcx>,
         terminator: &'mir rustc_middle::mir::Terminator<'tcx>,
         location: Location,
     ) {
@@ -296,7 +294,8 @@ impl<'tcx> PartialGraph<'tcx> {
         &'a mut self,
         results: &'a LocalAnalysisResults<'tcx, 'mir>,
         state: &'a InstructionState<'tcx>,
-    ) -> ModularMutationVisitor<'a, 'tcx, impl FnMut(Location, Mutation<'tcx>) + 'a> {
+    ) -> ModularMutationVisitor<'a, 'tcx, impl FnMut(Location, Mutation<'tcx>) + use<'a, 'tcx, 'mir>>
+    {
         ModularMutationVisitor::new(&results.analysis.place_info, move |location, mutation| {
             self.register_mutation(
                 results,
@@ -315,7 +314,7 @@ impl<'tcx> PartialGraph<'tcx> {
     fn handle_as_inline<'a>(
         &mut self,
         results: &LocalAnalysisResults<'tcx, 'a>,
-        state: &'a InstructionState<'tcx>,
+        state: &InstructionState<'tcx>,
         terminator: &Terminator<'tcx>,
         location: Location,
     ) -> bool {
@@ -353,7 +352,7 @@ impl<'tcx> PartialGraph<'tcx> {
                 // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
                 let rvalue = Rvalue::Aggregate(
                     Box::new(AggregateKind::Tuple),
-                    IndexVec::from_iter(args.iter().cloned()),
+                    IndexVec::from_iter(args.iter().map(|op| op.node.clone())),
                 );
                 self.modular_mutation_visitor(results, state).visit_assign(
                     destination,

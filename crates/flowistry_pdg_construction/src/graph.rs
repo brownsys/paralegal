@@ -227,7 +227,7 @@ impl<'tcx> DepGraph<'tcx> {
                 &|_, (_, _)| "fontname=\"Courier New\",shape=box".to_string(),
             )
         );
-        rustc_utils::mir::body::run_dot(path.as_ref(), graph_dot.into_bytes())
+        rustc_utils::mir::body::run_dot(path.as_ref(), &graph_dot.into_bytes())
     }
 }
 
