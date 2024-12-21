@@ -19,12 +19,11 @@ rustc_utils = { version = "=0.12.0-nightly-2024-12-15", features = [
     "indexical",
 ] }
 rustc_plugin = "=0.12.0-nightly-2024-12-15"
-#flowistry = { path = "../flowistry/crates/flowistry", default-features = false }
 
 [workspace.dependencies.flowistry]
-path = "../flowistry/crates/flowistry"
-# git = "https://github.com/brownsys/flowistry"
-# rev = "57627ed24802cb76c745118bbc46f83f402a1e88"
+# path = "../flowistry/crates/flowistry"
+git = "https://github.com/brownsys/flowistry"
+rev = "171dfeb2b4cc308e1475cd27c6aff714b4037aad"
 default-features = false
 
 
@@ -33,11 +32,11 @@ debug = true
 
 
 [replace."rustc_utils:0.12.0-nightly-2024-12-15"]
-path = "../rustc_plugin/crates/rustc_utils"
-# git = "https://github.com/JustusAdam/rustc_plugin"
-# rev = "e413907b2ae9a03d2c8e9aca3b72dd451a16b1db"
+# path = "../rustc_plugin/crates/rustc_utils"
+git = "https://github.com/JustusAdam/rustc_plugin"
+rev = "bcb896d812311f53cfea0bcbe7fc80f0140c58ea"
 
 [replace."rustc_plugin:0.12.0-nightly-2024-12-15"]
-path = "../rustc_plugin/crates/rustc_plugin"
-# git = "https://github.com/JustusAdam/rustc_plugin"
-# rev = "e413907b2ae9a03d2c8e9aca3b72dd451a16b1db"
+# path = "../rustc_plugin/crates/rustc_plugin"
+git = "https://github.com/JustusAdam/rustc_plugin"
+rev = "bcb896d812311f53cfea0bcbe7fc80f0140c58ea"
