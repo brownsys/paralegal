@@ -6,6 +6,7 @@
 //! that trait have no reachable markers.
 //!
 //! It also checks that we allow approximation if no such markers are reachable.
+#![feature(rustc_private)]
 
 use paralegal_flow::test_utils::InlineTestBuilder;
 

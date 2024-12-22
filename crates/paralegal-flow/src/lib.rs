@@ -475,12 +475,12 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         let out_path = plugin_args.result_path().to_owned();
 
         let info = how_to_handle_this_crate(&plugin_args, &mut compiler_args);
-        println!(
+        debug!(
             "Handling crate {} as {}",
             info.name.as_ref().map_or("unnamed", String::as_str),
             info.handling.as_ref()
         );
-        let result = {
+        {
             let mut callbacks = match info.handling {
                 CrateHandling::JustCompile => {
                     Box::new(NoopCallbacks) as Box<dyn rustc_driver::Callbacks + Send>
@@ -530,7 +530,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                 }
             };
 
-            rustc_driver::RunCompiler::new(&compiler_args, callbacks.as_mut()).run()
+            rustc_driver::RunCompiler::new(&compiler_args, callbacks.as_mut()).run();
         };
         if info.handling != CrateHandling::JustCompile {
             let filepath = output_path_location
