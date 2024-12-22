@@ -1,3 +1,5 @@
+#![feature(rustc_private)]
+
 extern crate rustc_plugin;
 
 fn main() {

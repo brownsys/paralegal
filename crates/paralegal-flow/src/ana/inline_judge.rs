@@ -2,7 +2,7 @@ use std::{fmt::Display, rc::Rc};
 
 use flowistry_pdg_construction::{body_cache::BodyCache, CallInfo};
 use paralegal_spdg::{utils::write_sep, Identifier};
-use rustc_hash::FxHashSet;
+use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::{CrateNum, DefId, LOCAL_CRATE};
 use rustc_middle::ty::{
     AssocKind, BoundVariableKind, Clause, ClauseKind, ImplPolarity, Instance, ParamEnv,

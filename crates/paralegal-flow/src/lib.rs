@@ -30,7 +30,6 @@ extern crate rustc_borrowck;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_errors;
-extern crate rustc_hash;
 extern crate rustc_hir;
 extern crate rustc_index;
 extern crate rustc_interface;
@@ -52,7 +51,6 @@ use desc::utils::write_sep;
 use flowistry_pdg_construction::body_cache::{dump_mir_and_borrowck_facts, intermediate_out_dir};
 use log::Level;
 use paralegal_spdg::{AnalyzerStats, STAT_FILE_EXT};
-use rustc_ast::Ty;
 use rustc_middle::ty::TyCtxt;
 use rustc_plugin::CrateFilter;
 

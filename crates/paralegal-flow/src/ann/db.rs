@@ -28,8 +28,8 @@ use flowistry_pdg_construction::{
 };
 use paralegal_spdg::Identifier;
 
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_errors::DiagMessage;
-use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_hir::{def::DefKind, def_id::CrateNum};
 use rustc_middle::{
