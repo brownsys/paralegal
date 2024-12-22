@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::{num::NonZeroU64, path::PathBuf};
 
 use rustc_const_eval::interpret::AllocId;
-use rustc_hash::FxHashMap;
+use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::{CrateNum, DefId, DefIndex};
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_serialize::{

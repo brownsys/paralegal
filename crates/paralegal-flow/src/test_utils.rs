@@ -63,7 +63,7 @@ pub fn with_current_directory<
 /// Be aware that any [`Symbol`] created in `F` will **not** compare equal to
 /// [`Symbol`]s created after `F` and may cause dereference errors.
 pub fn use_rustc<A, F: FnOnce() -> A>(f: F) -> A {
-    rustc_span::create_default_session_if_not_set_then(|_| f())
+    rustc_span::create_default_session_globals_then(|| f())
 }
 
 /// Crates a basic invocation of `cargo paralegal-flow`, ensuring that the `cargo-paralegal-flow`
@@ -259,7 +259,6 @@ impl InlineTestBuilder {
 
         rustc_utils::test_utils::CompileBuilder::new(&self.input)
             .with_args(EXTRA_RUSTC_ARGS.iter().copied().map(ToOwned::to_owned))
-            .with_query_override(None)
             .compile(move |result| {
                 let args: &'static _ = Box::leak(Box::new(args));
                 dump_markers(result.tcx);

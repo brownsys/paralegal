@@ -6,10 +6,10 @@ use rustc_hash::FxHashSet;
 use rustc_hir::def_id::{CrateNum, DefId, LOCAL_CRATE};
 use rustc_middle::ty::{
     AssocKind, BoundVariableKind, Clause, ClauseKind, ImplPolarity, Instance, ParamEnv,
-    ProjectionPredicate, TraitPredicate,
+    ProjectionPredicate, TraitPredicate, TypingEnv,
 };
 use rustc_span::{Span, Symbol};
-use rustc_type_ir::TyKind;
+use rustc_type_ir::{PredicatePolarity, TyKind};
 
 use crate::{
     ana::Print,
@@ -137,7 +137,7 @@ impl<'tcx> InlineJudge<'tcx> {
 
     pub fn ensure_is_safe_to_approximate(
         &self,
-        param_env: ParamEnv<'tcx>,
+        typing_env: TypingEnv<'tcx>,
         resolved: Instance<'tcx>,
         call_span: Span,
         emit_err: bool,
@@ -146,7 +146,7 @@ impl<'tcx> InlineJudge<'tcx> {
         SafetyChecker {
             tcx: self.tcx(),
             emit_err,
-            param_env,
+            typing_env,
             resolved,
             call_span,
             marker_ctx: self.marker_ctx.clone(),
@@ -168,7 +168,7 @@ struct SafetyChecker<'tcx> {
     tcx: TyCtxt<'tcx>,
     /// Emit errors if `true`, otherwise emit warnings
     emit_err: bool,
-    param_env: ParamEnv<'tcx>,
+    typing_env: TypingEnv<'tcx>,
     /// Instance under scrutiny
     resolved: Instance<'tcx>,
     call_span: Span,
@@ -180,7 +180,7 @@ struct SafetyChecker<'tcx> {
 impl<'tcx> SafetyChecker<'tcx> {
     /// Emit an error or a warning with some preformatted messaging.
     fn err(&self, s: &str, span: Span) {
-        let sess = self.tcx.sess;
+        let sess = self.tcx.dcx();
         let msg = format!(
             "the call to {:?} is not safe to abstract as demanded by '{}', because of: {s}",
             self.resolved, self.reason
@@ -210,8 +210,8 @@ impl<'tcx> SafetyChecker<'tcx> {
     }
 
     fn check_projection_predicate(&self, predicate: &ProjectionPredicate<'tcx>, span: Span) {
-        if let Some(t) = predicate.term.ty() {
-            let t = self.tcx.normalize_erasing_regions(self.param_env, t);
+        if let Some(t) = predicate.term.as_type() {
+            let t = self.tcx.normalize_erasing_regions(self.typing_env, t);
             let markers = self.marker_ctx.deep_type_markers(t);
             if !markers.is_empty() {
                 let markers = markers.iter().map(|t| t.1).collect::<Box<_>>();
@@ -226,7 +226,7 @@ impl<'tcx> SafetyChecker<'tcx> {
 
     fn check_trait_predicate(&self, predicate: &TraitPredicate<'tcx>, span: Span) {
         let TraitPredicate {
-            polarity: ImplPolarity::Positive,
+            polarity: PredicatePolarity::Positive,
             trait_ref,
         } = predicate
         else {
@@ -244,10 +244,14 @@ impl<'tcx> SafetyChecker<'tcx> {
 
         if self.tcx.is_fn_trait(trait_ref.def_id) {
             let instance = match self_ty.kind() {
-                TyKind::Closure(id, args) | TyKind::FnDef(id, args) => {
-                    Instance::resolve(self.tcx, ParamEnv::reveal_all(), *id, args)
-                }
-                TyKind::FnPtr(_) => {
+                TyKind::Closure(id, args) | TyKind::FnDef(id, args) => Instance::expect_resolve(
+                    self.tcx,
+                    TypingEnv::fully_monomorphized(),
+                    *id,
+                    args,
+                    span,
+                ),
+                TyKind::FnPtr(..) => {
                     self.err(&format!("unresolvable function pointer {self_ty:?}"), span);
                     return;
                 }
@@ -260,9 +264,7 @@ impl<'tcx> SafetyChecker<'tcx> {
                     );
                     return;
                 }
-            }
-            .unwrap()
-            .unwrap();
+            };
             let markers = self.marker_ctx.get_reachable_markers(instance);
             if !markers.is_empty() {
                 self.err_markers(
@@ -311,6 +313,7 @@ impl<'tcx> SafetyChecker<'tcx> {
             | ClauseKind::WellFormed(_)
             | ClauseKind::ConstArgHasType(..)
             | ClauseKind::ConstEvaluatable(_)
+            | ClauseKind::HostEffect(_)
             | ClauseKind::RegionOutlives(_) => {
                 // These predicates do not allow for "code injection" since they do not concern things that can be marked.
             }

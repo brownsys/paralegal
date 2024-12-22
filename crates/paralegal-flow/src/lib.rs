@@ -52,6 +52,7 @@ use desc::utils::write_sep;
 use flowistry_pdg_construction::body_cache::{dump_mir_and_borrowck_facts, intermediate_out_dir};
 use log::Level;
 use paralegal_spdg::{AnalyzerStats, STAT_FILE_EXT};
+use rustc_ast::Ty;
 use rustc_middle::ty::TyCtxt;
 use rustc_plugin::CrateFilter;
 
@@ -199,15 +200,13 @@ impl<'a> rustc_driver::Callbacks for DumpOnlyCallbacks<'a> {
     fn after_expansion<'tcx>(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
-        queries: &'tcx rustc_interface::Queries<'tcx>,
+        tcx: TyCtxt<'tcx>,
     ) -> rustc_driver::Compilation {
-        queries.global_ctxt().unwrap().enter(|tcx| {
-            dump_mir_and_update_stats(tcx, self.time);
-            assert!(self
-                .output_location
-                .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
-                .is_none());
-        });
+        dump_mir_and_update_stats(tcx, self.time);
+        assert!(self
+            .output_location
+            .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
+            .is_none());
         rustc_driver::Compilation::Continue
     }
 }
@@ -216,11 +215,11 @@ impl<'a> rustc_driver::Callbacks for Callbacks<'a> {
     fn after_expansion<'tcx>(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
-        queries: &'tcx rustc_interface::Queries<'tcx>,
+        tcx: TyCtxt<'tcx>,
     ) -> rustc_driver::Compilation {
         self.stats
             .record_timed(TimedStat::Rustc, self.stats.elapsed());
-        let compilation = self.run_the_analyzer(queries);
+        let compilation = self.run_the_analyzer(tcx);
         self.rustc_second_timer = Some(Instant::now());
         compilation
     }
@@ -232,9 +231,8 @@ impl<'a> rustc_driver::Callbacks for Callbacks<'a> {
     // that (when retrieving the MIR bodies for instance)
     fn after_analysis<'tcx>(
         &mut self,
-        _handler: &rustc_session::EarlyErrorHandler,
         _compiler: &rustc_interface::interface::Compiler,
-        _queries: &'tcx rustc_interface::Queries<'tcx>,
+        _tcx: TyCtxt<'tcx>,
     ) -> rustc_driver::Compilation {
         self.stats
             .record_timed(TimedStat::Rustc, self.rustc_second_timer.unwrap().elapsed());
@@ -243,51 +241,41 @@ impl<'a> rustc_driver::Callbacks for Callbacks<'a> {
 }
 
 impl<'a> Callbacks<'a> {
-    fn run_the_analyzer<'tcx>(
-        &mut self,
-        queries: &'tcx rustc_interface::Queries<'tcx>,
-    ) -> rustc_driver::Compilation {
-        let abort = queries
-            .global_ctxt()
-            .unwrap()
-            .enter(|tcx| {
-                dump_markers(tcx);
-                tcx.sess.abort_if_errors();
-                let (desc, mut stats) =
-                    discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone()).run()?;
-                info!("All elems walked");
-                tcx.sess.abort_if_errors();
+    fn run_the_analyzer<'tcx>(&mut self, tcx: TyCtxt<'tcx>) -> rustc_driver::Compilation {
+        dump_markers(tcx);
+        tcx.dcx().abort_if_errors();
+        let (desc, mut stats) =
+            discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone())
+                .run()
+                .unwrap();
+        info!("All elems walked");
+        tcx.dcx().abort_if_errors();
 
-                if self.opts.dbg().dump_spdg() {
-                    let out = std::fs::File::create("call-only-flow.gv").unwrap();
-                    paralegal_spdg::dot::dump(&desc, out).unwrap();
-                }
+        if self.opts.dbg().dump_spdg() {
+            let out = std::fs::File::create("call-only-flow.gv").unwrap();
+            paralegal_spdg::dot::dump(&desc, out).unwrap();
+        }
 
-                self.stats.measure(TimedStat::Serialization, || {
-                    desc.canonical_write(self.opts.result_path()).unwrap()
-                });
+        self.stats.measure(TimedStat::Serialization, || {
+            desc.canonical_write(self.opts.result_path()).unwrap()
+        });
 
-                stats.serialization_time = self.stats.get_timed(TimedStat::Serialization);
+        stats.serialization_time = self.stats.get_timed(TimedStat::Serialization);
 
-                println!("Analysis finished with timing: {}", self.stats);
+        println!("Analysis finished with timing: {}", self.stats);
 
-                assert!(self.stat_ref.replace(stats).is_none());
+        assert!(self.stat_ref.replace(stats).is_none());
 
-                assert!(self
-                    .output_location
-                    .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
-                    .is_none());
-                anyhow::Ok(self.opts.abort_after_analysis())
-            })
-            .unwrap();
+        assert!(self
+            .output_location
+            .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
+            .is_none());
 
-        if abort {
+        if self.opts.abort_after_analysis() {
             rustc_driver::Compilation::Stop
         } else {
-            queries.global_ctxt().unwrap().enter(|tcx| {
-                self.stats.measure(TimedStat::MirEmission, || {
-                    dump_mir_and_update_stats(tcx, self.time);
-                })
+            self.stats.measure(TimedStat::MirEmission, || {
+                dump_mir_and_update_stats(tcx, self.time);
             });
             rustc_driver::Compilation::Continue
         }
@@ -566,7 +554,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             stat.self_time = self_time;
             serde_json::to_writer(out, &stat).unwrap();
         }
-        result
+        Ok(())
     }
 }
 

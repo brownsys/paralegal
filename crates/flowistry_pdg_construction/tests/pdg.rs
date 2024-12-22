@@ -56,9 +56,8 @@ fn pdg(
     tests: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &BodyCache<'tcx>, DepGraph<'tcx>) + Send,
 ) {
     let _ = env_logger::try_init();
-    rustc_utils::test_utils::CompileBuilder::new(input)
-        .with_query_override(None)
-        .expect_compile(move |CompileResult { tcx, .. }| {
+    rustc_utils::test_utils::CompileBuilder::new(input).expect_compile(
+        move |CompileResult { tcx, .. }| {
             dump_mir_and_borrowck_facts(tcx);
             let def_id = get_main(tcx);
             let mut memo = MemoPdgConstructor::new(tcx);
@@ -67,7 +66,8 @@ fn pdg(
             memo.with_call_change_callback(LocalLoadingOnly(policy));
             let pdg = memo.construct_graph(def_id);
             tests(tcx, memo.body_cache(), pdg)
-        })
+        },
+    )
 }
 
 #[allow(unused)]

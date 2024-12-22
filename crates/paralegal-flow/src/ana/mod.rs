@@ -22,7 +22,7 @@ use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
     body_cache::{local_or_remote_paths, BodyCache},
     calling_convention::CallingConvention,
-    utils::is_async,
+    utils::{is_async, ArgSlice},
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
 use inline_judge::InlineJudgement;
@@ -35,7 +35,7 @@ use rustc_hir::{
 };
 use rustc_middle::{
     mir::{Location, Operand},
-    ty::{Instance, ParamEnv, TyCtxt},
+    ty::{Instance, ParamEnv, TyCtxt, TypingEnv},
 };
 use rustc_span::{ErrorGuaranteed, FileNameDisplayPreference, Span as RustSpan, Symbol};
 
@@ -472,8 +472,8 @@ fn type_info_sanity_check(controllers: &ControllerMap, types: &TypeInfoMap) {
 
 fn def_kind_for_item(id: DefId, tcx: TyCtxt) -> DefKind {
     match tcx.def_kind(id) {
+        _ if tcx.is_coroutine(id) => DefKind::Generator,
         def::DefKind::Closure => DefKind::Closure,
-        def::DefKind::Generator => DefKind::Generator,
         kind if kind.is_fn_like() => DefKind::Fn,
         def::DefKind::Struct
         | def::DefKind::AssocTy
@@ -539,7 +539,7 @@ impl Stub {
         &self,
         tcx: TyCtxt<'tcx>,
         function: Instance<'tcx>,
-        param_env: ParamEnv<'tcx>,
+        param_env: TypingEnv<'tcx>,
         at: RustSpan,
     ) -> Result<Instance<'tcx>, ErrorGuaranteed> {
         match self {
@@ -550,7 +550,7 @@ impl Stub {
                     let param = generics.param_at(idx, tcx);
                     param.name == name
                 }) else {
-                    return Err(tcx.sess.span_err(
+                    return Err(tcx.dcx().span_err(
                         at,
                         format!("Function has no parameter named {generic_name}"),
                     ));
@@ -558,9 +558,7 @@ impl Stub {
                 let ty = function.args[param_index].expect_ty();
                 let (def_id, args) =
                     flowistry_pdg_construction::utils::type_as_fn(tcx, ty).unwrap();
-                Ok(Instance::resolve(tcx, param_env, def_id, args)
-                    .unwrap()
-                    .unwrap())
+                Ok(Instance::expect_resolve(tcx, param_env, def_id, args, at))
             }
         }
     }
@@ -578,7 +576,7 @@ impl Stub {
                     DefKind::Closure => true,
                     DefKind::Fn => false,
                     kind => {
-                        return Err(tcx.sess.span_err(
+                        return Err(tcx.dcx().span_err(
                             at,
                             format!("Expected `fn` or `closure` def kind, got {kind:?}"),
                         ))
@@ -586,7 +584,7 @@ impl Stub {
                 }
             }
             Stub::SubFuture { .. } => {
-                assert!(tcx.generator_is_async(def_id));
+                assert!(tcx.coroutine_is_async(def_id));
                 true
             }
         };
@@ -603,8 +601,8 @@ impl Stub {
         &self,
         tcx: TyCtxt<'tcx>,
         function: Instance<'tcx>,
-        param_env: ParamEnv<'tcx>,
-        arguments: &[Operand<'tcx>],
+        param_env: TypingEnv<'tcx>,
+        arguments: ArgSlice<'_, 'tcx>,
         at: RustSpan,
     ) -> Result<(Instance<'tcx>, CallingConvention<'tcx>), ErrorGuaranteed> {
         let instance = self.resolve_alternate_instance(tcx, function, param_env, at)?;
@@ -622,7 +620,7 @@ impl Stub {
                     gen
                 }
                 _ => {
-                    return Err(tcx.sess.span_err(
+                    return Err(tcx.dcx().span_err(
                         at,
                         format!(
                             "this function ({:?}) should have only one argument but it has {}",
@@ -680,7 +678,7 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
     fn on_inline_miss(
         &self,
         resolution: Instance<'tcx>,
-        param_env: ParamEnv<'tcx>,
+        param_env: TypingEnv<'tcx>,
         _loc: Location,
         _parent: Instance<'tcx>,
         reason: InlineMissReason,

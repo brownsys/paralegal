@@ -31,17 +31,7 @@ use crate::{discover::AttrMatchT, sym_vec, utils::MetaItemMatch};
 /// and [`Self::as_exception`] are provided. These are particularly useful in
 /// conjunction with e.g. [`Iterator::filter_map`]
 #[derive(
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Debug,
-    Clone,
-    Deserialize,
-    Serialize,
-    strum::EnumIs,
-    Encodable,
-    Decodable,
+    PartialEq, Eq, Debug, Clone, Deserialize, Serialize, strum::EnumIs, Encodable, Decodable,
 )]
 pub enum Annotation {
     Marker(MarkerAnnotation),
