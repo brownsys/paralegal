@@ -23,7 +23,7 @@ rustc_plugin = "=0.12.0-nightly-2024-12-15"
 [workspace.dependencies.flowistry]
 # path = "../flowistry/crates/flowistry"
 git = "https://github.com/brownsys/flowistry"
-rev = "171dfeb2b4cc308e1475cd27c6aff714b4037aad"
+rev = "f271637d65a21a2785b87ef52ede8bdeb560948c"
 default-features = false
 
 
@@ -34,9 +34,9 @@ debug = true
 [replace."rustc_utils:0.12.0-nightly-2024-12-15"]
 # path = "../rustc_plugin/crates/rustc_utils"
 git = "https://github.com/JustusAdam/rustc_plugin"
-rev = "bcb896d812311f53cfea0bcbe7fc80f0140c58ea"
+rev = "caee66d57f536c0a4da6f0a2c97d0ff7d7177f40"
 
 [replace."rustc_plugin:0.12.0-nightly-2024-12-15"]
 # path = "../rustc_plugin/crates/rustc_plugin"
 git = "https://github.com/JustusAdam/rustc_plugin"
-rev = "bcb896d812311f53cfea0bcbe7fc80f0140c58ea"
+rev = "caee66d57f536c0a4da6f0a2c97d0ff7d7177f40"

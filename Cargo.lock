@@ -460,7 +460,7 @@ checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 [[package]]
 name = "flowistry"
 version = "0.5.43"
-source = "git+https://github.com/brownsys/flowistry?rev=171dfeb2b4cc308e1475cd27c6aff714b4037aad#171dfeb2b4cc308e1475cd27c6aff714b4037aad"
+source = "git+https://github.com/brownsys/flowistry?rev=f271637d65a21a2785b87ef52ede8bdeb560948c#f271637d65a21a2785b87ef52ede8bdeb560948c"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -1190,12 +1190,12 @@ name = "rustc_plugin"
 version = "0.12.0-nightly-2024-12-15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "351d0edb6bb7f15aa21d83c29604cdc3bdcec506e12233868b369ee6d3328da3"
-replace = "rustc_plugin 0.12.0-nightly-2024-12-15 (git+https://github.com/JustusAdam/rustc_plugin?rev=bcb896d812311f53cfea0bcbe7fc80f0140c58ea)"
+replace = "rustc_plugin 0.12.0-nightly-2024-12-15 (git+https://github.com/JustusAdam/rustc_plugin?rev=caee66d57f536c0a4da6f0a2c97d0ff7d7177f40)"
 
 [[package]]
 name = "rustc_plugin"
 version = "0.12.0-nightly-2024-12-15"
-source = "git+https://github.com/JustusAdam/rustc_plugin?rev=bcb896d812311f53cfea0bcbe7fc80f0140c58ea#bcb896d812311f53cfea0bcbe7fc80f0140c58ea"
+source = "git+https://github.com/JustusAdam/rustc_plugin?rev=caee66d57f536c0a4da6f0a2c97d0ff7d7177f40#caee66d57f536c0a4da6f0a2c97d0ff7d7177f40"
 dependencies = [
  "cargo_metadata",
  "log",
@@ -1216,18 +1216,19 @@ name = "rustc_utils"
 version = "0.12.0-nightly-2024-12-15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a82a375e5df4530b4c5e94ab8251c754c92c3e593efaf8214e572ea422bf3a0"
-replace = "rustc_utils 0.12.0-nightly-2024-12-15 (git+https://github.com/JustusAdam/rustc_plugin?rev=bcb896d812311f53cfea0bcbe7fc80f0140c58ea)"
+replace = "rustc_utils 0.12.0-nightly-2024-12-15 (git+https://github.com/JustusAdam/rustc_plugin?rev=caee66d57f536c0a4da6f0a2c97d0ff7d7177f40)"
 
 [[package]]
 name = "rustc_utils"
 version = "0.12.0-nightly-2024-12-15"
-source = "git+https://github.com/JustusAdam/rustc_plugin?rev=bcb896d812311f53cfea0bcbe7fc80f0140c58ea#bcb896d812311f53cfea0bcbe7fc80f0140c58ea"
+source = "git+https://github.com/JustusAdam/rustc_plugin?rev=caee66d57f536c0a4da6f0a2c97d0ff7d7177f40#caee66d57f536c0a4da6f0a2c97d0ff7d7177f40"
 dependencies = [
  "anyhow",
  "cfg-if",
  "indexical",
  "intervaltree",
  "log",
+ "rand",
  "textwrap",
 ]
 
