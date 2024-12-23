@@ -15,7 +15,7 @@ use rustc_middle::{
         visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, Location, Operand, Place,
         PlaceElem, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
-    ty::{GenericArgKind, GenericArgsRef, Instance, TyCtxt, TyKind},
+    ty::{GenericArgKind, GenericArgsRef, Instance, TyCtxt, TyKind, TypingEnv},
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 use rustc_span::{source_map::Spanned, DesugaringKind, Span};
@@ -52,6 +52,9 @@ impl<'tcx> df::JoinSemiLattice for InstructionState<'tcx> {
 pub(crate) struct LocalAnalysis<'tcx, 'a> {
     pub(crate) memo: &'a MemoPdgConstructor<'tcx>,
     pub(super) root: Instance<'tcx>,
+    // TODO: We should generally be using mono_body, this one is only used in
+    // retyping. Try and find out if I can use mono_body there too or
+    // encapsulate this away so we don't accidentally use this polymorphic one.
     body_with_facts: &'tcx CachedBody<'tcx>,
     pub(crate) mono_body: Body<'tcx>,
     pub(crate) def_id: DefId,
@@ -77,6 +80,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             .body()
             .typing_env(tcx)
             .with_post_analysis_normalized(tcx);
+        //let param_env = TypingEnv::post_analysis(tcx, def_id).with_post_analysis_normalized(tcx);
         let body = try_monomorphize(
             root,
             tcx,
@@ -387,12 +391,14 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 .span_err(span, "Operand is cannot be interpreted as function");
             return None;
         };
-        trace!("Resolved call to function: {}", self.fmt_fn(called_def_id));
+        trace!(
+            "Resolved call to function: {} with generic args {generic_args:?}",
+            self.fmt_fn(called_def_id)
+        );
 
         // Monomorphize the called function with the known generic_args.
         let typing_env = self
-            .body_with_facts
-            .body()
+            .mono_body
             .typing_env(tcx)
             .with_post_analysis_normalized(tcx);
         let Some(mut resolved_fn) =
@@ -647,7 +653,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     }
 
     pub(crate) fn construct_partial(&'a self) -> PartialGraph<'tcx> {
-        let mut analysis = self.iterate_to_fixpoint(self.tcx(), self.body_with_facts.body(), None);
+        let mut analysis = self.iterate_to_fixpoint(self.tcx(), &self.mono_body, None);
 
         let mut final_state = PartialGraph::new(
             self.generic_args(),
