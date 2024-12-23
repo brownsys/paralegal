@@ -63,7 +63,7 @@ pub fn with_current_directory<
 /// Be aware that any [`Symbol`] created in `F` will **not** compare equal to
 /// [`Symbol`]s created after `F` and may cause dereference errors.
 pub fn use_rustc<A, F: FnOnce() -> A>(f: F) -> A {
-    rustc_span::create_default_session_globals_then(|| f())
+    rustc_span::create_session_if_not_set_then(rustc_span::edition::DEFAULT_EDITION, |_| f())
 }
 
 /// Crates a basic invocation of `cargo paralegal-flow`, ensuring that the `cargo-paralegal-flow`
