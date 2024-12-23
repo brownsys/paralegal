@@ -5,6 +5,7 @@ extern crate rustc_middle;
 extern crate rustc_span;
 
 use hir::def_id::DefId;
+use rustc_errors::FatalError;
 use rustc_interface::interface;
 
 use crate::{
@@ -239,7 +240,7 @@ impl InlineTestBuilder {
         .unwrap()
     }
 
-    pub fn run(&self, f: impl FnOnce(PreFrg) + Send) -> interface::Result<()> {
+    pub fn run(&self, f: impl FnOnce(PreFrg) + Send) -> Result<(), FatalError> {
         use clap::Parser;
 
         #[derive(clap::Parser)]
@@ -299,7 +300,7 @@ pub trait HasGraph<'g>: Sized + Copy {
         let name = Identifier::new_intern(name.as_ref());
         let id = match self.graph().name_map.get(&name).map(Vec::as_slice) {
             Some([one]) => *one,
-            Some([]) | None => panic!("Did not find name {name}"),
+            Some([]) | None => panic!("Did not find name {name}",),
             _ => panic!("Found too many function matching name {name}"),
         };
         FnRef {
@@ -309,7 +310,7 @@ pub trait HasGraph<'g>: Sized + Copy {
     }
 
     fn async_function(self, name: impl AsRef<str>) -> FnRef<'g> {
-        self.function(format!("{}_generator", name.as_ref()))
+        self.function(format!("{}_coroutine", name.as_ref()))
     }
 
     fn info_for(self, id: DefId) -> &'g DefInfo {

@@ -258,7 +258,7 @@ impl<'tcx, 'a> SpanDecoder for ParalegalDecoder<'tcx, 'a> {
     }
 
     fn decode_symbol(&mut self) -> Symbol {
-        unimplemented!()
+        Symbol::intern(&String::decode(self))
     }
 
     fn decode_attr_id(&mut self) -> AttrId {
@@ -284,8 +284,8 @@ impl<'tcx> SpanEncoder for ParalegalEncoder<'tcx> {
     fn encode_expn_id(&mut self, _expn_id: ExpnId) {
         unimplemented!()
     }
-    fn encode_symbol(&mut self, _symbol: Symbol) {
-        unimplemented!()
+    fn encode_symbol(&mut self, symbol: Symbol) {
+        symbol.as_str().encode(self)
     }
 }
 
