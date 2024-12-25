@@ -119,7 +119,7 @@ pub fn expect_resolve_string_to_def_id(tcx: TyCtxt, path: &str, relaxed: bool) -
         path.to_string(),
     )
     .unwrap();
-    let qpath = parser.parse_expr().map_err(|mut e| e.emit()).ok()?;
+    let qpath = parser.parse_expr().map_err(|e| e.emit()).ok()?;
     if parser.token.kind != TokenKind::Eof {
         report_err(tcx, format!("Tokens left over after parsing path {path}"));
         return None;

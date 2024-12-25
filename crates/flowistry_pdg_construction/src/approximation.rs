@@ -5,7 +5,7 @@ use rustc_abi::VariantIdx;
 use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
 use rustc_middle::{
-    mir::{visit::Visitor, AggregateKind, Location, Operand, Place, Rvalue},
+    mir::{visit::Visitor, AggregateKind, Location, Place, Rvalue},
     ty::TyKind,
 };
 

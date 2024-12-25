@@ -47,7 +47,7 @@ pub enum InlineMissReason {
     TraitMethod,
 }
 
-impl<'tcx> Default for CallChanges<'tcx> {
+impl Default for CallChanges<'_> {
     fn default() -> Self {
         CallChanges {
             skip: SkipCall::NoSkip,

@@ -23,7 +23,6 @@ use std::{num::NonZeroU64, path::PathBuf};
 
 use rustc_const_eval::interpret::AllocId;
 use rustc_data_structures::fx::FxHashMap;
-use rustc_hir::def;
 use rustc_hir::def_id::{CrateNum, DefId, DefIndex};
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_serialize::{
@@ -84,7 +83,7 @@ pub fn encode_to_file<'tcx, V: Encodable<ParalegalEncoder<'tcx>>>(
 /// Whatever can't survive the crossing we need to live without.
 const CLEAR_CROSS_CRATE: bool = true;
 
-impl<'tcx> Encoder for ParalegalEncoder<'tcx> {
+impl Encoder for ParalegalEncoder<'_> {
     encoder_methods! {
         emit_usize(usize);
         emit_u128(u128);
@@ -158,7 +157,7 @@ pub fn decode_from_file<'tcx, V: for<'a> Decodable<ParalegalDecoder<'tcx, 'a>>>(
     Ok(V::decode(&mut decoder))
 }
 
-impl<'tcx, 'a> TyDecoder for ParalegalDecoder<'tcx, 'a> {
+impl<'tcx> TyDecoder for ParalegalDecoder<'tcx, '_> {
     const CLEAR_CROSS_CRATE: bool = CLEAR_CROSS_CRATE;
 
     type I = TyCtxt<'tcx>;
@@ -209,7 +208,7 @@ macro_rules! decoder_methods {
     }
 }
 
-impl<'tcx, 'a> Decoder for ParalegalDecoder<'tcx, 'a> {
+impl Decoder for ParalegalDecoder<'_, '_> {
     decoder_methods! {
         read_usize(usize);
         read_u128(u128);
@@ -234,7 +233,7 @@ impl<'tcx, 'a> Decoder for ParalegalDecoder<'tcx, 'a> {
     }
 }
 
-impl<'tcx, 'a> SpanDecoder for ParalegalDecoder<'tcx, 'a> {
+impl SpanDecoder for ParalegalDecoder<'_, '_> {
     fn decode_crate_num(&mut self) -> CrateNum {
         self.tcx
             .stable_crate_id_to_crate_num(Decodable::decode(self))
@@ -270,7 +269,7 @@ impl<'tcx, 'a> SpanDecoder for ParalegalDecoder<'tcx, 'a> {
     }
 }
 
-impl<'tcx> SpanEncoder for ParalegalEncoder<'tcx> {
+impl SpanEncoder for ParalegalEncoder<'_> {
     fn encode_def_index(&mut self, def_index: DefIndex) {
         def_index.as_u32().encode(self)
     }
@@ -327,7 +326,7 @@ impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for SpanData {
     }
 }
 
-impl<'tcx> ParalegalEncoder<'tcx> {
+impl ParalegalEncoder<'_> {
     fn encode_file_name(&mut self, n: &FileName) {
         if let Some(&idx) = self.filepath_shorthands.get(n) {
             TAG_ENCODE_REMOTE.encode(self);
@@ -341,7 +340,7 @@ impl<'tcx> ParalegalEncoder<'tcx> {
     }
 }
 
-impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
+impl ParalegalDecoder<'_, '_> {
     fn decode_file_name(&mut self, crate_num: CrateNum) -> Arc<SourceFile> {
         let tag = u8::decode(self);
         let pos = if tag == TAG_ENCODE_REMOTE {

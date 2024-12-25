@@ -10,7 +10,7 @@ use std::{collections::HashSet, rc::Rc};
 use either::Either;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    body_cache::{dump_mir_and_borrowck_facts, BodyCache},
+    body_cache::BodyCache,
     graph::{DepEdge, DepGraph},
     CallChangeCallback, CallChangeCallbackFn, CallChanges, MemoPdgConstructor, SkipCall,
 };
@@ -851,7 +851,7 @@ pdg_test! {
       params.with_call_change_callback(CallChangeCallbackFn::new(move |info| {
         let name = tcx.opt_item_name(info.callee.def_id());
         let name2 = tcx.opt_parent(info.callee.def_id()).and_then(|c| tcx.opt_item_name(c));
-        let is_spawn = |name: Option<&Symbol>| name.map_or(false, |n| n.as_str().contains("spawn"));
+        let is_spawn = |name: Option<&Symbol>| name.is_some_and(|n| n.as_str().contains("spawn"));
         let mut changes = CallChanges::default();
         if is_spawn(name.as_ref()) || is_spawn(name2.as_ref())
         {

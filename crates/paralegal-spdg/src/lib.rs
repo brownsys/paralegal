@@ -15,8 +15,6 @@ pub(crate) mod rustc {
     pub extern crate rustc_index as index;
     pub extern crate rustc_middle as middle;
     pub extern crate rustc_span as span;
-    pub use hir::def_id;
-    pub use middle::mir;
 }
 
 #[cfg(feature = "rustc")]
@@ -418,14 +416,22 @@ mod ser_defid_seq {
     struct DefIdWrap(#[serde(with = "rustc_proxies::DefId")] crate::DefId);
 
     pub fn serialize<S: Serializer>(v: &[crate::DefId], serializer: S) -> Result<S::Ok, S::Error> {
-        unsafe { <[DefIdWrap]>::serialize(std::mem::transmute(v), serializer) }
+        unsafe {
+            <[DefIdWrap]>::serialize(
+                std::mem::transmute::<&[rustc_span::def_id::DefId], &[DefIdWrap]>(v),
+                serializer,
+            )
+        }
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Box<[crate::DefId]>, D::Error> {
         unsafe {
-            Ok(std::mem::transmute(Box::<[DefIdWrap]>::deserialize(
+            Ok(std::mem::transmute::<
+                std::boxed::Box<[DefIdWrap]>,
+                std::boxed::Box<[rustc_span::def_id::DefId]>,
+            >(Box::<[DefIdWrap]>::deserialize(
                 deserializer,
             )?))
         }
@@ -981,7 +987,7 @@ impl<'a> DisplayNode<'a> {
     }
 }
 
-impl<'a> Display for DisplayNode<'a> {
+impl Display for DisplayNode<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let weight = self.graph.graph.node_weight(self.node).unwrap();
         if self.detailed {

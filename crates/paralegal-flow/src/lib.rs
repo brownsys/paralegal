@@ -194,11 +194,11 @@ fn dump_mir_and_update_stats(tcx: TyCtxt, timer: &mut DumpStats) {
     timer.tycheck_time = tycheck_time;
 }
 
-impl<'a> rustc_driver::Callbacks for DumpOnlyCallbacks<'a> {
-    fn after_expansion<'tcx>(
+impl rustc_driver::Callbacks for DumpOnlyCallbacks<'_> {
+    fn after_expansion(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
-        tcx: TyCtxt<'tcx>,
+        tcx: TyCtxt<'_>,
     ) -> rustc_driver::Compilation {
         dump_mir_and_update_stats(tcx, self.time);
         assert!(self
@@ -209,11 +209,11 @@ impl<'a> rustc_driver::Callbacks for DumpOnlyCallbacks<'a> {
     }
 }
 
-impl<'a> rustc_driver::Callbacks for Callbacks<'a> {
-    fn after_expansion<'tcx>(
+impl rustc_driver::Callbacks for Callbacks<'_> {
+    fn after_expansion(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
-        tcx: TyCtxt<'tcx>,
+        tcx: TyCtxt<'_>,
     ) -> rustc_driver::Compilation {
         self.stats
             .record_timed(TimedStat::Rustc, self.stats.elapsed());
@@ -227,10 +227,10 @@ impl<'a> rustc_driver::Callbacks for Callbacks<'a> {
     // `after_expansion` and so far that doesn't seem to break anything, but I'm
     // explaining this here in case that flowistry has some sort of issue with
     // that (when retrieving the MIR bodies for instance)
-    fn after_analysis<'tcx>(
+    fn after_analysis(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
-        _tcx: TyCtxt<'tcx>,
+        _tcx: TyCtxt<'_>,
     ) -> rustc_driver::Compilation {
         self.stats
             .record_timed(TimedStat::Rustc, self.rustc_second_timer.unwrap().elapsed());
@@ -238,8 +238,8 @@ impl<'a> rustc_driver::Callbacks for Callbacks<'a> {
     }
 }
 
-impl<'a> Callbacks<'a> {
-    fn run_the_analyzer<'tcx>(&mut self, tcx: TyCtxt<'tcx>) -> rustc_driver::Compilation {
+impl Callbacks<'_> {
+    fn run_the_analyzer(&mut self, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
         dump_markers(tcx);
         tcx.dcx().abort_if_errors();
         let (desc, mut stats) =

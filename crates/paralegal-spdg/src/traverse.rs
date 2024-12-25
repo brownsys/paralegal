@@ -112,48 +112,6 @@ fn bfs_iter<G: IntoNeighbors + Visitable<NodeId = Node, Map = <SPDGImpl as Visit
     Walker::iter(bfs, g)
 }
 
-#[cfg(test)]
-mod test {
-    use petgraph::graph::DiGraph;
-
-    use super::bfs_iter;
-
-    #[test]
-    fn iter_sees_nested() {
-        let mut g = DiGraph::<(), ()>::new();
-        let a = g.add_node(());
-        let b = g.add_node(());
-        let c = g.add_node(());
-        let d = g.add_node(());
-
-        g.add_edge(a, b, ());
-        g.add_edge(b, c, ());
-
-        let seen = bfs_iter(&g, [a]).collect::<Vec<_>>();
-        assert!(seen.contains(&b));
-        assert!(seen.contains(&c));
-        assert!(!seen.contains(&d));
-        assert!(!seen.contains(&a));
-    }
-
-    #[test]
-    fn iter_sees_cycle() {
-        let mut g = DiGraph::<(), ()>::new();
-        let a = g.add_node(());
-        let b = g.add_node(());
-        let c = g.add_node(());
-
-        g.add_edge(a, b, ());
-        g.add_edge(b, c, ());
-        g.add_edge(c, a, ());
-
-        let seen = bfs_iter(&g, [a]).collect::<Vec<_>>();
-        assert!(seen.contains(&b));
-        assert!(seen.contains(&c));
-        assert!(seen.contains(&a));
-    }
-}
-
 /// Base function for implementing influencers
 pub fn generic_influencers<
     G: IntoEdgesDirected
@@ -203,5 +161,47 @@ pub fn generic_influencees<
             bfs_iter(&edges_filtered, nodes).collect::<Vec<_>>()
         }
         EdgeSelection::Both => bfs_iter(g, nodes).collect::<Vec<_>>(),
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use petgraph::graph::DiGraph;
+
+    use super::bfs_iter;
+
+    #[test]
+    fn iter_sees_nested() {
+        let mut g = DiGraph::<(), ()>::new();
+        let a = g.add_node(());
+        let b = g.add_node(());
+        let c = g.add_node(());
+        let d = g.add_node(());
+
+        g.add_edge(a, b, ());
+        g.add_edge(b, c, ());
+
+        let seen = bfs_iter(&g, [a]).collect::<Vec<_>>();
+        assert!(seen.contains(&b));
+        assert!(seen.contains(&c));
+        assert!(!seen.contains(&d));
+        assert!(!seen.contains(&a));
+    }
+
+    #[test]
+    fn iter_sees_cycle() {
+        let mut g = DiGraph::<(), ()>::new();
+        let a = g.add_node(());
+        let b = g.add_node(());
+        let c = g.add_node(());
+
+        g.add_edge(a, b, ());
+        g.add_edge(b, c, ());
+        g.add_edge(c, a, ());
+
+        let seen = bfs_iter(&g, [a]).collect::<Vec<_>>();
+        assert!(seen.contains(&b));
+        assert!(seen.contains(&c));
+        assert!(seen.contains(&a));
     }
 }

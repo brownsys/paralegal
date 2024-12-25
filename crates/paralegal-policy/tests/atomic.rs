@@ -10,8 +10,7 @@ use anyhow::Result;
 use paralegal_policy::{
     assert_error, Context, Diagnostics as _, EdgeSelection, NodeExt as _, RootContext,
 };
-use paralegal_spdg::{GlobalNode, Identifier, NodeCluster, SourceUse};
-use petgraph::Outgoing;
+use paralegal_spdg::{Identifier, NodeCluster};
 
 macro_rules! marker {
     ($name:ident) => {{
@@ -20,18 +19,6 @@ macro_rules! marker {
         }
         *MARKER
     }};
-}
-
-trait NodeExt: Sized {
-    fn is_argument(self, ctx: &RootContext, num: u8) -> bool;
-}
-impl NodeExt for GlobalNode {
-    fn is_argument(self, ctx: &RootContext, num: u8) -> bool {
-        ctx.desc().controllers[&self.controller_id()]
-            .graph
-            .edges_directed(self.local_node(), Outgoing)
-            .any(|e| matches!(e.weight().source_use, SourceUse::Argument(n) if n == num))
-    }
 }
 
 const ATOMIC_CODE_SHARED: &str = stringify!(

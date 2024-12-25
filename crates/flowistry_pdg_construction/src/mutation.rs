@@ -41,6 +41,7 @@ pub struct Mutation<'tcx> {
     /// The set of inputs to the mutating operation.
     pub inputs: Vec<(Place<'tcx>, Option<u8>)>,
 
+    #[allow(dead_code)]
     /// The certainty of whether the mutation is happening.
     pub status: MutationStatus,
 }

@@ -204,7 +204,7 @@ fn is_async_fn_or_block(tcx: TyCtxt, instance: Instance) -> bool {
     tcx.coroutine_is_async(instance.def_id())
 }
 
-impl<'tcx, 'mir> LocalAnalysis<'tcx, 'mir> {
+impl<'tcx> LocalAnalysis<'tcx, '_> {
     /// Checks whether the function call, described by the unresolved `def_id`
     /// and the resolved instance `resolved_fn` is a call to [`<T as
     /// Future>::poll`](std::future::Future::poll) where `T` is the type of an

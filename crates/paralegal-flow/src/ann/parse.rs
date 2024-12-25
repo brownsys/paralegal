@@ -72,7 +72,7 @@ impl<'a> I<'a> {
     }
 }
 
-impl<'a> std::fmt::Debug for I<'a> {
+impl std::fmt::Debug for I<'_> {
     /// This only exists so we can use the standard `nom::Err`. A better
     /// solution would be to make our own error type that does not rely on this
     /// being printable.
@@ -85,7 +85,7 @@ impl<'a> std::fmt::Debug for I<'a> {
     }
 }
 
-impl<'a> nom::InputLength for I<'a> {
+impl nom::InputLength for I<'_> {
     fn input_len(&self) -> usize {
         // Cloning is cheap, because this is just a pointer + a count
         self.clone().0.count()

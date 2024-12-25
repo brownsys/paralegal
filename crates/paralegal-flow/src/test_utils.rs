@@ -6,7 +6,6 @@ extern crate rustc_span;
 
 use hir::def_id::DefId;
 use rustc_errors::FatalError;
-use rustc_interface::interface;
 
 use crate::{
     ann::dump_markers,
@@ -407,7 +406,7 @@ pub struct CtrlRef<'g> {
     ctrl: &'g SPDG,
 }
 
-impl<'g> Debug for CtrlRef<'g> {
+impl Debug for CtrlRef<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CtrlRef")
             .field("ident", &self.ctrl.name)
@@ -415,7 +414,7 @@ impl<'g> Debug for CtrlRef<'g> {
     }
 }
 
-impl<'g> PartialEq for CtrlRef<'g> {
+impl PartialEq for CtrlRef<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
@@ -471,7 +470,7 @@ impl<'g> CtrlRef<'g> {
                 instruction_info[&m.leaf()]
                     .kind
                     .as_function_call()
-                    .map_or(false, |i| i.id == fun.ident)
+                    .is_some_and(|i| i.id == fun.ident)
             })
             .map(|call_site| CallStringRef {
                 ctrl: self,
@@ -492,7 +491,7 @@ impl<'g> CtrlRef<'g> {
         cs.pop().unwrap()
     }
 
-    pub fn types_for(&'g self, target: Node) -> &[DefId] {
+    pub fn types_for(&'g self, target: Node) -> &'g [DefId] {
         self.ctrl
             .type_assigns
             .get(&target)
@@ -548,7 +547,7 @@ impl PartialEq for CallStringRef<'_> {
 
 impl Eq for CallStringRef<'_> {}
 
-impl<'g> PartialEq<CallString> for CallStringRef<'g> {
+impl PartialEq<CallString> for CallStringRef<'_> {
     fn eq(&self, other: &CallString) -> bool {
         self.call_site == *other
     }
@@ -658,7 +657,7 @@ impl<'g> HasGraph<'g> for &NodeRef<'g> {
     }
 }
 
-impl<'g> NodeRef<'g> {
+impl NodeRef<'_> {
     pub fn node(&self) -> Node {
         self.node
     }

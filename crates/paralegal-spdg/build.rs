@@ -31,7 +31,7 @@ fn visit_dirs(dir: &Path, hasher: &mut DefaultHasher) -> Result<()> {
         let path = entry.path();
         if path.is_dir() {
             visit_dirs(&path, hasher)?;
-        } else if path.extension().map_or(false, |ext| ext == "rs") {
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
             let metadata = entry.metadata()?;
             let modified = metadata.modified()?;
 

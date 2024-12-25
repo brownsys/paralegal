@@ -34,8 +34,8 @@ use rustc_hir::{
     def_id::{DefId, LOCAL_CRATE},
 };
 use rustc_middle::{
-    mir::{Location, Operand},
-    ty::{Instance, ParamEnv, TyCtxt, TypingEnv},
+    mir::Location,
+    ty::{Instance, TyCtxt, TypingEnv},
 };
 use rustc_span::{ErrorGuaranteed, FileNameDisplayPreference, Span as RustSpan, Symbol};
 

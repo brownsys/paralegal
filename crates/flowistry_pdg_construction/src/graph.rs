@@ -215,7 +215,7 @@ impl<'tcx> DepGraph<'tcx> {
     }
 }
 
-impl<'tcx> DepGraph<'tcx> {
+impl DepGraph<'_> {
     /// Generates a graphviz visualization of the PDG and saves it to `path`.
     pub fn generate_graphviz(&self, path: impl AsRef<Path>) -> anyhow::Result<()> {
         let graph_dot = format!(

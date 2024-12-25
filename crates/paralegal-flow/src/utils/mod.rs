@@ -156,7 +156,7 @@ pub trait TyExt: Sized {
     fn defid_ref(&self) -> Option<&DefId>;
 }
 
-impl<'tcx> TyExt for ty::Ty<'tcx> {
+impl TyExt for ty::Ty<'_> {
     fn defid_ref(&self) -> Option<&DefId> {
         match self.kind() {
             ty::TyKind::Adt(ty::AdtDef(Interned(ty::AdtDefData { did, .. }, _)), _) => Some(did),
@@ -388,7 +388,7 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
         };
         let ty = ty_of_const(func.constant().ok_or(AsFnAndArgsErr::NotAConstant)?);
         let Some((def_id, gargs)) = type_as_fn(tcx, ty) else {
-            return Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone()));
+            return Err(AsFnAndArgsErr::NotFunctionType(*ty.kind()));
         };
         test_generics_normalization(tcx, gargs)
             .map_err(|e| AsFnAndArgsErr::NormalizationError(format!("{e:?}")))?;
@@ -443,7 +443,7 @@ pub enum Overlap<'tcx> {
     Child(&'tcx [mir::PlaceElem<'tcx>]),
 }
 
-impl<'tcx> Overlap<'tcx> {
+impl Overlap<'_> {
     pub fn contains_other(self) -> bool {
         matches!(self, Overlap::Equal | Overlap::Parent(_))
     }

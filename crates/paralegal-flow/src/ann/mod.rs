@@ -259,7 +259,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
     }
 }
 
-impl<'tcx> DumpingVisitor<'tcx> {
+impl DumpingVisitor<'_> {
     fn try_parse_annotation(
         &self,
         a: &Attribute,

@@ -62,7 +62,7 @@ impl<'d> DotPrintableProgramDescription<'d> {
     }
 }
 
-impl<'a, 'd> dot::GraphWalk<'a, CallString, GlobalEdge> for DotPrintableProgramDescription<'d> {
+impl<'a> dot::GraphWalk<'a, CallString, GlobalEdge> for DotPrintableProgramDescription<'_> {
     fn nodes(&'a self) -> Nodes<'a, CallString> {
         self.call_sites.keys().copied().collect::<Vec<_>>().into()
     }
@@ -93,7 +93,7 @@ impl<'a, 'd> dot::GraphWalk<'a, CallString, GlobalEdge> for DotPrintableProgramD
     }
 }
 
-impl<'a, 'd> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDescription<'d> {
+impl<'a> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDescription<'_> {
     fn graph_id(&'a self) -> Id<'a> {
         Id::new("g").unwrap()
     }

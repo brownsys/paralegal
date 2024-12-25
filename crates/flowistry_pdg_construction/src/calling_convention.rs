@@ -48,7 +48,7 @@ pub struct PlaceTranslation<'a, 'tcx> {
     scope: &'a PlaceTranslator<'a, 'tcx>,
 }
 
-impl<'a, 'tcx> PlaceTranslation<'a, 'tcx> {
+impl<'tcx> PlaceTranslation<'_, 'tcx> {
     /// Complete the translation and return a precise parent place.
     pub fn make_translated_place(&self) -> Place<'tcx> {
         let base_place_projected = self

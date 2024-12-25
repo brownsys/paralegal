@@ -15,7 +15,7 @@ use rustc_middle::{
         visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, Location, Operand, Place,
         PlaceElem, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
-    ty::{GenericArgKind, GenericArgsRef, Instance, TyCtxt, TyKind, TypingEnv},
+    ty::{GenericArgKind, GenericArgsRef, Instance, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 use rustc_span::{source_map::Spanned, DesugaringKind, Span};
@@ -39,7 +39,7 @@ pub(crate) struct InstructionState<'tcx> {
 
 impl<C> DebugWithContext<C> for InstructionState<'_> {}
 
-impl<'tcx> df::JoinSemiLattice for InstructionState<'tcx> {
+impl df::JoinSemiLattice for InstructionState<'_> {
     fn join(&mut self, other: &Self) -> bool {
         utils::hashmap_join(
             &mut self.last_mutation,
@@ -735,7 +735,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     }
 }
 
-impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
+impl<'tcx> LocalAnalysis<'tcx, '_> {
     fn handle_terminator(
         &self,
         terminator: &Terminator<'tcx>,

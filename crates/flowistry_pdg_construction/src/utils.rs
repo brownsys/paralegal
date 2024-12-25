@@ -22,7 +22,7 @@ use rustc_type_ir::{fold::TypeFoldable, AliasTyKind, PredicatePolarity, RegionKi
 use rustc_utils::{BodyExt, PlaceExt};
 
 pub trait Captures<'a> {}
-impl<'a, T: ?Sized> Captures<'a> for T {}
+impl<T: ?Sized> Captures<'_> for T {}
 
 /// An async check that does not crash if called on closures.
 pub fn is_async(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
@@ -50,16 +50,15 @@ pub fn try_resolve_function<'tcx>(
 /// Note: While you are supposed to call this whit a `function` that refers to a
 /// function, it will not crash if it refers to a type or constant instead.
 pub fn is_virtual(tcx: TyCtxt, function: DefId) -> bool {
-    tcx.opt_associated_item(function)
-        .map_or(false, |assoc_item| {
-            matches!(
-                assoc_item.container,
-                AssocItemContainer::Trait
-                if !matches!(
-                    assoc_item.defaultness(tcx),
-                    Defaultness::Default { has_value: true })
-            )
-        })
+    tcx.opt_associated_item(function).is_some_and(|assoc_item| {
+        matches!(
+            assoc_item.container,
+            AssocItemContainer::Trait
+            if !matches!(
+                assoc_item.defaultness(tcx),
+                Defaultness::Default { has_value: true })
+        )
+    })
 }
 
 /// The "canonical" way we monomorphize
