@@ -11,11 +11,6 @@ fn consume_any<T>(w: T) {
     unimplemented!()
 }
 
-#[paralegal::analyze]
-fn use_wrapper() {
-    consume_any(make_wrapper())
-}
-
 trait Test {
     #[paralegal::marker(find_me, arguments = [0])]
     fn method(self);

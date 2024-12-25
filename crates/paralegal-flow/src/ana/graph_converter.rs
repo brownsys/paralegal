@@ -15,10 +15,7 @@ use flowistry_pdg_construction::{
 };
 use paralegal_spdg::{Node, SPDGStats};
 
-use rustc_hir::{
-    def,
-    def_id::{DefId, LocalDefId},
-};
+use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_middle::{
     mir,
     ty::{self, TyCtxt, TypingEnv},
@@ -360,9 +357,13 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             self.types.entry(i).or_default().extend(
                 node_types
                     .iter()
-                    .filter(|t| !tcx.is_coroutine(**t) && tcx.def_kind(*t).is_fn_like()),
+                    .filter(|t| !tcx.is_coroutine(**t) && !tcx.def_kind(*t).is_fn_like()),
             )
         }
+        trace!(
+            "For node {:?} found marked node types {node_types:?}",
+            weight.place
+        );
     }
 
     /// Create an initial flowistry graph for the function identified by
