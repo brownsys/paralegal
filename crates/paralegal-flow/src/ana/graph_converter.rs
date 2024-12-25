@@ -342,6 +342,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         else {
             return;
         };
+        trace!("Node {:?} has place type {:?}", weight.place, place_ty);
         // Restore after fixing https://github.com/brownsys/paralegal/issues/138
         //let deep = !weight.is_split;
         let deep = true;

@@ -447,18 +447,26 @@ impl<'tcx> MarkerCtx<'tcx> {
         &'a self,
         adt: &'a ty::AdtDef<'tcx>,
         generics: &'tcx ty::List<ty::GenericArg<'tcx>>,
-    ) -> impl Iterator<Item = &'a TypeMarkerElem> {
-        let tcx = self.tcx();
-        adt.variants()
-            .iter_enumerated()
-            .flat_map(move |(_, vdef)| {
-                vdef.fields.iter_enumerated().flat_map(move |(_, fdef)| {
-                    let f_ty = fdef.ty(tcx, generics);
-                    self.deep_type_markers(f_ty)
-                })
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
+    ) -> impl Iterator<Item = &'a TypeMarkerElem> + use<'tcx, 'a> {
+        if adt.is_phantom_data() {
+            Either::Left(
+                generics
+                    .iter()
+                    .filter_map(|g| g.as_type())
+                    .flat_map(|t| self.deep_type_markers(t)),
+            )
+        } else {
+            let tcx = self.tcx();
+            Either::Right(
+                adt.variants().iter_enumerated().flat_map(move |(_, vdef)| {
+                    vdef.fields.iter_enumerated().flat_map(move |(_, fdef)| {
+                        let f_ty = fdef.ty(tcx, generics);
+                        self.deep_type_markers(f_ty)
+                    })
+                }), //.collect::<Vec<_>>(), //.into_iter(),
+            )
+        }
+        .into_iter()
     }
 
     pub fn type_has_surface_markers(&self, ty: ty::Ty) -> Option<DefId> {
