@@ -611,6 +611,8 @@ mod call_string_resolver {
     //! This is a separate mod so that we can use encapsulation to preserve the
     //! internal invariants of the resolver.
 
+    use std::cell::OnceCell;
+
     use flowistry_pdg::CallString;
     use flowistry_pdg_construction::{
         body_cache::BodyCache,
@@ -627,7 +629,7 @@ mod call_string_resolver {
 
     use super::{func_of_term, map_either, match_async_trait_assign, AsFnAndArgs};
 
-    /// Cached resolution of [`CallString`]s to [`FnResolution`]s.
+    /// Cached resolution of [`CallString`]s to [`Instance`]s.
     ///
     /// Only valid for a single controller. Each controller should initialize a
     /// new resolver.
@@ -637,6 +639,7 @@ mod call_string_resolver {
         entrypoint_is_async: bool,
         body_cache: &'a BodyCache<'tcx>,
         marker_context: MarkerCtx<'tcx>,
+        base: OnceCell<Instance<'tcx>>,
     }
 
     impl<'tcx, 'a> CallStringResolver<'tcx, 'a> {
@@ -654,13 +657,15 @@ mod call_string_resolver {
                 }
             }
             let def_id = this.function;
-            try_resolve_function(
-                self.tcx,
-                def_id,
-                TypingEnv::post_analysis(self.tcx, def_id),
-                manufacture_substs_for(self.tcx, def_id).unwrap(),
-            )
-            .unwrap()
+            *self.base.get_or_init(|| {
+                try_resolve_function(
+                    self.tcx,
+                    def_id,
+                    TypingEnv::post_analysis(self.tcx, def_id),
+                    manufacture_substs_for(self.tcx, def_id).unwrap(),
+                )
+                .unwrap()
+            })
         }
 
         pub fn new(
@@ -675,6 +680,7 @@ mod call_string_resolver {
                 entrypoint_is_async: super::entrypoint_is_async(body_cache, tcx, entrypoint),
                 body_cache,
                 marker_context,
+                base: Default::default(),
             }
         }
 
