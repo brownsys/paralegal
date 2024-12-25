@@ -23,6 +23,7 @@ use std::{num::NonZeroU64, path::PathBuf};
 
 use rustc_const_eval::interpret::AllocId;
 use rustc_data_structures::fx::FxHashMap;
+use rustc_hir::def;
 use rustc_hir::def_id::{CrateNum, DefId, DefIndex};
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_serialize::{
@@ -250,7 +251,10 @@ impl<'tcx, 'a> SpanDecoder for ParalegalDecoder<'tcx, 'a> {
     }
 
     fn decode_def_id(&mut self) -> DefId {
-        DefId::decode(self)
+        DefId {
+            krate: self.decode_crate_num(),
+            index: self.decode_def_index(),
+        }
     }
 
     fn decode_expn_id(&mut self) -> ExpnId {
@@ -279,7 +283,8 @@ impl<'tcx> SpanEncoder for ParalegalEncoder<'tcx> {
         self.tcx.stable_crate_id(crate_num).encode(self)
     }
     fn encode_def_id(&mut self, def_id: DefId) {
-        def_id.encode(self)
+        self.encode_crate_num(def_id.krate);
+        self.encode_def_index(def_id.index);
     }
     fn encode_expn_id(&mut self, _expn_id: ExpnId) {
         unimplemented!()

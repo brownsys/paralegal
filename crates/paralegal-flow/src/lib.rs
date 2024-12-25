@@ -317,6 +317,12 @@ struct CrateInfo {
     is_build_script: bool,
 }
 
+impl CrateInfo {
+    pub fn name_or_default(&self) -> &str {
+        self.name.as_deref().unwrap_or("unnamed")
+    }
+}
+
 /// Also adds and additional features required by the Paralegal build config
 fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>) -> CrateInfo {
     let crate_name = compiler_args
@@ -477,7 +483,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         let info = how_to_handle_this_crate(&plugin_args, &mut compiler_args);
         debug!(
             "Handling crate {} as {}",
-            info.name.as_ref().map_or("unnamed", String::as_str),
+            info.name_or_default(),
             info.handling.as_ref()
         );
         {
@@ -552,6 +558,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             stat.self_time = self_time;
             serde_json::to_writer(out, &stat).unwrap();
         }
+        debug!("Finished with crate {}", info.name_or_default());
         Ok(())
     }
 }
