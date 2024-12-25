@@ -25,15 +25,15 @@ indexical = { version = "0.3.1", default-features = false, features = [
 ] }
 
 
-clap = { version = "=4.3.24", features = ["derive", "cargo", "env"] }
+clap = { version = "4.5.23", features = ["derive", "cargo", "env"] }
 serde = { workspace = true, features = ["derive"] }
 lazy_static = "1"
-ordermap = "0.3"
+ordermap = "0.5.4"
 trait_enum = "0.5"
-pretty = "0.11"
+pretty = "0.12"
 nom = "7"
 log = { version = "0.4", features = ["serde"] }
-simple_logger = "2"
+simple_logger = "5"
 num-derive = "0.4"
 num-traits = "0.2"
 petgraph = { workspace = true }
@@ -41,19 +41,14 @@ humantime = "2"
 strum = { workspace = true }
 enum-map = "2.7"
 serial_test = "2.0.0"
-itertools = "0.12"
+itertools = "0.13"
 anyhow = "1.0.72"
-thiserror = "1"
+thiserror = "2"
 serde_bare = "0.5.0"
-toml = "0.7"
+toml = "0.8"
 serde_json = "1"
 
-#dot = "0.1"
 dot = { git = "https://github.com/JustusAdam/dot-rust", rev = "ff2b42ceda98c639c8ea3cbfc56b83d6e06e8106" }
-#dot = {path = "../../clones/dot-rust" }
-
-# This is just for pinning this dependency
-camino = "= 1.0.9"
 
 [build-dependencies]
 chrono = "0.4"
