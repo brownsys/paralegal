@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CARRIAGE_RETURN","LINE_FEED","UNIX_NEWLINE","WINDOWS_NEWLINE"],"enum":["EffectiveNewlineStyle"],"fn":["apply_newline_style","auto_detect_newline_style","convert_to_unix_newlines","convert_to_windows_newlines","effective_newline_style","native_newline_style"]};

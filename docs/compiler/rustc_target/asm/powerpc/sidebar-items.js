@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PowerPCInlineAsmReg","PowerPCInlineAsmRegClass"],"fn":["fill_reg_map","regclass_map","reserved_r13","reserved_v20to31"]};

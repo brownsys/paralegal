@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SharedPrefix","UseSegmentKind"],"fn":["flatten_use_trees","merge_rest","merge_use_trees_inner","normalize_use_trees_with_granularity","path_to_imported_ident","rewrite_nested_use_tree"],"struct":["UseSegment","UseTree"]};

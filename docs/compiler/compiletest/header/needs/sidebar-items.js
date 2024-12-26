@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["find_dlltool","handle_needs","has_symlinks"],"struct":["CachedNeedsConditions","Need"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["END_MARKER","START_MARKER"],"fn":["check","check_lines","check_section","indentation","is_close_bracket"]};

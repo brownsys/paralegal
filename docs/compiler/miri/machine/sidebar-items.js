@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ADDRS_PER_ANON_GLOBAL","SIGRTMAX","SIGRTMIN"],"enum":["MiriMemoryKind","Provenance","ProvenanceExtra"],"struct":["AllocExtra","FrameExtra","MiriMachine","PrimitiveLayouts"],"trait":["MiriInterpCxExt"],"type":["MemoryKind","MiriInterpCx"]};

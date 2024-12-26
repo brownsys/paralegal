@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["RegionElement"],"fn":["pretty_print_points","pretty_print_region_elements"],"struct":["LiveLoans","LivenessValues","PlaceholderIndex","PlaceholderIndices","RegionValues"],"trait":["ToElementIndex"]};

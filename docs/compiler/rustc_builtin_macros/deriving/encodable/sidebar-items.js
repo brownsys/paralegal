@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["encodable_substructure","expand_deriving_rustc_encodable"]};

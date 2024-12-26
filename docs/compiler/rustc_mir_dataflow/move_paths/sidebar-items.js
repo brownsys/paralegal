@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["InitKind","InitLocation","LookupResult"],"mod":["abs_domain","builder"],"struct":["Init","InitIndex","LocationMap","MoveData","MoveOut","MoveOutIndex","MovePath","MovePathIndex","MovePathLinearIter","MovePathLookup"],"trait":["HasMoveData"]};

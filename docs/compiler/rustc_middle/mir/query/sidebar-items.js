@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ClosureOutlivesSubject","ConstraintCategory","ReturnConstraint"],"struct":["BorrowCheckResult","ClosureOutlivesRequirement","ClosureOutlivesSubjectTy","ClosureRegionRequirements","ConstQualifs","CoroutineLayout","CoroutineSavedLocal","CoroutineSavedTy","DestructuredConstant"]};

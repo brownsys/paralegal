@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["is_single_call_in_arm"],"static":["DROPPING_COPY_TYPES","DROPPING_REFERENCES","FORGETTING_COPY_TYPES","FORGETTING_REFERENCES","UNDROPPED_MANUALLY_DROPS"],"struct":["DropForgetUseless"]};

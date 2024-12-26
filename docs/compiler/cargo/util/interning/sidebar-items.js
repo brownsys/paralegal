@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["interned_storage"],"static":["INTERNED_DEFAULT"],"struct":["InternedString"]};

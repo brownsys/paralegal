@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["KEYWORDS"],"enum":["Cfg","CfgExpr","Token"],"fn":["is_ident_rest","is_ident_start"],"struct":["CommaSep","Ident","Parser","Tokenizer"]};

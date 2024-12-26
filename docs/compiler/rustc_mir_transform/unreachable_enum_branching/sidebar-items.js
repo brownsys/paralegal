@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["get_discriminant_local","get_switched_on_type","variant_discriminants"],"struct":["UnreachableEnumBranching"]};

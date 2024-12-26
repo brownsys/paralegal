@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["fulfill_implication","report_conflicting_impls","report_negative_positive_conflict","report_overlap_conflict","specialization_enabled_in","specialization_graph_provider","specializes","translate_args","translate_args_with_cause"],"mod":["specialization_graph"],"struct":["OverlapError"]};

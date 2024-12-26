@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CallStep"],"fn":["check_legal_trait_for_method_call"],"struct":["DeferredCallResolution"]};

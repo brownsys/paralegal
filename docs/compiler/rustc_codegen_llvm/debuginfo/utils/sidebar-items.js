@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["WidePtrKind"],"fn":["DIB","create_DIArray","debug_context","get_namespace_for_item","is_node_local_to_unit","wide_pointer_kind"]};

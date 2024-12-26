@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CandidateSource","MethodError"],"fn":["provide"],"mod":["confirm","prelude_edition_lints","probe","suggest"],"struct":["MethodCallee","NoMatchData"]};

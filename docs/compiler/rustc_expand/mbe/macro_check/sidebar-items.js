@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["NestedMacroState","Stack"],"fn":["buffer_lint","check_binders","check_meta_variables","check_nested_macro","check_nested_occurrences","check_occurrences","check_ops_is_prefix","get_binder_info","ops_is_prefix"],"struct":["BinderInfo","MacroState"],"type":["Binders"]};

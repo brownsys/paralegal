@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ArgumentType"],"fn":["expand_format_args","flatten_format_args","for_all_argument_indexes","make_argument","make_count","make_format_spec","may_contain_yield_point"]};

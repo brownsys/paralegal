@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MCDC_MAX_BITMAP_SIZE"],"fn":["calc_test_vectors_index","extract_all_mapping_info_from_mir","extract_branch_pairs","extract_mcdc_mappings","resolve_block_markers"],"struct":["BranchPair","CodeMapping","ExtractedMappings","MCDCBranch","MCDCDecision"]};

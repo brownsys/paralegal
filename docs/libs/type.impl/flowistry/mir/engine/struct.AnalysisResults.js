@@ -1,0 +1,9 @@
+(function() {
+    var type_impls = Object.fromEntries([["flowistry",[["<details class=\"toggle implementors-toggle\" open><summary><section id=\"impl-AnalysisResults%3C'tcx,+A%3E\" class=\"impl\"><a class=\"src rightside\" href=\"src/flowistry/mir/engine.rs.html#42-48\">Source</a><a href=\"#impl-AnalysisResults%3C'tcx,+A%3E\" class=\"anchor\">§</a><h3 class=\"code-header\">impl&lt;'tcx, A: Analysis&lt;'tcx&gt;&gt; <a class=\"struct\" href=\"flowistry/mir/engine/struct.AnalysisResults.html\" title=\"struct flowistry::mir::engine::AnalysisResults\">AnalysisResults</a>&lt;'tcx, A&gt;</h3></section></summary><div class=\"impl-items\"><details class=\"toggle method-toggle\" open><summary><section id=\"method.state_at\" class=\"method\"><a class=\"src rightside\" href=\"src/flowistry/mir/engine.rs.html#45-47\">Source</a><h4 class=\"code-header\">pub fn <a href=\"flowistry/mir/engine/struct.AnalysisResults.html#tymethod.state_at\" class=\"fn\">state_at</a>(&amp;self, location: <a class=\"struct\" href=\"https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/struct.Location.html\" title=\"struct rustc_middle::mir::Location\">Location</a>) -&gt; &amp;A::Domain</h4></section></summary><div class=\"docblock\"><p>Gets the computed <a href=\"https://doc.rust-lang.org/nightly/nightly-rustc/rustc_mir_dataflow/trait.AnalysisDomain.html\"><code>AnalysisDomain</code></a>\nat a given <a href=\"https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/struct.Location.html\" title=\"struct rustc_middle::mir::Location\"><code>Location</code></a>.</p>\n</div></details></div></details>",0,"flowistry::infoflow::FlowResults"]]]]);
+    if (window.register_type_impls) {
+        window.register_type_impls(type_impls);
+    } else {
+        window.pending_type_impls = type_impls;
+    }
+})()
+//{"start":55,"fragment_lengths":[1592]}

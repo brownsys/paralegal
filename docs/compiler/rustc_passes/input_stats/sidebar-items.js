@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["print_ast_stats","print_hir_stats"],"macro":["record_variants"],"struct":["Node","NodeStats","StatCollector"]};

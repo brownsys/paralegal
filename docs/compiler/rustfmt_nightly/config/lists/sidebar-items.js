@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DefinitiveListTactic"],"mod":["__define_config_type_on_enum_ListTactic","__define_config_type_on_enum_SeparatorPlace","__define_config_type_on_enum_SeparatorTactic"]};

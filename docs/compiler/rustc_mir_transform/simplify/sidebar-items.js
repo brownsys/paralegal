@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SimplifyCfg","SimplifyLocals"],"fn":["make_local_map","remove_dead_blocks","remove_unused_definitions","remove_unused_definitions_helper","simplify_cfg","simplify_duplicate_switch_targets"],"struct":["CfgSimplifier","LocalUpdater","UsedLocals"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CURRENT_CACHE_VERSION"],"struct":["CacheManager","SummariesCache"]};

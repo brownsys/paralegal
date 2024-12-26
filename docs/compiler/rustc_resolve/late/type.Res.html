@@ -1,0 +1,83 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="API documentation for the Rust `Res` type in crate `rustc_resolve`."><title>Res in rustc_resolve::late - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_resolve" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc type"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button><a class="logo-container" href="../../rustc_resolve/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt=""></a></nav><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../rustc_resolve/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt="logo"></a><h2><a href="../../rustc_resolve/index.html">rustc_<wbr>resolve</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Res</a></h2><h3><a href="#aliased-type">Aliased type</a></h3><h3><a href="#variants">Variants</a></h3><ul class="block variant"><li><a href="#variant.Def" title="Def">Def</a></li><li><a href="#variant.Err" title="Err">Err</a></li><li><a href="#variant.Local" title="Local">Local</a></li><li><a href="#variant.NonMacroAttr" title="NonMacroAttr">NonMacroAttr</a></li><li><a href="#variant.PrimTy" title="PrimTy">PrimTy</a></li><li><a href="#variant.SelfCtor" title="SelfCtor">SelfCtor</a></li><li><a href="#variant.SelfTyAlias" title="SelfTyAlias">SelfTyAlias</a></li><li><a href="#variant.SelfTyParam" title="SelfTyParam">SelfTyParam</a></li><li><a href="#variant.ToolMod" title="ToolMod">ToolMod</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="index.html">In rustc_<wbr>resolve::<wbr>late</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">rustc_resolve</a>::<wbr><a href="index.html">late</a></span><h1>Type Alias <span class="type">Res</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustc_resolve/late.rs.html#47">Source</a> </span></div><pre class="rust item-decl"><code>type Res = <a class="enum" href="../../rustc_hir/def/enum.Res.html" title="enum rustc_hir::def::Res">Res</a>&lt;<a class="struct" href="../../rustc_ast/node_id/struct.NodeId.html" title="struct rustc_ast::node_id::NodeId">NodeId</a>&gt;;</code></pre><h2 id="aliased-type" class="section-header">Aliased Type<a href="#aliased-type" class="anchor">§</a></h2><pre class="rust item-decl"><code>enum Res {
+    Def(<a class="enum" href="../../rustc_hir/def/enum.DefKind.html" title="enum rustc_hir::def::DefKind">DefKind</a>, <a class="struct" href="../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a>),
+    PrimTy(<a class="enum" href="../../rustc_hir/hir/enum.PrimTy.html" title="enum rustc_hir::hir::PrimTy">PrimTy</a>),
+    SelfTyParam {
+        trait_: <a class="struct" href="../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a>,
+    },
+    SelfTyAlias {
+        alias_to: <a class="struct" href="../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a>,
+        forbid_generic: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>,
+        is_trait_impl: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>,
+    },
+    SelfCtor(<a class="struct" href="../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a>),
+    Local(<a class="struct" href="../../rustc_ast/node_id/struct.NodeId.html" title="struct rustc_ast::node_id::NodeId">NodeId</a>),
+    ToolMod,
+    NonMacroAttr(<a class="enum" href="../../rustc_hir/def/enum.NonMacroAttrKind.html" title="enum rustc_hir::def::NonMacroAttrKind">NonMacroAttrKind</a>),
+    Err,
+}</code></pre><h2 id="variants" class="variants section-header">Variants<a href="#variants" class="anchor">§</a></h2><div class="variants"><section id="variant.Def" class="variant"><a href="#variant.Def" class="anchor">§</a><h3 class="code-header">Def(<a class="enum" href="../../rustc_hir/def/enum.DefKind.html" title="enum rustc_hir::def::DefKind">DefKind</a>, <a class="struct" href="../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a>)</h3></section><div class="docblock"><p>Definition having a unique ID (<code>DefId</code>), corresponds to something defined in user code.</p>
+<p><strong>Not bound to a specific namespace.</strong></p>
+</div><section id="variant.PrimTy" class="variant"><a href="#variant.PrimTy" class="anchor">§</a><h3 class="code-header">PrimTy(<a class="enum" href="../../rustc_hir/hir/enum.PrimTy.html" title="enum rustc_hir::hir::PrimTy">PrimTy</a>)</h3></section><div class="docblock"><p>A primitive type such as <code>i32</code> or <code>str</code>.</p>
+<p><strong>Belongs to the type namespace.</strong></p>
+</div><section id="variant.SelfTyParam" class="variant"><a href="#variant.SelfTyParam" class="anchor">§</a><h3 class="code-header">SelfTyParam</h3></section><div class="docblock"><p>The <code>Self</code> type, as used within a trait.</p>
+<p><strong>Belongs to the type namespace.</strong></p>
+<p>See the examples on [<code>Res::SelfTyAlias</code>] for details.</p>
+</div><div class="sub-variant" id="variant.SelfTyParam.fields"><h4>Fields</h4><div class="sub-variant-field"><span id="variant.SelfTyParam.field.trait_" class="section-header"><a href="#variant.SelfTyParam.field.trait_" class="anchor field">§</a><code>trait_: <a class="struct" href="../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a></code></span><div class="docblock"><p>The trait this <code>Self</code> is a generic parameter for.</p>
+</div></div></div><section id="variant.SelfTyAlias" class="variant"><a href="#variant.SelfTyAlias" class="anchor">§</a><h3 class="code-header">SelfTyAlias</h3></section><div class="docblock"><p>The <code>Self</code> type, as used somewhere other than within a trait.</p>
+<p><strong>Belongs to the type namespace.</strong></p>
+<p>Examples:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">struct </span>Bar(Box&lt;<span class="self">Self</span>&gt;); <span class="comment">// SelfTyAlias
+
+</span><span class="kw">trait </span>Foo {
+    <span class="kw">fn </span>foo() -&gt; Box&lt;<span class="self">Self</span>&gt;; <span class="comment">// SelfTyParam
+</span>}
+
+<span class="kw">impl </span>Bar {
+    <span class="kw">fn </span>blah() {
+        <span class="kw">let _</span>: <span class="self">Self</span>; <span class="comment">// SelfTyAlias
+    </span>}
+}
+
+<span class="kw">impl </span>Foo <span class="kw">for </span>Bar {
+    <span class="kw">fn </span>foo() -&gt; Box&lt;<span class="self">Self</span>&gt; { <span class="comment">// SelfTyAlias
+        </span><span class="kw">let _</span>: <span class="self">Self</span>;        <span class="comment">// SelfTyAlias
+
+        </span><span class="macro">todo!</span>()
+    }
+}</code></pre></div>
+<p><em>See also [<code>Res::SelfCtor</code>].</em></p>
+</div><div class="sub-variant" id="variant.SelfTyAlias.fields"><h4>Fields</h4><div class="sub-variant-field"><span id="variant.SelfTyAlias.field.alias_to" class="section-header"><a href="#variant.SelfTyAlias.field.alias_to" class="anchor field">§</a><code>alias_to: <a class="struct" href="../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a></code></span><div class="docblock"><p>The item introducing the <code>Self</code> type alias. Can be used in the <code>type_of</code> query
+to get the underlying type.</p>
+</div></div><div class="sub-variant-field"><span id="variant.SelfTyAlias.field.forbid_generic" class="section-header"><a href="#variant.SelfTyAlias.field.forbid_generic" class="anchor field">§</a><code>forbid_generic: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></code></span><div class="docblock"><p>Whether the <code>Self</code> type is disallowed from mentioning generics (i.e. when used in an
+anonymous constant).</p>
+<p>HACK(min_const_generics): self types also have an optional requirement to <strong>not</strong>
+mention any generic parameters to allow the following with <code>min_const_generics</code>:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">impl </span>Foo { <span class="kw">fn </span>test() -&gt; [u8; std::mem::size_of::&lt;<span class="self">Self</span>&gt;()] { <span class="macro">todo!</span>() } }
+
+<span class="kw">struct </span>Bar([u8; baz::&lt;<span class="self">Self</span>&gt;()]);
+<span class="kw">const fn </span>baz&lt;T&gt;() -&gt; usize { <span class="number">10 </span>}</code></pre></div>
+<p>We do however allow <code>Self</code> in repeat expression even if it is generic to not break code
+which already works on stable while causing the <code>const_evaluatable_unchecked</code> future
+compat lint:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">fn </span>foo&lt;T&gt;() {
+    <span class="kw">let </span>_bar = [<span class="number">1_u8</span>; std::mem::size_of::&lt;<span class="kw-2">*mut </span>T&gt;()];
+}</code></pre></div>
+</div></div><div class="sub-variant-field"><span id="variant.SelfTyAlias.field.is_trait_impl" class="section-header"><a href="#variant.SelfTyAlias.field.is_trait_impl" class="anchor field">§</a><code>is_trait_impl: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></code></span><div class="docblock"><p>Is this within an <code>impl Foo for bar</code>?</p>
+</div></div></div><section id="variant.SelfCtor" class="variant"><a href="#variant.SelfCtor" class="anchor">§</a><h3 class="code-header">SelfCtor(<a class="struct" href="../../rustc_span/def_id/struct.DefId.html" title="struct rustc_span::def_id::DefId">DefId</a>)</h3></section><div class="docblock"><p>The <code>Self</code> constructor, along with the [<code>DefId</code>]
+of the impl it is associated with.</p>
+<p><strong>Belongs to the value namespace.</strong></p>
+<p><em>See also [<code>Res::SelfTyParam</code>] and [<code>Res::SelfTyAlias</code>].</em></p>
+</div><section id="variant.Local" class="variant"><a href="#variant.Local" class="anchor">§</a><h3 class="code-header">Local(<a class="struct" href="../../rustc_ast/node_id/struct.NodeId.html" title="struct rustc_ast::node_id::NodeId">NodeId</a>)</h3></section><div class="docblock"><p>A local variable or function parameter.</p>
+<p><strong>Belongs to the value namespace.</strong></p>
+</div><section id="variant.ToolMod" class="variant"><a href="#variant.ToolMod" class="anchor">§</a><h3 class="code-header">ToolMod</h3></section><div class="docblock"><p>A tool attribute module; e.g., the <code>rustfmt</code> in <code>#[rustfmt::skip]</code>.</p>
+<p><strong>Belongs to the type namespace.</strong></p>
+</div><section id="variant.NonMacroAttr" class="variant"><a href="#variant.NonMacroAttr" class="anchor">§</a><h3 class="code-header">NonMacroAttr(<a class="enum" href="../../rustc_hir/def/enum.NonMacroAttrKind.html" title="enum rustc_hir::def::NonMacroAttrKind">NonMacroAttrKind</a>)</h3></section><div class="docblock"><p>An attribute that is <em>not</em> implemented via macro.
+E.g., <code>#[inline]</code> and <code>#[rustfmt::skip]</code>, which are essentially directives,
+as opposed to <code>#[test]</code>, which is a builtin macro.</p>
+<p><strong>Belongs to the macro namespace.</strong></p>
+</div><section id="variant.Err" class="variant"><a href="#variant.Err" class="anchor">§</a><h3 class="code-header">Err</h3></section><div class="docblock"><p>Name resolution failed. We use a dummy <code>Res</code> variant so later phases
+of the compiler won’t crash and can instead report more errors.</p>
+<p><strong>Not bound to a specific namespace.</strong></p>
+</div></div><h2 id="layout" class="section-header">Layout<a href="#layout" class="anchor">§</a></h2><div class="docblock"><div class="warning"><p><strong>Note:</strong> Most layout information is <strong>completely unstable</strong> and may even differ between compilations. The only exception is types with certain <code>repr(...)</code> attributes. Please see the Rust Reference's <a href="https://doc.rust-lang.org/reference/type-layout.html">“Type Layout”</a> chapter for details on type layout guarantees.</p></div><p><strong>Size:</strong> 12 bytes</p><p><strong>Size for each variant:</strong></p><ul><li><code>Def</code>: 11 bytes</li><li><code>PrimTy</code>: 2 bytes</li><li><code>SelfTyParam</code>: 11 bytes</li><li><code>SelfTyAlias</code>: 11 bytes</li><li><code>SelfCtor</code>: 11 bytes</li><li><code>Local</code>: 7 bytes</li><li><code>ToolMod</code>: 0 bytes</li><li><code>NonMacroAttr</code>: 7 bytes</li><li><code>Err</code>: 0 bytes</li></ul></div><script src="../../type.impl/rustc_hir/def/enum.Res.js" data-self-path="rustc_resolve::late::Res" async></script></section></div></main></body></html>

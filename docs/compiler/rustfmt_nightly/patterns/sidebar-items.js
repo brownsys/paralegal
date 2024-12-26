@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["TuplePatField"],"fn":["can_be_overflowed_pat","count_wildcard_suffix_len","is_short_pattern","is_short_pattern_inner","rewrite_struct_pat","rewrite_tuple_pat"],"struct":["RangeOperand"]};

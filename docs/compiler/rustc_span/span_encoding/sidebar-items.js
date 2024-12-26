@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["BASE_LEN_INTERNED_MARKER","CTXT_INTERNED_MARKER","DUMMY_SP","MAX_CTXT","MAX_LEN","PARENT_TAG"],"fn":["with_span_interner"],"macro":["match_span_kind"],"struct":["InlineCtxt","InlineParent","Interned","PartiallyInterned","Span","SpanInterner"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["adjust_for_rust_scalar","conv_from_spec_abi","fn_abi_adjust_for_abi","fn_abi_new_uncached","fn_abi_of_fn_ptr","fn_abi_of_instance","fn_abi_sanity_check","fn_sig_for_fn_abi","make_thin_self_ptr","provide"]};

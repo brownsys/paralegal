@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CargoHelp","ChangeValueSuggestion","CodeSuggestion","InvocationHelp"],"struct":["ExpectedValues","RemoveConditionSuggestion","RemoveValueSuggestion"]};

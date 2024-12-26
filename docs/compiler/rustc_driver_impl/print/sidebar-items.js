@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["print"],"macro":["safe_print","safe_println"]};

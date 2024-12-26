@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["docs_link","span_lint","span_lint_and_help","span_lint_and_note","span_lint_and_sugg","span_lint_and_then","span_lint_hir","span_lint_hir_and_then","validate_diag"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["SHELL"],"fn":["default_path","install_sh","is_dir_writable_for_user","prepare_dir","sanitize_sh"],"macro":["install"],"struct":["Cargo","Clippy","Docs","LlvmBitcodeLinker","LlvmTools","Miri","RustAnalyzer","Rustc","RustcCodegenCranelift","Rustfmt","Src","Std"]};

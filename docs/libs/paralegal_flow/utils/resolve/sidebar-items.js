@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Res","ResolutionError","SearchSpace"],"fn":["as_primitive_ty","def_path_res","expect_resolve_string_to_def_id","find_crates","find_primitive_impls","item_child_by_name","local_item_children_by_name","non_local_item_children_by_name","resolve_ty"],"type":["Result"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"derive":["Lift_Generic","TypeFoldable_Generic","TypeVisitable_Generic"]};

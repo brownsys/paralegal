@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ACCEPTED_LANG_FEATURES"],"macro":["declare_features"]};

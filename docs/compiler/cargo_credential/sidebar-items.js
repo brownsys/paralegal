@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["PROTOCOL_VERSION_1"],"enum":["Action","CacheControl","CredentialResponse","Error","Operation"],"fn":["deserialize_request","doit","main","read_line","read_token"],"mod":["error","secret","stdio"],"struct":["CredentialHello","CredentialRequest","LoginOptions","RegistryInfo","Secret","UnsupportedCredential"],"trait":["Credential"]};

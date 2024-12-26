@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["def_parents","opaque_hidden_types","predicates_and_item_bounds"]};

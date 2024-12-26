@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["cc","cxx","extra_c_flags","extra_cxx_flags","gcc"],"mod":["cc","extras","gcc"],"struct":["Cc","Gcc"]};

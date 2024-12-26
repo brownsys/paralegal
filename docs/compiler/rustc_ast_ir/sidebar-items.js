@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Movability","Mutability","Pinnedness"],"macro":["try_visit","visit_opt","walk_list","walk_visitable_list"],"mod":["visit"]};

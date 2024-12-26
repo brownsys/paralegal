@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["synthesize_blanket_impls"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_ARG_IN_REGS_SIZE","MAX_RET_IN_REGS_SIZE","NUM_ARG_GPRS","NUM_RET_GPRS"],"fn":["classify_arg_ty","classify_ret_ty","compute_abi_info","is_xtensa_aggregate"]};

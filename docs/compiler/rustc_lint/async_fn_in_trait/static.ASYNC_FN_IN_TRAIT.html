@@ -1,0 +1,48 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="The `async_fn_in_trait` lint detects use of `async fn` in the definition of a publicly-reachable trait."><title>ASYNC_FN_IN_TRAIT in rustc_lint::async_fn_in_trait - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_lint" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc static"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button><a class="logo-container" href="../../rustc_lint/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt=""></a></nav><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../rustc_lint/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt="logo"></a><h2><a href="../../rustc_lint/index.html">rustc_<wbr>lint</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">ASYNC_<wbr>FN_<wbr>IN_<wbr>TRAIT</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#example" title="Example">Example</a></li><li><a href="#explanation" title="Explanation">Explanation</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="index.html">In rustc_<wbr>lint::<wbr>async_<wbr>fn_<wbr>in_<wbr>trait</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">rustc_lint</a>::<wbr><a href="index.html">async_fn_in_trait</a></span><h1>Static <span class="static">ASYNC_FN_IN_TRAIT</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustc_lint/async_fn_in_trait.rs.html#8-84">Source</a> </span></div><pre class="rust item-decl"><code>pub static ASYNC_FN_IN_TRAIT: &amp;<a class="struct" href="../struct.Lint.html" title="struct rustc_lint::Lint">Lint</a></code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The <code>async_fn_in_trait</code> lint detects use of <code>async fn</code> in the
+definition of a publicly-reachable trait.</p>
+<h4 id="example"><a class="doc-anchor" href="#example">§</a>Example</h4>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">pub trait </span>Trait {
+    <span class="kw">async fn </span>method(<span class="kw-2">&amp;</span><span class="self">self</span>);
+}</code></pre></div>
+<p>{{produces}}</p>
+<h4 id="explanation"><a class="doc-anchor" href="#explanation">§</a>Explanation</h4>
+<p>When <code>async fn</code> is used in a trait definition, the trait does not
+promise that the opaque <a href="https://doc.rust-lang.org/core/future/trait.Future.html"><code>Future</code></a> returned by the associated function
+or method will implement any <a href="https://doc.rust-lang.org/reference/special-types-and-traits.html#auto-traits">auto traits</a> such as <a href="https://doc.rust-lang.org/core/marker/trait.Send.html"><code>Send</code></a>. This may
+be surprising and may make the associated functions or methods on the
+trait less useful than intended. On traits exposed publicly from a
+crate, this may affect downstream crates whose authors cannot alter
+the trait definition.</p>
+<p>For example, this code is invalid:</p>
+
+<div class="example-wrap compile_fail"><a href="#" class="tooltip" title="This example deliberately fails to compile">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">pub trait </span>Trait {
+    <span class="kw">async fn </span>method(<span class="kw-2">&amp;</span><span class="self">self</span>) {}
+}
+
+<span class="kw">fn </span>test&lt;T: Trait&gt;(x: T) {
+    <span class="kw">fn </span>spawn&lt;T: Send&gt;(<span class="kw">_</span>: T) {}
+    spawn(x.method()); <span class="comment">// Not OK.
+</span>}</code></pre></div>
+<p>This lint exists to warn authors of publicly-reachable traits that
+they may want to consider desugaring the <code>async fn</code> to a normal <code>fn</code>
+that returns an opaque <code>impl Future&lt;..&gt; + Send</code> type.</p>
+<p>For example, instead of:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">pub trait </span>Trait {
+    <span class="kw">async fn </span>method(<span class="kw-2">&amp;</span><span class="self">self</span>) {}
+}</code></pre></div>
+<p>The author of the trait may want to write:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>core::future::Future;
+<span class="kw">pub trait </span>Trait {
+    <span class="kw">fn </span>method(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = ()&gt; + Send { <span class="kw">async </span>{} }
+}</code></pre></div>
+<p>This still allows the use of <code>async fn</code> within impls of the trait.
+However, it also means that the trait will never be compatible with
+impls where the returned <a href="https://doc.rust-lang.org/core/future/trait.Future.html"><code>Future</code></a> of the method does not implement
+<code>Send</code>.</p>
+<p>Conversely, if the trait is used only locally, if it is never used in
+generic functions, or if it is only used in single-threaded contexts
+that do not care whether the returned <a href="https://doc.rust-lang.org/core/future/trait.Future.html"><code>Future</code></a> implements <a href="https://doc.rust-lang.org/core/marker/trait.Send.html"><code>Send</code></a>,
+then the lint may be suppressed.</p>
+</div></details></section></div></main></body></html>

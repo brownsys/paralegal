@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SuggestChangingConstraintsMessage"],"fn":["suggest_arbitrary_trait_bound","suggest_changing_unsized_bound","suggest_constraining_type_param","suggest_constraining_type_params"],"struct":["IsSuggestableVisitor","MakeSuggestableFolder","StaticLifetimeVisitor","TraitObjectVisitor"],"trait":["IsSuggestable"]};

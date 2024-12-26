@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["type_name"],"struct":["AbsolutePathPrinter"]};

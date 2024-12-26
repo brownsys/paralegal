@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["SMALL_VECTOR"],"struct":["VClock","VTimestamp","VectorIdx"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["EofMatcherPositions","MatcherLoc","NamedMatch","ParseResult"],"fn":["compute_locs","count_metavar_decls","token_name_eq"],"struct":["MatcherPos","TtParser"],"type":["NamedMatches","NamedParseResult"]};

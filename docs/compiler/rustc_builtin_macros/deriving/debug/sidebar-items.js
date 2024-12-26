@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["expand_deriving_debug","show_fieldless_enum","show_substructure"]};

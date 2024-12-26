@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["crate_hash","hir_crate_items","hir_id_to_string","hir_module_items","upstream_crates"],"struct":["ItemCollector","Map","ParentHirIterator","ParentOwnerIterator"]};
