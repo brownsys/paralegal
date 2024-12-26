@@ -132,7 +132,7 @@ description = """\
 This is bit ugly, because we want to reuse this tasks
 
 - In different directories (controlled by the `FORMAT_WD` env variable)
-- With different base comamnds (`cargo clippy` vs `cargo fmt`)
+- With different base commands (`cargo clippy` vs `cargo fmt`)
 - With different goals (check vs fix)
 
 The last two are both done via the `FORMAT_ARGS` command.
@@ -175,6 +175,16 @@ run_task = "format-base"
 [tasks.format-tests]
 private = true
 condition = { env_set = ["INCLUDE_TESTS"] }
+env = { COMMAND = "cargo", COMMAND_ARGS = "${FORMAT_ARGS}" }
+run_task = "run-for-tests"
+
+[tasks.clean-tests]
+env = { COMMAND = "cargo", COMMAND_ARGS = "clean" }
+run_task = "run-for-tests"
+
+[tasks.run-for-tests]
+private = true
+description = "A basic helper that lets you run a COMMAND with COMMAND_ARGS for each crate we use for tests"
 script_runner = "@duckscript"
 script = '''
 wd = pwd
@@ -184,12 +194,12 @@ for dir in ${test_dirs}
     cargo_toml_path = concat ${dir} /Cargo.toml
     if is_path_exists ${cargo_toml_path}
         cd ${dir}
-        exec --fail-on-error cargo %{FORMAT_ARGS}
+        exec --fail-on-error %{COMMAND} %{COMMAND_ARGS}
         cd ${wd}
     end
 end
 cd crates/paralegal-policy/tests/test-crate
-exec cargo %{FORMAT_ARGS}
+exec --fail-on-error %{COMMAND} %{COMMAND_ARGS}
 '''
 
 [tasks.populate-doc-dir]

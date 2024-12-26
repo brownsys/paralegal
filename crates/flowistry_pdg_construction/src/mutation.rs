@@ -5,7 +5,7 @@ use itertools::Itertools;
 use log::debug;
 use rustc_middle::{
     mir::{visit::Visitor, *},
-    ty::{AdtKind, TyKind},
+    ty::{AdtKind, CoroutineArgsExt, TyKind},
 };
 use rustc_target::abi::FieldIdx;
 
@@ -41,6 +41,7 @@ pub struct Mutation<'tcx> {
     /// The set of inputs to the mutating operation.
     pub inputs: Vec<(Place<'tcx>, Option<u8>)>,
 
+    #[allow(dead_code)]
     /// The certainty of whether the mutation is happening.
     pub status: MutationStatus,
 }
@@ -193,8 +194,8 @@ where
                             })
                             .collect_vec()
                     }
-                    TyKind::Generator(_, args, _) => {
-                        let ty = args.as_generator().prefix_tys();
+                    TyKind::Coroutine(_, args) => {
+                        let ty = args.as_coroutine().prefix_tys();
                         ty.iter()
                             .enumerate()
                             .map(|(i, ty)| PlaceElem::Field(FieldIdx::from_usize(i), ty))

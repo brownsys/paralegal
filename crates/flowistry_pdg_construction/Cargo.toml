@@ -15,9 +15,9 @@ fluid-let = "1.0"
 cfg-if = "1.0"
 rustc_utils = { workspace = true, features = ["indexical"] }
 indexical = { workspace = true }
-itertools = "0.12.0"
+itertools = "0.13.0"
 petgraph = { version = "0.6.4" }
-internment = { version = "0.7.4" }
+internment = { version = "0.8.6" }
 flowistry_pdg = { version = "0.1.0", path = "../flowistry_pdg", features = [
     "rustc",
 ] }
@@ -25,6 +25,7 @@ flowistry_pdg = { version = "0.1.0", path = "../flowistry_pdg", features = [
 flowistry = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 strum = { workspace = true }
+#rustc-hash = { version = "=2.1.0" }
 
 [dev-dependencies]
 rustc_utils = { workspace = true, features = ["indexical", "test"] }

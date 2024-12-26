@@ -6,6 +6,7 @@ use itertools::Itertools;
 use log::{debug, log_enabled, trace, Level};
 
 use rustc_borrowck::consumers::{places_conflict, PlaceConflictBias};
+use rustc_errors::DiagCtxtHandle;
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
@@ -17,7 +18,7 @@ use rustc_middle::{
     ty::{GenericArgKind, GenericArgsRef, Instance, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
-use rustc_span::{DesugaringKind, Span};
+use rustc_span::{source_map::Spanned, DesugaringKind, Span};
 use rustc_utils::{mir::control_dependencies::ControlDependencies, BodyExt, PlaceExt};
 
 use crate::{
@@ -38,7 +39,7 @@ pub(crate) struct InstructionState<'tcx> {
 
 impl<C> DebugWithContext<C> for InstructionState<'_> {}
 
-impl<'tcx> df::JoinSemiLattice for InstructionState<'tcx> {
+impl df::JoinSemiLattice for InstructionState<'_> {
     fn join(&mut self, other: &Self) -> bool {
         utils::hashmap_join(
             &mut self.last_mutation,
@@ -51,6 +52,9 @@ impl<'tcx> df::JoinSemiLattice for InstructionState<'tcx> {
 pub(crate) struct LocalAnalysis<'tcx, 'a> {
     pub(crate) memo: &'a MemoPdgConstructor<'tcx>,
     pub(super) root: Instance<'tcx>,
+    // TODO: We should generally be using mono_body, this one is only used in
+    // retyping. Try and find out if I can use mono_body there too or
+    // encapsulate this away so we don't accidentally use this polymorphic one.
     body_with_facts: &'tcx CachedBody<'tcx>,
     pub(crate) mono_body: Body<'tcx>,
     pub(crate) def_id: DefId,
@@ -72,7 +76,11 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         let tcx = memo.tcx;
         let def_id = root.def_id();
         let body_with_facts = memo.body_cache.get(def_id);
-        let param_env = tcx.param_env_reveal_all_normalized(def_id);
+        let param_env = body_with_facts
+            .body()
+            .typing_env(tcx)
+            .with_post_analysis_normalized(tcx);
+        //let param_env = TypingEnv::post_analysis(tcx, def_id).with_post_analysis_normalized(tcx);
         let body = try_monomorphize(
             root,
             tcx,
@@ -221,6 +229,10 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         self.memo.tcx
     }
 
+    pub(crate) fn dcx(&self) -> DiagCtxtHandle<'tcx> {
+        self.tcx().dcx()
+    }
+
     /// Returns all nodes `src` such that `src` is:
     /// 1. Part of the value of `input`
     /// 2. The most-recently modified location for `src`
@@ -364,7 +376,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         &'b self,
         location: Location,
         func: Cow<'_, Operand<'tcx>>,
-        args: Cow<'b, [Operand<'tcx>]>,
+        args: Cow<'b, [Spanned<Operand<'tcx>>]>,
         span: Span,
     ) -> Option<CallHandling<'tcx, 'b>> {
         let tcx = self.tcx();
@@ -375,16 +387,22 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         );
 
         let Some((called_def_id, generic_args)) = self.operand_to_def_id(&func) else {
-            tcx.sess
+            self.dcx()
                 .span_err(span, "Operand is cannot be interpreted as function");
             return None;
         };
-        trace!("Resolved call to function: {}", self.fmt_fn(called_def_id));
+        trace!(
+            "Resolved call to function: {} with generic args {generic_args:?}",
+            self.fmt_fn(called_def_id)
+        );
 
         // Monomorphize the called function with the known generic_args.
-        let param_env = tcx.param_env(self.def_id);
+        let typing_env = self
+            .mono_body
+            .typing_env(tcx)
+            .with_post_analysis_normalized(tcx);
         let Some(mut resolved_fn) =
-            utils::try_resolve_function(self.tcx(), called_def_id, param_env, generic_args)
+            utils::try_resolve_function(self.tcx(), called_def_id, typing_env, generic_args)
         else {
             let dynamics = generic_args.iter()
                 .flat_map(|g| g.walk())
@@ -416,22 +434,23 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                     trait definition and no refutation (`?Sized` constraint) is present."
                 )
                 .unwrap();
-                self.tcx().sess.span_warn(span, msg);
+                self.dcx().span_warn(span, msg);
             } else {
-                self.tcx().sess.span_err(span, msg);
+                self.dcx().span_err(span, msg);
             }
             return None;
         };
 
-        let call_kind =
-            if let Some((instance, shim_type)) = handle_shims(resolved_fn, self.tcx(), param_env) {
-                resolved_fn = instance;
-                CallKind::Indirect {
-                    shim: Some(shim_type),
-                }
-            } else {
-                self.classify_call_kind(called_def_id, resolved_fn, &args, span)
-            };
+        let call_kind = if let Some((instance, shim_type)) =
+            handle_shims(resolved_fn, self.tcx(), typing_env, span)
+        {
+            resolved_fn = instance;
+            CallKind::Indirect {
+                shim: Some(shim_type),
+            }
+        } else {
+            self.classify_call_kind(called_def_id, resolved_fn, &args, span)
+        };
         let resolved_def_id = resolved_fn.def_id();
         if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {
             let (called, resolved) = (self.fmt_fn(called_def_id), self.fmt_fn(resolved_def_id));
@@ -470,7 +489,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 span,
                 arguments: &args,
                 caller_body: &self.mono_body,
-                param_env,
+                param_env: typing_env,
             };
             callback.on_inline(info)
         });
@@ -517,7 +536,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             if let Some(callback) = self.call_change_callback() {
                 callback.on_inline_miss(
                     resolved_fn,
-                    param_env,
+                    typing_env,
                     location,
                     self.root,
                     InlineMissReason::TraitMethod,
@@ -546,7 +565,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         state: &mut InstructionState<'tcx>,
         location: Location,
         func: &Operand<'tcx>,
-        args: &[Operand<'tcx>],
+        args: &[Spanned<Operand<'tcx>>],
         destination: Place<'tcx>,
         span: Span,
     ) -> bool {
@@ -571,7 +590,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
                 let rvalue = Rvalue::Aggregate(
                     Box::new(AggregateKind::Tuple),
-                    IndexVec::from_iter(args.iter().cloned()),
+                    IndexVec::from_iter(args.iter().map(|o| o.node.clone())),
                 );
                 self.modular_mutation_visitor(state)
                     .visit_assign(&destination, &rvalue, location);
@@ -634,9 +653,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     }
 
     pub(crate) fn construct_partial(&'a self) -> PartialGraph<'tcx> {
-        let mut analysis = self
-            .into_engine(self.tcx(), &self.mono_body)
-            .iterate_to_fixpoint();
+        let mut analysis = self.iterate_to_fixpoint(self.tcx(), &self.mono_body, None);
 
         let mut final_state = PartialGraph::new(
             self.generic_args(),
@@ -689,7 +706,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         &'b self,
         def_id: DefId,
         resolved_fn: Instance<'tcx>,
-        original_args: &'b [Operand<'tcx>],
+        original_args: &'b [Spanned<Operand<'tcx>>],
         span: Span,
     ) -> CallKind<'tcx> {
         match self.try_poll_call_kind(def_id, resolved_fn, original_args) {
@@ -697,15 +714,13 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             AsyncDeterminationResult::NotAsync => self
                 .try_indirect_call_kind(resolved_fn.def_id())
                 .unwrap_or(CallKind::Direct),
-            AsyncDeterminationResult::Unresolvable(reason) => {
-                self.tcx().sess.span_fatal(span, reason)
-            }
+            AsyncDeterminationResult::Unresolvable(reason) => self.dcx().span_fatal(span, reason),
         }
     }
 
     fn try_indirect_call_kind(&self, def_id: DefId) -> Option<CallKind<'tcx>> {
         self.tcx()
-            .is_closure(def_id)
+            .is_closure_like(def_id)
             .then_some(CallKind::Indirect { shim: None })
     }
 
@@ -720,7 +735,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     }
 }
 
-impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
+impl<'tcx> LocalAnalysis<'tcx, '_> {
     fn handle_terminator(
         &self,
         terminator: &Terminator<'tcx>,
@@ -752,7 +767,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     }
 }
 
-impl<'tcx, 'a> df::AnalysisDomain<'tcx> for &'a LocalAnalysis<'tcx, 'a> {
+impl<'a, 'tcx> df::Analysis<'tcx> for &'a LocalAnalysis<'tcx, 'a> {
     type Domain = InstructionState<'tcx>;
 
     const NAME: &'static str = "LocalPdgConstruction";
@@ -762,10 +777,7 @@ impl<'tcx, 'a> df::AnalysisDomain<'tcx> for &'a LocalAnalysis<'tcx, 'a> {
     }
 
     fn initialize_start_block(&self, _body: &Body<'tcx>, _state: &mut Self::Domain) {}
-}
-
-impl<'a, 'tcx> df::Analysis<'tcx> for &'a LocalAnalysis<'tcx, 'a> {
-    fn apply_statement_effect(
+    fn apply_primary_statement_effect(
         &mut self,
         state: &mut Self::Domain,
         statement: &Statement<'tcx>,
@@ -775,7 +787,7 @@ impl<'a, 'tcx> df::Analysis<'tcx> for &'a LocalAnalysis<'tcx, 'a> {
             .visit_statement(statement, location)
     }
 
-    fn apply_terminator_effect<'mir>(
+    fn apply_primary_terminator_effect<'mir>(
         &mut self,
         state: &mut Self::Domain,
         terminator: &'mir Terminator<'tcx>,

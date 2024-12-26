@@ -5,7 +5,7 @@ extern crate rustc_middle;
 extern crate rustc_span;
 
 use hir::def_id::DefId;
-use rustc_interface::interface;
+use rustc_errors::FatalError;
 
 use crate::{
     ann::dump_markers,
@@ -63,7 +63,7 @@ pub fn with_current_directory<
 /// Be aware that any [`Symbol`] created in `F` will **not** compare equal to
 /// [`Symbol`]s created after `F` and may cause dereference errors.
 pub fn use_rustc<A, F: FnOnce() -> A>(f: F) -> A {
-    rustc_span::create_default_session_if_not_set_then(|_| f())
+    rustc_span::create_session_if_not_set_then(rustc_span::edition::DEFAULT_EDITION, |_| f())
 }
 
 /// Crates a basic invocation of `cargo paralegal-flow`, ensuring that the `cargo-paralegal-flow`
@@ -239,7 +239,7 @@ impl InlineTestBuilder {
         .unwrap()
     }
 
-    pub fn run(&self, f: impl FnOnce(PreFrg) + Send) -> interface::Result<()> {
+    pub fn run(&self, f: impl FnOnce(PreFrg) + Send) -> Result<(), FatalError> {
         use clap::Parser;
 
         #[derive(clap::Parser)]
@@ -259,7 +259,6 @@ impl InlineTestBuilder {
 
         rustc_utils::test_utils::CompileBuilder::new(&self.input)
             .with_args(EXTRA_RUSTC_ARGS.iter().copied().map(ToOwned::to_owned))
-            .with_query_override(None)
             .compile(move |result| {
                 let args: &'static _ = Box::leak(Box::new(args));
                 dump_markers(result.tcx);
@@ -300,7 +299,7 @@ pub trait HasGraph<'g>: Sized + Copy {
         let name = Identifier::new_intern(name.as_ref());
         let id = match self.graph().name_map.get(&name).map(Vec::as_slice) {
             Some([one]) => *one,
-            Some([]) | None => panic!("Did not find name {name}"),
+            Some([]) | None => panic!("Did not find name {name}",),
             _ => panic!("Found too many function matching name {name}"),
         };
         FnRef {
@@ -310,7 +309,7 @@ pub trait HasGraph<'g>: Sized + Copy {
     }
 
     fn async_function(self, name: impl AsRef<str>) -> FnRef<'g> {
-        self.function(format!("{}_generator", name.as_ref()))
+        self.function(format!("{}_coroutine", name.as_ref()))
     }
 
     fn info_for(self, id: DefId) -> &'g DefInfo {
@@ -407,7 +406,7 @@ pub struct CtrlRef<'g> {
     ctrl: &'g SPDG,
 }
 
-impl<'g> Debug for CtrlRef<'g> {
+impl Debug for CtrlRef<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CtrlRef")
             .field("ident", &self.ctrl.name)
@@ -415,7 +414,7 @@ impl<'g> Debug for CtrlRef<'g> {
     }
 }
 
-impl<'g> PartialEq for CtrlRef<'g> {
+impl PartialEq for CtrlRef<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
@@ -471,7 +470,7 @@ impl<'g> CtrlRef<'g> {
                 instruction_info[&m.leaf()]
                     .kind
                     .as_function_call()
-                    .map_or(false, |i| i.id == fun.ident)
+                    .is_some_and(|i| i.id == fun.ident)
             })
             .map(|call_site| CallStringRef {
                 ctrl: self,
@@ -492,7 +491,7 @@ impl<'g> CtrlRef<'g> {
         cs.pop().unwrap()
     }
 
-    pub fn types_for(&'g self, target: Node) -> &[DefId] {
+    pub fn types_for(&'g self, target: Node) -> &'g [DefId] {
         self.ctrl
             .type_assigns
             .get(&target)
@@ -548,7 +547,7 @@ impl PartialEq for CallStringRef<'_> {
 
 impl Eq for CallStringRef<'_> {}
 
-impl<'g> PartialEq<CallString> for CallStringRef<'g> {
+impl PartialEq<CallString> for CallStringRef<'_> {
     fn eq(&self, other: &CallString) -> bool {
         self.call_site == *other
     }
@@ -658,7 +657,7 @@ impl<'g> HasGraph<'g> for &NodeRef<'g> {
     }
 }
 
-impl<'g> NodeRef<'g> {
+impl NodeRef<'_> {
     pub fn node(&self) -> Node {
         self.node
     }

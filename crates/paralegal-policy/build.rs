@@ -22,6 +22,6 @@ fn main() {
     }
 
     let autocfg = autocfg::AutoCfg::new().unwrap();
-
+    println!("cargo::rustc-check-cfg=cfg(rustc_1_75)");
     autocfg.emit_rustc_version(1, 75);
 }

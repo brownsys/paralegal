@@ -10,7 +10,7 @@ use std::{collections::HashSet, rc::Rc};
 use either::Either;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    body_cache::{dump_mir_and_borrowck_facts, BodyCache},
+    body_cache::BodyCache,
     graph::{DepEdge, DepGraph},
     CallChangeCallback, CallChangeCallbackFn, CallChanges, MemoPdgConstructor, SkipCall,
 };
@@ -56,10 +56,8 @@ fn pdg(
     tests: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &BodyCache<'tcx>, DepGraph<'tcx>) + Send,
 ) {
     let _ = env_logger::try_init();
-    rustc_utils::test_utils::CompileBuilder::new(input)
-        .with_query_override(None)
-        .expect_compile(move |CompileResult { tcx, .. }| {
-            dump_mir_and_borrowck_facts(tcx);
+    rustc_utils::test_utils::CompileBuilder::new(input).expect_compile(
+        move |CompileResult { tcx, .. }| {
             let def_id = get_main(tcx);
             let mut memo = MemoPdgConstructor::new(tcx);
             configure(tcx, &mut memo);
@@ -67,7 +65,8 @@ fn pdg(
             memo.with_call_change_callback(LocalLoadingOnly(policy));
             let pdg = memo.construct_graph(def_id);
             tests(tcx, memo.body_cache(), pdg)
-        })
+        },
+    )
 }
 
 #[allow(unused)]
@@ -852,7 +851,7 @@ pdg_test! {
       params.with_call_change_callback(CallChangeCallbackFn::new(move |info| {
         let name = tcx.opt_item_name(info.callee.def_id());
         let name2 = tcx.opt_parent(info.callee.def_id()).and_then(|c| tcx.opt_item_name(c));
-        let is_spawn = |name: Option<&Symbol>| name.map_or(false, |n| n.as_str().contains("spawn"));
+        let is_spawn = |name: Option<&Symbol>| name.is_some_and(|n| n.as_str().contains("spawn"));
         let mut changes = CallChanges::default();
         if is_spawn(name.as_ref()) || is_spawn(name2.as_ref())
         {

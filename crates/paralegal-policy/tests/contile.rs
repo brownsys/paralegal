@@ -1,3 +1,5 @@
+#![feature(rustc_private)]
+
 use std::sync::Arc;
 
 use anyhow::{Ok, Result};

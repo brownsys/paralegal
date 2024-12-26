@@ -72,7 +72,7 @@ impl<'a> I<'a> {
     }
 }
 
-impl<'a> std::fmt::Debug for I<'a> {
+impl std::fmt::Debug for I<'_> {
     /// This only exists so we can use the standard `nom::Err`. A better
     /// solution would be to make our own error type that does not rely on this
     /// being printable.
@@ -85,7 +85,7 @@ impl<'a> std::fmt::Debug for I<'a> {
     }
 }
 
-impl<'a> nom::InputLength for I<'a> {
+impl nom::InputLength for I<'_> {
     fn input_len(&self) -> usize {
         // Cloning is cheap, because this is just a pointer + a count
         self.clone().0.count()
@@ -177,7 +177,7 @@ pub fn delimited<'a, A, P: Parser<I<'a>, A, Error<I<'a>>> + 'a>(
     nom::combinator::map_res(
         nom::combinator::map_res(
             nom::combinator::map_res(one, move |t| match t {
-                TokenTree::Delimited(_, d, s) if *d == delim => Ok(s),
+                TokenTree::Delimited(_, _, d, s) if *d == delim => Ok(s),
                 _ => Result::Err(""),
             }),
             move |s| p.parse(I::from_stream(s)),
@@ -240,8 +240,7 @@ pub fn tiny_bitset(i: I) -> R<TinyBitSet> {
 pub(crate) fn otype_ann_match(ann: &ast::AttrArgs, tcx: TyCtxt) -> Result<Vec<DefId>, String> {
     match ann {
         ast::AttrArgs::Delimited(dargs) => {
-            let mut parser =
-                rustc_parser::Parser::new(&tcx.sess.parse_sess, dargs.tokens.clone(), None);
+            let mut parser = rustc_parser::Parser::new(&tcx.sess.psess, dargs.tokens.clone(), None);
             std::iter::from_fn(|| {
                 if parser.token.kind == TokenKind::Eof {
                     return None;

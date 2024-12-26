@@ -9,35 +9,37 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::{def_id::DefId, Defaultness};
 use rustc_middle::{
     mir::{
-        tcx::PlaceTy, Body, HasLocalDecls, Local, Location, Place, ProjectionElem, Statement,
-        StatementKind, Terminator, TerminatorKind,
+        tcx::PlaceTy, Body, HasLocalDecls, Local, Location, Operand, Place, ProjectionElem,
+        Statement, StatementKind, Terminator, TerminatorKind,
     },
     ty::{
-        AssocItemContainer, Binder, EarlyBinder, GenericArg, GenericArgsRef, Instance, InstanceDef,
-        List, ParamEnv, Region, Ty, TyCtxt, TyKind,
+        AssocItemContainer, Binder, EarlyBinder, GenericArg, GenericArgsRef, Instance,
+        InstanceKind, Region, Ty, TyCtxt, TyKind, TypingEnv,
     },
 };
-use rustc_span::{ErrorGuaranteed, Span};
-use rustc_type_ir::{fold::TypeFoldable, AliasKind};
+use rustc_span::{source_map::Spanned, ErrorGuaranteed, Span};
+use rustc_type_ir::{fold::TypeFoldable, AliasTyKind, PredicatePolarity, RegionKind};
 use rustc_utils::{BodyExt, PlaceExt};
 
 pub trait Captures<'a> {}
-impl<'a, T: ?Sized> Captures<'a> for T {}
+impl<T: ?Sized> Captures<'_> for T {}
 
 /// An async check that does not crash if called on closures.
 pub fn is_async(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    !tcx.is_closure(def_id) && tcx.asyncness(def_id).is_async()
+    !tcx.is_closure_like(def_id) && tcx.asyncness(def_id).is_async()
 }
+
+pub type ArgSlice<'a, 'tcx> = &'a [Spanned<Operand<'tcx>>];
 
 /// Resolve the `def_id` item to an instance.
 pub fn try_resolve_function<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
-    param_env: ParamEnv<'tcx>,
+    typing_env: TypingEnv<'tcx>,
     args: GenericArgsRef<'tcx>,
 ) -> Option<Instance<'tcx>> {
-    let param_env = param_env.with_reveal_all_normalized(tcx);
-    Instance::resolve(tcx, param_env, def_id, args).unwrap()
+    let typing_env = typing_env.with_post_analysis_normalized(tcx);
+    Instance::try_resolve(tcx, typing_env, def_id, args).unwrap()
 }
 
 /// Returns whether this method is expected to have a body we can analyze.
@@ -48,36 +50,35 @@ pub fn try_resolve_function<'tcx>(
 /// Note: While you are supposed to call this whit a `function` that refers to a
 /// function, it will not crash if it refers to a type or constant instead.
 pub fn is_virtual(tcx: TyCtxt, function: DefId) -> bool {
-    tcx.opt_associated_item(function)
-        .map_or(false, |assoc_item| {
-            matches!(
-                assoc_item.container,
-                AssocItemContainer::TraitContainer
-                if !matches!(
-                    assoc_item.defaultness(tcx),
-                    Defaultness::Default { has_value: true })
-            )
-        })
+    tcx.opt_associated_item(function).is_some_and(|assoc_item| {
+        matches!(
+            assoc_item.container,
+            AssocItemContainer::Trait
+            if !matches!(
+                assoc_item.defaultness(tcx),
+                Defaultness::Default { has_value: true })
+        )
+    })
 }
 
 /// The "canonical" way we monomorphize
 pub fn try_monomorphize<'tcx, 'a, T>(
     inst: Instance<'tcx>,
     tcx: TyCtxt<'tcx>,
-    param_env: ParamEnv<'tcx>,
+    typing_env: TypingEnv<'tcx>,
     t: &'a T,
     span: Span,
 ) -> Result<T, ErrorGuaranteed>
 where
     T: TypeFoldable<TyCtxt<'tcx>> + Clone + std::fmt::Debug,
 {
-    inst.try_subst_mir_and_normalize_erasing_regions(
+    inst.try_instantiate_mir_and_normalize_erasing_regions(
         tcx,
-        param_env,
+        typing_env,
         EarlyBinder::bind(tcx.erase_regions(t.clone())),
     )
     .map_err(|e| {
-        tcx.sess.span_err(
+        tcx.dcx().span_err(
             span,
             format!("failed to monomorphize with instance {inst:?} due to {e:?}"),
         )
@@ -90,7 +91,7 @@ pub fn type_as_fn<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<(DefId, Gener
     let ty = ty_resolve(ty, tcx);
     match ty.kind() {
         TyKind::FnDef(def_id, generic_args)
-        | TyKind::Generator(def_id, generic_args, _)
+        | TyKind::Coroutine(def_id, generic_args)
         | TyKind::Closure(def_id, generic_args) => Some((*def_id, generic_args)),
         ty => {
             trace!("Bailing from handle_call because func is literal with type: {ty:?}");
@@ -109,7 +110,6 @@ pub fn retype_place<'tcx>(
 
     let mut new_projection = Vec::new();
     let mut ty = PlaceTy::from_ty(body.local_decls()[orig.local].ty);
-    let param_env = tcx.param_env_reveal_all_normalized(def_id);
     for elem in orig.projection.iter() {
         if matches!(
             ty.ty.kind(),
@@ -140,15 +140,14 @@ pub fn retype_place<'tcx>(
         );
         ty = ty.projection_ty_core(
             tcx,
-            param_env,
             &elem,
             |_, field, _| match ty.ty.kind() {
                 TyKind::Closure(_, args) => {
                     let upvar_tys = args.as_closure().upvar_tys();
                     upvar_tys.iter().nth(field.as_usize()).unwrap()
                 }
-                TyKind::Generator(_, args, _) => {
-                    let upvar_tys = args.as_generator().upvar_tys();
+                TyKind::Coroutine(_, args) => {
+                    let upvar_tys = args.as_coroutine().upvar_tys();
                     upvar_tys.iter().nth(field.as_usize()).unwrap()
                 }
                 _ => ty.field_ty(tcx, field),
@@ -218,7 +217,7 @@ pub fn find_body_assignments(body: &Body<'_>) -> BodyAssignments {
 
 pub fn ty_resolve<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
     match ty.kind() {
-        TyKind::Alias(AliasKind::Opaque, alias_ty) => tcx.type_of(alias_ty.def_id).skip_binder(),
+        TyKind::Alias(AliasTyKind::Opaque, alias_ty) => tcx.type_of(alias_ty.def_id).skip_binder(),
         _ => ty,
     }
 }
@@ -228,8 +227,8 @@ pub fn manufacture_substs_for(
     function: DefId,
 ) -> Result<GenericArgsRef<'_>, ErrorGuaranteed> {
     use rustc_middle::ty::{
-        BoundRegionKind, DynKind, ExistentialPredicate, ExistentialProjection, ExistentialTraitRef,
-        GenericParamDefKind, ImplPolarity, ParamTy, TraitPredicate,
+        DynKind, ExistentialPredicate, ExistentialProjection, ExistentialTraitRef,
+        GenericParamDefKind, ParamTy, TraitPredicate,
     };
 
     trace!("Manufacturing for {function:?}");
@@ -247,14 +246,13 @@ pub fn manufacture_substs_for(
         match param.kind {
             // I'm not sure this is correct. We could probably return also "erased" or "static" here.
             GenericParamDefKind::Lifetime => {
-                return Ok(GenericArg::from(Region::new_free(
+                return Ok(GenericArg::from(Region::new_from_kind(
                     tcx,
-                    function,
-                    BoundRegionKind::BrAnon(None),
+                    RegionKind::ReErased,
                 )))
             }
             GenericParamDefKind::Const { .. } => {
-                return Err(tcx.sess.span_err(
+                return Err(tcx.dcx().span_err(
                     tcx.def_span(param.def_id),
                     "Cannot use constants as generic parameters in controllers",
                 ))
@@ -265,11 +263,11 @@ pub fn manufacture_substs_for(
         let param_as_ty = ParamTy::for_def(param);
         let constraints = predicates.predicates.iter().filter_map(|clause| {
             let pred = if let Some(trait_ref) = clause.as_trait_clause() {
-                if trait_ref.polarity() != ImplPolarity::Positive {
+                if trait_ref.polarity() != PredicatePolarity::Positive {
                     return None;
                 };
                 let Some(TraitPredicate { trait_ref, .. }) = trait_ref.no_bound_vars() else {
-                    return Some(Err(tcx.sess.span_err(
+                    return Some(Err(tcx.dcx().span_err(
                         tcx.def_span(param.def_id),
                         format!("Trait ref had binder {trait_ref:?}"),
                     )));
@@ -289,7 +287,7 @@ pub fn manufacture_substs_for(
             } else if let Some(pred) = clause.as_projection_clause() {
                 trace!("    is projection clause");
                 let Some(pred) = pred.no_bound_vars() else {
-                    return Some(Err(tcx.sess.span_err(
+                    return Some(Err(tcx.dcx().span_err(
                         tcx.def_span(param.def_id),
                         "Predicate has a bound variable",
                     )));
@@ -308,18 +306,19 @@ pub fn manufacture_substs_for(
         });
         let mut predicates = constraints.collect::<Result<Vec<_>, _>>()?;
         trace!("  collected predicates {predicates:?}");
+        let no_args: [GenericArg; 0] = [];
         match predicates.len() {
             0 => predicates.push(Binder::dummy(ExistentialPredicate::Trait(
-                ExistentialTraitRef {
-                    def_id: tcx
-                        .get_diagnostic_item(rustc_span::sym::Any)
+                ExistentialTraitRef::new(
+                    tcx,
+                    tcx.get_diagnostic_item(rustc_span::sym::Any)
                         .expect("The `Any` item is not defined."),
-                    args: List::empty(),
-                },
+                    no_args,
+                ),
             ))),
             1 => (),
             _ => {
-                return Err(tcx.sess.span_err(
+                return Err(tcx.dcx().span_err(
                     tcx.def_span(param.def_id),
                     format!(
                         "can only synthesize a trait object for one non-auto trait, got {}",
@@ -333,7 +332,7 @@ pub fn manufacture_substs_for(
         let ty = Ty::new_dynamic(
             tcx,
             poly_predicate,
-            Region::new_free(tcx, function, BoundRegionKind::BrAnon(None)),
+            Region::new_from_kind(tcx, RegionKind::ReErased),
             DynKind::Dyn,
         );
         Ok(GenericArg::from(ty))
@@ -351,10 +350,11 @@ pub enum ShimType {
 pub fn handle_shims<'tcx>(
     resolved_fn: Instance<'tcx>,
     tcx: TyCtxt<'tcx>,
-    param_env: ParamEnv<'tcx>,
+    typing_env: TypingEnv<'tcx>,
+    span: Span,
 ) -> Option<(Instance<'tcx>, ShimType)> {
     match resolved_fn.def {
-        InstanceDef::ClosureOnceShim { .. } => {
+        InstanceKind::ClosureOnceShim { .. } => {
             // Rustc has inserted a call to the shim that maps `Fn` and `FnMut`
             // instances to an `FnOnce`. This shim has no body itself so we
             // can't just inline, we must explicitly simulate it's effects by
@@ -369,17 +369,17 @@ pub fn handle_shims<'tcx>(
             let Some((func_t, g)) = type_as_fn(tcx, func_a.expect_ty()) else {
                 unreachable!()
             };
-            let instance = Instance::expect_resolve(tcx, param_env, func_t, g);
+            let instance = Instance::expect_resolve(tcx, typing_env, func_t, g, span);
             Some((instance, ShimType::Once))
         }
-        InstanceDef::FnPtrShim { .. } => {
+        InstanceKind::FnPtrShim { .. } => {
             let Some((func_a, _rest)) = resolved_fn.args.split_first() else {
                 unreachable!()
             };
             let Some((func_t, g)) = type_as_fn(tcx, func_a.expect_ty()) else {
                 unreachable!()
             };
-            let instance = Instance::expect_resolve(tcx, param_env, func_t, g);
+            let instance = Instance::expect_resolve(tcx, typing_env, func_t, g, span);
 
             Some((instance, ShimType::FnPtr))
         }

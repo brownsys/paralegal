@@ -30,7 +30,6 @@ extern crate rustc_borrowck;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_errors;
-extern crate rustc_hash;
 extern crate rustc_hir;
 extern crate rustc_index;
 extern crate rustc_interface;
@@ -195,32 +194,30 @@ fn dump_mir_and_update_stats(tcx: TyCtxt, timer: &mut DumpStats) {
     timer.tycheck_time = tycheck_time;
 }
 
-impl<'a> rustc_driver::Callbacks for DumpOnlyCallbacks<'a> {
-    fn after_expansion<'tcx>(
+impl rustc_driver::Callbacks for DumpOnlyCallbacks<'_> {
+    fn after_expansion(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
-        queries: &'tcx rustc_interface::Queries<'tcx>,
+        tcx: TyCtxt<'_>,
     ) -> rustc_driver::Compilation {
-        queries.global_ctxt().unwrap().enter(|tcx| {
-            dump_mir_and_update_stats(tcx, self.time);
-            assert!(self
-                .output_location
-                .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
-                .is_none());
-        });
+        dump_mir_and_update_stats(tcx, self.time);
+        assert!(self
+            .output_location
+            .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
+            .is_none());
         rustc_driver::Compilation::Continue
     }
 }
 
-impl<'a> rustc_driver::Callbacks for Callbacks<'a> {
-    fn after_expansion<'tcx>(
+impl rustc_driver::Callbacks for Callbacks<'_> {
+    fn after_expansion(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
-        queries: &'tcx rustc_interface::Queries<'tcx>,
+        tcx: TyCtxt<'_>,
     ) -> rustc_driver::Compilation {
         self.stats
             .record_timed(TimedStat::Rustc, self.stats.elapsed());
-        let compilation = self.run_the_analyzer(queries);
+        let compilation = self.run_the_analyzer(tcx);
         self.rustc_second_timer = Some(Instant::now());
         compilation
     }
@@ -230,11 +227,10 @@ impl<'a> rustc_driver::Callbacks for Callbacks<'a> {
     // `after_expansion` and so far that doesn't seem to break anything, but I'm
     // explaining this here in case that flowistry has some sort of issue with
     // that (when retrieving the MIR bodies for instance)
-    fn after_analysis<'tcx>(
+    fn after_analysis(
         &mut self,
-        _handler: &rustc_session::EarlyErrorHandler,
         _compiler: &rustc_interface::interface::Compiler,
-        _queries: &'tcx rustc_interface::Queries<'tcx>,
+        _tcx: TyCtxt<'_>,
     ) -> rustc_driver::Compilation {
         self.stats
             .record_timed(TimedStat::Rustc, self.rustc_second_timer.unwrap().elapsed());
@@ -242,52 +238,42 @@ impl<'a> rustc_driver::Callbacks for Callbacks<'a> {
     }
 }
 
-impl<'a> Callbacks<'a> {
-    fn run_the_analyzer<'tcx>(
-        &mut self,
-        queries: &'tcx rustc_interface::Queries<'tcx>,
-    ) -> rustc_driver::Compilation {
-        let abort = queries
-            .global_ctxt()
-            .unwrap()
-            .enter(|tcx| {
-                dump_markers(tcx);
-                tcx.sess.abort_if_errors();
-                let (desc, mut stats) =
-                    discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone()).run()?;
-                info!("All elems walked");
-                tcx.sess.abort_if_errors();
+impl Callbacks<'_> {
+    fn run_the_analyzer(&mut self, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
+        dump_markers(tcx);
+        tcx.dcx().abort_if_errors();
+        let (desc, mut stats) =
+            discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone())
+                .run()
+                .unwrap();
+        info!("All elems walked");
+        tcx.dcx().abort_if_errors();
 
-                if self.opts.dbg().dump_spdg() {
-                    let out = std::fs::File::create("call-only-flow.gv").unwrap();
-                    paralegal_spdg::dot::dump(&desc, out).unwrap();
-                }
+        if self.opts.dbg().dump_spdg() {
+            let out = std::fs::File::create("call-only-flow.gv").unwrap();
+            paralegal_spdg::dot::dump(&desc, out).unwrap();
+        }
 
-                self.stats.measure(TimedStat::Serialization, || {
-                    desc.canonical_write(self.opts.result_path()).unwrap()
-                });
+        self.stats.measure(TimedStat::Serialization, || {
+            desc.canonical_write(self.opts.result_path()).unwrap()
+        });
 
-                stats.serialization_time = self.stats.get_timed(TimedStat::Serialization);
+        stats.serialization_time = self.stats.get_timed(TimedStat::Serialization);
 
-                println!("Analysis finished with timing: {}", self.stats);
+        println!("Analysis finished with timing: {}", self.stats);
 
-                assert!(self.stat_ref.replace(stats).is_none());
+        assert!(self.stat_ref.replace(stats).is_none());
 
-                assert!(self
-                    .output_location
-                    .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
-                    .is_none());
-                anyhow::Ok(self.opts.abort_after_analysis())
-            })
-            .unwrap();
+        assert!(self
+            .output_location
+            .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
+            .is_none());
 
-        if abort {
+        if self.opts.abort_after_analysis() {
             rustc_driver::Compilation::Stop
         } else {
-            queries.global_ctxt().unwrap().enter(|tcx| {
-                self.stats.measure(TimedStat::MirEmission, || {
-                    dump_mir_and_update_stats(tcx, self.time);
-                })
+            self.stats.measure(TimedStat::MirEmission, || {
+                dump_mir_and_update_stats(tcx, self.time);
             });
             rustc_driver::Compilation::Continue
         }
@@ -329,6 +315,12 @@ struct CrateInfo {
     handling: CrateHandling,
     #[allow(dead_code)]
     is_build_script: bool,
+}
+
+impl CrateInfo {
+    pub fn name_or_default(&self) -> &str {
+        self.name.as_deref().unwrap_or("unnamed")
+    }
 }
 
 /// Also adds and additional features required by the Paralegal build config
@@ -489,12 +481,12 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         let out_path = plugin_args.result_path().to_owned();
 
         let info = how_to_handle_this_crate(&plugin_args, &mut compiler_args);
-        println!(
+        debug!(
             "Handling crate {} as {}",
-            info.name.as_ref().map_or("unnamed", String::as_str),
+            info.name_or_default(),
             info.handling.as_ref()
         );
-        let result = {
+        {
             let mut callbacks = match info.handling {
                 CrateHandling::JustCompile => {
                     Box::new(NoopCallbacks) as Box<dyn rustc_driver::Callbacks + Send>
@@ -544,7 +536,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                 }
             };
 
-            rustc_driver::RunCompiler::new(&compiler_args, callbacks.as_mut()).run()
+            rustc_driver::RunCompiler::new(&compiler_args, callbacks.as_mut()).run();
         };
         if info.handling != CrateHandling::JustCompile {
             let filepath = output_path_location
@@ -566,7 +558,8 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             stat.self_time = self_time;
             serde_json::to_writer(out, &stat).unwrap();
         }
-        result
+        debug!("Finished with crate {}", info.name_or_default());
+        Ok(())
     }
 }
 

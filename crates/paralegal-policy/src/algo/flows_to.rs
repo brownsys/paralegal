@@ -95,7 +95,7 @@ impl<'a> DataAndControlInfluencees<'a> {
     }
 }
 
-impl<'a> Iterator for DataAndControlInfluencees<'a> {
+impl Iterator for DataAndControlInfluencees<'_> {
     type Item = SPDGNode;
     fn next(&mut self) -> Option<Self::Item> {
         self.walker.next()

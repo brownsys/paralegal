@@ -149,7 +149,7 @@ impl crate::RootContext {
         let select_data = |e: <&SPDGImpl as IntoEdgeReferences>::EdgeRef| e.weight().is_data();
 
         for (ctrl_id, starts) in &start_map {
-            let spdg = &self.desc().controllers[&ctrl_id];
+            let spdg = &self.desc().controllers[ctrl_id];
             let g = EdgeFiltered::from_fn(&spdg.graph, select_data);
             let mut tracer =
                 Tracer::new(&mut trace, g.node_bound(), starts.iter().copied(), *ctrl_id);

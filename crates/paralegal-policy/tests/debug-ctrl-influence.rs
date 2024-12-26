@@ -1,3 +1,5 @@
+#![feature(rustc_private)]
+
 mod helpers;
 
 use helpers::{Result, Test};

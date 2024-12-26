@@ -300,12 +300,7 @@ impl DiagnosticPart {
                     } else {
                         line_length_while(&line_content, char::is_whitespace)
                     };
-                    let highlight_len = if end < start {
-                        // TODO figure out how this happens
-                        0
-                    } else {
-                        end - start
-                    };
+                    let highlight_len = end.saturating_sub(start);
                     write!(s, "{tab} {} {:start$}", "|".blue(), "")?;
                     for _ in 0..highlight_len {
                         write!(s, "{}", "^".color(coloring))?;
@@ -377,7 +372,7 @@ impl<'a, A: ?Sized> DiagnosticBuilder<'a, A> {
     }
 }
 
-impl<'a, A: HasDiagnosticsBase + ?Sized> DiagnosticBuilder<'a, A> {
+impl<A: HasDiagnosticsBase + ?Sized> DiagnosticBuilder<'_, A> {
     /// Queue the diagnostic for display to the user.
     pub fn emit(self) {
         self.base.record(self.diagnostic)
@@ -1040,7 +1035,7 @@ pub(crate) struct DiagnosticsRecorder(std::sync::Mutex<IndexMap<Diagnostic, ()>>
 
 struct DisplayDiagnostic<'a>(&'a Diagnostic);
 
-impl<'a> std::fmt::Display for DisplayDiagnostic<'a> {
+impl std::fmt::Display for DisplayDiagnostic<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.write(f)
     }

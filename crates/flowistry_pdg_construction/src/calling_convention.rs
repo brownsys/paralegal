@@ -8,6 +8,7 @@ use rustc_middle::{
     mir::{Body, HasLocalDecls, Operand, Place, PlaceElem, RETURN_PLACE},
     ty::TyCtxt,
 };
+use rustc_span::source_map::Spanned;
 
 use crate::{
     async_support::AsyncInfo,
@@ -20,14 +21,14 @@ use crate::{
 #[derive(Debug)]
 pub enum CallingConvention<'tcx> {
     /// 1 to 1 mapping
-    Direct(Box<[Operand<'tcx>]>),
+    Direct(Box<[Spanned<Operand<'tcx>>]>),
     /// First argument is the closed-over environment, second argument is a
     /// tuple that contains the actual argument to the call of the closure
     /// function.
     Indirect {
         shim: Option<ShimType>,
-        closure_arg: Operand<'tcx>,
-        tupled_arguments: Operand<'tcx>,
+        closure_arg: Spanned<Operand<'tcx>>,
+        tupled_arguments: Spanned<Operand<'tcx>>,
     },
     /// An async generator, only has one argument which is the generator state.
     Async(Place<'tcx>),
@@ -47,7 +48,7 @@ pub struct PlaceTranslation<'a, 'tcx> {
     scope: &'a PlaceTranslator<'a, 'tcx>,
 }
 
-impl<'a, 'tcx> PlaceTranslation<'a, 'tcx> {
+impl<'tcx> PlaceTranslation<'_, 'tcx> {
     /// Complete the translation and return a precise parent place.
     pub fn make_translated_place(&self) -> Place<'tcx> {
         let base_place_projected = self
@@ -71,7 +72,7 @@ impl<'a, 'tcx> PlaceTranslation<'a, 'tcx> {
 impl<'tcx> CallingConvention<'tcx> {
     pub fn from_call_kind(
         kind: &CallKind<'tcx>,
-        args: Cow<'_, [Operand<'tcx>]>,
+        args: Cow<'_, [Spanned<Operand<'tcx>>]>,
     ) -> CallingConvention<'tcx> {
         match kind {
             CallKind::AsyncPoll(poll) => CallingConvention::Async(poll.generator_data),
@@ -174,7 +175,7 @@ impl<'a, 'tcx> PlaceTranslator<'a, 'tcx> {
             _ if child.local == RETURN_PLACE => (self.destination, &child.projection[..]),
             // Map arguments to the argument array
             CallingConvention::Direct(args) => (
-                args[child.local.as_usize() - 1].place()?,
+                args[child.local.as_usize() - 1].node.place()?,
                 &child.projection[..],
             ),
             // Map arguments to projections of the future, the poll's first argument
@@ -225,9 +226,9 @@ impl<'a, 'tcx> PlaceTranslator<'a, 'tcx> {
                     } else {
                         0
                     };
-                    (closure_arg.place()?, &child.projection[next_idx..])
+                    (closure_arg.node.place()?, &child.projection[next_idx..])
                 } else {
-                    let tuple_arg = tupled_arguments.place()?;
+                    let tuple_arg = tupled_arguments.node.place()?;
                     let _projection = child.projection.to_vec();
                     let field = FieldIdx::from_usize(local.as_usize() - 2);
                     let field_ty = tuple_arg

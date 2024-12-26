@@ -5,14 +5,14 @@ use rustc_abi::VariantIdx;
 use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
 use rustc_middle::{
-    mir::{visit::Visitor, AggregateKind, Location, Operand, Place, Rvalue},
+    mir::{visit::Visitor, AggregateKind, Location, Place, Rvalue},
     ty::TyKind,
 };
 
-use crate::local_analysis::LocalAnalysis;
+use crate::{local_analysis::LocalAnalysis, utils::ArgSlice};
 
 pub(crate) type ApproximationHandler<'tcx, 'a> =
-    fn(&LocalAnalysis<'tcx, 'a>, &mut dyn Visitor<'tcx>, &[Operand<'tcx>], Place<'tcx>, Location);
+    fn(&LocalAnalysis<'tcx, 'a>, &mut dyn Visitor<'tcx>, ArgSlice<'a, 'tcx>, Place<'tcx>, Location);
 
 impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     /// Special case behavior for calls to functions used in desugaring async functions.
@@ -38,7 +38,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     fn approximate_into_future(
         &self,
         vis: &mut dyn Visitor<'tcx>,
-        args: &[Operand<'tcx>],
+        args: ArgSlice<'_, 'tcx>,
         destination: Place<'tcx>,
         location: Location,
     ) {
@@ -46,13 +46,13 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         let [op] = args else {
             unreachable!();
         };
-        vis.visit_assign(&destination, &Rvalue::Use(op.clone()), location);
+        vis.visit_assign(&destination, &Rvalue::Use(op.node.clone()), location);
     }
 
     fn approximate_new_unchecked(
         &self,
         vis: &mut dyn Visitor<'tcx>,
-        args: &[Operand<'tcx>],
+        args: ArgSlice<'_, 'tcx>,
         destination: Place<'tcx>,
         location: Location,
     ) {
@@ -61,7 +61,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             unreachable!();
         };
         let mut operands = IndexVec::new();
-        operands.push(op.clone());
+        operands.push(op.node.clone());
         let TyKind::Adt(adt_id, generics) = destination.ty(&self.mono_body, self.tcx()).ty.kind()
         else {
             unreachable!()

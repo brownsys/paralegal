@@ -9,6 +9,10 @@
 //! allow us to change the name and default value of the argument without having
 //! to migrate the code using that argument.
 
+// Unfortunately we have to do this, because num-traits::FromPrimitive generates
+// code that triggers this lint
+#![allow(non_local_definitions)]
+
 use anyhow::Error;
 use clap::ValueEnum;
 use std::collections::HashMap;

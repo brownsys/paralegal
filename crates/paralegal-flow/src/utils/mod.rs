@@ -19,13 +19,13 @@ use rustc_hir::{
     BodyId,
 };
 use rustc_middle::{
-    mir::{self, Constant, Location, Place, ProjectionElem, Terminator},
-    ty::{self, GenericArgsRef, Instance, Ty},
+    mir::{self, ConstOperand, Location, Place, ProjectionElem, Terminator},
+    ty::{self, GenericArgsRef, Instance, Ty, TypingEnv},
 };
 use rustc_span::{symbol::Ident, Span as RustSpan, Span};
 use rustc_target::spec::abi::Abi;
 
-use std::{cmp::Ordering, hash::Hash};
+use std::cmp::Ordering;
 
 mod print;
 pub mod resolve;
@@ -156,14 +156,14 @@ pub trait TyExt: Sized {
     fn defid_ref(&self) -> Option<&DefId>;
 }
 
-impl<'tcx> TyExt for ty::Ty<'tcx> {
+impl TyExt for ty::Ty<'_> {
     fn defid_ref(&self) -> Option<&DefId> {
         match self.kind() {
             ty::TyKind::Adt(ty::AdtDef(Interned(ty::AdtDefData { did, .. }, _)), _) => Some(did),
             ty::TyKind::Foreign(did)
             | ty::TyKind::FnDef(did, _)
             | ty::TyKind::Closure(did, _)
-            | ty::TyKind::Generator(did, _, _) => Some(did),
+            | ty::TyKind::Coroutine(did, _) => Some(did),
             _ => None,
         }
     }
@@ -245,32 +245,23 @@ pub trait InstanceExt<'tcx> {
 
 impl<'tcx> InstanceExt<'tcx> for Instance<'tcx> {
     fn sig(self, tcx: TyCtxt<'tcx>) -> Result<ty::FnSig<'tcx>, ErrorGuaranteed> {
-        let sess = tcx.sess;
         let def_id = self.def_id();
-        let def_span = tcx.def_span(def_id);
         let fn_kind = FunctionKind::for_def_id(tcx, def_id)?;
+        let typing_env = TypingEnv::fully_monomorphized();
         let late_bound_sig = match fn_kind {
             FunctionKind::Generator => {
-                let gen = self.args.as_generator();
+                let gen = self.args.as_coroutine();
                 ty::Binder::dummy(ty::FnSig {
                     inputs_and_output: tcx.mk_type_list(&[gen.resume_ty(), gen.return_ty()]),
                     c_variadic: false,
-                    unsafety: hir::Unsafety::Normal,
                     abi: Abi::Rust,
+                    safety: hir::Safety::Safe,
                 })
             }
             FunctionKind::Closure => self.args.as_closure().sig(),
-            FunctionKind::Plain => self.ty(tcx, ty::ParamEnv::reveal_all()).fn_sig(tcx),
+            FunctionKind::Plain => self.ty(tcx, typing_env).fn_sig(tcx),
         };
-        Ok(tcx
-            .try_normalize_erasing_late_bound_regions(ty::ParamEnv::reveal_all(), late_bound_sig)
-            .unwrap_or_else(|e| {
-                sess.span_warn(
-                    def_span,
-                    format!("Could not erase regions in {late_bound_sig:?}: {e:?}"),
-                );
-                late_bound_sig.skip_binder()
-            }))
+        Ok(tcx.normalize_erasing_late_bound_regions(typing_env, late_bound_sig))
     }
 }
 
@@ -290,15 +281,15 @@ pub enum FunctionKind {
 
 impl FunctionKind {
     pub fn for_def_id(tcx: TyCtxt, def_id: DefId) -> Result<Self, ErrorGuaranteed> {
-        if tcx.generator_kind(def_id).is_some() {
+        if tcx.coroutine_kind(def_id).is_some() {
             Ok(Self::Generator)
-        } else if tcx.is_closure(def_id) {
+        } else if tcx.is_closure_like(def_id) {
             Ok(Self::Closure)
         } else if tcx.def_kind(def_id).is_fn_like() {
             Ok(Self::Plain)
         } else {
             Err(tcx
-                .sess
+                .dcx()
                 .span_err(tcx.def_span(def_id), "Expected this item to be a function."))
         }
     }
@@ -372,11 +363,11 @@ pub enum AsFnAndArgsErr<'tcx> {
     InstanceTooUnspecific,
 }
 
-pub fn ty_of_const<'tcx>(c: &Constant<'tcx>) -> Ty<'tcx> {
-    match c.literal {
-        mir::ConstantKind::Val(_, ty) => ty,
-        mir::ConstantKind::Ty(cst) => cst.ty(),
-        mir::ConstantKind::Unevaluated { .. } => unreachable!(),
+pub fn ty_of_const<'tcx>(c: &ConstOperand<'tcx>) -> Ty<'tcx> {
+    match c.const_ {
+        mir::Const::Val(_, ty) => ty,
+        mir::Const::Ty(cst, _) => cst,
+        mir::Const::Unevaluated { .. } => unreachable!(),
     }
 }
 
@@ -397,16 +388,17 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
         };
         let ty = ty_of_const(func.constant().ok_or(AsFnAndArgsErr::NotAConstant)?);
         let Some((def_id, gargs)) = type_as_fn(tcx, ty) else {
-            return Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone()));
+            return Err(AsFnAndArgsErr::NotFunctionType(*ty.kind()));
         };
         test_generics_normalization(tcx, gargs)
             .map_err(|e| AsFnAndArgsErr::NormalizationError(format!("{e:?}")))?;
-        let instance = ty::Instance::resolve(tcx, ty::ParamEnv::reveal_all(), def_id, gargs)
-            .map_err(|_| AsFnAndArgsErr::InstanceResolutionErr)?
-            .ok_or(AsFnAndArgsErr::InstanceTooUnspecific)?;
+        let instance =
+            ty::Instance::try_resolve(tcx, TypingEnv::fully_monomorphized(), def_id, gargs)
+                .map_err(|_| AsFnAndArgsErr::InstanceResolutionErr)?
+                .ok_or(AsFnAndArgsErr::InstanceTooUnspecific)?;
         Ok((
             instance,
-            args.iter().map(|a| a.place()).collect(),
+            args.iter().map(|a| a.node.place()).collect(),
             *destination,
         ))
     }
@@ -424,7 +416,7 @@ fn test_generics_normalization<'tcx>(
     tcx: TyCtxt<'tcx>,
     args: &'tcx ty::List<ty::GenericArg<'tcx>>,
 ) -> Result<(), ty::normalize_erasing_regions::NormalizationError<'tcx>> {
-    tcx.try_normalize_erasing_regions(ty::ParamEnv::reveal_all(), args)
+    tcx.try_normalize_erasing_regions(TypingEnv::fully_monomorphized(), args)
         .map(|_| ())
 }
 
@@ -451,7 +443,7 @@ pub enum Overlap<'tcx> {
     Child(&'tcx [mir::PlaceElem<'tcx>]),
 }
 
-impl<'tcx> Overlap<'tcx> {
+impl Overlap<'_> {
     pub fn contains_other(self) -> bool {
         matches!(self, Overlap::Equal | Overlap::Parent(_))
     }
@@ -622,26 +614,9 @@ impl IntoDefId for Res {
     }
 }
 
-pub trait IntoHirId: std::marker::Sized {
-    fn into_hir_id(self, tcx: TyCtxt) -> Option<HirId>;
-
-    #[inline]
-    fn force_into_hir_id(self, tcx: TyCtxt) -> HirId {
-        self.into_hir_id(tcx).unwrap()
-    }
-}
-
-impl IntoHirId for LocalDefId {
-    #[inline]
-    fn into_hir_id(self, tcx: TyCtxt) -> Option<HirId> {
-        Some(tcx.hir().local_def_id_to_hir_id(self))
-    }
-}
-
 /// Get a reasonable, but not guaranteed unique name for this item
-pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> Identifier {
+pub fn identifier_for_item(tcx: TyCtxt, did: DefId) -> Identifier {
     // TODO Make a generic version instead of just copying `unique_identifier_for_item`
-    let did = did.into_def_id(tcx);
     let get_parent = || identifier_for_item(tcx, tcx.parent(did));
     Identifier::new_intern(
         &tcx.opt_item_name(did)
@@ -650,8 +625,14 @@ pub fn identifier_for_item<D: IntoDefId + Hash + Copy>(tcx: TyCtxt, did: D) -> I
                 use hir::def::DefKind::*;
                 match tcx.def_kind(did) {
                     OpaqueTy => Some("Opaque".to_string()),
-                    Closure => Some(format!("{}_closure", get_parent())),
-                    Generator => Some(format!("{}_generator", get_parent())),
+                    Closure => {
+                        let suffix = if tcx.is_coroutine(did) {
+                            "coroutine"
+                        } else {
+                            "closure"
+                        };
+                        Some(format!("{}_{}", get_parent(), suffix))
+                    }
                     _ => None,
                 }
             })
@@ -689,34 +670,6 @@ pub fn time<R, F: FnOnce() -> R>(msg: &str, f: F) -> R {
     let r = f();
     info!("{msg} took {}", humantime::format_duration(time.elapsed()));
     r
-}
-
-pub trait IntoBodyId: Copy {
-    fn into_body_id(self, tcx: TyCtxt) -> Option<BodyId>;
-}
-
-impl IntoBodyId for BodyId {
-    fn into_body_id(self, _tcx: TyCtxt) -> Option<BodyId> {
-        Some(self)
-    }
-}
-
-impl IntoBodyId for HirId {
-    fn into_body_id(self, tcx: TyCtxt) -> Option<BodyId> {
-        self.as_owner()?.def_id.into_body_id(tcx)
-    }
-}
-
-impl IntoBodyId for LocalDefId {
-    fn into_body_id(self, tcx: TyCtxt) -> Option<BodyId> {
-        tcx.hir().maybe_body_owned_by(self)
-    }
-}
-
-impl IntoBodyId for DefId {
-    fn into_body_id(self, tcx: TyCtxt) -> Option<BodyId> {
-        self.as_local()?.into_body_id(tcx)
-    }
 }
 
 pub trait Spanned<'tcx> {
