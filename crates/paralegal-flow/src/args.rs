@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use crate::utils::TinyBitSet;
 use crate::{num_derive, num_traits::FromPrimitive};
@@ -60,6 +61,7 @@ impl TryFrom<ClapArgs> for Args {
             cargo_args,
             trace,
             attach_to_debugger,
+            rustc_version_impersonation,
         } = value;
         let mut dump: DumpArgs = dump.into();
         if let Some(from_env) = env_var_expect_unicode("PARALEGAL_DUMP")? {
@@ -110,6 +112,10 @@ impl TryFrom<ClapArgs> for Args {
             abort_after_analysis,
             anactrl: anactrl.try_into()?,
             dump,
+            rustc_version_impersonation: rustc_version_impersonation
+                .or(build_config.1.rustc_impersonation.clone())
+                .unwrap_or_default()
+                .into_version_string(),
             build_config,
             marker_control,
             cargo_args,
@@ -149,6 +155,8 @@ pub struct Args {
     build_config: (Option<PathBuf>, BuildConfig),
     /// Additional options for cargo
     cargo_args: Vec<String>,
+    /// Rustc version to pretend to be
+    rustc_version_impersonation: String,
 }
 
 impl Default for Args {
@@ -166,6 +174,7 @@ impl Default for Args {
             build_config: Default::default(),
             cargo_args: Vec::new(),
             attach_to_debugger: None,
+            rustc_version_impersonation: RustcImpersonationSpec::default().into_version_string(),
         }
     }
 }
@@ -206,6 +215,8 @@ pub struct ClapArgs {
     /// Attach to a debugger before running the analyses
     #[clap(long)]
     attach_to_debugger: Option<Debugger>,
+    #[clap(long)]
+    rustc_version_impersonation: Option<RustcImpersonationSpec>,
     /// Additional arguments that control the flow analysis specifically
     #[clap(flatten, next_help_heading = "Flow Analysis")]
     anactrl: ClapAnalysisCtrl,
@@ -414,6 +425,10 @@ impl Args {
             log::set_max_level(log::LevelFilter::Warn);
         }
     }
+
+    pub fn impersonated_rustc(&self) -> &str {
+        &self.rustc_version_impersonation
+    }
 }
 
 fn config_hash_for_file(path: &Option<impl AsRef<Path>>, state: &mut impl Hasher) {
@@ -606,4 +621,59 @@ pub struct BuildConfig {
     pub include: Vec<String>,
     #[serde(default)]
     pub stubs: HashMap<String, Stub>,
+    pub rustc_impersonation: Option<RustcImpersonationSpec>,
+}
+
+/// This option lets us pretend to be a different rustc version. There are
+/// several reasons why we might want this.
+///
+/// 0. Many build scripts rely on parsing the rustc version. As a result if we
+///    report something like "paralegal 0.0.1", they don't know what to do with
+///    that and fail, that's why we need to pretend to be a regular rustc to
+///    begin with.
+/// 1. We may lag behind the latest stable compiler that a project needs. It may
+///    be possible to emulate it behavior with the "dep" features in the build
+///    config (Paralegal.toml) but the build scripts or other setup may still
+///    scoff at our reported rustc version. This lets you specify a different
+///    rustc version to shut them up.
+/// 2. Many dependencies and their build scripts are not stable when running on
+///    nightly. They sometimes enable very new features that we don't know yet,
+///    or don't know anymore. Often build scripts will only check *whether* a
+///    nightly is being run, but not which version. So this also allows us to
+///    pretend to be a stable compiler, so that no nightly features will be
+///    enabled by the dependency.
+#[derive(serde::Serialize, serde::Deserialize, Default, Debug, Clone)]
+pub enum RustcImpersonationSpec {
+    /// Report to be the closest supported stable rustc
+    #[default]
+    Stable,
+    /// Report to be the closest supported nightly. Currently reports the actual
+    /// nightly we link against
+    Nightly,
+    /// Report the actual compiler version we link against. Currently the same as "nightly".
+    Real,
+    /// Report to be a freely chosen compiler version. No compatibility
+    /// guarantees are made.
+    Precise(String),
+}
+
+impl FromStr for RustcImpersonationSpec {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "stable" => Ok(Self::Stable),
+            "nightly" => Ok(Self::Nightly),
+            s => Ok(Self::Precise(s.to_owned())),
+        }
+    }
+}
+
+impl RustcImpersonationSpec {
+    pub fn into_version_string(self) -> String {
+        match self {
+            Self::Stable => "rustc 1.83.0 (90b35a623 2024-11-26)".to_owned(),
+            Self::Nightly | Self::Real => env!("RUSTC_VERSION").to_owned(),
+            Self::Precise(s) => s,
+        }
+    }
 }

@@ -384,8 +384,8 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         "paralegal-flow".into()
     }
 
-    fn reported_driver_version(&self) -> std::borrow::Cow<'static, str> {
-        env!("RUSTC_VERSION").into()
+    fn reported_driver_version<'a>(&'a self, args: &'a Self::Args) -> std::borrow::Cow<'a, str> {
+        std::borrow::Cow::Borrowed(args.impersonated_rustc())
     }
 
     fn hash_config(&self, args: &Self::Args, hasher: &mut impl std::hash::Hasher) {

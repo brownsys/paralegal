@@ -1116,14 +1116,6 @@ checksum = "719b953e2095829ee67db738b3bfa9fa368c94900df327b3f07fe6e794d2fe1f"
 [[package]]
 name = "rustc_plugin"
 version = "0.12.0-nightly-2024-12-15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "351d0edb6bb7f15aa21d83c29604cdc3bdcec506e12233868b369ee6d3328da3"
-replace = "rustc_plugin 0.12.0-nightly-2024-12-15 (git+https://github.com/JustusAdam/rustc_plugin?rev=901641910d536f00f1a6b6b2766778ac0a5bad64)"
-
-[[package]]
-name = "rustc_plugin"
-version = "0.12.0-nightly-2024-12-15"
-source = "git+https://github.com/JustusAdam/rustc_plugin?rev=901641910d536f00f1a6b6b2766778ac0a5bad64#901641910d536f00f1a6b6b2766778ac0a5bad64"
 dependencies = [
  "cargo_metadata",
  "log",
@@ -1134,6 +1126,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustc_plugin"
+version = "0.12.0-nightly-2024-12-15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "351d0edb6bb7f15aa21d83c29604cdc3bdcec506e12233868b369ee6d3328da3"
+replace = "rustc_plugin 0.12.0-nightly-2024-12-15"
+
+[[package]]
 name = "rustc_tools_util"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1142,14 +1141,6 @@ checksum = "b3c5a95edfa0c893236ae4778bb7c4752760e4c0d245e19b5eff33c5aa5eb9dc"
 [[package]]
 name = "rustc_utils"
 version = "0.12.0-nightly-2024-12-15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a82a375e5df4530b4c5e94ab8251c754c92c3e593efaf8214e572ea422bf3a0"
-replace = "rustc_utils 0.12.0-nightly-2024-12-15 (git+https://github.com/JustusAdam/rustc_plugin?rev=901641910d536f00f1a6b6b2766778ac0a5bad64)"
-
-[[package]]
-name = "rustc_utils"
-version = "0.12.0-nightly-2024-12-15"
-source = "git+https://github.com/JustusAdam/rustc_plugin?rev=901641910d536f00f1a6b6b2766778ac0a5bad64#901641910d536f00f1a6b6b2766778ac0a5bad64"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -1159,6 +1150,13 @@ dependencies = [
  "rand",
  "textwrap",
 ]
+
+[[package]]
+name = "rustc_utils"
+version = "0.12.0-nightly-2024-12-15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a82a375e5df4530b4c5e94ab8251c754c92c3e593efaf8214e572ea422bf3a0"
+replace = "rustc_utils 0.12.0-nightly-2024-12-15"
 
 [[package]]
 name = "rustversion"
