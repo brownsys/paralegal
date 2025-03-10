@@ -11,6 +11,7 @@
 //! All interactions happen through the central database object: [`MarkerCtx`].
 
 use crate::{
+    ana::InlineJudge,
     ann::{Annotation, MarkerAnnotation},
     args::{Args, Stub},
     utils::{
@@ -30,8 +31,11 @@ use paralegal_spdg::Identifier;
 
 use rustc_errors::DiagnosticMessage;
 use rustc_hash::{FxHashMap, FxHashSet};
-use rustc_hir::def_id::DefId;
-use rustc_hir::{def::DefKind, def_id::CrateNum};
+use rustc_hir::{
+    def::DefKind,
+    def_id::{CrateNum, DefId},
+};
+use rustc_middle::mir::Body;
 use rustc_middle::{
     mir,
     ty::{self, GenericArgsRef, Instance, TyCtxt},
@@ -41,7 +45,7 @@ use rustc_serialize::Decodable;
 use rustc_span::Span;
 use rustc_utils::cache::Cache;
 
-use std::{borrow::Cow, fs::File, io::Read, rc::Rc};
+use std::{borrow::Cow, collections::hash_map::Entry, fs::File, io::Read, rc::Rc};
 
 use super::{MarkerMeta, MarkerRefinement, MARKER_META_EXT};
 
@@ -526,6 +530,192 @@ impl<'tcx> MarkerCtx<'tcx> {
             )
             .find_map(|def_id| self.0.stubs.get(&def_id))
             .copied()
+    }
+}
+
+/// A convenient means to deal with exploring a call tree that requires monomophization.
+///
+/// Guarantees to visit every unique call site only once.
+pub trait CallTreeVisitor<'tcx> {
+    fn visit_instance(&mut self, instance: Instance<'tcx>) {
+        super_visit_instance(self, instance);
+    }
+    fn visit_call(&mut self, _body: &Body<'tcx>, function: Instance<'tcx>, _span: Span) {
+        super_visit_call(self, function);
+    }
+    fn get_visit_set(&mut self) -> &mut HashSet<Instance<'tcx>>;
+    fn get_body_cache(&self) -> &BodyCache<'tcx>;
+    fn tcx(&self) -> TyCtxt<'tcx>;
+}
+
+fn super_visit_instance<'tcx>(
+    vis: &mut (impl CallTreeVisitor<'tcx> + ?Sized),
+    instance: Instance<'tcx>,
+) {
+    let param_env = ty::ParamEnv::reveal_all();
+    let tcx = vis.tcx();
+    if is_virtual(tcx, instance.def_id()) {
+        log::warn!("Could not visit virtual function {instance:?}");
+        return;
+    }
+    let Some(body) = vis.get_body_cache().try_get(instance.def_id()) else {
+        return;
+    };
+    let mono_body = try_monomorphize(
+        instance,
+        tcx,
+        tcx.param_env_reveal_all_normalized(instance.def_id()),
+        body.body(),
+        tcx.def_span(instance.def_id()),
+    )
+    .unwrap();
+    for bbdat in mono_body.basic_blocks.iter() {
+        let terminator = bbdat.terminator();
+        let Some((def_id, gargs)) = func_of_term(vis.tcx(), terminator) else {
+            continue;
+        };
+        let instance = Instance::resolve(tcx, param_env, def_id, gargs)
+            .unwrap()
+            .unwrap();
+        vis.visit_call(&mono_body, instance, terminator.source_info.span)
+    }
+}
+
+fn super_visit_call<'tcx>(
+    vis: &mut (impl CallTreeVisitor<'tcx> + ?Sized),
+    function: Instance<'tcx>,
+) {
+    let set = vis.get_visit_set();
+    if set.insert(function) {
+        vis.visit_instance(function)
+    }
+}
+
+#[derive(Clone, Copy, strum::AsRefStr)]
+pub enum CallSiteState {
+    Inlined,
+    Elided,
+    Library,
+}
+
+impl CallSiteState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CallSiteState::Elided => "elided",
+            CallSiteState::Inlined => "inlined",
+            CallSiteState::Library => "library",
+        }
+    }
+}
+
+pub struct CallSiteCounter<'tcx, 'a> {
+    tcx: TyCtxt<'tcx>,
+    visit_cache: HashSet<Instance<'tcx>>,
+    body_cache: &'a BodyCache<'tcx>,
+    judge: &'a InlineJudge<'tcx>,
+    counter: HashMap<Instance<'tcx>, (CallSiteState, u32)>,
+}
+
+impl<'tcx, 'a> CallSiteCounter<'tcx, 'a> {
+    pub fn new(
+        tcx: TyCtxt<'tcx>,
+        body_cache: &'a BodyCache<'tcx>,
+        judge: &'a InlineJudge<'tcx>,
+    ) -> Self {
+        Self {
+            tcx,
+            judge,
+            body_cache,
+            counter: Default::default(),
+            visit_cache: Default::default(),
+        }
+    }
+
+    pub fn counter(&self) -> &HashMap<Instance<'tcx>, (CallSiteState, u32)> {
+        &self.counter
+    }
+
+    pub fn start(&mut self, instance: Instance<'tcx>) {
+        let tcx = self.tcx();
+        let Some(body) = self.get_body_cache().try_get(instance.def_id()) else {
+            return;
+        };
+        let mono_body = try_monomorphize(
+            instance,
+            tcx,
+            tcx.param_env_reveal_all_normalized(instance.def_id()),
+            body.body(),
+            tcx.def_span(instance.def_id()),
+        )
+        .unwrap();
+        let start_instance =
+            if let Some((async_fn, _, _)) = determine_async(tcx, instance.def_id(), &mono_body) {
+                async_fn
+            } else {
+                instance
+            };
+        self.visit_instance(start_instance);
+    }
+}
+
+impl<'tcx, 'a> CallTreeVisitor<'tcx> for CallSiteCounter<'tcx, 'a> {
+    fn get_body_cache(&self) -> &BodyCache<'tcx> {
+        &self.body_cache
+    }
+
+    fn get_visit_set(&mut self) -> &mut HashSet<Instance<'tcx>> {
+        &mut self.visit_cache
+    }
+
+    fn tcx(&self) -> TyCtxt<'tcx> {
+        self.tcx
+    }
+
+    fn visit_call(&mut self, body: &Body<'tcx>, mut function: Instance<'tcx>, span: Span) {
+        let param_env = ty::ParamEnv::reveal_all();
+        let tcx = self.tcx();
+        function = handle_shims(function, tcx, param_env).map_or(function, |i| i.0);
+        if let Some(model) = self.judge.marker_ctx().has_stub(function.def_id()) {
+            if let Ok(new_instance) =
+                model.resolve_alternate_instance(tcx, function, param_env, span)
+            {
+                self.visit_call(body, new_instance, span);
+                return;
+            } else {
+                tcx.sess.span_err(
+                    span,
+                    "Could not resolve stub for this call with given generics",
+                );
+            }
+        }
+
+        super_visit_call(self, function);
+        if let Some(ctr) = self.counter.get_mut(&function) {
+            ctr.1 += 1;
+        }
+    }
+
+    fn visit_instance(&mut self, instance: Instance<'tcx>) {
+        let mctx = self.judge.marker_ctx();
+        if mctx.is_marked(instance.def_id()) {
+            return;
+        }
+        let state = if !self
+            .judge
+            .included_crates()
+            .contains(&instance.def_id().krate)
+        {
+            CallSiteState::Library
+        } else if !mctx.has_transitive_reachable_markers(instance) {
+            CallSiteState::Elided
+        } else {
+            CallSiteState::Inlined
+        };
+        match self.counter.entry(instance) {
+            Entry::Occupied(_) => panic!("Entry for {instance:?} already set???"),
+            Entry::Vacant(v) => v.insert((state, 0)),
+        };
+        super_visit_instance(self, instance);
     }
 }
 

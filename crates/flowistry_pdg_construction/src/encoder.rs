@@ -142,7 +142,7 @@ pub struct ParalegalDecoder<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
     mem_decoder: MemDecoder<'a>,
     shorthand_map: FxHashMap<usize, Ty<'tcx>>,
-    file_shorthands: FxHashMap<usize, Rc<SourceFile>>,
+    file_shorthands: FxHashMap<usize, Option<Rc<SourceFile>>>,
 }
 
 impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
@@ -316,7 +316,7 @@ impl<'tcx> ParalegalEncoder<'tcx> {
 }
 
 impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
-    fn decode_file_name(&mut self, crate_num: CrateNum) -> Rc<SourceFile> {
+    fn decode_file_name(&mut self, crate_num: CrateNum) -> Option<Rc<SourceFile>> {
         let tag = u8::decode(self);
         let pos = if tag == TAG_ENCODE_REMOTE {
             let index = usize::decode(self);
@@ -342,7 +342,7 @@ impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
         file
     }
 
-    fn decode_filename_local(&mut self, crate_num: CrateNum) -> Rc<SourceFile> {
+    fn decode_filename_local(&mut self, crate_num: CrateNum) -> Option<Rc<SourceFile>> {
         let file_name = FileName::decode(self);
         let source_map = self.tcx.sess.source_map();
         let matching_source_files = source_map
@@ -358,12 +358,15 @@ impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
             .cloned()
             .collect::<Box<[_]>>();
         match matching_source_files.as_ref() {
-            [sf] => sf.clone(),
+            [sf] => Some(sf.clone()),
             [] => match &file_name {
                 FileName::Real(RealFileName::LocalPath(local)) if source_map.file_exists(local) => {
-                    source_map.load_file(local).unwrap()
+                    Some(source_map.load_file(local).unwrap())
                 }
-                _ => panic!("Could not load file {}", file_name.prefer_local()),
+                _ => {
+                    log::error!("Could not load file {}", file_name.prefer_local());
+                    return None;
+                }
             },
             other => {
                 let names = other.iter().map(|f| &f.name).collect::<Vec<_>>();
@@ -409,9 +412,17 @@ impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for SpanData {
         }
         debug_assert_eq!(tag, TAG_VALID_SPAN_FULL);
         let crate_num = CrateNum::decode(d);
-        let source_file = d.decode_file_name(crate_num);
+        let m_source_file = d.decode_file_name(crate_num);
         let lo = BytePos::decode(d);
         let len = BytePos::decode(d);
+        let Some(source_file) = m_source_file else {
+            return SpanData {
+                lo: BytePos(0),
+                hi: BytePos(0),
+                ctxt,
+                parent: None,
+            };
+        };
         let hi = lo + len;
         let lo = source_file.start_pos + lo;
         let hi = source_file.start_pos + hi;

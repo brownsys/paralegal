@@ -5,7 +5,10 @@
 //! [`analyze`](SPDGGenerator::analyze).
 
 use crate::{
-    ann::{Annotation, MarkerAnnotation},
+    ann::{
+        db::{CallSiteCounter, CallSiteState},
+        Annotation, MarkerAnnotation,
+    },
     args::Stub,
     desc::*,
     discover::FnToAnalyze,
@@ -22,7 +25,7 @@ use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
     body_cache::{local_or_remote_paths, BodyCache},
     calling_convention::CallingConvention,
-    utils::is_async,
+    utils::{is_async, manufacture_substs_for, try_resolve_function},
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
 use inline_judge::InlineJudgement;
@@ -181,7 +184,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
         type_info_sanity_check(&controllers, &type_info);
 
-        let (stats, analyzed_spans) = self.collect_stats_and_analyzed_spans();
+        let (stats, analyzed_spans) = self.collect_stats_and_analyzed_spans(&controllers);
 
         (
             ProgramDescription {
@@ -195,7 +198,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
         )
     }
 
-    fn collect_stats_and_analyzed_spans(&self) -> (AnalyzerStats, AnalyzedSpans) {
+    fn collect_stats_and_analyzed_spans(
+        &self,
+        controllers: &ControllerMap,
+    ) -> (AnalyzerStats, AnalyzedSpans) {
         let tcx = self.tcx;
 
         // In this we don't have to filter out async functions. They are already
@@ -264,6 +270,29 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .collect::<AnalyzedSpans>();
 
         let prior_stats = self.get_prior_stats();
+
+        let f = std::io::BufWriter::new(std::fs::File::create("inlining-stats.json").unwrap());
+        serde_json::to_writer(
+            f,
+            &collect_inlining_stats(
+                self.tcx,
+                controllers.keys().map(|&function| {
+                    let generics = manufacture_substs_for(self.tcx, function)
+                        .map_err(|i| vec![i])
+                        .unwrap();
+                    try_resolve_function(
+                        self.tcx,
+                        function,
+                        self.tcx.param_env_reveal_all_normalized(function),
+                        generics,
+                    )
+                    .unwrap()
+                }),
+                self.judge.as_ref(),
+                self.pdg_constructor.body_cache(),
+            ),
+        )
+        .unwrap();
 
         // A few notes on these stats. We calculate most of them here, because
         // this is where we easily have access to the information. For example
@@ -516,6 +545,64 @@ fn def_info_for_item(id: DefId, markers: &MarkerCtx, tcx: TyCtxt) -> DefInfo {
             })
             .collect(),
     }
+}
+
+#[derive(serde::Serialize, Clone, Copy, Default)]
+struct CallStat {
+    instances: u32,
+    calls: u32,
+}
+
+impl std::ops::AddAssign for CallStat {
+    fn add_assign(&mut self, other: Self) {
+        self.instances += other.instances;
+        self.calls += other.calls;
+    }
+}
+
+#[derive(serde::Serialize, Clone)]
+struct CallStats {
+    inlined: CallStat,
+    elided: CallStat,
+    library: CallStat,
+}
+
+impl Default for CallStats {
+    fn default() -> Self {
+        Self {
+            inlined: Default::default(),
+            elided: Default::default(),
+            library: Default::default(),
+        }
+    }
+}
+
+fn collect_inlining_stats<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    entrypoints: impl Iterator<Item = Instance<'tcx>>,
+    judge: &InlineJudge<'tcx>,
+    body_cache: &BodyCache<'tcx>,
+) -> HashMap<String, CallStats> {
+    let mut vis = CallSiteCounter::new(tcx, body_cache, judge);
+    for e in entrypoints {
+        vis.start(e);
+    }
+    vis.counter()
+        .iter()
+        .map(|(inst, (state, count))| (tcx.def_path_str(inst.def_id()), (state, count)))
+        .into_grouping_map()
+        .fold(CallStats::default(), |mut stat, _, (state, count)| {
+            let target = match state {
+                CallSiteState::Elided => &mut stat.elided,
+                CallSiteState::Inlined => &mut stat.inlined,
+                CallSiteState::Library => &mut stat.library,
+            };
+            *target += CallStat {
+                instances: 1,
+                calls: *count,
+            };
+            stat
+        })
 }
 
 /// A higher order function that increases the logging level if the `target`

@@ -9,6 +9,7 @@ use flowistry::mir::FlowistryInput;
 
 use polonius_engine::FactTypes;
 use rustc_borrowck::consumers::{ConsumerOptions, RustcFacts};
+use rustc_data_structures::{steal::Steal, sync::RwLock};
 use rustc_hash::FxHashMap;
 use rustc_hir::{
     def_id::{CrateNum, DefId, DefIndex, LocalDefId, LOCAL_CRATE},
@@ -21,6 +22,7 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 
+use rustc_span::Symbol;
 use rustc_utils::cache::Cache;
 
 use crate::encoder::{decode_from_file, encode_to_file};
@@ -33,12 +35,35 @@ pub struct CachedBody<'tcx> {
     input_facts: FlowistryFacts,
 }
 
+/// Mega yikes. Makes up for the fact that our current rustc version does not
+/// expose Steal::is_stolen
+fn is_stolen<'a, T>(val: &'a Steal<T>) -> bool {
+    struct StealProxy<T> {
+        value: RwLock<Option<T>>,
+    }
+
+    assert_eq!(
+        std::mem::size_of::<Steal<T>>(),
+        std::mem::size_of::<StealProxy<T>>()
+    );
+
+    let as_proxy = unsafe { std::mem::transmute::<&'a Steal<T>, &'a StealProxy<T>>(val) };
+
+    as_proxy.value.borrow().is_none()
+}
+
 impl<'tcx> CachedBody<'tcx> {
     /// Retrieve a body and the necessary facts for a local item.
     ///
     /// Ensure this is called early enough in the compiler
     /// (like `after_expansion`) so that the body has not been stolen yet.
     fn retrieve(tcx: TyCtxt<'tcx>, local_def_id: LocalDefId) -> Self {
+        Self::try_retrieve(tcx, local_def_id).expect("Reading stolen body")
+    }
+    fn try_retrieve(tcx: TyCtxt<'tcx>, local_def_id: LocalDefId) -> Option<Self> {
+        if is_stolen(&tcx.mir_promoted(local_def_id).0) {
+            return None;
+        }
         let mut body_with_facts = rustc_borrowck::consumers::get_body_with_borrowck_facts(
             tcx,
             local_def_id,
@@ -47,7 +72,7 @@ impl<'tcx> CachedBody<'tcx> {
 
         clean_undecodable_data_from_body(&mut body_with_facts.body);
 
-        Self {
+        Some(Self {
             body: body_with_facts.body,
             input_facts: FlowistryFacts {
                 subset_base: body_with_facts
@@ -56,7 +81,7 @@ impl<'tcx> CachedBody<'tcx> {
                     .map(|constraint| (constraint.sup, constraint.sub))
                     .collect(),
             },
-        }
+        })
     }
 }
 
@@ -103,16 +128,31 @@ pub struct BodyCache<'tcx> {
     compress_artifacts: bool,
     local_cache: Cache<DefIndex, CachedBody<'tcx>>,
     timer: RefCell<Duration>,
+    std_crates: Vec<CrateNum>,
 }
 
 impl<'tcx> BodyCache<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>, compress_artifacts: bool) -> Self {
+        let std_names = [
+            Symbol::intern("std"),
+            Symbol::intern("alloc"),
+            Symbol::intern("core"),
+            Symbol::intern("libc"),
+            Symbol::intern("std_detect"),
+        ];
+        let std_crates = tcx
+            .crates(())
+            .iter()
+            .filter(|c| std_names.contains(&tcx.crate_name(**c)))
+            .copied()
+            .collect();
         Self {
             tcx,
             cache: Default::default(),
             compress_artifacts,
             local_cache: Default::default(),
             timer: RefCell::new(Duration::ZERO),
+            std_crates,
         }
     }
 
@@ -121,9 +161,11 @@ impl<'tcx> BodyCache<'tcx> {
     }
 
     /// Serve the body from the cache or read it from the disk.
-    ///
-    /// Returns `None` if the policy forbids loading from this crate.
     pub fn get(&self, key: DefId) -> &'tcx CachedBody<'tcx> {
+        self.try_get(key).unwrap()
+    }
+
+    pub fn try_get(&self, key: DefId) -> Option<&'tcx CachedBody<'tcx>> {
         let body = if let Some(local) = key.as_local() {
             self.local_cache.get(local.local_def_index, |_| {
                 let start = Instant::now();
@@ -131,13 +173,20 @@ impl<'tcx> BodyCache<'tcx> {
                 *self.timer.borrow_mut() += start.elapsed();
                 res
             })
+        } else if self.std_crates.contains(&key.krate) {
+            return None;
         } else {
-            self.cache
+            let res = self
+                .cache
                 .get(key.krate, |_| {
                     load_body_and_facts(self.tcx, key.krate, self.compress_artifacts)
                 })
-                .get(&key.index)
-                .expect("Invariant broken, body for this is should exist")
+                .get(&key.index);
+            if res.is_none() {
+                log::warn!("Could not load body for {key:?}");
+                return None;
+            }
+            res?
         };
 
         // SAFETY: Theoretically this struct may not outlive the body, but
@@ -146,7 +195,7 @@ impl<'tcx> BodyCache<'tcx> {
         // (because it needs global variables like MIR_BODIES).
         //
         // So until we fix flowistry's lifetimes this is good enough.
-        unsafe { std::mem::transmute(body) }
+        Some(unsafe { std::mem::transmute(body) })
     }
 }
 
@@ -221,10 +270,14 @@ pub fn dump_mir_and_borrowck_facts<'tcx>(
     let bodies: BodyMap<'tcx> = vis
         .targets
         .iter()
-        .map(|local_def_id| {
-            let to_write = CachedBody::retrieve(tcx, *local_def_id);
+        .filter_map(|local_def_id| {
+            let to_write = CachedBody::try_retrieve(tcx, *local_def_id);
 
-            (local_def_id.local_def_index, to_write)
+            if to_write.is_none() {
+                log::error!("Body for {local_def_id:?} was stolen");
+            }
+
+            Some((local_def_id.local_def_index, to_write?))
         })
         .collect();
     let tc_time = tc_start.elapsed();
@@ -292,7 +345,10 @@ fn load_body_and_facts<'tcx>(
         return data;
     }
 
-    panic!("No facts for {krate:?} found at any path tried: {paths:?}");
+    panic!(
+        "No facts for {:?} found at any path tried: {paths:?}",
+        tcx.crate_name(krate)
+    );
 }
 
 /// Create the name of the file in which to store intermediate artifacts.

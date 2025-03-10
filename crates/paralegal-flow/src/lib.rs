@@ -343,7 +343,8 @@ fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>)
         Some(krate) if plugin_args.anactrl().included().contains(krate) => {
             CrateHandling::CompileAndDump
         }
-        _ => CrateHandling::JustCompile,
+        None => CrateHandling::JustCompile,
+        _ => CrateHandling::CompileAndDump,
     }
 }
 
