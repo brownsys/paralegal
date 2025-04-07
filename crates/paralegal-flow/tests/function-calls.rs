@@ -3,6 +3,7 @@
 extern crate lazy_static;
 
 use paralegal_flow::test_utils::*;
+use paralegal_spdg::Identifier;
 
 #[test]
 fn argument_return_connection() {
@@ -11,7 +12,7 @@ fn argument_return_connection() {
             a: i32,
         }
 
-        #[paralegal_flow::marker(noinline)]
+        #[paralegal_flow::marker(target, return)]
         fn function(t: T) -> T {
             t
         }
@@ -21,6 +22,11 @@ fn argument_return_connection() {
             let t2 = function(t);
         }
     ));
-    test.with_extra_args(["--dump".to_string(), "spdg".to_string()]);
-    test.check_ctrl(|ctrl| {});
+    //test.with_extra_args(["--dump".to_string(), "spdg".to_string()]);
+    test.check_ctrl(|ctrl| {
+        let target = ctrl.marked(Identifier::new_intern("target"));
+        let direct = target.predecessors_data();
+        let indirect = direct.predecessors_data();
+        assert!(&direct.overlaps(&indirect));
+    });
 }
