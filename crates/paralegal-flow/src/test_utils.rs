@@ -648,6 +648,56 @@ impl<'g> NodeRefs<'g> {
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
+    fn connections_impl(
+        &self,
+        direction: petgraph::Direction,
+        edge_selection: EdgeSelection,
+    ) -> NodeRefs<'g> {
+        let graph = &self.graph.spdg().graph;
+        let mut predecessors = self
+            .nodes()
+            .iter()
+            .copied()
+            .flat_map(|n| {
+                graph
+                    .edges(n)
+                    .filter(|e| match edge_selection {
+                        EdgeSelection::Data => e.weight().is_data(),
+                        EdgeSelection::Control => e.weight().is_control(),
+                        EdgeSelection::Both => true,
+                    })
+                    .map(|e| match direction {
+                        petgraph::Direction::Incoming => e.source(),
+                        petgraph::Direction::Outgoing => e.target(),
+                    })
+            })
+            .collect::<Vec<_>>();
+        predecessors.sort();
+        predecessors.dedup();
+        NodeRefs {
+            nodes: predecessors,
+            graph: self.graph,
+        }
+    }
+
+    pub fn predecessors_data(&self) -> NodeRefs<'g> {
+        self.connections_impl(petgraph::Direction::Incoming, EdgeSelection::Data)
+    }
+    pub fn predecessors_ctrl(&self) -> NodeRefs<'g> {
+        self.connections_impl(petgraph::Direction::Incoming, EdgeSelection::Control)
+    }
+    pub fn predecessors_any(&self) -> NodeRefs<'g> {
+        self.connections_impl(petgraph::Direction::Incoming, EdgeSelection::Both)
+    }
+    pub fn successors_data(&self) -> NodeRefs<'g> {
+        self.connections_impl(petgraph::Direction::Outgoing, EdgeSelection::Data)
+    }
+    pub fn successors_ctrl(&self) -> NodeRefs<'g> {
+        self.connections_impl(petgraph::Direction::Outgoing, EdgeSelection::Control)
+    }
+    pub fn successors_any(&self) -> NodeRefs<'g> {
+        self.connections_impl(petgraph::Direction::Outgoing, EdgeSelection::Both)
+    }
 }
 
 pub struct NodeRef<'g> {
