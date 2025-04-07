@@ -265,6 +265,10 @@ impl InlineTestBuilder {
                 let tcx = result.tcx;
                 let memo = discover::CollectingVisitor::new(tcx, args, Stats::default());
                 let (pdg, _) = memo.run().unwrap();
+                if args.dbg().dump_spdg() {
+                    let out = std::fs::File::create("call-only-flow.gv").unwrap();
+                    paralegal_spdg::dot::dump(&pdg, out).unwrap();
+                }
                 let graph = PreFrg::from_description(pdg);
                 f(graph)
             })
