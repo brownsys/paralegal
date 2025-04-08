@@ -257,6 +257,8 @@ impl InlineTestBuilder {
 
         args.setup_logging();
 
+        let name = self.ctrl_name.clone();
+
         rustc_utils::test_utils::CompileBuilder::new(&self.input)
             .with_args(EXTRA_RUSTC_ARGS.iter().copied().map(ToOwned::to_owned))
             .compile(move |result| {
@@ -266,7 +268,7 @@ impl InlineTestBuilder {
                 let memo = discover::CollectingVisitor::new(tcx, args, Stats::default());
                 let (pdg, _) = memo.run().unwrap();
                 if args.dbg().dump_spdg() {
-                    let out = std::fs::File::create("call-only-flow.gv").unwrap();
+                    let out = std::fs::File::create(format!("{name}.cof.gv")).unwrap();
                     paralegal_spdg::dot::dump(&pdg, out).unwrap();
                 }
                 let graph = PreFrg::from_description(pdg);
@@ -660,7 +662,7 @@ impl<'g> NodeRefs<'g> {
             .copied()
             .flat_map(|n| {
                 graph
-                    .edges(n)
+                    .edges_directed(n, direction)
                     .filter(|e| match edge_selection {
                         EdgeSelection::Data => e.weight().is_data(),
                         EdgeSelection::Control => e.weight().is_control(),
