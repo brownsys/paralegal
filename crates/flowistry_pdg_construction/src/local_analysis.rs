@@ -240,6 +240,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         &self,
         state: &InstructionState<'tcx>,
         input: Place<'tcx>,
+        consider_reachable: bool,
     ) -> Vec<DepNode<'tcx>> {
         trace!("Finding inputs for place {input:?}");
         // Include all sources of indirection (each reference in the chain) as relevant places.
@@ -283,14 +284,24 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                                     place = new_place;
                                 }
                             }
-                            trace!("Checking conflict status of {place:?} and {alias:?}");
-                            places_conflict(
+                            let result = places_conflict(
                                 self.tcx(),
                                 &self.mono_body,
                                 place,
                                 alias,
                                 PlaceConflictBias::Overlap,
-                            )
+                            );
+                            let from_reachability = consider_reachable || place == input;
+                            trace!(
+                                "Checking conflict status of {place:?} and {alias:?}: {} {}",
+                                if result { "yes" } else { "no" },
+                                if !consider_reachable {
+                                    "but ignoring because reachability disabled"
+                                } else {
+                                    ""
+                                }
+                            );
+                            result && from_reachability
                         }
                     });
 
