@@ -221,6 +221,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, &'mir LocalAnalysis<'tcx, 'mir>>
                     Either::Left(place),
                     location,
                     TargetUse::Assign,
+                    true,
                 );
             }
             return;
@@ -241,6 +242,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, &'mir LocalAnalysis<'tcx, 'mir>>
                     Either::Left(mutation.mutated),
                     location,
                     mutation.mutation_reason,
+                    true,
                 )
             });
         arg_vis.set_time(Time::Before);
@@ -282,6 +284,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, &'mir LocalAnalysis<'tcx, 'mir>>
                     Either::Left(mutation.mutated),
                     location,
                     mutation.mutation_reason,
+                    false,
                 )
             });
         arg_vis.set_time(Time::After);
@@ -306,6 +309,7 @@ impl<'tcx> PartialGraph<'tcx> {
                 Either::Left(mutation.mutated),
                 location,
                 mutation.mutation_reason,
+                true,
             )
         })
     }
@@ -403,6 +407,7 @@ impl<'tcx> PartialGraph<'tcx> {
                     Either::Right(child_src),
                     location,
                     TargetUse::Assign,
+                    true,
                 );
             }
         }
@@ -425,6 +430,7 @@ impl<'tcx> PartialGraph<'tcx> {
                     Either::Left(parent_place),
                     location,
                     kind.map_or(TargetUse::Return, TargetUse::MutArg),
+                    true,
                 );
             }
         }
@@ -446,6 +452,10 @@ impl<'tcx> PartialGraph<'tcx> {
 }
 
 impl<'tcx> PartialGraph<'tcx> {
+    /// The consider_readable flag is so that the "after primary effect" phase
+    /// doesn't consider overlapping places of the call arguments. Those are
+    /// guaranteed to have been handled before when the reachable inputs are
+    /// combined on the argument place.
     fn register_mutation(
         &mut self,
         results: &LocalAnalysisResults<'tcx, '_>,
@@ -454,6 +464,7 @@ impl<'tcx> PartialGraph<'tcx> {
         mutated: Either<Place<'tcx>, DepNode<'tcx>>,
         location: Location,
         target_use: TargetUse,
+        consider_reachable: bool,
     ) {
         trace!("Registering mutation to {mutated:?} with inputs {inputs:?} at {location:?}");
         let constructor = &results.analysis;
@@ -466,7 +477,7 @@ impl<'tcx> PartialGraph<'tcx> {
                 .into_iter()
                 .flat_map(|(input, input_use)| {
                     constructor
-                        .find_data_inputs(state, input)
+                        .find_data_inputs(state, input, consider_reachable)
                         .into_iter()
                         .map(move |input| {
                             (

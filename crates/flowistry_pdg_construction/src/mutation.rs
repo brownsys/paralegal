@@ -74,7 +74,7 @@ where
 /// [Self::Unspecified] mean do both.
 ///
 /// This has no effect on any statements or terminators besides function calls.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Time {
     Unspecified,
     Before,
@@ -307,6 +307,11 @@ where
         location: Location,
         destination: Place<'tcx>,
     ) {
+        debug!(
+            "Combining args for location {location:?} at time {:?}. Arg places are {:?}",
+            self.time, arg_places
+        );
+
         let arg_place_inputs = arg_places
             .iter()
             .copied()

@@ -257,6 +257,8 @@ impl InlineTestBuilder {
 
         args.setup_logging();
 
+        let name = self.ctrl_name.clone();
+
         rustc_utils::test_utils::CompileBuilder::new(&self.input)
             .with_args(EXTRA_RUSTC_ARGS.iter().copied().map(ToOwned::to_owned))
             .compile(move |result| {
@@ -265,6 +267,10 @@ impl InlineTestBuilder {
                 let tcx = result.tcx;
                 let memo = discover::CollectingVisitor::new(tcx, args, Stats::default());
                 let (pdg, _) = memo.run().unwrap();
+                if args.dbg().dump_spdg() {
+                    let out = std::fs::File::create(format!("{name}.cof.gv")).unwrap();
+                    paralegal_spdg::dot::dump(&pdg, out).unwrap();
+                }
                 let graph = PreFrg::from_description(pdg);
                 f(graph)
             })
@@ -643,6 +649,56 @@ impl<'g> NodeRefs<'g> {
 
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
+    }
+    fn connections_impl(
+        &self,
+        direction: petgraph::Direction,
+        edge_selection: EdgeSelection,
+    ) -> NodeRefs<'g> {
+        let graph = &self.graph.spdg().graph;
+        let mut predecessors = self
+            .nodes()
+            .iter()
+            .copied()
+            .flat_map(|n| {
+                graph
+                    .edges_directed(n, direction)
+                    .filter(|e| match edge_selection {
+                        EdgeSelection::Data => e.weight().is_data(),
+                        EdgeSelection::Control => e.weight().is_control(),
+                        EdgeSelection::Both => true,
+                    })
+                    .map(|e| match direction {
+                        petgraph::Direction::Incoming => e.source(),
+                        petgraph::Direction::Outgoing => e.target(),
+                    })
+            })
+            .collect::<Vec<_>>();
+        predecessors.sort();
+        predecessors.dedup();
+        NodeRefs {
+            nodes: predecessors,
+            graph: self.graph,
+        }
+    }
+
+    pub fn predecessors_data(&self) -> NodeRefs<'g> {
+        self.connections_impl(petgraph::Direction::Incoming, EdgeSelection::Data)
+    }
+    pub fn predecessors_ctrl(&self) -> NodeRefs<'g> {
+        self.connections_impl(petgraph::Direction::Incoming, EdgeSelection::Control)
+    }
+    pub fn predecessors_any(&self) -> NodeRefs<'g> {
+        self.connections_impl(petgraph::Direction::Incoming, EdgeSelection::Both)
+    }
+    pub fn successors_data(&self) -> NodeRefs<'g> {
+        self.connections_impl(petgraph::Direction::Outgoing, EdgeSelection::Data)
+    }
+    pub fn successors_ctrl(&self) -> NodeRefs<'g> {
+        self.connections_impl(petgraph::Direction::Outgoing, EdgeSelection::Control)
+    }
+    pub fn successors_any(&self) -> NodeRefs<'g> {
+        self.connections_impl(petgraph::Direction::Outgoing, EdgeSelection::Both)
     }
 }
 
