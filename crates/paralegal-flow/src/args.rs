@@ -16,7 +16,7 @@ use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Symbol;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -671,12 +671,12 @@ pub struct BuildConfig {
     pub include: Vec<String>,
     /// Whether to recurse into non-workspace crates by default. Only useful
     /// when `include` is not specified.
-    #[serde(default = "const_false")]
+    #[serde(default = "const_true")]
     pub default_include: bool,
     #[serde(default)]
     pub stubs: HashMap<String, Stub>,
 }
 
-fn const_false() -> bool {
-    false
+fn const_true() -> bool {
+    true
 }

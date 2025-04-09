@@ -2,13 +2,12 @@ use std::{fmt::Display, rc::Rc};
 
 use flowistry_pdg_construction::{body_cache::BodyCache, CallInfo};
 use paralegal_spdg::{utils::write_sep, Identifier};
-use rustc_hash::FxHashSet;
-use rustc_hir::def_id::{CrateNum, DefId, LOCAL_CRATE};
+use rustc_hir::def_id::{CrateNum, DefId};
 use rustc_middle::ty::{
     AssocKind, BoundVariableKind, Clause, ClauseKind, ImplPolarity, Instance, ParamEnv,
     ProjectionPredicate, TraitPredicate,
 };
-use rustc_span::{Span, Symbol};
+use rustc_span::Span;
 use rustc_type_ir::TyKind;
 
 use crate::{
