@@ -11,7 +11,12 @@
 
 use anyhow::Error;
 use clap::ValueEnum;
-use std::collections::HashMap;
+use either::Either;
+use rustc_data_structures::fx::FxHashSet;
+use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
+use rustc_middle::ty::TyCtxt;
+use rustc_span::Symbol;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -84,6 +89,7 @@ impl TryFrom<ClapArgs> for Args {
         anactrl
             .include
             .extend(build_config.1.include.iter().cloned());
+        anactrl.include_all |= build_config.1.default_include;
         let log_level_config = match debug_target {
             Some(target) if !target.is_empty() => LogLevelConfig::Targeted(target),
             _ => LogLevelConfig::Disabled,
@@ -470,6 +476,9 @@ struct ClapAnalysisCtrl {
     /// Crates that should be recursed into.
     #[clap(long)]
     include: Vec<String>,
+    /// Include all non-workspace crates in analysis
+    #[clap(long, default_value_t = false, conflicts_with = "include")]
+    include_all: bool,
     #[clap(long)]
     compress_artifacts: bool,
     #[clap(long)]
@@ -487,6 +496,7 @@ pub struct AnalysisCtrl {
     /// Flowistry's recursive analysis).
     inlining_depth: InliningDepth,
     include: Vec<String>,
+    include_all: bool,
     compress_artifacts: bool,
     no_pdg_cache: bool,
 }
@@ -499,6 +509,7 @@ impl Default for AnalysisCtrl {
             include: Default::default(),
             compress_artifacts: false,
             no_pdg_cache: false,
+            include_all: false,
         }
     }
 }
@@ -514,6 +525,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             include,
             compress_artifacts,
             no_pdg_cache,
+            include_all,
         } = value;
 
         let inlining_depth = if adaptive_depth {
@@ -530,6 +542,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             include,
             compress_artifacts,
             no_pdg_cache,
+            include_all,
         })
     }
 }
@@ -559,8 +572,41 @@ impl AnalysisCtrl {
         &self.inlining_depth
     }
 
-    pub fn included(&self) -> &[String] {
-        &self.include
+    pub fn included(&self, crate_name: &str) -> bool {
+        self.include_all || self.include.iter().any(|s| s == crate_name)
+    }
+
+    pub fn included_crates<'tcx>(
+        &self,
+        tcx: TyCtxt<'tcx>,
+    ) -> impl Iterator<Item = CrateNum> + 'tcx {
+        if self.include_all {
+            Either::Left(tcx.crates(()).iter().copied())
+        } else {
+            let included_crate_names = self
+                .include
+                .iter()
+                .map(|s| Symbol::intern(s))
+                .collect::<FxHashSet<_>>();
+            Either::Right(
+                tcx.crates(())
+                    .iter()
+                    .copied()
+                    .filter(move |cnum| included_crate_names.contains(&tcx.crate_name(*cnum)))
+                    .chain([LOCAL_CRATE]),
+            )
+        }
+        .into_iter()
+    }
+
+    pub fn inclusion_predicate(&self, tcx: TyCtxt<'_>) -> impl Fn(CrateNum) -> bool {
+        let include_all = self.include_all;
+        let hs = if include_all {
+            FxHashSet::default()
+        } else {
+            self.included_crates(tcx).collect()
+        };
+        move |c| include_all || hs.contains(&c)
     }
 
     pub fn compress_artifacts(&self) -> bool {
@@ -618,8 +664,19 @@ pub struct BuildConfig {
     /// Dependency specific configuration
     #[serde(default)]
     pub dep: crate::HashMap<String, DepConfig>,
+    /// A select list of non-workspace crates which should be recursed into
+    /// during analysis. If you want this to happen for all non-workspace crates
+    /// instead specify `default-include = true`.
     #[serde(default)]
     pub include: Vec<String>,
+    /// Whether to recurse into non-workspace crates by default. Only useful
+    /// when `include` is not specified.
+    #[serde(default = "const_false")]
+    pub default_include: bool,
     #[serde(default)]
     pub stubs: HashMap<String, Stub>,
+}
+
+fn const_false() -> bool {
+    false
 }

@@ -340,9 +340,7 @@ fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>)
             CrateHandling::Analyze
         }
         _ if std::env::var("CARGO_PRIMARY_PACKAGE").is_ok() => CrateHandling::Analyze,
-        Some(krate) if plugin_args.anactrl().included().contains(krate) => {
-            CrateHandling::CompileAndDump
-        }
+        Some(krate) if plugin_args.anactrl().included(krate) => CrateHandling::CompileAndDump,
         _ => CrateHandling::JustCompile,
     }
 }

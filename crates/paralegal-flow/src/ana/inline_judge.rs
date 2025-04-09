@@ -27,7 +27,7 @@ use crate::{
 pub struct InlineJudge<'tcx> {
     marker_ctx: MarkerCtx<'tcx>,
     opts: &'static Args,
-    included_crates: FxHashSet<CrateNum>,
+    included_crates: Rc<dyn Fn(CrateNum) -> bool>,
     tcx: TyCtxt<'tcx>,
 }
 
@@ -55,21 +55,8 @@ impl Display for InlineJudgement {
 
 impl<'tcx> InlineJudge<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>, body_cache: Rc<BodyCache<'tcx>>, opts: &'static Args) -> Self {
-        let included_crate_names = opts
-            .anactrl()
-            .included()
-            .iter()
-            .map(|s| Symbol::intern(s))
-            .collect::<FxHashSet<_>>();
-        let included_crates = tcx
-            .crates(())
-            .iter()
-            .copied()
-            .filter(|cnum| included_crate_names.contains(&tcx.crate_name(*cnum)))
-            .chain(Some(LOCAL_CRATE))
-            .collect::<FxHashSet<_>>();
-        let marker_ctx =
-            MarkerDatabase::init(tcx, opts, body_cache, included_crates.clone()).into();
+        let included_crates = Rc::new(opts.anactrl().inclusion_predicate(tcx));
+        let marker_ctx = MarkerDatabase::init(tcx, opts, body_cache).into();
         Self {
             marker_ctx,
             included_crates,
@@ -82,8 +69,8 @@ impl<'tcx> InlineJudge<'tcx> {
         self.tcx
     }
 
-    pub fn included_crates(&self) -> &FxHashSet<CrateNum> {
-        &self.included_crates
+    pub fn is_included(&self, c: CrateNum) -> bool {
+        (self.included_crates)(c)
     }
 
     /// Should we perform inlining on this function?
@@ -102,7 +89,7 @@ impl<'tcx> InlineJudge<'tcx> {
         }
         let is_marked = self.marker_ctx.is_marked(marker_target_def_id);
         let judgement = match self.opts.anactrl().inlining_depth() {
-            _ if !self.included_crates.contains(&marker_target_def_id.krate) => {
+            _ if !self.is_included(marker_target_def_id.krate) => {
                 InlineJudgement::AbstractViaType("inlining for crate disabled")
             }
             _ if is_marked => InlineJudgement::AbstractViaType("marked"),

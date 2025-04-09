@@ -193,7 +193,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             trace!("  Is virtual");
             return &[];
         }
-        if !self.0.included_crates.contains(&def_id.krate) {
+        if !(self.0.included_crates)(def_id.krate) {
             return &[];
         }
         self.db()
@@ -587,18 +587,13 @@ pub struct MarkerDatabase<'tcx> {
     config: &'static Args,
     type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,
     body_cache: Rc<BodyCache<'tcx>>,
-    included_crates: FxHashSet<CrateNum>,
+    included_crates: Rc<dyn Fn(CrateNum) -> bool>,
     stubs: FxHashMap<DefId, &'static Stub>,
 }
 
 impl<'tcx> MarkerDatabase<'tcx> {
     /// Construct a new database, loading external markers.
-    pub fn init(
-        tcx: TyCtxt<'tcx>,
-        args: &'static Args,
-        body_cache: Rc<BodyCache<'tcx>>,
-        included_crates: FxHashSet<CrateNum>,
-    ) -> Self {
+    pub fn init(tcx: TyCtxt<'tcx>, args: &'static Args, body_cache: Rc<BodyCache<'tcx>>) -> Self {
         let stubs = args
             .build_config()
             .stubs
@@ -609,9 +604,10 @@ impl<'tcx> MarkerDatabase<'tcx> {
                 Some((res, v))
             })
             .collect();
+        let included_crates = Rc::new(args.anactrl().inclusion_predicate(tcx));
         Self {
             tcx,
-            annotations: load_annotations(tcx, included_crates.iter().copied()),
+            annotations: load_annotations(tcx, args.anactrl().included_crates(tcx)),
             external_annotations: resolve_external_markers(args, tcx),
             reachable_markers: Default::default(),
             config: args,

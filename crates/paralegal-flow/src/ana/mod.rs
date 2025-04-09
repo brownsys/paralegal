@@ -298,10 +298,9 @@ impl<'tcx> SPDGGenerator<'tcx> {
     }
 
     fn get_prior_stats(&self) -> DumpStats {
-        self.judge
-            .included_crates()
-            .iter()
-            .copied()
+        self.opts
+            .anactrl()
+            .included_crates(self.tcx)
             .filter(|c| *c != LOCAL_CRATE)
             .map(|c| {
                 let paths = local_or_remote_paths(c, self.tcx, INTERMEDIATE_STAT_EXT);
