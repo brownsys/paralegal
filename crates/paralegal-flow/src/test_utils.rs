@@ -10,7 +10,6 @@ use rustc_interface::interface;
 use crate::{
     ann::dump_markers,
     desc::{Identifier, ProgramDescription},
-    discover::CollectingVisitor,
     utils::Print,
     Callbacks, HashSet, EXTRA_RUSTC_ARGS,
 };
@@ -258,6 +257,7 @@ impl InlineTestBuilder {
 
         rustc_utils::test_utils::CompileBuilder::new(&self.input)
             .with_args(EXTRA_RUSTC_ARGS.iter().copied().map(ToOwned::to_owned))
+            .with_args(["-Ztrack-diagnostics".to_string()])
             .with_query_override(None)
             .compile(move |result| {
                 let args: &'static _ = Box::leak(Box::new(args));

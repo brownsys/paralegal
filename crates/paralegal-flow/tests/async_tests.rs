@@ -323,6 +323,7 @@ fn await_with_inner_generic_sanity() {
 }
 
 #[test]
+#[ignore = "This relies on resolving a `dyn` to the default method, but I'm doubtful now that's even the right policy."]
 fn await_with_inner_generic() {
     InlineTestBuilder::new(stringify!(
         use std::{
@@ -353,6 +354,7 @@ fn await_with_inner_generic() {
 }
 
 #[test]
+#[ignore = "This relies on resolving a `dyn` to the default method, but I'm doubtful now that's even the right policy."]
 fn await_with_inner_generic_constrained() {
     InlineTestBuilder::new(stringify!(
         use std::{

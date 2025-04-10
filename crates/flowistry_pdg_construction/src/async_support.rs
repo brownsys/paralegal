@@ -324,7 +324,12 @@ impl<'tcx, 'mir> LocalAnalysis<'tcx, 'mir> {
                     self.tcx().param_env_reveal_all_normalized(self.def_id),
                     generics,
                 )
-                .ok_or_else(|| "Instance resolution failed".to_string())
+                .ok_or_else(|| {
+                    format!(
+                        "Resolving instance {} with generics {generics:?} failed",
+                        self.tcx().def_path_debug_str(def_id)
+                    )
+                })
             })
             .transpose()?;
 
