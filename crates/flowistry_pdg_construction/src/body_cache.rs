@@ -5,6 +5,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use log::debug;
+
 use flowistry::mir::FlowistryInput;
 
 use polonius_engine::FactTypes;
@@ -167,7 +169,12 @@ impl<'tcx> BodyCache<'tcx> {
 
     /// Serve the body from the cache or read it from the disk.
     pub fn get(&self, key: DefId) -> &'tcx CachedBody<'tcx> {
-        self.try_get(key).unwrap()
+        self.try_get(key).unwrap_or_else(|| {
+            panic!(
+                "Could not load body for crate {}",
+                self.tcx.crate_name(key.krate)
+            )
+        })
     }
 
     pub fn try_get(&self, key: DefId) -> Option<&'tcx CachedBody<'tcx>> {
@@ -293,11 +300,12 @@ pub fn dump_mir_and_borrowck_facts<'tcx>(
         assert!(Command::new("gzip")
             .arg("--fast")
             .arg("--force")
-            .arg(path)
+            .arg(&path)
             .status()
             .unwrap()
             .success())
     }
+    debug!("Dumped {} bodies to {}", bodies.len(), path.display());
     (tc_time, dump_time.elapsed())
 }
 

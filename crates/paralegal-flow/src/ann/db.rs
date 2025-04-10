@@ -33,6 +33,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_hir::{def::DefKind, def_id::CrateNum};
 use rustc_middle::{
+    dep_graph::DepContext,
     mir,
     ty::{self, GenericArgsRef, Instance, TyCtxt},
 };
@@ -223,7 +224,9 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// computes it.
     fn compute_reachable_markers(&self, res: MaybeMonomorphized<'tcx>) -> Box<[Identifier]> {
         trace!("Computing reachable markers for {res:?}");
-        let body = self.0.body_cache.get(res.def_id());
+        let Some(body) = self.0.body_cache.try_get(res.def_id()) else {
+            return Box::new([]);
+        };
         let mono_body = match res {
             MaybeMonomorphized::Monomorphized(res) => Cow::Owned(
                 try_monomorphize(
@@ -623,11 +626,15 @@ fn load_annotations(
     tcx: TyCtxt,
     included_crates: impl IntoIterator<Item = CrateNum>,
 ) -> FxHashMap<DefId, Vec<Annotation>> {
+    let sysroot = &tcx.sess().sysroot;
     included_crates
         .into_iter()
         .flat_map(|krate| {
             let paths = local_or_remote_paths(krate, tcx, MARKER_META_EXT);
             for path in &paths {
+                if path.starts_with(sysroot) {
+                    return Either::Left(std::iter::empty());
+                }
                 let Ok(mut file) = File::open(path) else {
                     continue;
                 };
@@ -635,9 +642,10 @@ fn load_annotations(
                 file.read_to_end(&mut buf).unwrap();
                 let mut decoder = ParalegalDecoder::new(tcx, buf.as_slice());
                 let meta = MarkerMeta::decode(&mut decoder);
-                return meta
-                    .into_iter()
-                    .map(move |(index, v)| (DefId { krate, index }, v));
+                return Either::Right(
+                    meta.into_iter()
+                        .map(move |(index, v)| (DefId { krate, index }, v)),
+                );
             }
             panic!("No marker metadata fund for crate {krate}, tried paths {paths:?}");
         })

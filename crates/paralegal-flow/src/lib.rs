@@ -301,6 +301,7 @@ fn add_to_rustflags(new: impl IntoIterator<Item = String>) -> Result<(), std::en
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy)]
 enum CrateHandling {
     JustCompile,
     CompileAndDump,
@@ -328,7 +329,7 @@ fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>)
         );
     }
 
-    match &crate_name {
+    let handling = match &crate_name {
         Some(krate) if krate == "build_script_build" => CrateHandling::JustCompile,
         Some(krate)
             if matches!(
@@ -342,7 +343,9 @@ fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>)
         _ if std::env::var("CARGO_PRIMARY_PACKAGE").is_ok() => CrateHandling::Analyze,
         Some(krate) if plugin_args.anactrl().included(krate) => CrateHandling::CompileAndDump,
         _ => CrateHandling::JustCompile,
-    }
+    };
+    info!("Handling crate {crate_name:?} as {handling:?}");
+    handling
 }
 
 impl rustc_plugin::RustcPlugin for DfppPlugin {
@@ -452,6 +455,8 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         let mut stat_ref = None;
         let out_path = plugin_args.result_path().to_owned();
 
+        plugin_args.setup_logging();
+
         let handling = how_to_handle_this_crate(&plugin_args, &mut compiler_args);
         let result = {
             let mut callbacks = match handling {
@@ -467,8 +472,6 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                     })
                 }
                 CrateHandling::Analyze => {
-                    plugin_args.setup_logging();
-
                     let opts = Box::leak(Box::new(plugin_args));
 
                     const RERUN_VAR: &str = "RERUN_WITH_PROFILER";
