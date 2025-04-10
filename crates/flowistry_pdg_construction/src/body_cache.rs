@@ -19,6 +19,7 @@ use rustc_hir::{
 };
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
+    dep_graph::DepContext,
     hir::nested_filter::OnlyBodies,
     mir::{Body, ClearCrossCrate, StatementKind},
     ty::TyCtxt,
@@ -27,7 +28,10 @@ use rustc_middle::{
 use rustc_span::Symbol;
 use rustc_utils::cache::Cache;
 
-use crate::encoder::{decode_from_file, encode_to_file};
+use crate::{
+    encoder::{decode_from_file, encode_to_file},
+    utils::Captures,
+};
 
 /// A mir [`Body`] and all the additional borrow checking facts that our
 /// points-to analysis needs.
@@ -133,22 +137,14 @@ pub struct BodyCache<'tcx> {
     std_crates: Vec<CrateNum>,
 }
 
-pub fn std_crates(tcx: TyCtxt<'_>) -> Vec<CrateNum> {
-    let std_names = [
-        Symbol::intern("std"),
-        Symbol::intern("alloc"),
-        Symbol::intern("core"),
-        Symbol::intern("libc"),
-        Symbol::intern("std_detect"),
-        Symbol::intern("compiler_builtins"),
-        Symbol::intern("rustc_std_workspace_core"),
-        Symbol::intern("unwind"),
-    ];
-    tcx.crates(())
-        .iter()
-        .filter(|c| std_names.contains(&tcx.crate_name(**c)))
-        .copied()
-        .collect()
+pub fn std_crates<'tcx>(tcx: TyCtxt<'tcx>) -> impl Iterator<Item = CrateNum> + Captures<'tcx> {
+    tcx.crates(()).iter().copied().filter(move |&c| {
+        c != LOCAL_CRATE
+            && tcx
+                .crate_extern_paths(c)
+                .iter()
+                .all(|p| p.starts_with(&tcx.sess().sysroot))
+    })
 }
 
 impl<'tcx> BodyCache<'tcx> {
@@ -159,7 +155,7 @@ impl<'tcx> BodyCache<'tcx> {
             compress_artifacts,
             local_cache: Default::default(),
             timer: RefCell::new(Duration::ZERO),
-            std_crates: std_crates(tcx),
+            std_crates: std_crates(tcx).collect(),
         }
     }
 
@@ -382,11 +378,7 @@ pub fn intermediate_out_dir(tcx: TyCtxt, ext: &str) -> PathBuf {
         .to_str()
         .unwrap_or_else(|| panic!("not utf8"));
 
-    let file = if file.starts_with("lib") {
-        std::borrow::Cow::Borrowed(file)
-    } else {
-        format!("lib{file}").into()
-    };
+    let file = format!("lib{file}");
 
-    dir.join(file.as_ref())
+    dir.join(file)
 }

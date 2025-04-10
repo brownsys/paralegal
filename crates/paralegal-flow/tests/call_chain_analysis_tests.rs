@@ -8,7 +8,8 @@ use paralegal_flow::{define_flow_test_template, test_utils::*};
 const TEST_CRATE_NAME: &str = "tests/call-chain-analysis-tests";
 
 lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool = run_paralegal_flow_with_flow_graph_dump(TEST_CRATE_NAME);
+    static ref TEST_CRATE_ANALYZED: bool =
+        run_paralegal_flow_with_flow_graph_dump_and(TEST_CRATE_NAME, ["--no-include-all"]);
 }
 
 macro_rules! define_test {

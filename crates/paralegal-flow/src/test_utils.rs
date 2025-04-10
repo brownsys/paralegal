@@ -10,6 +10,7 @@ use rustc_interface::interface;
 use crate::{
     ann::dump_markers,
     desc::{Identifier, ProgramDescription},
+    discover::CollectingVisitor,
     utils::Print,
     HashSet, EXTRA_RUSTC_ARGS,
 };
@@ -262,8 +263,9 @@ impl InlineTestBuilder {
                 let args: &'static _ = Box::leak(Box::new(args));
                 dump_markers(result.tcx);
                 let tcx = result.tcx;
-                let memo = crate::Callbacks::new(args);
-                let pdg = memo.run(tcx).unwrap();
+                let (pdg, _) = CollectingVisitor::new(tcx, args, Default::default())
+                    .run()
+                    .unwrap();
                 let graph = PreFrg::from_description(pdg);
                 f(graph)
             })

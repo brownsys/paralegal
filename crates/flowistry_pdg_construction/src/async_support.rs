@@ -2,6 +2,8 @@ use std::rc::Rc;
 
 use either::Either;
 use itertools::Itertools;
+use log::debug;
+
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
@@ -196,7 +198,7 @@ pub enum AsyncDeterminationResult<T> {
 }
 
 /// Does this instance refer to an `async fn` or `async {}`.
-fn is_async_fn_or_block(tcx: TyCtxt, instance: Instance) -> bool {
+pub fn is_async_fn_or_block(tcx: TyCtxt, instance: Instance) -> bool {
     // It turns out that the `DefId` of the [`poll`](std::future::Future::poll)
     // impl for an `async fn` or async block is the same as the `DefId` of the
     // generator itself. That means after resolution (e.g. on the `Instance`) we
@@ -205,33 +207,9 @@ fn is_async_fn_or_block(tcx: TyCtxt, instance: Instance) -> bool {
 }
 
 impl<'tcx, 'mir> LocalAnalysis<'tcx, 'mir> {
-    /// Checks whether the function call, described by the unresolved `def_id`
-    /// and the resolved instance `resolved_fn` is a call to [`<T as
-    /// Future>::poll`](std::future::Future::poll) where `T` is the type of an
-    /// `async fn` or `async {}` created generator.
-    ///
-    /// Resolves the original arguments that constituted the generator.
-    pub(crate) fn try_poll_call_kind<'a>(
-        &'a self,
-        def_id: DefId,
-        resolved_fn: Instance<'tcx>,
-        original_args: &'a [Operand<'tcx>],
-    ) -> AsyncDeterminationResult<CallKind<'tcx>> {
-        let lang_items = self.tcx().lang_items();
-        if lang_items.future_poll_fn() == Some(def_id)
-            && is_async_fn_or_block(self.tcx(), resolved_fn)
-        {
-            match self.find_async_args(original_args) {
-                Ok(poll) => AsyncDeterminationResult::Resolved(CallKind::AsyncPoll(poll)),
-                Err(str) => AsyncDeterminationResult::Unresolvable(str),
-            }
-        } else {
-            AsyncDeterminationResult::NotAsync
-        }
-    }
     /// Given the arguments to a `Future::poll` call, walk back through the
     /// body to find the original future being polled, and get the arguments to the future.
-    fn find_async_args<'a>(
+    pub fn find_async_args<'a>(
         &'a self,
         args: &'a [Operand<'tcx>],
     ) -> Result<AsyncFnPollEnv<'tcx>, String> {

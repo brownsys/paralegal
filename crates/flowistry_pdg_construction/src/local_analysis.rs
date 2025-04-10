@@ -22,7 +22,7 @@ use rustc_utils::{mir::control_dependencies::ControlDependencies, BodyExt, Place
 
 use crate::{
     approximation::ApproximationHandler,
-    async_support::*,
+    async_support::{self, *},
     body_cache::CachedBody,
     calling_convention::*,
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
@@ -558,14 +558,15 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             return false;
         };
 
-        trace!("Call handling is {}", preamble.as_ref());
+        debug!("Call handling is {}", preamble.as_ref());
 
-        let (child_constructor, calling_convention, precise) = match preamble {
+        let (instance, child_constructor, calling_convention, precise) = match preamble {
             CallHandling::Ready {
                 descriptor,
                 calling_convention,
                 precise,
             } => (
+                descriptor,
                 self.memo
                     .construct_for(descriptor)
                     .expect("Recursion check should have already happened"),
@@ -593,6 +594,13 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 return true;
             }
         };
+
+        debug!(
+            "Inlining call at {span:?} in {} at {:?} with handling {}",
+            self.tcx().def_path_debug_str(self.def_id),
+            location,
+            calling_convention.as_ref()
+        );
 
         let parentable_dsts = child_constructor.parentable_dsts(|n| n.len() == 1);
         let parent_body = &self.mono_body;
@@ -690,6 +698,13 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     /// The error case is if we tried to resolve this as async and failed. We
     /// know it *is* async but we couldn't determine the information needed to
     /// analyze the function, therefore we will have to approximate it.
+    ///
+    /// In case of async, checks whether the function call, described by the unresolved `def_id`
+    /// and the resolved instance `resolved_fn` is a call to [`<T as
+    /// Future>::poll`](std::future::Future::poll) where `T` is the type of an
+    /// `async fn` or `async {}` created generator.
+    ///
+    /// Resolves the original arguments that constituted the generator.
     fn classify_call_kind<'b>(
         &'b self,
         def_id: DefId,
@@ -697,15 +712,18 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         original_args: &'b [Operand<'tcx>],
         span: Span,
     ) -> CallKind<'tcx> {
-        match self.try_poll_call_kind(def_id, resolved_fn, original_args) {
-            AsyncDeterminationResult::Resolved(r) => r,
-            AsyncDeterminationResult::NotAsync => self
-                .try_indirect_call_kind(resolved_fn.def_id())
-                .unwrap_or(CallKind::Direct),
-            AsyncDeterminationResult::Unresolvable(reason) => {
-                self.tcx().sess.span_fatal(span, reason)
-            }
+        let lang_items = self.tcx().lang_items();
+        if span.desugaring_kind() == Some(DesugaringKind::Await)
+            && lang_items.future_poll_fn() == Some(def_id)
+        //&& async_support::is_async_fn_or_block(self.tcx(), resolved_fn)
+        {
+            return match self.find_async_args(original_args) {
+                Ok(poll) => CallKind::AsyncPoll(poll),
+                Err(str) => self.tcx().sess.span_fatal(span, str),
+            };
         }
+        self.try_indirect_call_kind(resolved_fn.def_id())
+            .unwrap_or(CallKind::Direct)
     }
 
     fn try_indirect_call_kind(&self, def_id: DefId) -> Option<CallKind<'tcx>> {

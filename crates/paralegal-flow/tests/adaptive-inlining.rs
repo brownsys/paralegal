@@ -12,7 +12,9 @@ fn marking_function_found(ctrl: CtrlRef<'_>) {
 fn marking_closure_does_not_inline() {
     InlineTestBuilder::new(stringify!(
         #[paralegal_flow::marker(source, return)]
-        fn marking_function() -> usize {}
+        fn marking_function() -> usize {
+            0
+        }
 
         fn call_the_closure<R>(f: impl FnOnce() -> R) -> R {
             f()
@@ -30,7 +32,9 @@ fn marking_closure_does_not_inline() {
 fn marking_fn_ptr_does_not_inline() {
     InlineTestBuilder::new(stringify!(
         #[paralegal_flow::marker(source, return)]
-        fn marking_function() -> usize {}
+        fn marking_function() -> usize {
+            0
+        }
 
         fn call_the_closure<R>(f: impl FnOnce() -> R) -> R {
             f()

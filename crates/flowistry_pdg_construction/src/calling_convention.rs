@@ -17,11 +17,11 @@ use crate::{
 
 /// Describes how the formal parameters of a given function call relate to the
 /// actual parameters.
-#[derive(Debug)]
+#[derive(Debug, strum::AsRefStr)]
 pub enum CallingConvention<'tcx> {
     /// 1 to 1 mapping
     Direct(Box<[Operand<'tcx>]>),
-    /// First argument is the closed-over environment, second argument is a
+    /// First argument is the closed-over environment. Second argument is a
     /// tuple that contains the actual argument to the call of the closure
     /// function.
     Indirect {
@@ -29,7 +29,7 @@ pub enum CallingConvention<'tcx> {
         closure_arg: Operand<'tcx>,
         tupled_arguments: Operand<'tcx>,
     },
-    /// An async generator, only has one argument which is the generator state.
+    /// An async generator. Only has one argument, which is the generator state.
     Async(Place<'tcx>),
 }
 
@@ -192,7 +192,7 @@ impl<'a, 'tcx> PlaceTranslator<'a, 'tcx> {
                 closure_arg,
                 tupled_arguments,
             } => {
-                // Accounting fot FnPtrShim
+                // Accounting for FnPtrShim
                 //
                 // The shim gets an extra first argument (the function pointer)
                 // but we replace it with the function iself which doesn't have

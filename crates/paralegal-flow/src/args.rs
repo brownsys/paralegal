@@ -90,7 +90,12 @@ impl TryFrom<ClapArgs> for Args {
         anactrl
             .include
             .extend(build_config.1.include.iter().cloned());
-        anactrl.include_all |= build_config.1.default_include;
+        // If the user has set an include decision in the build config and *not*
+        // speficied the flag (flag is false) then we use the decision from the
+        // build config.
+        if let Some(include_decision) = build_config.1.default_include {
+            anactrl.no_include_all |= !include_decision;
+        }
         let log_level_config = match debug_target {
             Some(target) if !target.is_empty() => LogLevelConfig::Targeted(target),
             _ => LogLevelConfig::Disabled,
@@ -478,8 +483,8 @@ struct ClapAnalysisCtrl {
     #[clap(long)]
     include: Vec<String>,
     /// Include all non-workspace crates in analysis
-    #[clap(long, default_value_t = false, conflicts_with = "include")]
-    include_all: bool,
+    #[clap(long, conflicts_with = "include")]
+    no_include_all: bool,
     #[clap(long)]
     compress_artifacts: bool,
     #[clap(long)]
@@ -526,7 +531,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             include,
             compress_artifacts,
             no_pdg_cache,
-            include_all,
+            no_include_all,
         } = value;
 
         let inlining_depth = if adaptive_depth {
@@ -543,7 +548,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             include,
             compress_artifacts,
             no_pdg_cache,
-            include_all,
+            include_all: !no_include_all,
         })
     }
 }
@@ -581,8 +586,8 @@ impl AnalysisCtrl {
         &self,
         tcx: TyCtxt<'tcx>,
     ) -> impl Iterator<Item = CrateNum> + 'tcx {
-        let std_crates = std_crates(tcx);
         if self.include_all {
+            let std_crates = std_crates(tcx).collect::<FxHashSet<_>>();
             Either::Left(
                 tcx.crates(())
                     .iter()
@@ -607,13 +612,22 @@ impl AnalysisCtrl {
     }
 
     pub fn inclusion_predicate(&self, tcx: TyCtxt<'_>) -> impl Fn(CrateNum) -> bool {
+        // The policy for this predicate is that if "all" crates should be included,
+        // then `hs` is the set of standard included form rustc, which we won't
+        // see during compilation and as a result we do not have artifacts for
+        // this data, therefore they must be excluded.
+        //
+        // If instead only an explicit user selection of crates is included,
+        // `hs` contains those crates.
+        //
+        // Therefore we use xor (^) in the predicate.
         let include_all = self.include_all;
-        let hs = if include_all {
-            FxHashSet::default()
+        let hs: FxHashSet<CrateNum> = if include_all {
+            std_crates(tcx).collect()
         } else {
             self.included_crates(tcx).collect()
         };
-        move |c| include_all || hs.contains(&c)
+        move |c| include_all ^ hs.contains(&c)
     }
 
     pub fn compress_artifacts(&self) -> bool {
@@ -678,8 +692,7 @@ pub struct BuildConfig {
     pub include: Vec<String>,
     /// Whether to recurse into non-workspace crates by default. Only useful
     /// when `include` is not specified.
-    #[serde(default = "const_true")]
-    pub default_include: bool,
+    pub default_include: Option<bool>,
     #[serde(default)]
     pub stubs: HashMap<String, Stub>,
 }

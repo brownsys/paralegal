@@ -8,7 +8,8 @@ use paralegal_spdg::Identifier;
 const CRATE_DIR: &str = "tests/boxes";
 
 lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool = run_paralegal_flow_with_flow_graph_dump(CRATE_DIR);
+    static ref TEST_CRATE_ANALYZED: bool =
+        run_paralegal_flow_with_flow_graph_dump_and(CRATE_DIR, ["--no-include-all"]);
 }
 
 macro_rules! define_test {

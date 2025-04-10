@@ -12,7 +12,10 @@ static TEST_CTX: OnceLock<Arc<RootContext>> = OnceLock::new();
 pub fn test_ctx() -> Arc<RootContext> {
     TEST_CTX
         .get_or_init(|| {
-            paralegal_flow::test_utils::run_paralegal_flow_with_flow_graph_dump("tests/test-crate");
+            paralegal_flow::test_utils::run_paralegal_flow_with_flow_graph_dump_and(
+                "tests/test-crate",
+                ["--no-include-all"],
+            );
             let desc = PreFrg::from_file_at("tests/test-crate").desc;
             Arc::new(RootContext::new(desc, Default::default()))
         })
@@ -29,7 +32,11 @@ pub fn get_callsite_or_datasink_node<'a>(
         .unwrap()
 }
 
-pub fn get_callsite_node<'a>(ctx: &'a RootContext, controller: Endpoint, name: &'a str) -> NodeCluster {
+pub fn get_callsite_node<'a>(
+    ctx: &'a RootContext,
+    controller: Endpoint,
+    name: &'a str,
+) -> NodeCluster {
     let name = Identifier::new_intern(name);
     let ctrl = &ctx.desc().controllers[&controller];
     let inner = ctrl
