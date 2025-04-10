@@ -30,7 +30,7 @@ use paralegal_spdg::Identifier;
 
 use rustc_errors::DiagnosticMessage;
 use rustc_hash::{FxHashMap, FxHashSet};
-use rustc_hir::def_id::DefId;
+use rustc_hir::def_id::{DefId, LOCAL_CRATE};
 use rustc_hir::{def::DefKind, def_id::CrateNum};
 use rustc_middle::{
     dep_graph::DepContext,
@@ -610,7 +610,10 @@ impl<'tcx> MarkerDatabase<'tcx> {
         let included_crates = Rc::new(args.anactrl().inclusion_predicate(tcx));
         Self {
             tcx,
-            annotations: load_annotations(tcx, args.anactrl().included_crates(tcx)),
+            annotations: load_annotations(
+                tcx,
+                args.anactrl().included_crates(tcx).chain([LOCAL_CRATE]),
+            ),
             external_annotations: resolve_external_markers(args, tcx),
             reachable_markers: Default::default(),
             config: args,

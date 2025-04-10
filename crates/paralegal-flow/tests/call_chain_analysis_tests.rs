@@ -46,12 +46,16 @@ fn with_return() {
             receiver(callee(x));
         }
     ))
+    .with_extra_args(["--dump".to_string(), "spdg".to_string()])
     .check_ctrl(|ctrl| {
         let src_fn = ctrl.function("source");
         let src = ctrl.call_site(&src_fn);
         let dest_fn = ctrl.function("receiver");
         let dest_sink = ctrl.call_site(&dest_fn);
         let dest = dest_sink.input().nth(0).unwrap();
+
+        assert!(!src.output().is_empty());
+        assert!(!dest_sink.input().is_empty());
 
         assert!(src.output().flows_to_data(&dest));
     })

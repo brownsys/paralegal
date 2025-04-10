@@ -12,7 +12,7 @@ use crate::{
     desc::{Identifier, ProgramDescription},
     discover::CollectingVisitor,
     utils::Print,
-    HashSet, EXTRA_RUSTC_ARGS,
+    Callbacks, HashSet, EXTRA_RUSTC_ARGS,
 };
 use std::hash::{Hash, Hasher};
 use std::process::Command;
@@ -263,8 +263,8 @@ impl InlineTestBuilder {
                 let args: &'static _ = Box::leak(Box::new(args));
                 dump_markers(result.tcx);
                 let tcx = result.tcx;
-                let (pdg, _) = CollectingVisitor::new(tcx, args, Default::default())
-                    .run()
+                let (pdg, _) = Callbacks::new(args, &mut None)
+                    .run_in_context_without_writing_stats(tcx)
                     .unwrap();
                 let graph = PreFrg::from_description(pdg);
                 f(graph)

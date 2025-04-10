@@ -51,7 +51,7 @@ use desc::utils::write_sep;
 
 use flowistry_pdg_construction::body_cache::{dump_mir_and_borrowck_facts, intermediate_out_dir};
 use log::Level;
-use paralegal_spdg::{AnalyzerStats, STAT_FILE_EXT};
+use paralegal_spdg::{AnalyzerStats, ProgramDescription, STAT_FILE_EXT};
 use rustc_middle::ty::TyCtxt;
 use rustc_plugin::CrateFilter;
 
@@ -232,6 +232,24 @@ impl<'a> rustc_driver::Callbacks for Callbacks<'a> {
 }
 
 impl<'a> Callbacks<'a> {
+    pub fn run_in_context_without_writing_stats(
+        &self,
+        tcx: TyCtxt<'_>,
+    ) -> anyhow::Result<(ProgramDescription, AnalyzerStats)> {
+        dump_markers(tcx);
+        tcx.sess.abort_if_errors();
+        let (desc, stats) =
+            discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone()).run()?;
+        info!("All elems walked");
+        tcx.sess.abort_if_errors();
+
+        if self.opts.dbg().dump_spdg() {
+            let out = std::fs::File::create("call-only-flow.gv")?;
+            paralegal_spdg::dot::dump(&desc, out)?;
+        }
+        Ok((desc, stats))
+    }
+
     fn run_the_analyzer<'tcx>(
         &mut self,
         queries: &'tcx rustc_interface::Queries<'tcx>,
@@ -240,18 +258,7 @@ impl<'a> Callbacks<'a> {
             .global_ctxt()
             .unwrap()
             .enter(|tcx| {
-                dump_markers(tcx);
-                tcx.sess.abort_if_errors();
-                let (desc, mut stats) =
-                    discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone()).run()?;
-                info!("All elems walked");
-                tcx.sess.abort_if_errors();
-
-                if self.opts.dbg().dump_spdg() {
-                    let out = std::fs::File::create("call-only-flow.gv").unwrap();
-                    paralegal_spdg::dot::dump(&desc, out).unwrap();
-                }
-
+                let (desc, mut stats) = self.run_in_context_without_writing_stats(tcx)?;
                 self.stats.measure(TimedStat::Serialization, || {
                     desc.canonical_write(self.opts.result_path()).unwrap()
                 });
