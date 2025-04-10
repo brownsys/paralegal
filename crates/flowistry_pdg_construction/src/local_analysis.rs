@@ -713,9 +713,18 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         span: Span,
     ) -> CallKind<'tcx> {
         let lang_items = self.tcx().lang_items();
+        // Why is calling `is_async_fn_or_block` here necessary? Because the
+        // rewriting of arguments only needs to take place if rustc
+        // automatically created that implementation of `poll` for us. If this
+        // is a manual `poll` implementation, the signature of the resolved
+        // function and the signature of `poll` will be the same.
+        //
+        // Why is this important? For example, an auto-generated async closure's
+        // return gets wrapped in `Ready` automatically, whereas a manual
+        // implementation does it explicitly.
         if span.desugaring_kind() == Some(DesugaringKind::Await)
             && lang_items.future_poll_fn() == Some(def_id)
-        //&& async_support::is_async_fn_or_block(self.tcx(), resolved_fn)
+            && async_support::is_async_fn_or_block(self.tcx(), resolved_fn)
         {
             return match self.find_async_args(original_args) {
                 Ok(poll) => CallKind::AsyncPoll(poll),
