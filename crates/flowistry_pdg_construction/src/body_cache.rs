@@ -131,28 +131,33 @@ pub struct BodyCache<'tcx> {
     std_crates: Vec<CrateNum>,
 }
 
+pub fn std_crates(tcx: TyCtxt<'_>) -> Vec<CrateNum> {
+    let std_names = [
+        Symbol::intern("std"),
+        Symbol::intern("alloc"),
+        Symbol::intern("core"),
+        Symbol::intern("libc"),
+        Symbol::intern("std_detect"),
+        Symbol::intern("compiler_builtins"),
+        Symbol::intern("rustc_std_workspace_core"),
+        Symbol::intern("unwind"),
+    ];
+    tcx.crates(())
+        .iter()
+        .filter(|c| std_names.contains(&tcx.crate_name(**c)))
+        .copied()
+        .collect()
+}
+
 impl<'tcx> BodyCache<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>, compress_artifacts: bool) -> Self {
-        let std_names = [
-            Symbol::intern("std"),
-            Symbol::intern("alloc"),
-            Symbol::intern("core"),
-            Symbol::intern("libc"),
-            Symbol::intern("std_detect"),
-        ];
-        let std_crates = tcx
-            .crates(())
-            .iter()
-            .filter(|c| std_names.contains(&tcx.crate_name(**c)))
-            .copied()
-            .collect();
         Self {
             tcx,
             cache: Default::default(),
             compress_artifacts,
             local_cache: Default::default(),
             timer: RefCell::new(Duration::ZERO),
-            std_crates,
+            std_crates: std_crates(tcx),
         }
     }
 

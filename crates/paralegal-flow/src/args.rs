@@ -12,6 +12,7 @@
 use anyhow::Error;
 use clap::ValueEnum;
 use either::Either;
+use flowistry_pdg_construction::body_cache::std_crates;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
 use rustc_middle::ty::TyCtxt;
@@ -580,8 +581,14 @@ impl AnalysisCtrl {
         &self,
         tcx: TyCtxt<'tcx>,
     ) -> impl Iterator<Item = CrateNum> + 'tcx {
+        let std_crates = std_crates(tcx);
         if self.include_all {
-            Either::Left(tcx.crates(()).iter().copied())
+            Either::Left(
+                tcx.crates(())
+                    .iter()
+                    .copied()
+                    .filter(move |c| !std_crates.contains(&c)),
+            )
         } else {
             let included_crate_names = self
                 .include
