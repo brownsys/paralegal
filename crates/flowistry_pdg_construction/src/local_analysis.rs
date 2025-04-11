@@ -64,14 +64,14 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     /// Creates [`GraphConstructor`] for a function resolved as `fn_resolution`
     /// in a given `calling_context`.
     ///
-    /// Returns `None`, if we were unable to load the body.
+    /// Returns `None`, if this body should not be analyzed.
     pub(crate) fn new(
         memo: &'a MemoPdgConstructor<'tcx>,
         root: Instance<'tcx>,
-    ) -> LocalAnalysis<'tcx, 'a> {
+    ) -> Option<LocalAnalysis<'tcx, 'a>> {
         let tcx = memo.tcx;
         let def_id = root.def_id();
-        let body_with_facts = memo.body_cache.get(def_id);
+        let body_with_facts = memo.body_cache.try_get(def_id)?;
         let param_env = tcx.param_env_reveal_all_normalized(def_id);
         let body = try_monomorphize(
             root,
@@ -98,7 +98,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
         let body_assignments = utils::find_body_assignments(&body);
 
-        LocalAnalysis {
+        Some(LocalAnalysis {
             memo,
             root,
             body_with_facts,
@@ -108,7 +108,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             start_loc,
             def_id,
             body_assignments,
-        }
+        })
     }
 
     fn make_dep_node(
@@ -116,6 +116,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         place: Place<'tcx>,
         location: impl Into<RichLocation>,
     ) -> DepNode<'tcx> {
+        debug!("Creating dep node for {place:?} in {:?}", self.def_id);
         DepNode::new(
             place,
             self.make_call_string(location),
@@ -527,14 +528,16 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             return None;
         }
 
-        (!self.memo.is_recursion(resolved_fn)).then(|| {
-            trace!("  Bailing because of recursion.");
-            CallHandling::Ready {
+        if self.memo.is_recursion(resolved_fn) {
+            trace!("  bailing because recursion");
+            None
+        } else {
+            Some(CallHandling::Ready {
                 calling_convention,
                 descriptor: resolved_fn,
                 precise,
-            }
-        })
+            })
+        }
     }
 
     /// Attempt to inline a call to a function.
@@ -569,7 +572,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                 descriptor,
                 self.memo
                     .construct_for(descriptor)
-                    .expect("Recursion check should have already happened"),
+                    .expect("Existence check should have already happened"),
                 calling_convention,
                 precise,
             ),

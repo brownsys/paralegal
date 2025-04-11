@@ -91,6 +91,9 @@ impl<'tcx> InlineJudge<'tcx> {
             _ if !self.is_included(marker_target_def_id.krate) => {
                 InlineJudgement::AbstractViaType("inlining for crate disabled")
             }
+            _ if self.tcx().is_foreign_item(marker_target_def_id) => {
+                InlineJudgement::AbstractViaType("cannot inline foreign item")
+            }
             _ if is_marked => InlineJudgement::AbstractViaType("marked"),
             InliningDepth::Adaptive
                 if self

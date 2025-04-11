@@ -163,16 +163,12 @@ impl<'tcx> BodyCache<'tcx> {
         *self.timer.borrow()
     }
 
-    /// Serve the body from the cache or read it from the disk.
     pub fn get(&self, key: DefId) -> &'tcx CachedBody<'tcx> {
-        self.try_get(key).unwrap_or_else(|| {
-            panic!(
-                "Could not load body for crate {}",
-                self.tcx.crate_name(key.krate)
-            )
-        })
+        self.try_get(key)
+            .unwrap_or_else(|| panic!("INVARIANT VIOLATION: {key:?} is not loadable"))
     }
 
+    /// Serve the body from the cache or read it from the disk.
     pub fn try_get(&self, key: DefId) -> Option<&'tcx CachedBody<'tcx>> {
         let body = if let Some(local) = key.as_local() {
             self.local_cache.get(local.local_def_index, |_| {
@@ -183,18 +179,25 @@ impl<'tcx> BodyCache<'tcx> {
             })
         } else if self.std_crates.contains(&key.krate) {
             return None;
+        } else if self.tcx.is_foreign_item(key) {
+            return None;
         } else {
             let res = self
                 .cache
                 .get(key.krate, |_| {
-                    load_body_and_facts(self.tcx, key.krate, self.compress_artifacts)
+                    let result = load_body_and_facts(self.tcx, key.krate, self.compress_artifacts);
+                    log::debug!(
+                        "Loaded {} bodies from {}",
+                        result.len(),
+                        self.tcx.crate_name(key.krate)
+                    );
+                    result
                 })
-                .get(&key.index);
-            if res.is_none() {
-                log::warn!("Could not load body for {key:?}");
-                return None;
-            }
-            res?
+                .get(&key.index)
+                .unwrap_or_else(|| {
+                    panic!("INVARIANT VIOLATION: body map loaded but {key:?} not found")
+                });
+            res
         };
 
         // SAFETY: Theoretically this struct may not outlive the body, but

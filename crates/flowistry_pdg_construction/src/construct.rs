@@ -32,6 +32,40 @@ use crate::{
     CallChangeCallback,
 };
 
+#[derive(Debug, Clone, Copy)]
+pub enum ConstructionResult<T> {
+    Success(T),
+    Recursive,
+    /// The body could not be loaded. At the moment this means this is an extern item.
+    Unconstructible,
+}
+
+impl<T> ConstructionResult<T> {
+    pub fn unwrap(self) -> T {
+        match self {
+            ConstructionResult::Success(t) => t,
+            ConstructionResult::Recursive => panic!("Recursion detected"),
+            ConstructionResult::Unconstructible => panic!("Unconstructible body"),
+        }
+    }
+
+    pub fn unwrap_or_msg(self, msg: impl FnOnce() -> String) -> T {
+        match self {
+            ConstructionResult::Success(t) => t,
+            ConstructionResult::Recursive => panic!("Recursion detected: {}", msg()),
+            ConstructionResult::Unconstructible => panic!("Unconstrutible body: {}", msg()),
+        }
+    }
+
+    pub fn expect(self, msg: &str) -> T {
+        match self {
+            ConstructionResult::Success(t) => t,
+            ConstructionResult::Recursive => panic!("Recursion detected: {}", msg),
+            ConstructionResult::Unconstructible => panic!("Unconstrutible body: {}", msg),
+        }
+    }
+}
+
 /// A memoizing constructor of PDGs.
 ///
 /// Each `(LocalDefId, GenericArgs)` pair is guaranteed to be constructed only
@@ -108,8 +142,9 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         )
         .unwrap();
 
-        self.construct_for(resolution)
-            .expect("Invariant broken, entrypoint cannot have been recursive.")
+        self.construct_for(resolution).unwrap_or_msg(|| {
+            format!("Failed to construct PDG for {function:?} with generics {generics:?}")
+        })
     }
 
     /// Construct a  graph for this instance of return it from the cache.
@@ -118,12 +153,12 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     pub(crate) fn construct_for<'a>(
         &'a self,
         resolution: Instance<'tcx>,
-    ) -> Option<Cow<'a, PartialGraph<'tcx>>> {
+    ) -> ConstructionResult<Cow<'a, PartialGraph<'tcx>>> {
         let construct = || {
-            let g = LocalAnalysis::new(self, resolution).construct_partial();
+            let g = LocalAnalysis::new(self, resolution)?.construct_partial();
             trace!("Computed new for {resolution:?}");
             g.check_invariants();
-            g
+            Some(g)
         };
         let mut was_constructed = false;
         let result = self.pdg_cache.get_maybe_recursive(resolution, |_| {
@@ -131,9 +166,14 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             construct()
         });
         if self.disable_cache && result.is_some() && !was_constructed {
-            Some(Cow::Owned(construct()))
-        } else {
-            result.map(Cow::Borrowed)
+            return construct().map_or(ConstructionResult::Unconstructible, |r| {
+                ConstructionResult::Success(Cow::Owned(r))
+            });
+        }
+        match result {
+            None => ConstructionResult::Recursive,
+            Some(None) => ConstructionResult::Unconstructible,
+            Some(Some(g)) => ConstructionResult::Success(Cow::Borrowed(g)),
         }
     }
 
@@ -151,7 +191,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         if let Some((generator, loc, _ty)) = determine_async(
             self.tcx,
             function.to_def_id(),
-            self.body_cache.get(function.to_def_id()).body(),
+            self.body_cache.try_get(function.to_def_id()).unwrap_or_else(|| panic!("INVARIANT VIOLATED: body for local function {function:?} cannot be loaded.")).body(),
         ) {
             // TODO remap arguments
 
@@ -178,7 +218,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
 
     /// Try to retrieve or load a body for this id.
     ///
-    /// Returns `None` if the loading policy forbids loading from this crate.
+    /// Make sure the body is retrievable or this function will panic.
     pub fn body_for_def_id(&self, key: DefId) -> &'tcx CachedBody<'tcx> {
         self.body_cache.get(key)
     }
@@ -367,12 +407,13 @@ impl<'tcx> PartialGraph<'tcx> {
             return false;
         };
 
-        let (child_descriptor, calling_convention, precise) = match handling {
+        let (child_instance, child_descriptor, calling_convention, precise) = match handling {
             CallHandling::Ready {
                 calling_convention,
                 descriptor,
                 precise,
             } => (
+                descriptor,
                 constructor
                     .memo
                     .construct_for(descriptor)
@@ -554,7 +595,7 @@ impl<'tcx> PartialGraph<'tcx> {
 pub type PdgCacheKey<'tcx> = Instance<'tcx>;
 /// Stores PDG's we have already computed and which we know we can use again
 /// given a certain key.
-pub type PdgCache<'tcx> = Rc<Cache<PdgCacheKey<'tcx>, PartialGraph<'tcx>>>;
+pub type PdgCache<'tcx> = Rc<Cache<PdgCacheKey<'tcx>, Option<PartialGraph<'tcx>>>>;
 
 #[derive(Debug)]
 enum Inputs<'tcx> {
