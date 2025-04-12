@@ -13,7 +13,7 @@ use rustc_ast as ast;
 use rustc_data_structures::intern::Interned;
 use rustc_hir::{
     self as hir,
-    def::Res,
+    def::{DefKind, Res},
     def_id::{DefId, LocalDefId},
     hir_id::HirId,
     BodyId,
@@ -313,7 +313,7 @@ pub fn func_of_term<'tcx>(
     };
     let const_ = func.constant()?;
     let ty = ty_of_const(const_);
-    type_as_fn(tcx, ty)
+    type_as_fn(tcx, ty).to_option()
 }
 
 /// A simplified version of the argument list that is stored in a
@@ -396,7 +396,7 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
             return Err(AsFnAndArgsErr::NotAFunctionCall);
         };
         let ty = ty_of_const(func.constant().ok_or(AsFnAndArgsErr::NotAConstant)?);
-        let Some((def_id, gargs)) = type_as_fn(tcx, ty) else {
+        let Some((def_id, gargs)) = type_as_fn(tcx, ty).to_option() else {
             return Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone()));
         };
         test_generics_normalization(tcx, gargs)
@@ -767,5 +767,21 @@ pub fn map_either<A, B, C, D>(
     match either {
         Either::Left(l) => Either::Left(f(l)),
         Either::Right(r) => Either::Right(g(r)),
+    }
+}
+
+pub fn type_for_constructor(tcx: TyCtxt, def_id: DefId) -> DefId {
+    assert!(tcx.is_constructor(def_id));
+    let parent = tcx.parent(def_id);
+    match tcx.def_kind(parent) {
+        DefKind::Variant => {
+            let ty = tcx.parent(parent);
+            assert_eq!(tcx.def_kind(ty), DefKind::Enum);
+            ty
+        }
+        DefKind::Struct => parent,
+        other => {
+            panic!("Expected a variant or struct, got {other:?}");
+        }
     }
 }

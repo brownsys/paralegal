@@ -57,3 +57,5 @@ pub enum TestConstructors {
     A(&'static str),
     B(i32),
 }
+
+pub struct SingleVariant(pub &'static str);

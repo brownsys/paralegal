@@ -14,8 +14,8 @@ use crate::{
     ann::{Annotation, MarkerAnnotation},
     args::{Args, Stub},
     utils::{
-        func_of_term, resolve::expect_resolve_string_to_def_id, FunctionKind, InstanceExt,
-        IntoDefId, TyExt,
+        func_of_term, resolve::expect_resolve_string_to_def_id, type_for_constructor, FunctionKind,
+        InstanceExt, IntoDefId, TyExt,
     },
     Either, HashMap, HashSet,
 };
@@ -24,7 +24,7 @@ use flowistry_pdg_construction::{
     body_cache::{local_or_remote_paths, BodyCache},
     determine_async,
     encoder::ParalegalDecoder,
-    utils::{handle_shims, is_virtual, try_monomorphize, try_resolve_function},
+    utils::{handle_shims, is_virtual, try_monomorphize, try_resolve_function, ShimResult},
 };
 use paralegal_spdg::Identifier;
 
@@ -224,6 +224,14 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// computes it.
     fn compute_reachable_markers(&self, res: MaybeMonomorphized<'tcx>) -> Box<[Identifier]> {
         trace!("Computing reachable markers for {res:?}");
+
+        if self.tcx().is_constructor(res.def_id()) {
+            let parent = type_for_constructor(self.tcx(), res.def_id());
+            return self
+                .combined_markers(parent)
+                .map(|m| m.marker)
+                .collect::<Box<_>>();
+        }
         let Some(body) = self.0.body_cache.try_get(res.def_id()) else {
             return Box::new([]);
         };
@@ -298,10 +306,18 @@ impl<'tcx> MarkerCtx<'tcx> {
                     );
                 return v.into_iter();
             };
-            MaybeMonomorphized::Monomorphized(
-                handle_shims(instance, self.tcx(), param_env)
-                    .map_or(instance, |(shimmed, _)| shimmed),
-            )
+            let new_instance = match handle_shims(instance, self.tcx(), param_env) {
+                ShimResult::IsHandledShim { instance, .. } => instance,
+                ShimResult::IsNonHandleableShim => {
+                    self.span_err(
+                        terminator.source_info.span,
+                        format!("cannot determine reachable markers, failed to handle shim {def_id:?} with {gargs:?}")
+                    );
+                    return v.into_iter();
+                }
+                ShimResult::IsNotShim => instance,
+            };
+            MaybeMonomorphized::Monomorphized(new_instance)
         } else {
             MaybeMonomorphized::Plain(def_id)
         };

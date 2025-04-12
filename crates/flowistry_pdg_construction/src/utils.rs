@@ -89,17 +89,53 @@ where
     })
 }
 
+pub enum TyAsFnResult<'tcx> {
+    Resolved {
+        def_id: DefId,
+        generic_args: GenericArgsRef<'tcx>,
+    },
+    FnPtr,
+    NotAFunction,
+}
+
+impl<'tcx> TyAsFnResult<'tcx> {
+    pub fn unwrap(self) -> (DefId, GenericArgsRef<'tcx>) {
+        match self {
+            TyAsFnResult::Resolved {
+                def_id,
+                generic_args,
+            } => (def_id, generic_args),
+            TyAsFnResult::FnPtr => panic!("Expected a static function, but got a function pointer"),
+            TyAsFnResult::NotAFunction => panic!("Expected a function, but got something else"),
+        }
+    }
+
+    pub fn to_option(self) -> Option<(DefId, GenericArgsRef<'tcx>)> {
+        match self {
+            TyAsFnResult::Resolved {
+                def_id,
+                generic_args,
+            } => Some((def_id, generic_args)),
+            TyAsFnResult::FnPtr | TyAsFnResult::NotAFunction => None,
+        }
+    }
+}
+
 /// Attempt to interpret this type as a statically determinable function and its
 /// generic arguments.
-pub fn type_as_fn<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<(DefId, GenericArgsRef<'tcx>)> {
+pub fn type_as_fn<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> TyAsFnResult<'tcx> {
     let ty = ty_resolve(ty, tcx);
     match ty.kind() {
         TyKind::FnDef(def_id, generic_args)
         | TyKind::Generator(def_id, generic_args, _)
-        | TyKind::Closure(def_id, generic_args) => Some((*def_id, generic_args)),
+        | TyKind::Closure(def_id, generic_args) => TyAsFnResult::Resolved {
+            def_id: *def_id,
+            generic_args: *generic_args,
+        },
+        TyKind::FnPtr(_) => TyAsFnResult::FnPtr,
         ty => {
             trace!("Bailing from handle_call because func is literal with type: {ty:?}");
-            None
+            TyAsFnResult::NotAFunction
         }
     }
 }
@@ -353,11 +389,20 @@ pub enum ShimType {
     FnPtr,
 }
 
+pub enum ShimResult<'tcx> {
+    IsHandledShim {
+        instance: Instance<'tcx>,
+        shim_type: ShimType,
+    },
+    IsNonHandleableShim,
+    IsNotShim,
+}
+
 pub fn handle_shims<'tcx>(
     resolved_fn: Instance<'tcx>,
     tcx: TyCtxt<'tcx>,
     param_env: ParamEnv<'tcx>,
-) -> Option<(Instance<'tcx>, ShimType)> {
+) -> ShimResult<'tcx> {
     match resolved_fn.def {
         InstanceDef::ClosureOnceShim { .. } => {
             // Rustc has inserted a call to the shim that maps `Fn` and `FnMut`
@@ -371,24 +416,47 @@ pub fn handle_shims<'tcx>(
             let Some((func_a, _rest)) = resolved_fn.args.split_first() else {
                 unreachable!()
             };
-            let Some((func_t, g)) = type_as_fn(tcx, func_a.expect_ty()) else {
-                unreachable!()
+            let (func_t, g) = match type_as_fn(tcx, func_a.expect_ty()) {
+                TyAsFnResult::Resolved {
+                    def_id,
+                    generic_args,
+                } => (def_id, generic_args),
+                TyAsFnResult::FnPtr => {
+                    return ShimResult::IsNonHandleableShim;
+                }
+                TyAsFnResult::NotAFunction => {
+                    unreachable!("Expected a function, but got something else");
+                }
             };
             let instance = Instance::expect_resolve(tcx, param_env, func_t, g);
-            Some((instance, ShimType::Once))
+            ShimResult::IsHandledShim {
+                instance,
+                shim_type: ShimType::Once,
+            }
         }
         InstanceDef::FnPtrShim { .. } => {
             let Some((func_a, _rest)) = resolved_fn.args.split_first() else {
                 unreachable!()
             };
-            let Some((func_t, g)) = type_as_fn(tcx, func_a.expect_ty()) else {
-                unreachable!()
+            let (func_t, g) = match type_as_fn(tcx, func_a.expect_ty()) {
+                TyAsFnResult::Resolved {
+                    def_id,
+                    generic_args,
+                } => (def_id, generic_args),
+                TyAsFnResult::FnPtr => {
+                    return ShimResult::IsNonHandleableShim;
+                }
+                TyAsFnResult::NotAFunction => {
+                    unreachable!("Expected a function, but got something else");
+                }
             };
             let instance = Instance::expect_resolve(tcx, param_env, func_t, g);
-
-            Some((instance, ShimType::FnPtr))
+            ShimResult::IsHandledShim {
+                instance,
+                shim_type: ShimType::FnPtr,
+            }
         }
-        _ => None,
+        _ => ShimResult::IsNotShim,
     }
 }
 

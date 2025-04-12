@@ -98,4 +98,10 @@ fn test_constructors_via_hof() {
     any_target(b);
 }
 
+#[paralegal::analyze]
+fn test_single_variant_constructor_in_hof() {
+    let a = apply(SingleVariant, static_str_source());
+    any_target(a);
+}
+
 fn main() {}

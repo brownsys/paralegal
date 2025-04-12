@@ -11,7 +11,7 @@ use flowistry_pdg_construction::{
     body_cache::BodyCache,
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
     is_async_trait_fn, match_async_trait_assign,
-    utils::{handle_shims, try_monomorphize, try_resolve_function, type_as_fn},
+    utils::{handle_shims, try_monomorphize, try_resolve_function, type_as_fn, ShimResult},
 };
 use paralegal_spdg::{Node, SPDGStats};
 
@@ -192,21 +192,28 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                         .unwrap();
                 let (inst, args) =
                     type_as_fn(self.tcx(), ty_of_const(func.constant().unwrap())).unwrap();
-                let mres = try_resolve_function(
+                let f = if let Some(inst) = try_resolve_function(
                     self.tcx(),
                     inst,
                     self.tcx().param_env(leaf_loc.function),
                     args,
-                )
-                .map(|inst| handle_shims(inst, self.tcx(), param_env).map_or(inst, |t| t.0));
-
-                if mres.is_none() {
-                    debug!("Could not resolve {inst:?} properly during marker assignment");
+                ) {
+                    match handle_shims(inst, self.tcx(), param_env) {
+                        ShimResult::IsHandledShim { instance, .. } => instance,
+                        ShimResult::IsNotShim => inst,
+                        ShimResult::IsNonHandleableShim => {
+                            self.tcx().sess.span_warn(
+                                weight.span,
+                                "SOUNDNESS: Cannot determine markers for shim usage",
+                            );
+                            return;
+                        }
+                    }
+                    .def_id()
                 } else {
-                    debug!("Function monomorphized to {:?}", mres.unwrap().def_id());
-                }
-
-                let f = mres.map_or(inst, |i| i.def_id());
+                    debug!("Could not resolve {inst:?} properly during marker assignment");
+                    inst
+                };
 
                 self.known_def_ids.extend(Some(f));
 

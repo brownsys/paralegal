@@ -120,3 +120,12 @@ define_test!(test_constructors_via_hof: graph -> {
 
     assert!(sources.flows_to_data(&targets));
 });
+
+define_test!(test_single_variant_constructor_in_hof: graph -> {
+    let sources = graph.marked(Identifier::new_intern("source"));
+    let targets = graph.marked(Identifier::new_intern("target"));
+    assert!(!sources.is_empty());
+    assert!(!targets.is_empty());
+
+    assert!(sources.flows_to_data(&targets));
+});

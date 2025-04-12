@@ -30,7 +30,10 @@ use crate::{
     calling_convention::*,
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
-    utils::{self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize, ShimType},
+    utils::{
+        self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize, ShimResult,
+        ShimType,
+    },
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
 
@@ -339,7 +342,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         func: &Operand<'tcx>,
     ) -> Option<(DefId, GenericArgsRef<'tcx>)> {
         let ty = func.ty(&self.mono_body, self.tcx());
-        utils::type_as_fn(self.tcx(), ty)
+        utils::type_as_fn(self.tcx(), ty).to_option()
     }
 
     fn fmt_fn(&self, def_id: DefId) -> String {
@@ -409,15 +412,24 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             return None;
         };
 
-        let call_kind =
-            if let Some((instance, shim_type)) = handle_shims(resolved_fn, self.tcx(), param_env) {
+        let call_kind = match handle_shims(resolved_fn, self.tcx(), param_env) {
+            ShimResult::IsHandledShim {
+                instance,
+                shim_type,
+            } => {
                 resolved_fn = instance;
                 CallKind::Indirect {
                     shim: Some(shim_type),
                 }
-            } else {
+            }
+            ShimResult::IsNonHandleableShim => {
+                trace!("Bailing because shim cannot behandled (like function pointer)");
+                return None;
+            }
+            ShimResult::IsNotShim => {
                 self.classify_call_kind(called_def_id, resolved_fn, &args, span)
-            };
+            }
+        };
         let resolved_def_id = resolved_fn.def_id();
         if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {
             let (called, resolved) = (self.fmt_fn(called_def_id), self.fmt_fn(resolved_def_id));
