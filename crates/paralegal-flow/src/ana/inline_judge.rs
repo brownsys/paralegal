@@ -94,6 +94,13 @@ impl<'tcx> InlineJudge<'tcx> {
             _ if self.tcx().is_foreign_item(marker_target_def_id) => {
                 InlineJudgement::AbstractViaType("cannot inline foreign item")
             }
+            _ if self.tcx().is_constructor(marker_target_def_id) => {
+                // This is an enum constructor. It would be better to handle
+                // this by simulating it's effects, but I am lazy right now.
+                // This should only trigger if a constructor is called as the
+                // function argument to a higher-order function.
+                InlineJudgement::AbstractViaType("is constructor")
+            }
             _ if is_marked => InlineJudgement::AbstractViaType("marked"),
             InliningDepth::Adaptive
                 if self

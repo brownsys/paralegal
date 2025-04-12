@@ -480,6 +480,7 @@ fn def_kind_for_item(id: DefId, tcx: TyCtxt) -> DefKind {
         | def::DefKind::OpaqueTy
         | def::DefKind::TyAlias { .. }
         | def::DefKind::Enum => DefKind::Type,
+        def::DefKind::Ctor { .. } => DefKind::Ctor,
         kind => unreachable!("{} ({:?})", tcx.def_path_debug_str(id), kind),
     }
 }

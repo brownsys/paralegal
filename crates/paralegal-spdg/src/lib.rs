@@ -205,6 +205,9 @@ pub enum DefKind {
     Closure,
     /// A type
     Type,
+    #[deprecated = "Tracking constructors is a workaround and should not be relied upon."]
+    /// An enum constructor that was called via a higher-order function
+    Ctor,
 }
 
 /// An interned [`SourceFileInfo`]
