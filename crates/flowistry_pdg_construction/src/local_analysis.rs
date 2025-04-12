@@ -196,25 +196,26 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         // We can ask for the aliases in the context of the original body, receiving e.g. {_1}.
         // Then we reproject the aliases with the remaining projection, to create {_1.0}.
         //
-        // This is a massive hack bc it's inefficient and I'm not certain that it's sound.
-        let place_retyped =
-            utils::retype_place(place, self.tcx(), self.body_with_facts.body(), self.def_id);
+        // This is a massive hack bc it's inefficient and I'm not certain that
+        // it's sound.
+        let body = self.body_with_facts.body();
+        let place_retyped = utils::retype_place(place, self.tcx(), body, self.def_id);
         self.place_info
             .aliases(place_retyped)
             .iter()
             .map(move |alias| {
+                // If the type of the alias is not the same as the retyped
+                // place, then adding the remaining projections from the
+                // original place won't work so we overtaint to the entire alias.
+                if !place_ty_eq(
+                    alias.ty(body, self.tcx()),
+                    place_retyped.ty(body, self.tcx()),
+                ) {
+                    return *alias;
+                }
                 let mut projection = alias.projection.to_vec();
                 projection.extend(&place.projection[place_retyped.projection.len()..]);
-                let p = Place::make(alias.local, &projection, self.tcx());
-                // let t1 = place.ty(&self.body, self.tcx());
-                // let t2 = p.ty(&self.body, self.tcx());
-                // if !t1.equiv(&t2) {
-                //     let p1_str = format!("{place:?}");
-                //     let p2_str = format!("{p:?}");
-                // let l = p1_str.len().max(p2_str.len());
-                //     panic!("Retyping in {} failed to produce an equivalent type.\n  Src {p1_str:l$} : {t1:?}\n  Dst {p2_str:l$} : {t2:?}", self.tcx().def_path_str(self.def_id))
-                // }
-                p
+                Place::make(alias.local, &projection, self.tcx())
             })
     }
 

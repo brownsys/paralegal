@@ -40,12 +40,16 @@ pub fn try_resolve_function<'tcx>(
     Instance::resolve(tcx, param_env, def_id, args).unwrap()
 }
 
+pub fn place_ty_eq<'tcx>(a: PlaceTy<'tcx>, b: PlaceTy<'tcx>) -> bool {
+    a.ty == b.ty && a.variant_index == b.variant_index
+}
+
 /// Returns whether this method is expected to have a body we can analyze.
 ///
 /// Specifically this returns `true` if `function` refers to an associated item
 /// of a trait which has *no* default value.
 ///
-/// Note: While you are supposed to call this whit a `function` that refers to a
+/// Note: While you are supposed to call this with a `function` that refers to a
 /// function, it will not crash if it refers to a type or constant instead.
 pub fn is_virtual(tcx: TyCtxt, function: DefId) -> bool {
     tcx.opt_associated_item(function)

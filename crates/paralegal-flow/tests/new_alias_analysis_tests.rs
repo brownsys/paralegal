@@ -140,3 +140,70 @@ define_test!(no_inlining_overtaint : graph -> {
     assert!(!get.output().flows_to_data(&send2.input()));
     assert!(!get2.output().flows_to_data(&send.input()));
 });
+
+// Inspired by sled::arc::Arc::make_mut, when instantiating `T` to `Config`
+#[test]
+fn projections_after_deref() {
+    InlineTestBuilder::new(stringify!(
+        use std::sync::atomic::AtomicUsize;
+
+        #[repr(C)]
+        struct ArcInner<T: ?Sized> {
+            rc: AtomicUsize,
+            inner: T,
+        }
+
+        pub struct Arc<T: ?Sized> {
+            ptr: *mut ArcInner<T>,
+        }
+
+        #[derive(Clone)]
+        struct Config {
+            a: i32,
+            b: i32,
+            c: i32,
+            d: i32,
+            e: i32,
+        }
+
+        impl<T: ?Sized> std::ops::Deref for Arc<T> {
+            type Target = T;
+
+            fn deref(&self) -> &T {
+                unsafe { &(*self.ptr).inner }
+            }
+        }
+
+        impl<T: Clone> Arc<T> {
+            pub fn make_mut(arc: &mut Self) -> &mut T {
+                *arc = Arc::new((**arc).clone());
+                unsafe { &mut arc.ptr.as_mut().unwrap().inner }
+            }
+        }
+
+        impl<T> Arc<T> {
+            pub fn new(inner: T) -> Arc<T> {
+                let bx = Box::new(ArcInner {
+                    inner,
+                    rc: AtomicUsize::new(1),
+                });
+                let ptr = Box::into_raw(bx);
+                Arc { ptr }
+            }
+        }
+
+        fn main() {
+            let mut a = Arc::new(Config {
+                a: 1,
+                b: 2,
+                c: 3,
+                d: 4,
+                e: 5,
+            });
+            let b = Arc::make_mut(&mut a);
+            b.a = 10;
+            println!("{:?}", b.a);
+        }
+    ))
+    .check_ctrl(|_| ());
+}
