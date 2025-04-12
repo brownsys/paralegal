@@ -207,3 +207,33 @@ fn projections_after_deref() {
     ))
     .check_ctrl(|_| ());
 }
+
+#[test]
+fn reference_in_struct() {
+    InlineTestBuilder::new(stringify!(
+        struct Foo<'a> {
+            a: &'a i32,
+        }
+
+        #[paralegal_flow::marker(target, arguments=[0])]
+        fn sink(_a: Foo<'_>) {}
+
+        #[paralegal_flow::marker(source, return)]
+        fn source() -> i32 {
+            42
+        }
+
+        fn main() {
+            let a = source();
+            let foo = Foo { a: &a };
+            sink(foo);
+        }
+    ))
+    .check_ctrl(|graph| {
+        let source = graph.marked("source");
+        let sink = graph.marked("target");
+        assert!(!source.is_empty());
+        assert!(!sink.is_empty());
+        assert!(source.flows_to_data(&sink));
+    });
+}

@@ -3,6 +3,7 @@ target/
 
 /rust-dfpp-patch
 flow-graph.json
+*.stat.json
 
 # Local cargo configuration
 .cargo/config.toml
@@ -19,3 +20,4 @@ flow-graph.json
 
 *.mir
 *.o
+

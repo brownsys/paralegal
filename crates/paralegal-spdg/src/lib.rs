@@ -466,6 +466,12 @@ impl ProgramDescription {
 #[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone, Serialize, Deserialize, Copy)]
 pub struct Identifier(Intern<String>);
 
+impl<'a> From<&'a str> for Identifier {
+    fn from(value: &'a str) -> Self {
+        Identifier::new_intern(value)
+    }
+}
+
 #[cfg(feature = "rustc")]
 impl<S: rustc_serialize::Encoder> rustc_serialize::Encodable<S> for Identifier {
     fn encode(&self, s: &mut S) {

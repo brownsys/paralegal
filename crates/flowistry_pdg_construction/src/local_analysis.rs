@@ -18,7 +18,10 @@ use rustc_middle::{
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 use rustc_span::{DesugaringKind, Span};
-use rustc_utils::{mir::control_dependencies::ControlDependencies, BodyExt, PlaceExt};
+use rustc_utils::{
+    mir::{control_dependencies::ControlDependencies, places_conflict},
+    BodyExt, PlaceExt,
+};
 
 use crate::{
     approximation::ApproximationHandler,
@@ -27,7 +30,7 @@ use crate::{
     calling_convention::*,
     graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
-    utils::{self, handle_shims, is_async, is_virtual, try_monomorphize, ShimType},
+    utils::{self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize, ShimType},
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
 
@@ -259,28 +262,9 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                             place.local == alias.local
                         } else {
                             let mut place = *place;
-                            if let Some((PlaceElem::Deref, rest)) = place.projection.split_last() {
-                                let mut new_place = place;
-                                new_place.projection = self.tcx().mk_place_elems(rest);
-                                if new_place.ty(&self.mono_body, self.tcx()).ty.is_box() {
-                                    if new_place.is_indirect() {
-                                        // TODO might be unsound: We assume that if
-                                        // there are other indirections in here,
-                                        // there is an alias that does not have
-                                        // indirections in it.
-                                        return false;
-                                    }
-                                    place = new_place;
-                                }
-                            }
+
                             trace!("Checking conflict status of {place:?} and {alias:?}");
-                            places_conflict(
-                                self.tcx(),
-                                &self.mono_body,
-                                place,
-                                alias,
-                                PlaceConflictBias::Overlap,
-                            )
+                            utils::places_conflict(self.tcx(), &self.mono_body, place, alias)
                         }
                     });
 

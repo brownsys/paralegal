@@ -438,7 +438,8 @@ impl<'g> CtrlRef<'g> {
         other.flows_to_data(&self.return_value())
     }
 
-    pub fn marked(&self, marker: Identifier) -> NodeRefs<'_> {
+    pub fn marked(&self, marker: impl Into<Identifier>) -> NodeRefs<'_> {
+        let marker = marker.into();
         NodeRefs {
             nodes: self
                 .ctrl
