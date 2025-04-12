@@ -236,7 +236,7 @@ pub struct PartialGraph<'tcx> {
     pub(crate) nodes: FxHashSet<DepNode<'tcx>>,
     pub(crate) edges: FxHashSet<(DepNode<'tcx>, DepNode<'tcx>, DepEdge)>,
     pub(crate) generics: GenericArgsRef<'tcx>,
-    def_id: DefId,
+    pub(crate) def_id: DefId,
     arg_count: usize,
     local_decls: IndexVec<Local, LocalDecl<'tcx>>,
 }

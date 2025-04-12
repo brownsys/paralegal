@@ -633,7 +633,10 @@ impl<'tcx> PartialGraph<'tcx> {
     }
 
     fn check_invariants(&self) {
-        let root_function = self.nodes.iter().next().unwrap().at.root().function;
+        let Some(sample) = self.nodes.iter().next() else {
+            return;
+        };
+        let root_function = sample.at.root().function;
         for n in &self.nodes {
             assert_eq!(n.at.root().function, root_function);
         }

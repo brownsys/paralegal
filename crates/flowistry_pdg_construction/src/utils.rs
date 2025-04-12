@@ -27,7 +27,7 @@ impl<'a, T: ?Sized> Captures<'a> for T {}
 
 /// An async check that does not crash if called on closures.
 pub fn is_async(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    !tcx.is_closure(def_id) && tcx.asyncness(def_id).is_async()
+    !tcx.is_closure(def_id) && !tcx.is_constructor(def_id) && tcx.asyncness(def_id).is_async()
 }
 
 /// Resolve the `def_id` item to an instance.
