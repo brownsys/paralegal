@@ -24,7 +24,6 @@ fn marking_closure_does_not_inline() {
             call_the_closure(|| marking_function());
         }
     ))
-    .with_extra_args(["--adaptive-depth".to_string()])
     .check_ctrl(marking_function_found);
 }
 
@@ -44,6 +43,5 @@ fn marking_fn_ptr_does_not_inline() {
             call_the_closure(marking_function);
         }
     ))
-    .with_extra_args(["--adaptive-depth".to_string()])
     .check_ctrl(marking_function_found);
 }

@@ -190,16 +190,14 @@ impl DumpStats {
 }
 
 struct DumpOnlyCallbacks {
-    compress_artifacts: bool,
     time: DumpStats,
     start: Instant,
     output_location: Option<PathBuf>,
 }
 
 impl DumpOnlyCallbacks {
-    fn new(compress_artifacts: bool) -> Self {
+    fn new() -> Self {
         Self {
-            compress_artifacts,
             time: DumpStats::zero(),
             start: Instant::now(),
             output_location: None,
@@ -216,8 +214,7 @@ impl rustc_driver::Callbacks for DumpOnlyCallbacks {
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> rustc_driver::Compilation {
         queries.global_ctxt().unwrap().enter(|tcx| {
-            let (tycheck_time, dump_time) =
-                dump_mir_and_borrowck_facts(tcx, self.compress_artifacts);
+            let (tycheck_time, dump_time) = dump_mir_and_borrowck_facts(tcx);
             let dump_marker_start = Instant::now();
             dump_markers(tcx);
             self.time.dump_time = dump_marker_start.elapsed() + dump_time;
@@ -353,10 +350,8 @@ impl Callbacks {
         } else {
             queries.global_ctxt().unwrap().enter(|tcx| {
                 let dump_stats = &mut self.dump_stats;
-                let compress_artifacts = self.opts.anactrl().compress_artifacts();
                 self.stats.measure(TimedStat::MirEmission, || {
-                    let (tycheck_time, dump_time) =
-                        dump_mir_and_borrowck_facts(tcx, compress_artifacts);
+                    let (tycheck_time, dump_time) = dump_mir_and_borrowck_facts(tcx);
                     dump_stats.tycheck_time += tycheck_time;
                     dump_stats.dump_time += dump_time;
                 })
@@ -544,9 +539,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             CrateHandling::JustCompile => Box::new(NoopCallbacks) as Box<dyn FinalizingCallbacks>,
             CrateHandling::CompileAndDump => {
                 compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
-                Box::new(DumpOnlyCallbacks::new(
-                    plugin_args.anactrl().compress_artifacts(),
-                ))
+                Box::new(DumpOnlyCallbacks::new())
             }
             CrateHandling::Analyze => {
                 let opts = Box::leak(Box::new(plugin_args));

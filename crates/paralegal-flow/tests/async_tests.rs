@@ -8,8 +8,10 @@ use paralegal_spdg::Identifier;
 const CRATE_DIR: &str = "tests/async-tests";
 
 lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool =
-        run_paralegal_flow_with_flow_graph_dump_and(CRATE_DIR, ["--no-include-all"]);
+    static ref TEST_CRATE_ANALYZED: bool = run_paralegal_flow_with_flow_graph_dump_and(
+        CRATE_DIR,
+        ["--local-crate-only", "--no-adaptive-approximation"]
+    );
 }
 
 macro_rules! define_test {
@@ -417,13 +419,16 @@ fn async_through_another_layer() {
             sink(get_async(src, src2).await)
         }
     ))
+    .with_extra_args(["--no-adaptive-approximation".to_string()])
     .check_ctrl(|ctrl| {
         let sources = ctrl.marked(Identifier::new_intern("source"));
-        let sinks = ctrl.marked(Identifier::new_intern("source_2"));
+        let source_2 = ctrl.marked(Identifier::new_intern("source_2"));
+        let sinks = ctrl.marked(Identifier::new_intern("sink"));
         assert!(!sources.is_empty());
+        assert!(!source_2.is_empty());
         assert!(!sinks.is_empty());
-        assert!(!sources.flows_to_any(&ctrl.marked(Identifier::new_intern("sink"))));
-        assert!(sinks.flows_to_any(&ctrl.marked(Identifier::new_intern("sink"))));
+        assert!(!sources.flows_to_any(&sinks));
+        assert!(source_2.flows_to_any(&sinks));
     })
 }
 

@@ -8,7 +8,7 @@ const CRATE_DIR: &str = "tests/non-transitive-graph-tests";
 
 lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool =
-        run_paralegal_flow_with_flow_graph_dump_and(CRATE_DIR, ["--no-cross-function-analysis"]);
+        run_paralegal_flow_with_flow_graph_dump_and(CRATE_DIR, ["--no-interprocedural-analysis"]);
 }
 
 macro_rules! define_test {

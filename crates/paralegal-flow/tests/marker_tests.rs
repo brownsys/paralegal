@@ -11,7 +11,7 @@ const TEST_CRATE_NAME: &str = "tests/marker-tests";
 lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool = run_paralegal_flow_with_flow_graph_dump_and(
         TEST_CRATE_NAME,
-        ["--no-cross-function-analysis"]
+        ["--no-interprocedural-analysis"]
     );
 }
 

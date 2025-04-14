@@ -11,7 +11,6 @@
 
 use anyhow::Error;
 use clap::ValueEnum;
-use either::Either;
 use flowistry_pdg_construction::body_cache::std_crates;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
@@ -90,12 +89,6 @@ impl TryFrom<ClapArgs> for Args {
         anactrl
             .include
             .extend(build_config.1.include.iter().cloned());
-        // If the user has set an include decision in the build config and *not*
-        // speficied the flag (flag is false) then we use the decision from the
-        // build config.
-        if let Some(include_decision) = build_config.1.default_include {
-            anactrl.no_include_all |= !include_decision;
-        }
         let log_level_config = match debug_target {
             Some(target) if !target.is_empty() => LogLevelConfig::Targeted(target),
             _ => LogLevelConfig::Disabled,
@@ -459,34 +452,29 @@ impl MarkerControl {
 /// Arguments that control the flow analysis
 #[derive(clap::Args)]
 struct ClapAnalysisCtrl {
-    /// Target this function as analysis target. Command line version of
+    /// Target this function as analysis entrypoint. Command line version of
     /// `#[paralegal::analyze]`). Must be a full rust path and resolve to a
     /// function. May be specified multiple times and multiple, comma separated
     /// paths may be supplied at the same time.
     #[clap(long)]
     analyze: Vec<String>,
-    /// Disables all recursive analysis (both paralegal_flow's inlining as well as
-    /// Flowistry's recursive analysis).
+    /// Limits the PDG to a single function. This is intended for testing and
+    /// should not be used in production.
     #[clap(long, env)]
-    no_cross_function_analysis: bool,
-    /// Generate PDGs that span all called functions which can attach markers
-    #[clap(long, conflicts_with_all = ["unconstrained_depth", "no_cross_function_analysis"])]
-    adaptive_depth: bool,
-    /// Generate PDGs that span to all functions for which we have source code.
-    ///
-    /// If no depth option is specified this is the default right now but that
-    /// is not guaranteed to be the case in the future. If you want to guarantee
-    /// this is used explicitly supply the argument.
-    #[clap(long, conflicts_with_all = ["adaptive_depth", "no_cross_function_analysis"])]
-    unconstrained_depth: bool,
-    /// Crates that should be recursed into.
+    no_interprocedural_analysis: bool,
+    /// Do not decide whether to represent a function in the PDG based on the
+    /// presence of markers. This will create very large PDGs that span all
+    /// crates configured for analysis and with source code present.
+    #[clap(long, conflicts_with_all = ["no_interprocedural_analysis"])]
+    no_adaptive_approximation: bool,
+    /// Limit the set of crates to analyze. Beware that if those crates contain
+    /// marked code (other than the surface API), this poses a soundness risk.
+    /// This is intended as an optimization experts can apply for large
+    /// projects.
     #[clap(long)]
     include: Vec<String>,
-    /// Include all non-workspace crates in analysis
-    #[clap(long, conflicts_with = "include")]
-    no_include_all: bool,
-    #[clap(long)]
-    compress_artifacts: bool,
+    #[clap(hide = true, long, conflicts_with = "include")]
+    local_crate_only: bool,
     #[clap(long)]
     no_pdg_cache: bool,
 }
@@ -502,8 +490,7 @@ pub struct AnalysisCtrl {
     /// Flowistry's recursive analysis).
     inlining_depth: InliningDepth,
     include: Vec<String>,
-    include_all: bool,
-    compress_artifacts: bool,
+    local_crate_only: bool,
     no_pdg_cache: bool,
 }
 
@@ -513,9 +500,8 @@ impl Default for AnalysisCtrl {
             analyze: Vec::new(),
             inlining_depth: InliningDepth::Adaptive,
             include: Default::default(),
-            compress_artifacts: false,
             no_pdg_cache: false,
-            include_all: false,
+            local_crate_only: false,
         }
     }
 }
@@ -525,30 +511,27 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
     fn try_from(value: ClapAnalysisCtrl) -> Result<Self, Self::Error> {
         let ClapAnalysisCtrl {
             analyze,
-            no_cross_function_analysis,
-            adaptive_depth,
-            unconstrained_depth: _,
             include,
-            compress_artifacts,
             no_pdg_cache,
-            no_include_all,
+            no_interprocedural_analysis,
+            no_adaptive_approximation,
+            local_crate_only,
         } = value;
 
-        let inlining_depth = if adaptive_depth {
-            InliningDepth::Adaptive
-        } else if no_cross_function_analysis {
+        let inlining_depth = if no_interprocedural_analysis {
             InliningDepth::Shallow
-        } else {
+        } else if no_adaptive_approximation {
             InliningDepth::Unconstrained
+        } else {
+            InliningDepth::Adaptive
         };
 
         Ok(Self {
             analyze,
             inlining_depth,
             include,
-            compress_artifacts,
             no_pdg_cache,
-            include_all: !no_include_all,
+            local_crate_only,
         })
     }
 }
@@ -579,36 +562,37 @@ impl AnalysisCtrl {
     }
 
     pub fn included(&self, crate_name: &str) -> bool {
-        self.include_all || self.include.iter().any(|s| s == crate_name)
+        !self.local_crate_only || self.include.iter().any(|s| s == crate_name)
     }
 
     pub fn included_crates<'tcx>(
         &self,
         tcx: TyCtxt<'tcx>,
     ) -> impl Iterator<Item = CrateNum> + 'tcx {
-        if self.include_all {
+        if self.local_crate_only {
+            Box::new([LOCAL_CRATE].into_iter()) as Box<dyn Iterator<Item = CrateNum> + 'tcx>
+        } else if self.include.is_empty() {
             let std_crates = std_crates(tcx).collect::<FxHashSet<_>>();
-            Either::Left(
+            Box::new(
                 tcx.crates(())
                     .iter()
                     .copied()
                     .filter(move |c| !std_crates.contains(&c)),
-            )
+            ) as Box<_>
         } else {
             let included_crate_names = self
                 .include
                 .iter()
                 .map(|s| Symbol::intern(s))
                 .collect::<FxHashSet<_>>();
-            Either::Right(
+            Box::new(
                 tcx.crates(())
                     .iter()
                     .copied()
                     .filter(move |cnum| included_crate_names.contains(&tcx.crate_name(*cnum)))
                     .chain([LOCAL_CRATE]),
-            )
+            ) as Box<_>
         }
-        .into_iter()
     }
 
     pub fn inclusion_predicate(&self, tcx: TyCtxt<'_>) -> impl Fn(CrateNum) -> bool {
@@ -621,17 +605,13 @@ impl AnalysisCtrl {
         // `hs` contains those crates.
         //
         // Therefore we use xor (^) in the predicate.
-        let include_all = self.include_all;
-        let hs: FxHashSet<CrateNum> = if include_all {
+        let include_all = !self.local_crate_only;
+        let hs: FxHashSet<CrateNum> = if !self.local_crate_only {
             std_crates(tcx).collect()
         } else {
             self.included_crates(tcx).collect()
         };
         move |c| include_all ^ hs.contains(&c)
-    }
-
-    pub fn compress_artifacts(&self) -> bool {
-        self.compress_artifacts
     }
 
     pub fn pdg_cache(&self) -> bool {
@@ -690,13 +670,6 @@ pub struct BuildConfig {
     /// instead specify `default-include = true`.
     #[serde(default)]
     pub include: Vec<String>,
-    /// Whether to recurse into non-workspace crates by default. Only useful
-    /// when `include` is not specified.
-    pub default_include: Option<bool>,
     #[serde(default)]
     pub stubs: HashMap<String, Stub>,
-}
-
-fn const_true() -> bool {
-    true
 }

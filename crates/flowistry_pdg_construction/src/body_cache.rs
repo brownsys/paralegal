@@ -131,7 +131,6 @@ type BodyMap<'tcx> = FxHashMap<DefIndex, CachedBody<'tcx>>;
 pub struct BodyCache<'tcx> {
     tcx: TyCtxt<'tcx>,
     cache: Cache<CrateNum, BodyMap<'tcx>>,
-    compress_artifacts: bool,
     local_cache: Cache<DefIndex, CachedBody<'tcx>>,
     timer: RefCell<Duration>,
     std_crates: Vec<CrateNum>,
@@ -148,11 +147,10 @@ pub fn std_crates<'tcx>(tcx: TyCtxt<'tcx>) -> impl Iterator<Item = CrateNum> + C
 }
 
 impl<'tcx> BodyCache<'tcx> {
-    pub fn new(tcx: TyCtxt<'tcx>, compress_artifacts: bool) -> Self {
+    pub fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self {
             tcx,
             cache: Default::default(),
-            compress_artifacts,
             local_cache: Default::default(),
             timer: RefCell::new(Duration::ZERO),
             std_crates: std_crates(tcx).collect(),
@@ -185,7 +183,7 @@ impl<'tcx> BodyCache<'tcx> {
             let res = self
                 .cache
                 .get(key.krate, |_| {
-                    let result = load_body_and_facts(self.tcx, key.krate, self.compress_artifacts);
+                    let result = load_body_and_facts(self.tcx, key.krate);
                     log::debug!(
                         "Loaded {} bodies from {}",
                         result.len(),
@@ -267,10 +265,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
 ///
 /// Ensure this gets called early in the compiler before the unoptimized mir
 /// bodies are stolen.
-pub fn dump_mir_and_borrowck_facts<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    compress_artifacts: bool,
-) -> (Duration, Duration) {
+pub fn dump_mir_and_borrowck_facts<'tcx>(tcx: TyCtxt<'tcx>) -> (Duration, Duration) {
     let mut vis = DumpingVisitor {
         tcx,
         targets: vec![],
@@ -295,15 +290,6 @@ pub fn dump_mir_and_borrowck_facts<'tcx>(
     let dump_time = Instant::now();
     let path = intermediate_out_dir(tcx, INTERMEDIATE_ARTIFACT_EXT);
     encode_to_file(tcx, &path, &bodies);
-    if compress_artifacts {
-        assert!(Command::new("gzip")
-            .arg("--fast")
-            .arg("--force")
-            .arg(&path)
-            .status()
-            .unwrap()
-            .success())
-    }
     debug!("Dumped {} bodies to {}", bodies.len(), path.display());
     (tc_time, dump_time.elapsed())
 }
@@ -325,35 +311,14 @@ pub fn local_or_remote_paths(krate: CrateNum, tcx: TyCtxt, ext: &str) -> Vec<Pat
 }
 
 /// Try to load a [`CachedBody`] for this id.
-fn load_body_and_facts<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    krate: CrateNum,
-    compress_artifacts: bool,
-) -> BodyMap<'tcx> {
+fn load_body_and_facts<'tcx>(tcx: TyCtxt<'tcx>, krate: CrateNum) -> BodyMap<'tcx> {
     let paths = local_or_remote_paths(krate, tcx, INTERMEDIATE_ARTIFACT_EXT);
-    let zipped_ext = INTERMEDIATE_ARTIFACT_EXT.to_owned() + ".gz";
-    for path in &paths {
-        let zip_path = path.with_extension(&zipped_ext);
-
-        let target_path = if compress_artifacts { &zip_path } else { &path };
-
+    for target_path in &paths {
         if !target_path.exists() {
             continue;
         }
 
-        assert!(
-            !compress_artifacts
-                || Command::new("gunzip")
-                    .arg("-k")
-                    .arg(&zip_path)
-                    .status()
-                    .unwrap()
-                    .success()
-        );
-        let data = decode_from_file(tcx, path).unwrap();
-        if compress_artifacts {
-            std::fs::remove_file(&path).unwrap();
-        }
+        let data = decode_from_file(tcx, target_path).unwrap();
         return data;
     }
 

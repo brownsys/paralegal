@@ -11,6 +11,7 @@ lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool = {
         paralegal_flow_command(CRATE_DIR)
             .args(["--include", "dependency"])
+            .arg("--no-adaptive-approximation")
             .status()
             .unwrap()
             .success()

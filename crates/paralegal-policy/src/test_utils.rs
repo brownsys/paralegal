@@ -14,7 +14,7 @@ pub fn test_ctx() -> Arc<RootContext> {
         .get_or_init(|| {
             paralegal_flow::test_utils::run_paralegal_flow_with_flow_graph_dump_and(
                 "tests/test-crate",
-                ["--no-include-all"],
+                ["--local-crate-only", "--no-adaptive-approximation"],
             );
             let desc = PreFrg::from_file_at("tests/test-crate").desc;
             Arc::new(RootContext::new(desc, Default::default()))

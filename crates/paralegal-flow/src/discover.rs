@@ -86,7 +86,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 })
             })
             .collect();
-        let body_cache = Rc::new(BodyCache::new(tcx, opts.anactrl().compress_artifacts()));
+        let body_cache = Rc::new(BodyCache::new(tcx));
         let inline_judge = InlineJudge::new(tcx, body_cache.clone(), opts);
         Self {
             tcx,
