@@ -194,7 +194,12 @@ impl<'tcx> MarkerCtx<'tcx> {
             trace!("  Is virtual");
             return &[];
         }
+        if self.tcx().is_foreign_item(def_id) {
+            trace!("  Is foreign");
+            return &[];
+        }
         if !(self.0.included_crates)(def_id.krate) {
+            trace!("  Is excluded");
             return &[];
         }
         self.db()
@@ -232,9 +237,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                 .map(|m| m.marker)
                 .collect::<Box<_>>();
         }
-        let Some(body) = self.0.body_cache.try_get(res.def_id()) else {
-            return Box::new([]);
-        };
+        let body = self.0.body_cache.get(res.def_id());
         let mono_body = match res {
             MaybeMonomorphized::Monomorphized(res) => Cow::Owned(
                 try_monomorphize(

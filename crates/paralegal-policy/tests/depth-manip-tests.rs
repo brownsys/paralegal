@@ -26,8 +26,6 @@ fn adaptive_inlines_if_reachable() -> Result<()> {
         }
     ))?;
 
-    test.with_paralegal_args(["--adaptive-depth"]);
-
     test.run(|ctx| {
         let sources = ctx
             .marked_nodes(Identifier::new_intern("source"))
@@ -66,8 +64,6 @@ fn adaptive_inlines_if_reachable_async() -> Result<()> {
             target(intermediary().await).await
         }
     ))?;
-
-    test.with_paralegal_args(["--adaptive-depth"]);
 
     test.run(|ctx| {
         let sources = ctx

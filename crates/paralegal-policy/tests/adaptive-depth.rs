@@ -45,8 +45,6 @@ fn higher_order_futures() -> Result<()> {
         }
     ))?;
 
-    test.with_paralegal_args(["--adaptive-depth"]);
-
     test.run(|ctx| {
         let m_source = Identifier::new_intern("source");
         let m_sink = Identifier::new_intern("sink");
