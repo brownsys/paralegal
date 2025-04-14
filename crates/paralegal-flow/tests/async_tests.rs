@@ -603,3 +603,30 @@ define_test!(control_flow_overtaint_async_trait: graph -> {
 define_test!(control_flow_overtaint_async_trait_tracing: graph -> {
     control_flow_overtaint_check(graph)
 });
+
+#[test]
+fn explicit_call_to_poll() {
+    InlineTestBuilder::new(stringify!(
+        #![feature(noop_waker)]
+        use std::pin::{Pin, pin};
+        use std::future::Future;
+
+        fn main() {
+            let data1 = (1, 2,3, 4, 5);
+            let data2 = (1, 2,3, 4, 5);
+            let data3 = (1, 2,3, 4, 5);
+            let mut f = pin!(async { println!("{}", data3.4); data1.4 + data2.4 });
+            let waker = std::task::Waker::noop();
+            let mut cx = std::task::Context::from_waker(&waker);
+            let _ = f.as_mut().poll(&mut cx);
+        }
+    ))
+    .with_extra_args([
+        "--no-adaptive-approximation".to_string(),
+        "--dump".to_string(),
+        "spdg".to_string(),
+        "--dump".to_string(),
+        "mir".to_string(),
+    ])
+    .check_ctrl(|_| ());
+}

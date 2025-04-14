@@ -29,8 +29,16 @@ pub enum CallingConvention<'tcx> {
         closure_arg: Operand<'tcx>,
         tupled_arguments: Operand<'tcx>,
     },
-    /// An async generator. Only has one argument, which is the generator state.
-    Async(Place<'tcx>),
+    /// An async generator.
+    Async {
+        /// If this is false, the generator state is an overapproximation (most
+        /// likely `Pin<& mut [closure]>`). This happens when `poll` is called
+        /// explicitly, outside of `await`. In this case we cannot guarantee to
+        /// be able to precisely resolve the generator state.
+        precise: bool,
+        /// Where the generator state is stored
+        generator: Place<'tcx>,
+    },
 }
 
 /// The result of calculating a translation from a child place (in a called
@@ -74,7 +82,10 @@ impl<'tcx> CallingConvention<'tcx> {
         args: Cow<'_, [Operand<'tcx>]>,
     ) -> CallingConvention<'tcx> {
         match kind {
-            CallKind::AsyncPoll(poll) => CallingConvention::Async(poll.generator_data),
+            CallKind::AsyncPoll(poll) => CallingConvention::Async {
+                generator: poll.generator_data,
+                precise: poll.precise,
+            },
             CallKind::Direct => CallingConvention::Direct(args.into()),
             CallKind::Indirect { shim: once_shim } => CallingConvention::Indirect {
                 shim: *once_shim,
@@ -178,9 +189,10 @@ impl<'a, 'tcx> PlaceTranslator<'a, 'tcx> {
                 &child.projection[..],
             ),
             // Map arguments to projections of the future, the poll's first argument
-            CallingConvention::Async(ctx) => {
+            CallingConvention::Async { generator, precise } => {
                 if child.local.as_usize() == 1 {
-                    (*ctx, &child.projection[..])
+                    let projection = if *precise { &child.projection[..] } else { &[] };
+                    (*generator, projection)
                 } else {
                     return None;
                 }

@@ -8,6 +8,7 @@ use rustc_middle::{
     mir::{visit::Visitor, AggregateKind, Location, Operand, Place, Rvalue},
     ty::TyKind,
 };
+use rustc_span::Span;
 
 use crate::local_analysis::LocalAnalysis;
 
@@ -15,13 +16,17 @@ pub(crate) type ApproximationHandler<'tcx, 'a> =
     fn(&LocalAnalysis<'tcx, 'a>, &mut dyn Visitor<'tcx>, &[Operand<'tcx>], Place<'tcx>, Location);
 
 impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
-    /// Special case behavior for calls to functions used in desugaring async functions.
+    /// Special case behavior for calls to functions used in desugaring `await` desugarings.
     ///
     /// Ensures that functions like `Pin::new_unchecked` are not modularly-approximated.
     pub(crate) fn can_approximate_async_functions(
         &self,
         def_id: DefId,
+        span: Span,
     ) -> Option<ApproximationHandler<'tcx, 'a>> {
+        if span.desugaring_kind() != Some(rustc_span::DesugaringKind::Await) {
+            return None;
+        }
         let lang_items = self.tcx().lang_items();
         if Some(def_id) == lang_items.new_unchecked_fn() {
             Some(Self::approximate_new_unchecked)

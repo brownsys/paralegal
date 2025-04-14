@@ -13,6 +13,7 @@ use rustc_middle::{
     },
     ty::{GenericArgsRef, Instance, TyCtxt},
 };
+use rustc_span::Span;
 
 use crate::utils::is_async;
 
@@ -37,11 +38,13 @@ pub struct AsyncFnPollEnv<'tcx> {
     /// If the generator came from an `async fn`, then this is that function. If
     /// it is from an async block, this is `None`.
     pub async_fn_parent: Option<Instance<'tcx>>,
-    /// Where was the `async fn` called, or where was the async block created.
-    pub creation_loc: Location,
     /// A place which carries the runtime value representing the generator in
     /// the caller.
     pub generator_data: Place<'tcx>,
+    /// Was this from an `await` desugaring and as a result we can guarantee
+    /// that `generator_place` refers directly to the generator? Otherwise the
+    /// generator place is (over)approximate.
+    pub precise: bool,
 }
 
 /// Stores ids that are needed to construct projections around async functions.
@@ -211,6 +214,33 @@ impl<'tcx, 'mir> LocalAnalysis<'tcx, 'mir> {
     /// body to find the original future being polled, and get the arguments to the future.
     pub fn find_async_args<'a>(
         &'a self,
+        resolved_fn: Instance<'tcx>,
+        args: &'a [Operand<'tcx>],
+        span: Span,
+    ) -> Result<AsyncFnPollEnv<'tcx>, String> {
+        let precise = self.find_async_args_precise(args);
+        if precise.is_ok() || span.desugaring_kind() == Some(rustc_span::DesugaringKind::Await) {
+            return precise;
+        } else {
+            let parent = self.tcx().parent(resolved_fn.def_id());
+            Ok(AsyncFnPollEnv {
+                async_fn_parent: is_async(self.tcx(), parent).then(|| {
+                    utils::try_resolve_function(
+                        self.tcx(),
+                        parent,
+                        self.tcx().param_env_reveal_all_normalized(self.def_id),
+                        resolved_fn.args,
+                    )
+                    .unwrap()
+                }),
+                generator_data: args[0].place().unwrap(),
+                precise: false,
+            })
+        }
+    }
+
+    fn find_async_args_precise<'a>(
+        &'a self,
         args: &'a [Operand<'tcx>],
     ) -> Result<AsyncFnPollEnv<'tcx>, String> {
         macro_rules! let_assert {
@@ -335,8 +365,8 @@ impl<'tcx, 'mir> LocalAnalysis<'tcx, 'mir> {
 
         Ok(AsyncFnPollEnv {
             async_fn_parent,
-            creation_loc,
             generator_data,
+            precise: true,
         })
     }
 }

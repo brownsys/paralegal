@@ -436,7 +436,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             trace!("  `{called}` monomorphized to `{resolved}`",);
         }
 
-        if let Some(handler) = self.can_approximate_async_functions(resolved_def_id) {
+        if let Some(handler) = self.can_approximate_async_functions(resolved_def_id, span) {
             return Some(CallHandling::ApproxAsyncSM(handler));
         };
 
@@ -722,11 +722,10 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         // Why is this important? For example, an auto-generated async closure's
         // return gets wrapped in `Ready` automatically, whereas a manual
         // implementation does it explicitly.
-        if span.desugaring_kind() == Some(DesugaringKind::Await)
-            && lang_items.future_poll_fn() == Some(def_id)
+        if lang_items.future_poll_fn() == Some(def_id)
             && async_support::is_async_fn_or_block(self.tcx(), resolved_fn)
         {
-            return match self.find_async_args(original_args) {
+            return match self.find_async_args(resolved_fn, original_args, span) {
                 Ok(poll) => CallKind::AsyncPoll(poll),
                 Err(str) => self.tcx().sess.span_fatal(span, str),
             };

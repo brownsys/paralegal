@@ -190,8 +190,14 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 let func =
                     try_monomorphize(res, self.tcx(), param_env, func, term.source_info.span)
                         .unwrap();
-                let (inst, args) =
-                    type_as_fn(self.tcx(), ty_of_const(func.constant().unwrap())).unwrap();
+                let Some(funcc) = func.constant() else {
+                    self.tcx().sess.span_warn(
+                        weight.span,
+                        "SOUNDNESS: Cannot determine markers for function call",
+                    );
+                    return;
+                };
+                let (inst, args) = type_as_fn(self.tcx(), ty_of_const(funcc)).unwrap();
                 let f = if let Some(inst) = try_resolve_function(
                     self.tcx(),
                     inst,
