@@ -228,7 +228,7 @@ pub struct SourceFile(Intern<SourceFileInfo>);
 impl Allocative for SourceFile {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        allocative_visit_intern_t(&self.0, &mut visitor);
+        allocative_visit_intern_t(self.0, &mut visitor);
         visitor.exit();
     }
 }
@@ -536,7 +536,7 @@ pub struct Identifier(Intern<String>);
 impl Allocative for Identifier {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        allocative_visit_intern_t(&self.0, &mut visitor);
+        allocative_visit_intern_t(self.0, &mut visitor);
         visitor.exit();
     }
 }
@@ -991,8 +991,12 @@ fn allocative_visit_petgraph_graph<
 
     impl<E: Allocative, Ix> Allocative for EdgeProxy<E, Ix> {
         fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-            let mut visitor = visitor.enter_self_sized::<petgraph::graph::Edge<E, Ix>>();
-            visitor.visit_field(ident_key!(weight), &self.0.weight);
+            let mut visitor = visitor.enter_self_sized::<Self>();
+            visitor.visit_field_with(ident_key!(value), std::mem::size_of::<Self>(), |visitor| {
+                let mut visitor = visitor.enter_self_sized::<petgraph::graph::Edge<E, Ix>>();
+                visitor.visit_field(ident_key!(weight), &self.0.weight);
+                visitor.exit()
+            });
             visitor.exit();
         }
     }
@@ -1002,8 +1006,12 @@ fn allocative_visit_petgraph_graph<
 
     impl<N: Allocative, Ix> Allocative for NodeProxy<N, Ix> {
         fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-            let mut visitor = visitor.enter_self_sized::<petgraph::graph::Node<N, Ix>>();
-            visitor.visit_field(ident_key!(weight), &self.0.weight);
+            let mut visitor = visitor.enter_self_sized::<Self>();
+            visitor.visit_field_with(ident_key!(value), std::mem::size_of::<Self>(), |visitor| {
+                let mut visitor = visitor.enter_self_sized::<petgraph::graph::Node<N, Ix>>();
+                visitor.visit_field(ident_key!(weight), &self.0.weight);
+                visitor.exit()
+            });
             visitor.exit();
         }
     }
@@ -1013,9 +1021,20 @@ fn allocative_visit_petgraph_graph<
     let edges_as_proxy: &[EdgeProxy<E, Ix>] = unsafe { std::mem::transmute(graph.raw_edges()) };
     let nodes_as_proxy =
         unsafe { std::mem::transmute::<_, &[NodeProxy<N, Ix>]>(graph.raw_nodes()) };
-    edges_as_proxy[0].visit(&mut visitor);
-    // visitor.visit_vec_like_body(edges_as_proxy, ecap);
-    // visitor.visit_vec_like_body(nodes_as_proxy, ncap);
+    visitor.visit_field_with(
+        ident_key!(nodes),
+        std::mem::size_of::<Vec<petgraph::graph::Node<N, Ix>>>(),
+        |visitor| {
+            visitor.visit_vec_like_body(nodes_as_proxy, ncap);
+        },
+    );
+    visitor.visit_field_with(
+        ident_key!(edges),
+        std::mem::size_of::<Vec<petgraph::graph::Edge<E, Ix>>>(),
+        |visitor| {
+            visitor.visit_vec_like_body(edges_as_proxy, ecap);
+        },
+    );
     visitor.exit()
 }
 

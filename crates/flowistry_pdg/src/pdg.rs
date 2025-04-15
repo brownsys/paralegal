@@ -1,6 +1,6 @@
 //! The representation of the PDG.
 
-use std::{collections::HashMap, fmt};
+use std::{cell::OnceCell, collections::HashMap, fmt};
 
 use allocative::{ident_key, Allocative};
 use internment::Intern;
@@ -114,35 +114,47 @@ pub struct CallString(Intern<CallStringInner>);
 impl Allocative for CallString {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        allocative_visit_intern_t(&self.0, &mut visitor);
+        allocative_visit_intern_t(self.0, &mut visitor);
         visitor.exit();
     }
 }
 
+const TRACK_INTERN_AS_UNIQUE: OnceCell<bool> = OnceCell::new();
+
 pub fn allocative_visit_intern_t<'a, 'b, T: Allocative + ?Sized>(
-    intern: &Intern<T>,
+    intern: Intern<T>,
     visitor: &'b mut allocative::Visitor<'a>,
 ) {
-    {
+    let track_as_unique = *TRACK_INTERN_AS_UNIQUE.get_or_init(|| {
+        if let Ok(val) = std::env::var("ALLOCATIVE_TRACK_INTERN_AS_UNIQUE") {
+            val == "true" || val == "1"
+        } else {
+            false
+        }
+    });
+    if !track_as_unique {
         let mut visitor = visitor.enter_self_sized::<Intern<T>>();
         {
+            let ptr: &T = intern.as_ref();
+            let as_ptr = ptr as *const T as *const ();
+
             let inner_visitor = visitor.enter_shared(
-                ident_key!(call_string),
+                ident_key!(intern_value),
                 std::mem::size_of::<*const T>(),
-                intern.as_ref() as *const T as *const (),
+                as_ptr,
             );
             if let Some(mut visitor) = inner_visitor {
-                intern.as_ref().visit(&mut visitor);
+                ptr.visit(&mut visitor);
                 visitor.exit();
             }
         }
         visitor.exit();
+    } else {
+        let mut visitor = visitor.enter_self_sized::<Intern<T>>();
+        let inner: &T = intern.as_ref();
+        inner.visit(&mut visitor);
+        visitor.exit();
     }
-    // {
-    //     let mut visitor = visitor.enter_self_sized::<Intern<T>>();
-    //     intern.as_ref().visit(&mut visitor);
-    //     visitor.exit();
-    // }
 }
 
 impl Serialize for CallString {
