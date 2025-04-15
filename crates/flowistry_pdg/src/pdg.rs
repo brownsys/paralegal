@@ -113,20 +113,9 @@ pub struct CallString(Intern<CallStringInner>);
 
 impl Allocative for CallString {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        allocative_visit_intern_t(&self.0, visitor);
-        // let mut visitor = visitor.enter_self_sized::<Self>();
-        // {
-        //     let inner_visitor = visitor.enter_shared(
-        //         ident_key!(call_string),
-        //         std::mem::size_of::<*const [GlobalLocation]>(),
-        //         self.0.as_ref().as_ptr() as *const (),
-        //     );
-        //     if let Some(mut visitor) = inner_visitor {
-        //         visitor.visit_slice(self.0.as_ref());
-        //         visitor.exit();
-        //     }
-        // }
-        // visitor.exit();
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        allocative_visit_intern_t(&self.0, &mut visitor);
+        visitor.exit();
     }
 }
 
@@ -134,19 +123,26 @@ pub fn allocative_visit_intern_t<'a, 'b, T: Allocative + ?Sized>(
     intern: &Intern<T>,
     visitor: &'b mut allocative::Visitor<'a>,
 ) {
-    let mut visitor = visitor.enter_self_sized::<Intern<T>>();
     {
-        let inner_visitor = visitor.enter_shared(
-            ident_key!(call_string),
-            std::mem::size_of::<*const T>(),
-            intern.as_ref() as *const T as *const (),
-        );
-        if let Some(mut visitor) = inner_visitor {
-            intern.as_ref().visit(&mut visitor);
-            visitor.exit();
+        let mut visitor = visitor.enter_self_sized::<Intern<T>>();
+        {
+            let inner_visitor = visitor.enter_shared(
+                ident_key!(call_string),
+                std::mem::size_of::<*const T>(),
+                intern.as_ref() as *const T as *const (),
+            );
+            if let Some(mut visitor) = inner_visitor {
+                intern.as_ref().visit(&mut visitor);
+                visitor.exit();
+            }
         }
+        visitor.exit();
     }
-    visitor.exit();
+    // {
+    //     let mut visitor = visitor.enter_self_sized::<Intern<T>>();
+    //     intern.as_ref().visit(&mut visitor);
+    //     visitor.exit();
+    // }
 }
 
 impl Serialize for CallString {
@@ -277,7 +273,18 @@ impl fmt::Display for CallString {
 ///
 /// If the operation is a function call this contains the argument index
 #[derive(
-    PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Debug, Serialize, Deserialize, strum::EnumIs,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    strum::EnumIs,
+    Allocative,
 )]
 pub enum SourceUse {
     Operand,
@@ -285,7 +292,9 @@ pub enum SourceUse {
 }
 
 /// Additional information about this mutation.
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize, strum::EnumIs)]
+#[derive(
+    PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize, strum::EnumIs, Allocative,
+)]
 pub enum TargetUse {
     /// A function returned, assigning to it's return destination
     Return,

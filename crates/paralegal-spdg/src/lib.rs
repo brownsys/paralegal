@@ -34,7 +34,7 @@ mod tiny_bitset;
 pub mod traverse;
 pub mod utils;
 
-use allocative::Allocative;
+use allocative::{ident_key, Allocative};
 use internment::Intern;
 use itertools::Itertools;
 use rustc_portable::DefId;
@@ -50,7 +50,7 @@ pub use crate::tiny_bitset::TinyBitSet;
 use flowistry_pdg::rustc_portable::LocalDefId;
 use petgraph::graph::{EdgeIndex, EdgeReference, NodeIndex};
 use petgraph::prelude::EdgeRef;
-use petgraph::visit::IntoNodeIdentifiers;
+use petgraph::visit::{self, IntoNodeIdentifiers};
 pub use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 
@@ -225,6 +225,14 @@ pub enum DefKind {
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Hash, PartialOrd, Ord)]
 pub struct SourceFile(Intern<SourceFileInfo>);
 
+impl Allocative for SourceFile {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        allocative_visit_intern_t(&self.0, &mut visitor);
+        visitor.exit();
+    }
+}
+
 impl std::ops::Deref for SourceFile {
     type Target = SourceFileInfo;
     fn deref(&self) -> &Self::Target {
@@ -233,7 +241,9 @@ impl std::ops::Deref for SourceFile {
 }
 
 /// Information about a source file
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Hash, PartialOrd, Ord)]
+#[derive(
+    Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Hash, PartialOrd, Ord, Allocative,
+)]
 pub struct SourceFileInfo {
     /// Printable location of the source code file - either an absolute path to library source code
     /// or a path relative to within the compiled crate (e.g. `src/...`)
@@ -253,7 +263,9 @@ impl SourceFileInfo {
 ///
 /// NOTE: The ordering of this type must be such that if point "a" is earlier in
 /// the file than "b", then "a" < "b".
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, PartialOrd, Ord, Hash, Allocative,
+)]
 pub struct SpanCoord {
     /// Line in the source file
     pub line: u32,
@@ -262,7 +274,9 @@ pub struct SpanCoord {
 }
 
 /// Encodes a source code location
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone, PartialEq, Eq, Serialize, Deserialize, Debug, PartialOrd, Ord, Hash, Allocative,
+)]
 pub struct Span {
     /// Which file this comes from
     pub source_file: SourceFile,
@@ -521,7 +535,9 @@ pub struct Identifier(Intern<String>);
 
 impl Allocative for Identifier {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        allocative_visit_intern_t(&self.0, visitor);
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        allocative_visit_intern_t(&self.0, &mut visitor);
+        visitor.exit();
     }
 }
 
@@ -856,7 +872,7 @@ impl GlobalEdge {
 }
 
 /// Node metadata in the [`SPDGImpl`]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Allocative)]
 pub struct NodeInfo {
     /// Location of the node in the call stack
     pub at: CallString,
@@ -873,7 +889,7 @@ impl Display for NodeInfo {
 }
 
 /// Metadata for an edge in the [`SPDGImpl`]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Allocative)]
 pub struct EdgeInfo {
     /// What type of edge it is
     pub kind: EdgeKind,
@@ -906,7 +922,16 @@ impl EdgeInfo {
 
 /// The type of an edge
 #[derive(
-    Clone, Debug, Copy, Eq, PartialEq, Deserialize, Serialize, strum::EnumIs, strum::Display,
+    Clone,
+    Debug,
+    Copy,
+    Eq,
+    PartialEq,
+    Deserialize,
+    Serialize,
+    strum::EnumIs,
+    strum::Display,
+    Allocative,
 )]
 pub enum EdgeKind {
     /// The target can read data created by the source
@@ -930,6 +955,7 @@ pub struct SPDG {
     #[allocative(visit = allocative_visit_simple_sized)]
     pub id: Endpoint,
     /// The PDG
+    #[allocative(visit = allocative_visit_petgraph_graph)]
     pub graph: SPDGImpl,
     /// Nodes to which markers are assigned.
     #[allocative(visit = allocative_visit_map_coerce_key)]
@@ -949,12 +975,48 @@ pub struct SPDG {
     pub statistics: SPDGStats,
 }
 
-fn allocative_visit_petgraph_graph<'a, 'b, N: Allocative, E: Allocative, Ty, Ix: Sized>(
+fn allocative_visit_petgraph_graph<
+    'a,
+    'b,
+    N: Allocative,
+    E: Allocative,
+    Ty: petgraph::EdgeType,
+    Ix: petgraph::csr::IndexType,
+>(
     graph: &petgraph::Graph<N, E, Ty, Ix>,
     visitor: &'a mut allocative::Visitor<'b>,
 ) {
+    #[repr(transparent)]
+    struct EdgeProxy<E, Ix>(petgraph::graph::Edge<E, Ix>);
+
+    impl<E: Allocative, Ix> Allocative for EdgeProxy<E, Ix> {
+        fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+            let mut visitor = visitor.enter_self_sized::<petgraph::graph::Edge<E, Ix>>();
+            visitor.visit_field(ident_key!(weight), &self.0.weight);
+            visitor.exit();
+        }
+    }
+
+    #[repr(transparent)]
+    struct NodeProxy<N, Ix>(petgraph::graph::Node<N, Ix>);
+
+    impl<N: Allocative, Ix> Allocative for NodeProxy<N, Ix> {
+        fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+            let mut visitor = visitor.enter_self_sized::<petgraph::graph::Node<N, Ix>>();
+            visitor.visit_field(ident_key!(weight), &self.0.weight);
+            visitor.exit();
+        }
+    }
+
     let (ncap, ecap) = graph.capacity();
     let mut visitor = visitor.enter_self_sized::<petgraph::Graph<N, E, Ty, Ix>>();
+    let edges_as_proxy: &[EdgeProxy<E, Ix>] = unsafe { std::mem::transmute(graph.raw_edges()) };
+    let nodes_as_proxy =
+        unsafe { std::mem::transmute::<_, &[NodeProxy<N, Ix>]>(graph.raw_nodes()) };
+    edges_as_proxy[0].visit(&mut visitor);
+    // visitor.visit_vec_like_body(edges_as_proxy, ecap);
+    // visitor.visit_vec_like_body(nodes_as_proxy, ncap);
+    visitor.exit()
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default, Allocative)]
