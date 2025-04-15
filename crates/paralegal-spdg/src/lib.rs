@@ -34,6 +34,7 @@ mod tiny_bitset;
 pub mod traverse;
 pub mod utils;
 
+use allocative::Allocative;
 use internment::Intern;
 use itertools::Itertools;
 use rustc_portable::DefId;
@@ -97,7 +98,7 @@ mod ser_localdefid_map {
 }
 
 /// A marker annotation and its refinements.
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize, Allocative)]
 pub struct MarkerAnnotation {
     /// The (unchanged) name of the marker as provided by the user
     pub marker: Identifier,
@@ -156,7 +157,7 @@ mod ser_defid_map {
 
 /// Exported information from rustc about what sort of object a [`DefId`] points
 /// to.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Allocative)]
 pub struct DefInfo {
     /// Name of the object. Usually the one that a user assigned, but can be
     /// generated in the case of closures and generators
@@ -166,6 +167,7 @@ pub struct DefInfo {
     /// Kind of object
     pub kind: DefKind,
     /// Information about the span
+    #[allocative(visit = allocative_visit_simple_sized)]
     pub src_info: Span,
     /// Marker annotations on this item
     pub markers: Box<[MarkerAnnotation]>,
@@ -194,7 +196,16 @@ impl<'a> From<&'a Box<[Identifier]>> for DisplayPath<'a> {
 
 /// Similar to `DefKind` in rustc but *not the same*!
 #[derive(
-    Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, strum::EnumIs, strum::AsRefStr,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Debug,
+    strum::EnumIs,
+    strum::AsRefStr,
+    Allocative,
 )]
 pub enum DefKind {
     /// A regular function object
@@ -274,18 +285,31 @@ impl Span {
 }
 
 /// Metadata on a function call.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq)]
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq, Allocative,
+)]
 pub struct FunctionCallInfo {
     /// Has this call been inlined
     pub is_inlined: bool,
     /// What is the ID of the item that was called here.
     #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))]
+    #[allocative(visit = allocative_visit_simple_sized)]
     pub id: DefId,
 }
 
 /// The type of instructions we may encounter
 #[derive(
-    Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq, strum::EnumIs,
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    Eq,
+    Ord,
+    PartialOrd,
+    PartialEq,
+    strum::EnumIs,
+    Allocative,
 )]
 pub enum InstructionKind {
     /// Some type of statement
@@ -311,11 +335,12 @@ impl InstructionKind {
 }
 
 /// Information about an instruction represented in the PDG
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Allocative)]
 pub struct InstructionInfo {
     /// Classification of the instruction
     pub kind: InstructionKind,
     /// The source code span
+    #[allocative(visit = allocative_visit_simple_sized)]
     pub span: Span,
     /// Textual rendering of the MIR
     pub description: Identifier,
@@ -329,7 +354,7 @@ pub type ControllerMap = HashMap<Endpoint, SPDG>;
 
 #[doc(hidden)]
 /// How was a given function handled by the analyzer
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Allocative)]
 pub enum FunctionHandling {
     /// A PDG was generated
     PDG,
@@ -341,16 +366,18 @@ pub enum FunctionHandling {
 pub type AnalyzedSpans = HashMap<DefId, (Span, FunctionHandling)>;
 
 /// The annotated program dependence graph.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Allocative)]
 pub struct ProgramDescription {
     /// Entry points we analyzed and their PDGs
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
+    #[allocative(visit = allocative_visit_map_coerce_key)]
     pub controllers: ControllerMap,
 
     /// Metadata about types
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
+    #[allocative(visit = allocative_visit_map_coerce_key)]
     pub type_info: TypeInfoMap,
 
     /// Metadata about the instructions that are executed at all program
@@ -360,12 +387,26 @@ pub struct ProgramDescription {
 
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
+    #[allocative(visit = allocative_visit_map_coerce_key)]
     /// Metadata about the `DefId`s
     pub def_info: HashMap<DefId, DefInfo>,
     #[doc(hidden)]
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
+    #[allocative(visit = allocative_visit_analyzed_spans)]
     pub analyzed_spans: AnalyzedSpans,
+}
+
+fn allocative_visit_analyzed_spans<'a, 'b>(
+    analyzed_spans: &AnalyzedSpans,
+    visitor: &'a mut allocative::Visitor<'b>,
+) {
+    let coerced: &HashMap<
+        SimpleSizedAllocativeWrapper<DefId>,
+        (SimpleSizedAllocativeWrapper<Span>, FunctionHandling),
+    > = unsafe { std::mem::transmute(analyzed_spans) };
+
+    coerced.visit(visitor);
 }
 
 /// Statistics about a single run of paralegal-flow
@@ -400,15 +441,24 @@ pub struct AnalyzerStats {
 }
 
 /// Metadata about a type
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Allocative)]
 pub struct TypeDescription {
     /// How rustc would debug print this type
     pub rendering: String,
     /// Aliases
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_seq"))]
+    #[allocative(visit = allocative_visit_box_slice_simple_t)]
     pub otypes: Box<[TypeId]>,
     /// Attached markers. Guaranteed not to be empty.
     pub markers: Vec<Identifier>,
+}
+
+fn allocative_visit_box_slice_simple_t<'a, 'b, T>(
+    item: &Box<[T]>,
+    visitor: &'a mut allocative::Visitor<'b>,
+) {
+    let coerced: &Box<[SimpleSizedAllocativeWrapper<T>]> = unsafe { std::mem::transmute(item) };
+    coerced.visit(visitor);
 }
 
 #[cfg(feature = "rustc")]
@@ -468,6 +518,12 @@ impl ProgramDescription {
 /// Implemented as an interned string, so identifiers are cheap to reuse.
 #[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Clone, Serialize, Deserialize, Copy)]
 pub struct Identifier(Intern<String>);
+
+impl Allocative for Identifier {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        allocative_visit_intern_t(&self.0, visitor);
+    }
+}
 
 impl<'a> From<&'a str> for Identifier {
     fn from(value: &'a str) -> Self {
@@ -863,7 +919,7 @@ pub enum EdgeKind {
 pub type SPDGImpl = petgraph::Graph<NodeInfo, EdgeInfo>;
 
 /// A semantic PDG, e.g. a graph plus marker annotations
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Allocative)]
 pub struct SPDG {
     /// The identifier of the entry point to this computation
     pub name: Identifier,
@@ -871,24 +927,37 @@ pub struct SPDG {
     pub path: Box<[Identifier]>,
     /// The id
     #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))]
+    #[allocative(visit = allocative_visit_simple_sized)]
     pub id: Endpoint,
     /// The PDG
     pub graph: SPDGImpl,
     /// Nodes to which markers are assigned.
+    #[allocative(visit = allocative_visit_map_coerce_key)]
     pub markers: HashMap<Node, Box<[Identifier]>>,
     /// The nodes that represent arguments to the entrypoint
+    #[allocative(visit = allocative_visit_box_slice_simple_t)]
     pub arguments: Box<[Node]>,
     /// If the return is `()` or `!` then this is `None`
+    #[allocative(visit = allocative_visit_box_slice_simple_t)]
     pub return_: Box<[Node]>,
     /// Stores the assignment of relevant (e.g. marked) types to nodes. Node
     /// that this contains multiple types for a single node, because it hold
     /// top-level types and subtypes that may be marked.
+    #[allocative(visit = allocative_visit_map_coerce_key)]
     pub type_assigns: HashMap<Node, Types>,
     /// Statistics
     pub statistics: SPDGStats,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+fn allocative_visit_petgraph_graph<'a, 'b, N: Allocative, E: Allocative, Ty, Ix: Sized>(
+    graph: &petgraph::Graph<N, E, Ty, Ix>,
+    visitor: &'a mut allocative::Visitor<'b>,
+) {
+    let (ncap, ecap) = graph.capacity();
+    let mut visitor = visitor.enter_self_sized::<petgraph::Graph<N, E, Ty, Ix>>();
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, Default, Allocative)]
 /// Statistics about the code that produced an SPDG
 pub struct SPDGStats {
     /// The number of unique lines of code we generated a PDG for. This means
@@ -914,8 +983,12 @@ pub struct SPDGStats {
 }
 
 /// Holds [`TypeId`]s that were assigned to a node.
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
-pub struct Types(#[cfg_attr(feature = "rustc", serde(with = "ser_defid_seq"))] pub Box<[TypeId]>);
+#[derive(Clone, Serialize, Deserialize, Debug, Default, Allocative)]
+pub struct Types(
+    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_seq"))]
+    #[allocative(visit = allocative_visit_box_slice_simple_t)]
+    pub Box<[TypeId]>,
+);
 
 impl SPDG {
     /// Retrieve metadata for this node
