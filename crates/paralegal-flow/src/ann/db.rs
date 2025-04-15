@@ -238,12 +238,13 @@ impl<'tcx> MarkerCtx<'tcx> {
                 .collect::<Box<_>>();
         }
         let body = self.0.body_cache.get(res.def_id());
+        let param_env = self.tcx().param_env_reveal_all_normalized(res.def_id());
         let mono_body = match res {
             MaybeMonomorphized::Monomorphized(res) => Cow::Owned(
                 try_monomorphize(
                     res,
                     self.tcx(),
-                    self.tcx().param_env_reveal_all_normalized(res.def_id()),
+                    param_env,
                     body.body(),
                     self.tcx().def_span(res.def_id()),
                 )
@@ -267,6 +268,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                 self.terminator_reachable_markers(
                     &mono_body.local_decls,
                     bbdat.terminator(),
+                    param_env,
                     expect_resolve,
                 )
             })
@@ -289,9 +291,9 @@ impl<'tcx> MarkerCtx<'tcx> {
         &self,
         local_decls: &mir::LocalDecls,
         terminator: &mir::Terminator<'tcx>,
+        param_env: ty::ParamEnv<'tcx>,
         expect_resolve: bool,
     ) -> impl Iterator<Item = Identifier> + '_ {
-        let param_env = ty::ParamEnv::reveal_all();
         let mut v = vec![];
         trace!(
             "  Finding reachable markers for terminator {:?}",
@@ -301,8 +303,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             return v.into_iter();
         };
         let mut res = if expect_resolve {
-            let Some(instance) = Instance::resolve(self.tcx(), param_env, def_id, gargs).unwrap()
-            else {
+            let Some(instance) = try_resolve_function(self.tcx(), def_id, param_env, gargs) else {
                 self.span_err(
                         terminator.source_info.span,
                         format!("cannot determine reachable markers, failed to resolve {def_id:?} with {gargs:?}")
