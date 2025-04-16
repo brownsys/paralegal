@@ -562,7 +562,13 @@ impl AnalysisCtrl {
     }
 
     pub fn included(&self, crate_name: &str) -> bool {
-        !self.local_crate_only || self.include.iter().any(|s| s == crate_name)
+        if self.local_crate_only {
+            false
+        } else if self.include.is_empty() {
+            true
+        } else {
+            self.include.iter().any(|s| s == crate_name)
+        }
     }
 
     pub fn included_crates<'tcx>(
@@ -596,22 +602,27 @@ impl AnalysisCtrl {
     }
 
     pub fn inclusion_predicate(&self, tcx: TyCtxt<'_>) -> impl Fn(CrateNum) -> bool {
-        // The policy for this predicate is that if "all" crates should be included,
-        // then `hs` is the set of standard included form rustc, which we won't
-        // see during compilation and as a result we do not have artifacts for
-        // this data, therefore they must be excluded.
-        //
-        // If instead only an explicit user selection of crates is included,
-        // `hs` contains those crates.
-        //
-        // Therefore we use xor (^) in the predicate.
-        let include_all = !self.local_crate_only;
-        let hs: FxHashSet<CrateNum> = if !self.local_crate_only {
-            std_crates(tcx).collect()
-        } else {
+        let local_crate_only = self.local_crate_only;
+        let include_restricted_set = !self.include.is_empty();
+        let hs: FxHashSet<CrateNum> = if include_restricted_set {
             self.included_crates(tcx).collect()
+        } else {
+            std_crates(tcx).collect()
         };
-        move |c| include_all ^ hs.contains(&c)
+        move |c| {
+            if local_crate_only {
+                // We're only supposed to analyze the local crate
+                c == LOCAL_CRATE
+            } else if include_restricted_set {
+                // We are supposed to analyze a specific set of crates. This does
+                // that selection.
+                hs.contains(&c)
+            } else {
+                // We're supposed to analyze all crates, but crates from the stdlib
+                // cannot be loaded so we exclude them here.
+                !hs.contains(&c)
+            }
+        }
     }
 
     pub fn pdg_cache(&self) -> bool {
