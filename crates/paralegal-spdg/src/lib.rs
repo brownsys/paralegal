@@ -354,7 +354,6 @@ pub struct InstructionInfo {
     /// Classification of the instruction
     pub kind: InstructionKind,
     /// The source code span
-    #[allocative(visit = allocative_visit_simple_sized)]
     pub span: Span,
     /// Textual rendering of the MIR
     pub description: Identifier,
@@ -407,20 +406,8 @@ pub struct ProgramDescription {
     #[doc(hidden)]
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
-    #[allocative(visit = allocative_visit_analyzed_spans)]
+    #[allocative(visit = allocative_visit_map_coerce_key)]
     pub analyzed_spans: AnalyzedSpans,
-}
-
-fn allocative_visit_analyzed_spans<'a, 'b>(
-    analyzed_spans: &AnalyzedSpans,
-    visitor: &'a mut allocative::Visitor<'b>,
-) {
-    let coerced: &HashMap<
-        SimpleSizedAllocativeWrapper<DefId>,
-        (SimpleSizedAllocativeWrapper<Span>, FunctionHandling),
-    > = unsafe { std::mem::transmute(analyzed_spans) };
-
-    coerced.visit(visitor);
 }
 
 /// Statistics about a single run of paralegal-flow
@@ -1158,5 +1145,50 @@ impl<'a> Display for DisplayNode<'a> {
         } else {
             write!(f, "{{{}}} {}", self.node.index(), weight.description)
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use rustc_span::sym::assert;
+
+    fn size(t: &T) -> usize {
+        let mut builder = allocative::FlameGraphBuilder::default();
+        builder.visit_root(t);
+        builder.finish().flamegraph().total_size()
+    }
+
+    /// This test was made from opportunity. I had been trying to figure out
+    /// whether the interned pointers were handles properly and happened to
+    /// calculate these sizes in the process. So I figured why tho turn them
+    /// into tests.
+    ///
+    /// This relies ona  certain pointer width so ... maybe these need to be
+    /// calculated in a platform dependenct way at some point.
+    #[test]
+    fn test_sizing() {
+        let ident1 = Identifier::new_intern("");
+        assert_eq!(size(ident1), 32);
+        let ident2 = Identifier::new_intern("a longer string that should be larger");
+        assert_eq!(size(ident2), 69);
+
+        let gloc = GlobalLocation {
+            function: DefId {
+                index: unsafe { std::mem::transmute(0_u32) },
+                krate: { unsafe { std::mem::transmute(0_u32) } },
+            },
+            location: paralegal_spdg::RichLocation::End,
+        };
+        assert_eq!(size(&gloc), 32);
+        let cstring = CallString::single(gloc.clone());
+        assert_eq!(size(&cstring), 48);
+        let cstring_2 = cstring.push(gloc.clone());
+        assert_eq!(size(&cstring_2), 80);
+        let cstring_3 = cstring_2.push(gloc.clone());
+        assert_eq!(size(&cstring_3), 112);
+        let cstringarr_2 = [cstring_3, cstring_3];
+        assert_eq!(size(&cstringarr_2), 128);
+        let cstringarr_3 = [cstring_3, cstring_3, cstring_3];
+        assert_eq!(size(&cstringarr_3), 144);
     }
 }
