@@ -56,6 +56,7 @@ pub struct SPDGGenerator<'tcx> {
     stats: Stats,
     pdg_constructor: MemoPdgConstructor<'tcx>,
     judge: Rc<InlineJudge<'tcx>>,
+    functions_to_analyze: Vec<FnToAnalyze>,
 }
 
 impl<'tcx> SPDGGenerator<'tcx> {
@@ -65,6 +66,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         tcx: TyCtxt<'tcx>,
         body_cache: Rc<BodyCache<'tcx>>,
         stats: Stats,
+        functions_to_analyze: Vec<FnToAnalyze>,
     ) -> Self {
         let judge = Rc::new(inline_judge);
         let mut pdg_constructor = MemoPdgConstructor::new_with_cache(tcx, body_cache);
@@ -81,6 +83,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             tcx,
             stats,
             judge,
+            functions_to_analyze,
         }
     }
 
@@ -112,10 +115,8 @@ impl<'tcx> SPDGGenerator<'tcx> {
     /// other setup necessary for the flow graph creation.
     ///
     /// Should only be called after the visit.
-    pub fn analyze(
-        &mut self,
-        targets: Vec<FnToAnalyze>,
-    ) -> Result<(ProgramDescription, AnalyzerStats)> {
+    pub fn analyze(&mut self) -> Result<(ProgramDescription, AnalyzerStats)> {
+        let targets = std::mem::take(&mut self.functions_to_analyze);
         if let LogLevelConfig::Targeted(s) = self.opts.direct_debug() {
             assert!(
                 targets.iter().any(|target| target.name().as_str() == s),

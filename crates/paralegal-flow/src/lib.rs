@@ -307,8 +307,9 @@ impl Callbacks {
         dump_markers(tcx);
         self.dump_stats.dump_time += dump_marker_start.elapsed();
         tcx.sess.abort_if_errors();
-        let (desc, stats) =
-            discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone()).run()?;
+        let vis = discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone());
+        let mut generator = vis.run();
+        let (desc, stats) = generator.analyze()?;
         info!("All elems walked");
         tcx.sess.abort_if_errors();
 
@@ -316,6 +317,12 @@ impl Callbacks {
             let out = std::fs::File::create("call-only-flow.gv")?;
             paralegal_spdg::dot::dump(&desc, out)?;
         }
+
+        generator
+            .marker_ctx()
+            .dump_marker_stats(std::fs::File::create(
+                self.opts.result_path().with_extension("marker_stats.json"),
+            )?);
         Ok((desc, stats))
     }
 

@@ -11,7 +11,7 @@ use std::{
 use anyhow::anyhow;
 pub use anyhow::{ensure, Result};
 
-use paralegal_policy::{RootContext, GraphLocation};
+use paralegal_policy::{GraphLocation, RootContext};
 
 lazy_static::lazy_static! {
     static ref TOOL_BUILT: PathBuf = {

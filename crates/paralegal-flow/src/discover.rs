@@ -108,17 +108,17 @@ impl<'tcx> CollectingVisitor<'tcx> {
             self.tcx,
             self.body_cache,
             self.stats,
+            self.functions_to_analyze,
         )
     }
 
     /// Driver function. Performs the data collection via visit, then calls
     /// [`Self::analyze`] to construct the Forge friendly description of all
     /// endpoints.
-    pub fn run(mut self) -> Result<(ProgramDescription, AnalyzerStats)> {
+    pub fn run(mut self) -> SPDGGenerator<'tcx> {
         let tcx = self.tcx;
         tcx.hir().visit_all_item_likes_in_crate(&mut self);
-        let targets = std::mem::take(&mut self.functions_to_analyze);
-        self.into_generator().analyze(targets)
+        self.into_generator()
     }
 
     /// Does the function named by this id have the `paralegal_flow::analyze` annotation
