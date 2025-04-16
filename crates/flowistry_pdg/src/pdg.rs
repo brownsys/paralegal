@@ -132,17 +132,14 @@ pub fn allocative_visit_intern_t<'a, 'b, T: Allocative + ?Sized>(
             false
         }
     });
+    let ptr_size = std::mem::size_of::<*const T>();
     if !track_as_unique {
         let mut visitor = visitor.enter_self_sized::<Intern<T>>();
         {
             let ptr: &T = intern.as_ref();
             let as_ptr = ptr as *const T as *const ();
 
-            let inner_visitor = visitor.enter_shared(
-                ident_key!(intern_value),
-                std::mem::size_of::<*const T>(),
-                as_ptr,
-            );
+            let inner_visitor = visitor.enter_shared(ident_key!(intern_value), ptr_size, as_ptr);
             if let Some(mut visitor) = inner_visitor {
                 ptr.visit(&mut visitor);
                 visitor.exit();
@@ -152,7 +149,11 @@ pub fn allocative_visit_intern_t<'a, 'b, T: Allocative + ?Sized>(
     } else {
         let mut visitor = visitor.enter_self_sized::<Intern<T>>();
         let inner: &T = intern.as_ref();
-        inner.visit(&mut visitor);
+        {
+            let mut visitor = visitor.enter_unique(ident_key!(pointee), ptr_size);
+            inner.visit(&mut visitor);
+            visitor.exit();
+        }
         visitor.exit();
     }
 }
