@@ -8,6 +8,7 @@ use petgraph::graph::DiGraph;
 use flowistry_pdg::{CallString, GlobalLocation};
 
 use df::{AnalysisDomain, Results, ResultsVisitor};
+use rustc_error_messages::DiagnosticMessage;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
@@ -78,6 +79,7 @@ pub struct MemoPdgConstructor<'tcx> {
     pub pdg_cache: PdgCache<'tcx>,
     pub(crate) body_cache: Rc<body_cache::BodyCache<'tcx>>,
     disable_cache: bool,
+    relaxed: bool,
 }
 
 impl<'tcx> MemoPdgConstructor<'tcx> {
@@ -91,6 +93,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             pdg_cache: Default::default(),
             body_cache: Rc::new(BodyCache::new(tcx)),
             disable_cache: false,
+            relaxed: false,
         }
     }
 
@@ -104,6 +107,7 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             pdg_cache: Default::default(),
             body_cache,
             disable_cache: false,
+            relaxed: false,
         }
     }
 
@@ -115,6 +119,11 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     /// Dump the MIR of any function that is visited.
     pub fn with_dump_mir(&mut self, dump_mir: bool) -> &mut Self {
         self.dump_mir = dump_mir;
+        self
+    }
+
+    pub fn with_relaxed(&mut self, relaxed: bool) -> &mut Self {
+        self.relaxed = relaxed;
         self
     }
 
@@ -231,6 +240,14 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     /// Used for testing.
     pub fn take_call_changes_policy(&mut self) -> Option<Rc<dyn CallChangeCallback<'tcx> + 'tcx>> {
         self.call_change_callback.take()
+    }
+
+    pub(crate) fn maybe_span_err(&self, span: rustc_span::Span, msg: impl Into<DiagnosticMessage>) {
+        if self.relaxed {
+            self.tcx.sess.span_warn(span, msg.into());
+        } else {
+            self.tcx.sess.span_err(span, msg.into());
+        }
     }
 }
 

@@ -74,6 +74,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 tcx: ctx.tcx(),
             })
             .with_dump_mir(ctx.opts().dbg().dump_mir())
+            .with_relaxed(ctx.opts().relaxed())
             .with_disable_cache(!ctx.opts().anactrl().pdg_cache());
         Self {
             pdg_constructor,

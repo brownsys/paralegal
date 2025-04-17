@@ -15,7 +15,7 @@ use rustc_middle::{
 };
 use rustc_span::Span;
 
-use crate::utils::is_async;
+use crate::utils::{is_async, TyAsFnResult};
 
 use super::{
     local_analysis::{CallKind, LocalAnalysis},
@@ -331,10 +331,13 @@ impl<'tcx, 'mir> LocalAnalysis<'tcx, 'mir> {
                     (None, *generic_args, *lhs)
                 }
                 StatementKind::Assign(box (_, Rvalue::Use(target))) => {
-                    let generics = self
-                        .operand_to_def_id(target)
-                        .ok_or_else(|| "Nope".to_string())?
-                        .1;
+                    let generics = match self.operand_to_def_id(target) {
+                        TyAsFnResult::Resolved { generic_args, .. } => generic_args,
+                        TyAsFnResult::FnPtr => return Err("Function pointer".to_string()),
+                        TyAsFnResult::NotAFunction => {
+                            return Err("Not a function".to_string());
+                        }
+                    };
                     (None, generics, target.place().unwrap())
                 }
                 _ => {

@@ -32,7 +32,7 @@ use crate::{
     mutation::{ModularMutationVisitor, Mutation, Time},
     utils::{
         self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize, ShimResult,
-        ShimType,
+        ShimType, TyAsFnResult,
     },
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
@@ -350,12 +350,9 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     }
 
     /// Resolve a function [`Operand`] to a specific [`DefId`] and generic arguments if possible.
-    pub(crate) fn operand_to_def_id(
-        &self,
-        func: &Operand<'tcx>,
-    ) -> Option<(DefId, GenericArgsRef<'tcx>)> {
+    pub(crate) fn operand_to_def_id(&self, func: &Operand<'tcx>) -> TyAsFnResult<'tcx> {
         let ty = func.ty(&self.mono_body, self.tcx());
-        utils::type_as_fn(self.tcx(), ty).to_option()
+        utils::type_as_fn(self.tcx(), ty)
     }
 
     fn fmt_fn(&self, def_id: DefId) -> String {
@@ -376,10 +373,20 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             self.tcx().def_path_str(self.def_id)
         );
 
-        let Some((called_def_id, generic_args)) = self.operand_to_def_id(&func) else {
-            tcx.sess
-                .span_err(span, "Operand cannot be interpreted as function");
-            return None;
+        let (called_def_id, generic_args) = match self.operand_to_def_id(&func) {
+            TyAsFnResult::Resolved {
+                def_id,
+                generic_args,
+            } => (def_id, generic_args),
+            TyAsFnResult::FnPtr => {
+                self.memo
+                    .maybe_span_err(span, "Operand is a function pointer");
+                return None;
+            }
+            TyAsFnResult::NotAFunction => {
+                self.tcx().sess.span_err(span, "Operand is not a function");
+                return None;
+            }
         };
         trace!("Resolved call to function: {}", self.fmt_fn(called_def_id));
 
