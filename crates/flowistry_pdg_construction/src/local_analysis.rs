@@ -14,13 +14,13 @@ use rustc_middle::{
         visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, Location, Operand, Place,
         PlaceElem, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
-    ty::{GenericArgKind, GenericArgsRef, Instance, TyCtxt, TyKind},
+    ty::{AdtKind, GenericArgKind, GenericArgsRef, Instance, Ty, TyCtxt, TyKind},
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 use rustc_span::{DesugaringKind, Span};
 use rustc_utils::{
     mir::{control_dependencies::ControlDependencies, places_conflict},
-    BodyExt, PlaceExt,
+    AdtDefExt, BodyExt, PlaceExt,
 };
 
 use crate::{
@@ -122,13 +122,26 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         place: Place<'tcx>,
         location: impl Into<RichLocation>,
     ) -> DepNode<'tcx> {
-        debug!("Creating dep node for {place:?} in {:?}", self.def_id);
+        let location = location.into();
+        debug!(
+            "Creating dep node for {place:?} ({:?}) (base ty {:?}) in {} at {:?}",
+            place.ty(&self.mono_body, self.tcx()).ty,
+            Place::from(place.local)
+                .ty(self.body_with_facts.body(), self.tcx())
+                .ty,
+            self.tcx().def_path_str(self.def_id),
+            location,
+        );
         DepNode::new(
             place,
             self.make_call_string(location),
             self.tcx(),
             &self.mono_body,
-            self.place_info.children(place).iter().any(|p| *p != place),
+            is_split(
+                place.ty(&self.mono_body, self.tcx()).ty,
+                self.def_id,
+                self.tcx(),
+            ),
         )
     }
 
@@ -365,7 +378,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
         let Some((called_def_id, generic_args)) = self.operand_to_def_id(&func) else {
             tcx.sess
-                .span_err(span, "Operand is cannot be interpreted as function");
+                .span_err(span, "Operand cannot be interpreted as function");
             return None;
         };
         trace!("Resolved call to function: {}", self.fmt_fn(called_def_id));
@@ -864,4 +877,37 @@ pub(crate) enum CallHandling<'tcx, 'a> {
 fn other_as_arg<'tcx>(place: Place<'tcx>, body: &Body<'tcx>) -> Option<u8> {
     (body.local_kind(place.local) == rustc_middle::mir::LocalKind::Arg)
         .then(|| place.local.as_u32() as u8 - 1)
+}
+
+/// This used to be implemented as `place_info.children(place).iter().any(|p| *p
+/// != place)`, but this is more efficient and should cause fewer spurious
+/// errors, since it only explores the type shallowly.
+fn is_split<'tcx>(ty: Ty<'tcx>, context: DefId, tcx: TyCtxt<'tcx>) -> bool {
+    match ty.kind() {
+        _ if ty.is_box() => true,
+        TyKind::Tuple(fields) => !fields.is_empty(),
+        TyKind::Adt(def, ..) => match def.adt_kind() {
+            AdtKind::Struct => def.all_visible_fields(context, tcx).next().is_some(),
+            AdtKind::Union => false,
+            AdtKind::Enum => def.all_fields().next().is_some(),
+        },
+        TyKind::Array(..) | TyKind::Slice(..) => true,
+        TyKind::Ref(..) => false,
+        TyKind::RawPtr(..) => true,
+        TyKind::Closure(_, args) | TyKind::Generator(_, args, _) => {
+            is_split(args.as_closure().tupled_upvars_ty(), context, tcx)
+        }
+        TyKind::FnDef(..)
+        | TyKind::FnPtr(..)
+        | TyKind::Foreign(..)
+        | TyKind::Dynamic(..)
+        | TyKind::Param(..)
+        | TyKind::Never => false,
+
+        _ if ty.is_primitive_ty() => false,
+        _ => {
+            log::warn!("unimplemented {ty:?} ({:?})", ty.kind());
+            false
+        }
+    }
 }

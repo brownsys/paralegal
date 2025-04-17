@@ -405,7 +405,7 @@ impl Args {
         // //let lvl = log::LevelFilter::Debug;
         if simple_logger::SimpleLogger::new()
             .with_level(lvl)
-            .with_module_level("flowistry", lvl)
+            .with_module_level("flowistry", log::LevelFilter::Error)
             .with_module_level("rustc_utils", log::LevelFilter::Error)
             .without_timestamps()
             .init()
