@@ -74,6 +74,7 @@ pub use rustc_span::Symbol;
 pub mod ana;
 pub mod ann;
 mod args;
+mod ctx;
 pub mod dbg;
 mod discover;
 mod stats;
@@ -86,6 +87,7 @@ pub use paralegal_spdg as desc;
 
 pub use crate::ann::db::MarkerCtx;
 pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, MarkerControl};
+pub use ctx::Pctx;
 
 use crate::{
     stats::{Stats, TimedStat},

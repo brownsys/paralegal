@@ -11,7 +11,7 @@ use crate::{
     discover::FnToAnalyze,
     stats::{Stats, TimedStat},
     utils::*,
-    DumpStats, HashMap, HashSet, LogLevelConfig, MarkerCtx, INTERMEDIATE_STAT_EXT,
+    DumpStats, HashMap, HashSet, LogLevelConfig, MarkerCtx, Pctx, INTERMEDIATE_STAT_EXT,
 };
 
 use std::{fs::File, io::BufReader, rc::Rc, time::Instant};
@@ -51,8 +51,7 @@ pub use self::inline_judge::InlineJudge;
 ///
 /// [`Self::analyze`] serves as the main entrypoint to SPDG generation.
 pub struct SPDGGenerator<'tcx> {
-    pub opts: &'static crate::Args,
-    pub tcx: TyCtxt<'tcx>,
+    ctx: Pctx<'tcx>,
     stats: Stats,
     pdg_constructor: MemoPdgConstructor<'tcx>,
     judge: Rc<InlineJudge<'tcx>>,
@@ -61,26 +60,24 @@ pub struct SPDGGenerator<'tcx> {
 
 impl<'tcx> SPDGGenerator<'tcx> {
     pub fn new(
+        ctx: Pctx<'tcx>,
         inline_judge: InlineJudge<'tcx>,
-        opts: &'static crate::Args,
-        tcx: TyCtxt<'tcx>,
-        body_cache: Rc<BodyCache<'tcx>>,
         stats: Stats,
         functions_to_analyze: Vec<FnToAnalyze>,
     ) -> Self {
         let judge = Rc::new(inline_judge);
-        let mut pdg_constructor = MemoPdgConstructor::new_with_cache(tcx, body_cache);
+        let mut pdg_constructor =
+            MemoPdgConstructor::new_with_cache(ctx.tcx(), ctx.body_cache().clone());
         pdg_constructor
             .with_call_change_callback(MyCallback {
                 judge: judge.clone(),
-                tcx,
+                tcx: ctx.tcx(),
             })
-            .with_dump_mir(opts.dbg().dump_mir())
-            .with_disable_cache(!opts.anactrl().pdg_cache());
+            .with_dump_mir(ctx.opts().dbg().dump_mir())
+            .with_disable_cache(!ctx.opts().anactrl().pdg_cache());
         Self {
             pdg_constructor,
-            opts,
-            tcx,
+            ctx,
             stats,
             judge,
             functions_to_analyze,
@@ -88,7 +85,11 @@ impl<'tcx> SPDGGenerator<'tcx> {
     }
 
     pub fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
-        self.judge.marker_ctx()
+        self.ctx.marker_ctx()
+    }
+
+    pub fn tcx(&self) -> TyCtxt<'tcx> {
+        self.ctx.tcx()
     }
 
     /// Perform the analysis for one `#[paralegal_flow::analyze]` annotated function and
@@ -101,7 +102,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
         target: &FnToAnalyze,
         known_def_ids: &mut impl Extend<DefId>,
     ) -> Result<(Endpoint, SPDG)> {
-        info!("Handling target {}", self.tcx.def_path_str(target.def_id));
+        info!(
+            "Handling target {}",
+            self.ctx.tcx().def_path_str(target.def_id)
+        );
         let local_def_id = target.def_id;
 
         let converter = GraphConverter::new_with_flowistry(self, known_def_ids, target)?;
@@ -117,7 +121,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     /// Should only be called after the visit.
     pub fn analyze(&mut self) -> Result<(ProgramDescription, AnalyzerStats)> {
         let targets = std::mem::take(&mut self.functions_to_analyze);
-        if let LogLevelConfig::Targeted(s) = self.opts.direct_debug() {
+        if let LogLevelConfig::Targeted(s) = self.ctx.opts().direct_debug() {
             assert!(
                 targets.iter().any(|target| target.name().as_str() == s),
                 "Debug output option specified a specific target '{s}', but no such target was found in [{}]",
@@ -135,7 +139,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .iter()
             .map(|desc| {
                 let target_name = desc.name();
-                with_reset_level_if_target(self.opts, target_name, || {
+                with_reset_level_if_target(self.ctx.opts(), target_name, || {
                     self.handle_target(
                         //hash_verifications,
                         desc,
@@ -162,7 +166,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         mut known_def_ids: HashSet<DefId>,
         _targets: &[FnToAnalyze],
     ) -> (ProgramDescription, AnalyzerStats) {
-        let tcx = self.tcx;
+        let tcx = self.ctx.tcx();
 
         let instruction_info = self.collect_instruction_info(&controllers);
 
@@ -197,7 +201,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     }
 
     fn collect_stats_and_analyzed_spans(&self) -> (AnalyzerStats, AnalyzedSpans) {
-        let tcx = self.tcx;
+        let tcx = self.ctx.tcx();
 
         // In this we don't have to filter out async functions. They are already
         // not in it. For the top-level (target) an async function immediately
@@ -302,12 +306,13 @@ impl<'tcx> SPDGGenerator<'tcx> {
     }
 
     fn get_prior_stats(&self) -> DumpStats {
-        self.opts
+        self.ctx
+            .opts()
             .anactrl()
-            .included_crates(self.tcx)
+            .included_crates(self.ctx.tcx())
             .filter(|c| *c != LOCAL_CRATE)
             .map(|c| {
-                let paths = local_or_remote_paths(c, self.tcx, INTERMEDIATE_STAT_EXT);
+                let paths = local_or_remote_paths(c, self.ctx.tcx(), INTERMEDIATE_STAT_EXT);
 
                 let path = paths.iter().find(|p| p.exists()).unwrap_or_else(|| {
                     panic!("No stats path found for included crate {c:?}, searched {paths:?}")
@@ -324,6 +329,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         &self,
         controllers: &HashMap<Endpoint, SPDG>,
     ) -> HashMap<GlobalLocation, InstructionInfo> {
+        let tcx = self.ctx.tcx();
         let all_instructions = controllers
             .values()
             .flat_map(|v| {
@@ -343,7 +349,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                     RichLocation::Start => (InstructionKind::Start, "end".to_owned()),
                     RichLocation::Location(loc) => match body.stmt_at(loc) {
                         crate::Either::Right(term) => {
-                            let kind = if let Ok((id, ..)) = term.as_fn_and_args(self.tcx) {
+                            let kind = if let Ok((id, ..)) = term.as_fn_and_args(tcx) {
                                 InstructionKind::FunctionCall(FunctionCallInfo {
                                     id,
                                     is_inlined: id.is_local(),
@@ -364,18 +370,15 @@ impl<'tcx> SPDGGenerator<'tcx> {
                             crate::Either::Right(term) => term.source_info.span,
                             crate::Either::Left(stmt) => stmt.source_info.span,
                         };
-                        self.tcx
-                            .sess
-                            .source_map()
-                            .stmt_span(expanded_span, body.span)
+                        tcx.sess.source_map().stmt_span(expanded_span, body.span)
                     }
-                    RichLocation::Start | RichLocation::End => self.tcx.def_span(i.function),
+                    RichLocation::Start | RichLocation::End => tcx.def_span(i.function),
                 };
                 (
                     i,
                     InstructionInfo {
                         kind,
-                        span: src_loc_for_span(rust_span, self.tcx),
+                        span: src_loc_for_span(rust_span, tcx),
                         description: Identifier::new_intern(&description),
                     },
                 )
@@ -388,7 +391,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     fn collect_type_info(&self) -> TypeInfoMap {
         self.marker_ctx()
             .all_annotations()
-            .filter(|(id, _)| def_kind_for_item(*id, self.tcx).is_type())
+            .filter(|(id, _)| def_kind_for_item(*id, self.ctx.tcx()).is_type())
             .into_grouping_map()
             .fold_with(
                 |id, _| (*id, vec![], vec![]),

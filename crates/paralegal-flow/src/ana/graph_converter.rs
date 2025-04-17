@@ -59,7 +59,7 @@ pub struct GraphConverter<'tcx, 'a, C> {
     /// The converted graph we are creating
     spdg: SPDGImpl,
     marker_assignments: HashMap<Node, HashSet<Identifier>>,
-    call_string_resolver: call_string_resolver::CallStringResolver<'tcx, 'a>,
+    call_string_resolver: call_string_resolver::CallStringResolver<'tcx>,
     stats: SPDGStats,
 }
 
@@ -75,10 +75,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             Self::create_flowistry_graph(generator, local_def_id)
         })?;
 
-        if generator.opts.dbg().dump_flowistry_pdg() {
+        if generator.ctx.opts().dbg().dump_flowistry_pdg() {
             dep_graph.generate_graphviz(format!(
                 "{}.flowistry-pdg.pdf",
-                generator.tcx.def_path_str(target.def_id)
+                generator.tcx().def_path_str(target.def_id)
             ))?
         }
 
@@ -94,18 +94,13 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             types: Default::default(),
             spdg: Default::default(),
             marker_assignments: Default::default(),
-            call_string_resolver: CallStringResolver::new(
-                generator.tcx,
-                def_id,
-                generator.pdg_constructor.body_cache(),
-                generator.marker_ctx().clone(),
-            ),
+            call_string_resolver: CallStringResolver::new(generator.ctx.clone(), def_id),
             stats,
         })
     }
 
     fn tcx(&self) -> TyCtxt<'tcx> {
-        self.generator.tcx
+        self.generator.tcx()
     }
 
     fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
@@ -625,7 +620,7 @@ mod call_string_resolver {
     use rustc_middle::{mir::TerminatorKind, ty::Instance};
     use rustc_utils::cache::Cache;
 
-    use crate::{Either, MarkerCtx, TyCtxt};
+    use crate::{Either, MarkerCtx, Pctx, TyCtxt};
 
     use super::{func_of_term, map_either, match_async_trait_assign, AsFnAndArgs};
 
@@ -633,15 +628,13 @@ mod call_string_resolver {
     ///
     /// Only valid for a single controller. Each controller should initialize a
     /// new resolver.
-    pub struct CallStringResolver<'tcx, 'a> {
+    pub struct CallStringResolver<'tcx> {
         cache: Cache<CallString, Instance<'tcx>>,
-        tcx: TyCtxt<'tcx>,
+        ctx: Pctx<'tcx>,
         entrypoint_is_async: bool,
-        body_cache: &'a BodyCache<'tcx>,
-        marker_context: MarkerCtx<'tcx>,
     }
 
-    impl<'tcx, 'a> CallStringResolver<'tcx, 'a> {
+    impl<'tcx> CallStringResolver<'tcx> {
         /// Tries to resolve to the monomophized function in which this call
         /// site exists. That is to say that `return.def_id() ==
         /// cs.leaf().function`.
@@ -649,6 +642,7 @@ mod call_string_resolver {
         /// Unlike `Self::resolve_internal` this can be called on any valid
         /// [`CallString`].
         pub fn resolve(&self, cs: CallString) -> Instance<'tcx> {
+            let tcx = self.ctx.tcx();
             let (this, opt_prior_loc) = cs.pop();
             if let Some(prior_loc) = opt_prior_loc {
                 if prior_loc.len() != 1 || !self.entrypoint_is_async {
@@ -657,26 +651,23 @@ mod call_string_resolver {
             }
             let def_id = this.function;
             try_resolve_function(
-                self.tcx,
+                tcx,
                 def_id,
-                self.tcx.param_env(def_id),
-                manufacture_substs_for(self.tcx, def_id).unwrap(),
+                tcx.param_env(def_id),
+                manufacture_substs_for(tcx, def_id).unwrap(),
             )
             .unwrap()
         }
 
-        pub fn new(
-            tcx: TyCtxt<'tcx>,
-            entrypoint: Endpoint,
-            body_cache: &'a BodyCache<'tcx>,
-            marker_context: MarkerCtx<'tcx>,
-        ) -> Self {
+        pub fn new(ctx: Pctx<'tcx>, entrypoint: Endpoint) -> Self {
             Self {
                 cache: Default::default(),
-                tcx,
-                entrypoint_is_async: super::entrypoint_is_async(body_cache, tcx, entrypoint),
-                body_cache,
-                marker_context,
+                entrypoint_is_async: super::entrypoint_is_async(
+                    ctx.body_cache(),
+                    ctx.tcx(),
+                    entrypoint,
+                ),
+                ctx,
             }
         }
 
@@ -691,9 +682,9 @@ mod call_string_resolver {
                 let this = cs.leaf();
                 let prior = self.resolve(cs);
 
-                let tcx = self.tcx;
+                let tcx = self.ctx.tcx();
 
-                let base_stmt = super::expect_stmt_at(self.body_cache, this);
+                let base_stmt = super::expect_stmt_at(self.ctx.body_cache(), this);
                 let param_env = tcx.param_env_reveal_all_normalized(prior.def_id());
                 let normalized = map_either(
                     base_stmt,
@@ -710,7 +701,7 @@ mod call_string_resolver {
                     Either::Right(term) => {
                         let (def_id, args) = func_of_term(tcx, &term).unwrap();
                         let instance = Instance::expect_resolve(tcx, param_env, def_id, args);
-                        if let Some(model) = self.marker_context.has_stub(def_id) {
+                        if let Some(model) = self.ctx.marker_ctx().has_stub(def_id) {
                             let TerminatorKind::Call { args, .. } = &term.kind else {
                                 unreachable!()
                             };
