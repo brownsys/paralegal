@@ -103,6 +103,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         self.generator.tcx()
     }
 
+    fn ctx(&self) -> &Pctx<'tcx> {
+        &self.generator.ctx
+    }
+
     fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
         self.generator.marker_ctx()
     }
@@ -186,7 +190,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     try_monomorphize(res, self.tcx(), param_env, func, term.source_info.span)
                         .unwrap();
                 let Some(funcc) = func.constant() else {
-                    self.tcx().sess.span_warn(
+                    self.ctx().maybe_span_err(
                         weight.span,
                         "SOUNDNESS: Cannot determine markers for function call",
                     );
@@ -203,7 +207,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                         ShimResult::IsHandledShim { instance, .. } => instance,
                         ShimResult::IsNotShim => inst,
                         ShimResult::IsNonHandleableShim => {
-                            self.tcx().sess.span_warn(
+                            self.ctx().maybe_span_err(
                                 weight.span,
                                 "SOUNDNESS: Cannot determine markers for shim usage",
                             );
