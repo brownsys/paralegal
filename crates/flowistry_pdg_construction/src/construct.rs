@@ -776,12 +776,10 @@ impl<'tcx, 'c> GraphAssembler<'tcx, 'c> {
             let new_node = self.globalize_node(node);
             let node = self.add_node(new_node);
 
-            if self
+            if !self
                 .graph
                 .edges_directed(node, petgraph::Direction::Incoming)
-                .filter(|e| e.weight().is_control())
-                .count()
-                > 0
+                .any(|e| e.weight().is_control())
             {
                 for (src, edge) in self.control_inputs.iter() {
                     self.graph.add_edge(*src, node, edge.clone());
