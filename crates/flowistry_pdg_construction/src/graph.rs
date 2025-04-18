@@ -64,6 +64,15 @@ impl From<Location> for OneHopLocation {
     }
 }
 
+impl<T: Copy> From<&'_ T> for OneHopLocation
+where
+    OneHopLocation: From<T>,
+{
+    fn from(at: &'_ T) -> Self {
+        OneHopLocation::from(*at)
+    }
+}
+
 /// A node in the program dependency graph.
 ///
 /// Represents a place at a particular call-string.
@@ -304,7 +313,11 @@ pub struct PartialGraph<'tcx> {
     pub(crate) def_id: DefId,
     arg_count: usize,
     local_decls: IndexVec<Local, LocalDecl<'tcx>>,
-    pub(crate) inlined_calls: Vec<(Location, Instance<'tcx>)>,
+    pub(crate) inlined_calls: Vec<(
+        Location,
+        Instance<'tcx>,
+        Vec<(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)>,
+    )>,
 }
 
 impl<'tcx> HasLocalDecls<'tcx> for PartialGraph<'tcx> {

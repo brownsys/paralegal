@@ -3,7 +3,7 @@ use std::{borrow::Cow, rc::Rc};
 use either::Either;
 use flowistry::mir::FlowistryInput;
 use log::trace;
-use petgraph::graph::DiGraph;
+use petgraph::graph::{DiGraph, NodeIndex};
 
 use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 
@@ -453,7 +453,11 @@ impl<'tcx> PartialGraph<'tcx> {
             }
         };
 
-        self.inlined_calls.push((location, child_instance));
+        self.inlined_calls.push((
+            location,
+            child_instance,
+            constructor.find_control_inputs(location),
+        ));
         let child_graph = child_descriptor.as_ref();
 
         trace!("Child graph has generics {:?}", child_descriptor.generics);
@@ -623,6 +627,7 @@ struct GraphAssembler<'tcx, 'c> {
     graph: DiGraph<DepNode<'tcx, CallString>, DepEdge<CallString>>,
     nodes: FxHashMap<DepNode<'tcx, CallString>, petgraph::graph::NodeIndex>,
     current_function: Option<DefId>,
+    control_inputs: Vec<(NodeIndex, DepEdge<CallString>)>,
 }
 
 impl<'tcx, 'c> GraphAssembler<'tcx, 'c> {
@@ -633,14 +638,21 @@ impl<'tcx, 'c> GraphAssembler<'tcx, 'c> {
             graph: DiGraph::new(),
             nodes: FxHashMap::default(),
             current_function: None,
+            control_inputs: Vec::new(),
         }
     }
 
     fn add_node(&mut self, node: DepNode<'tcx, CallString>) -> petgraph::graph::NodeIndex {
-        *self
-            .nodes
-            .entry(node.clone())
-            .or_insert_with(|| self.graph.add_node(node))
+        *self.nodes.entry(node.clone()).or_insert_with(|| {
+            let n = self.graph.add_node(node);
+            // This is kinda yikes, but it's the most straightforward way I
+            // could think of to propagate the control deps from the callers to
+            // new nodes and also to ensure they are only added once.
+            for (src, edge) in &self.control_inputs {
+                self.graph.add_edge(*src, n, edge.clone());
+            }
+            n
+        })
     }
 
     fn globalize_location(&mut self, location: &OneHopLocation) -> CallString {
@@ -705,19 +717,35 @@ impl<'tcx, 'c> GraphAssembler<'tcx, 'c> {
             self.graph.add_edge(src_idx, dst_idx, new_kind);
         }
 
-        for &(loc, inst) in &graph.inlined_calls {
+        for (loc, inst, ctrl_inputs) in &graph.inlined_calls {
+            let new_ctrl_inputs = ctrl_inputs
+                .iter()
+                .map(|(src, edge)| {
+                    let src = self.globalize_node(src);
+                    let src_idx = self.add_node(src);
+                    let new_edge = self.globalize_edge(edge);
+                    (src_idx, new_edge)
+                })
+                .collect::<Vec<_>>();
+            let ctrl_stack_size = self.control_inputs.len();
+            self.control_inputs.extend_from_slice(&new_ctrl_inputs);
             self.with_pushed_stack(
                 GlobalLocation {
                     function: self.current_function.unwrap(),
-                    location: loc.into(),
+                    location: (*loc).into(),
                 },
                 |slf| {
                     let old_fn = std::mem::replace(&mut slf.current_function, Some(inst.def_id()));
-                    let graph = slf.memo.construct_for(inst).unwrap();
+                    let graph = slf.memo.construct_for(*inst).unwrap();
                     slf.visit_partial_graph(&graph);
                     slf.current_function = old_fn;
                 },
-            )
+            );
+            assert_eq!(
+                self.control_inputs.len(),
+                new_ctrl_inputs.len() + ctrl_stack_size
+            );
+            self.control_inputs.truncate(ctrl_stack_size);
         }
     }
 }

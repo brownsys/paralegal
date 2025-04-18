@@ -59,9 +59,9 @@ fn pdg(
     rustc_utils::test_utils::CompileBuilder::new(input)
         .with_query_override(None)
         .expect_compile(move |CompileResult { tcx, .. }| {
-            dump_mir_and_borrowck_facts(tcx, false);
+            dump_mir_and_borrowck_facts(tcx);
             let def_id = get_main(tcx);
-            let mut memo = MemoPdgConstructor::new(tcx, false);
+            let mut memo = MemoPdgConstructor::new(tcx);
             configure(tcx, &mut memo);
             let policy = memo.take_call_changes_policy();
             memo.with_call_change_callback(LocalLoadingOnly(policy));
@@ -666,12 +666,11 @@ pdg_test! {
   |tcx, params| {
       params.with_call_change_callback(CallChangeCallbackFn::new(move |info| {
       let name = tcx.opt_item_name(info.callee.def_id());
-      let skip = if !matches!(name.as_ref().map(|sym| sym.as_str()), Some("no_inline"))
-          && info.call_string.len() < 2
+      let skip = if matches!(name.as_ref().map(|sym| sym.as_str()), Some("no_inline"))
       {
-          SkipCall::NoSkip
-      } else {
           SkipCall::Skip
+      } else {
+          SkipCall::NoSkip
       };
       CallChanges::default().with_skip(skip)
     }));
