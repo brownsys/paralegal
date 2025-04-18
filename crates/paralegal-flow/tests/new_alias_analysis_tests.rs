@@ -239,3 +239,60 @@ fn reference_in_struct() {
         assert!(source.flows_to_data(&sink));
     });
 }
+
+// Now yes, this doesn't quite fit into this test suite but because the tests
+// make such large artifacts, I didn't want to create another test file.
+#[test]
+fn lemmy_non_monomorphized_place_bug() {
+    InlineTestBuilder::new(stringify!(
+        trait Trait {
+            fn method(&self) -> usize;
+        }
+
+        impl<T: Trait> Trait for &T {
+            fn method(&self) -> usize {
+                (*self).method()
+            }
+        }
+
+        #[derive(Clone, Copy)]
+        enum Foo {
+            Usize(usize),
+            None
+        }
+
+        impl Trait for Foo {
+            fn method(&self) -> usize {
+                match self {
+                    Foo::Usize(x) => *x,
+                    Foo::None => 0
+                }
+            }
+        }
+
+        fn inner<T: Trait>(u: &T) -> usize {
+            (*u).method()
+        }
+
+        struct S<T>{
+            f:T,
+            f2: usize
+        }
+
+        fn pass_through<T: Trait >(s: &S<T>) -> usize {
+            inner(&s.f)
+        }
+
+        fn main() {
+            let foo = Foo::Usize(0);
+            let s = S { f: &foo, f2: 0 };
+            let result = pass_through(&s);
+        }
+    ))
+    .with_extra_args([
+        "--no-adaptive-approximation".to_string(),
+        "--dump".to_string(),
+        "mir".to_string(),
+    ])
+    .check_ctrl(|_| ());
+}

@@ -14,7 +14,10 @@ use rustc_middle::{
         visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, Location, Operand, Place,
         PlaceElem, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
-    ty::{AdtKind, GenericArgKind, GenericArgsRef, Instance, Ty, TyCtxt, TyKind},
+    ty::{
+        AdtKind, EarlyBinder, GenericArgKind, GenericArgsRef, Instance, ParamEnv, Ty, TyCtxt,
+        TyKind,
+    },
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 use rustc_span::{DesugaringKind, Span};
@@ -64,6 +67,7 @@ pub(crate) struct LocalAnalysis<'tcx, 'a> {
     control_dependencies: ControlDependencies<BasicBlock>,
     pub(crate) body_assignments: utils::BodyAssignments,
     start_loc: FxHashSet<RichLocation>,
+    param_env: ParamEnv<'tcx>,
 }
 
 impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
@@ -220,6 +224,23 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             .aliases(place_retyped)
             .iter()
             .map(move |alias| {
+                // The place we get back is not monomorphized, since aliases are
+                // calculated on the original body. And because rustc will crash
+                // if we have regions in the type, we erase those first.
+                let alias = self.tcx().erase_regions(*alias);
+                let alias = self
+                    .tcx()
+                    .try_subst_and_normalize_erasing_regions(
+                        self.generic_args(),
+                        self.param_env,
+                        EarlyBinder::bind(alias),
+                    )
+                    .unwrap_or_else(|err| {
+                        panic!(
+                            "Failed to backtype alias {alias:?} in {}: {err:?}",
+                            self.tcx().def_path_str(self.def_id)
+                        )
+                    });
                 // If the type of the alias is not the same as the retyped
                 // place, then adding the remaining projections from the
                 // original place won't work so we overtaint to the entire alias.
@@ -227,7 +248,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                     alias.ty(body, self.tcx()),
                     place_retyped.ty(body, self.tcx()),
                 ) {
-                    return *alias;
+                    return alias;
                 }
                 let mut projection = alias.projection.to_vec();
                 projection.extend(&place.projection[place_retyped.projection.len()..]);
