@@ -627,7 +627,7 @@ struct GraphAssembler<'tcx, 'c> {
     graph: DiGraph<DepNode<'tcx, CallString>, DepEdge<CallString>>,
     nodes: FxHashMap<DepNode<'tcx, CallString>, petgraph::graph::NodeIndex>,
     current_function: Option<DefId>,
-    control_inputs: Vec<(NodeIndex, DepEdge<CallString>)>,
+    control_inputs: Box<[(NodeIndex, DepEdge<CallString>)]>,
 }
 
 impl<'tcx, 'c> GraphAssembler<'tcx, 'c> {
@@ -638,21 +638,15 @@ impl<'tcx, 'c> GraphAssembler<'tcx, 'c> {
             graph: DiGraph::new(),
             nodes: FxHashMap::default(),
             current_function: None,
-            control_inputs: Vec::new(),
+            control_inputs: Box::new([]),
         }
     }
 
     fn add_node(&mut self, node: DepNode<'tcx, CallString>) -> petgraph::graph::NodeIndex {
-        *self.nodes.entry(node.clone()).or_insert_with(|| {
-            let n = self.graph.add_node(node);
-            // This is kinda yikes, but it's the most straightforward way I
-            // could think of to propagate the control deps from the callers to
-            // new nodes and also to ensure they are only added once.
-            for (src, edge) in &self.control_inputs {
-                self.graph.add_edge(*src, n, edge.clone());
-            }
-            n
-        })
+        *self
+            .nodes
+            .entry(node.clone())
+            .or_insert_with(|| self.graph.add_node(node))
     }
 
     fn globalize_location(&mut self, location: &OneHopLocation) -> CallString {
@@ -702,12 +696,68 @@ impl<'tcx, 'c> GraphAssembler<'tcx, 'c> {
         result
     }
 
-    fn visit_partial_graph(&mut self, graph: &PartialGraph<'tcx>) {
-        for node in &graph.nodes {
-            let new_node = self.globalize_node(node);
-            self.add_node(new_node);
+    /// Forwarding of control flow. It is sound to replace the control inputs
+    /// here rather than extend them because we are guaranteed that these new
+    /// nodes are connected to the old ctrl nodes, possibly transitively.
+    ///
+    /// Each node in our graph is either connected to a local control flow
+    /// node or to the ones coming from the parent, which is established by
+    /// the `visit_partial_graph` function. By induction all nodes, including
+    /// these control flow sources are connected to the old ctrl inputs.
+    fn with_new_ctr_inputs<F, R>(
+        &mut self,
+        new_ctrl_inputs: &[(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)],
+        f: F,
+    ) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        let new_ctrl_inputs: Box<[(NodeIndex, DepEdge<CallString>)]> = new_ctrl_inputs
+            .iter()
+            .map(|(src, edge)| {
+                let src = self.globalize_node(src);
+                let src_idx = self.add_node(src);
+                let new_edge = self.globalize_edge(edge);
+                (src_idx, new_edge)
+            })
+            .collect();
+        // The last thing we need to ensure for that to hold is that the new
+        // ctrl inputs must not be empty. So if they are we leave the old one's intact.
+        let old_ctrl_inputs = if new_ctrl_inputs.is_empty() {
+            Box::new([])
+        } else {
+            std::mem::replace(&mut self.control_inputs, new_ctrl_inputs)
+        };
+        let r = f(self);
+        if !old_ctrl_inputs.is_empty() {
+            self.control_inputs = old_ctrl_inputs;
         }
+        r
+    }
 
+    fn visit_inlined_call(
+        &mut self,
+        loc: Location,
+        inst: Instance<'tcx>,
+        ctrl_inputs: &[(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)],
+    ) {
+        self.with_new_ctr_inputs(ctrl_inputs, |slf| {
+            slf.with_pushed_stack(
+                GlobalLocation {
+                    function: slf.current_function.unwrap(),
+                    location: loc.into(),
+                },
+                |slf| {
+                    let old_fn = std::mem::replace(&mut slf.current_function, Some(inst.def_id()));
+                    let graph = slf.memo.construct_for(inst).unwrap();
+                    slf.visit_partial_graph(&graph);
+                    slf.current_function = old_fn;
+                },
+            );
+        })
+    }
+
+    fn visit_partial_graph(&mut self, graph: &PartialGraph<'tcx>) {
         for (src, dst, kind) in &graph.edges {
             let src = self.globalize_node(src);
             let src_idx = self.add_node(src);
@@ -717,35 +767,30 @@ impl<'tcx, 'c> GraphAssembler<'tcx, 'c> {
             self.graph.add_edge(src_idx, dst_idx, new_kind);
         }
 
+        // This loop served two purposes. It connects the control inputs that
+        // are incoming to the function to those nodes in the graph who have no
+        // control inputs yet. Secondly the add_node call will ensure that each
+        // node is represented, even if no edges are present (though I suspect
+        // that is an impossible scenario.)
+        for node in &graph.nodes {
+            let new_node = self.globalize_node(node);
+            let node = self.add_node(new_node);
+
+            if self
+                .graph
+                .edges_directed(node, petgraph::Direction::Incoming)
+                .filter(|e| e.weight().is_control())
+                .count()
+                > 0
+            {
+                for (src, edge) in self.control_inputs.iter() {
+                    self.graph.add_edge(*src, node, edge.clone());
+                }
+            }
+        }
+
         for (loc, inst, ctrl_inputs) in &graph.inlined_calls {
-            let new_ctrl_inputs = ctrl_inputs
-                .iter()
-                .map(|(src, edge)| {
-                    let src = self.globalize_node(src);
-                    let src_idx = self.add_node(src);
-                    let new_edge = self.globalize_edge(edge);
-                    (src_idx, new_edge)
-                })
-                .collect::<Vec<_>>();
-            let ctrl_stack_size = self.control_inputs.len();
-            self.control_inputs.extend_from_slice(&new_ctrl_inputs);
-            self.with_pushed_stack(
-                GlobalLocation {
-                    function: self.current_function.unwrap(),
-                    location: (*loc).into(),
-                },
-                |slf| {
-                    let old_fn = std::mem::replace(&mut slf.current_function, Some(inst.def_id()));
-                    let graph = slf.memo.construct_for(*inst).unwrap();
-                    slf.visit_partial_graph(&graph);
-                    slf.current_function = old_fn;
-                },
-            );
-            assert_eq!(
-                self.control_inputs.len(),
-                new_ctrl_inputs.len() + ctrl_stack_size
-            );
-            self.control_inputs.truncate(ctrl_stack_size);
+            self.visit_inlined_call(*loc, *inst, ctrl_inputs);
         }
     }
 }

@@ -220,9 +220,9 @@ pub struct DepEdge<Loc> {
     pub target_use: TargetUse,
 }
 
-impl DepEdge<OneHopLocation> {
+impl<Loc> DepEdge<Loc> {
     /// Constructs a data edge.
-    pub fn data(at: OneHopLocation, source_use: SourceUse, target_use: TargetUse) -> Self {
+    pub fn data(at: Loc, source_use: SourceUse, target_use: TargetUse) -> Self {
         DepEdge {
             kind: DepEdgeKind::Data,
             at,
@@ -232,13 +232,20 @@ impl DepEdge<OneHopLocation> {
     }
 
     /// Constructs a control edge.
-    pub fn control(at: OneHopLocation, source_use: SourceUse, target_use: TargetUse) -> Self {
+    pub fn control(at: Loc, source_use: SourceUse, target_use: TargetUse) -> Self {
         DepEdge {
             kind: DepEdgeKind::Control,
             at,
             source_use,
             target_use,
         }
+    }
+
+    pub fn is_control(&self) -> bool {
+        self.kind == DepEdgeKind::Control
+    }
+    pub fn is_data(&self) -> bool {
+        self.kind == DepEdgeKind::Data
     }
 }
 
