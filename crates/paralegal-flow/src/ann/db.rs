@@ -332,6 +332,14 @@ impl<'tcx> MarkerCtx<'tcx> {
         }
     }
 
+    fn err(&self, msg: impl Into<DiagnosticMessage>) {
+        if self.0.config.relaxed() {
+            self.tcx().sess.warn(msg.into());
+        } else {
+            self.tcx().sess.err(msg.into());
+        }
+    }
+
     /// Does this terminator carry a marker?
     fn terminator_reachable_markers(
         &self,
@@ -497,10 +505,9 @@ impl<'tcx> MarkerCtx<'tcx> {
                     RawPtr(ty::TypeAndMut { ty, .. }) | Ref(_, ty, _) => {
                         markers.extend(self.deep_type_markers(*ty))
                     }
-                    Param(_) | Dynamic { .. } => self
-                        .tcx()
-                        .sess
-                        .warn(format!("Cannot determine markers for type {key:?}")),
+                    Param(_) | Dynamic { .. } => self.err(
+                        format!("Cannot determine markers for type {key:?}")
+                    ),
                     Placeholder(_) | Infer(_) => self
                         .tcx()
                         .sess
