@@ -4,7 +4,7 @@ use self::call_string_resolver::CallStringResolver;
 use super::{default_index, path_for_item, src_loc_for_span, SPDGGenerator};
 use crate::{
     ann::MarkerAnnotation, desc::*, discover::FnToAnalyze, stats::TimedStat, utils::*, HashMap,
-    HashSet, MarkerCtx,
+    HashSet, MarkerCtx, Pctx,
 };
 use flowistry_pdg::SourceUse;
 use flowistry_pdg_construction::{
@@ -146,7 +146,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     }
 
     /// Find direct annotations on this node and register them in the marker map.
-    fn node_annotations(&mut self, old_node: Node, weight: &DepNode<'tcx>) {
+    fn node_annotations(&mut self, old_node: Node, weight: &DepNode<'tcx, CallString>) {
         let leaf_loc = weight.at.leaf();
         let node = self.new_node_for(old_node);
 
@@ -339,7 +339,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     }
 
     /// Check if this node is of a marked type and register that type.
-    fn handle_node_types(&mut self, old_node: Node, weight: &DepNode<'tcx>) {
+    fn handle_node_types(&mut self, old_node: Node, weight: &DepNode<'tcx, CallString>) {
         let i = self.new_node_for(old_node);
 
         let Some(place_ty) =

@@ -28,7 +28,7 @@ use crate::{
     async_support::{self, *},
     body_cache::CachedBody,
     calling_convention::*,
-    graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
+    graph::{DepEdge, DepNode, OneHopLocation, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
     utils::{
         self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize, ShimResult,
@@ -121,7 +121,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         &self,
         place: Place<'tcx>,
         location: impl Into<RichLocation>,
-    ) -> DepNode<'tcx> {
+    ) -> DepNode<'tcx, OneHopLocation> {
         let location = location.into();
         debug!(
             "Creating dep node for {place:?} ({:?}) (base ty {:?}) in {} at {:?}",
@@ -134,9 +134,10 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         );
         DepNode::new(
             place,
-            self.make_call_string(location),
+            location.into(),
             self.tcx(),
             &self.mono_body,
+            self.def_id,
             is_split(
                 place.ty(&self.mono_body, self.tcx()).ty,
                 self.def_id,
@@ -147,7 +148,10 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
     /// Returns all pairs of `(src, edge)`` such that the given `location` is control-dependent on `edge`
     /// with input `src`.
-    pub(crate) fn find_control_inputs(&self, location: Location) -> Vec<(DepNode<'tcx>, DepEdge)> {
+    pub(crate) fn find_control_inputs(
+        &self,
+        location: Location,
+    ) -> Vec<(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)> {
         let mut blocks_seen = HashSet::<BasicBlock>::from_iter(Some(location.block));
         let mut block_queue = vec![location.block];
         let mut out = vec![];
@@ -177,7 +181,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                     let Some(ctrl_place) = discr.place() else {
                         continue;
                     };
-                    let at = self.make_call_string(ctrl_loc);
+                    let at = ctrl_loc.into();
                     let src = self.make_dep_node(ctrl_place, ctrl_loc);
                     let edge = DepEdge::control(at, SourceUse::Operand, TargetUse::Assign);
                     out.push((src, edge));
@@ -193,13 +197,6 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
     pub(crate) fn async_info(&self) -> &AsyncInfo {
         &self.memo.async_info
-    }
-
-    pub(crate) fn make_call_string(&self, location: impl Into<RichLocation>) -> CallString {
-        CallString::single(GlobalLocation {
-            function: self.def_id,
-            location: location.into(),
-        })
     }
 
     /// Returns the aliases of `place`. See [`PlaceInfo::aliases`] for details.
@@ -249,7 +246,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         &self,
         state: &InstructionState<'tcx>,
         input: Place<'tcx>,
-    ) -> Vec<DepNode<'tcx>> {
+    ) -> Vec<DepNode<'tcx, OneHopLocation>> {
         trace!("Finding inputs for place {input:?}");
         // Include all sources of indirection (each reference in the chain) as relevant places.
         let provenance = input
@@ -277,10 +274,8 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                             // TODO: this is not field-sensitive!
                             place.local == alias.local
                         } else {
-                            let mut place = *place;
-
                             trace!("Checking conflict status of {place:?} and {alias:?}");
-                            utils::places_conflict(self.tcx(), &self.mono_body, place, alias)
+                            utils::places_conflict(self.tcx(), &self.mono_body, *place, alias)
                         }
                     });
 
@@ -310,7 +305,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         &self,
         mutated: Place<'tcx>,
         location: Location,
-    ) -> Vec<(Place<'tcx>, DepNode<'tcx>)> {
+    ) -> Vec<(Place<'tcx>, DepNode<'tcx, OneHopLocation>)> {
         // **POINTER-SENSITIVITY:**
         // If `mutated` involves indirection via dereferences, then resolve it to the direct places it could point to.
         let aliases = self.aliases(mutated).collect_vec();
@@ -470,7 +465,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         let call_changes = self.call_change_callback().map(|callback| {
             let info = CallInfo {
                 callee: resolved_fn,
-                call_string: self.make_call_string(location),
+                call_string: location,
                 is_cached,
                 async_parent: if let CallKind::AsyncPoll(poll) = &call_kind {
                     // Special case for async. We ask for skipping not on the closure, but
@@ -622,7 +617,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             calling_convention.as_ref()
         );
 
-        let parentable_dsts = child_constructor.parentable_dsts(|n| n.len() == 1);
+        let parentable_dsts = child_constructor.parentable_dsts();
         let parent_body = &self.mono_body;
 
         let place_translator = PlaceTranslator::new(
@@ -701,7 +696,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                     let src = self.make_dep_node(*place, *location);
                     let dst = self.make_dep_node(*place, RichLocation::End);
                     let edge = DepEdge::data(
-                        self.make_call_string(self.mono_body.terminator_loc(block)),
+                        self.mono_body.terminator_loc(block).into(),
                         SourceUse::Operand,
                         ret_kind,
                     );

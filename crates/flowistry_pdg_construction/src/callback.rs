@@ -64,8 +64,8 @@ pub struct CallInfo<'tcx, 'mir> {
     /// `async fn` item.
     pub async_parent: Option<Instance<'tcx>>,
 
-    /// The call-stack up to the current call site.
-    pub call_string: CallString,
+    /// The current location
+    pub call_string: Location,
 
     /// Would the PDG for this function be served from the cache.
     pub is_cached: bool,

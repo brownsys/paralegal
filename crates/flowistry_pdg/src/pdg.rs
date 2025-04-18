@@ -186,7 +186,7 @@ type CallStringInner = [GlobalLocation];
 
 impl CallString {
     /// Create a new call string from a list of global locations.
-    fn new(locs: &CallStringInner) -> Self {
+    pub fn new(locs: &CallStringInner) -> Self {
         CallString(Intern::from(locs))
     }
 

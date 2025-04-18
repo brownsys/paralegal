@@ -477,7 +477,6 @@ pub fn places_conflict<'tcx>(
     let borrow_local = borrow_place.local;
     let access_local = access_place.local;
     let access_place = access_place.as_ref();
-    let access = AccessDepth::Deep;
 
     if borrow_local != access_local {
         // We have proven the borrow disjoint - further projections will remain disjoint.

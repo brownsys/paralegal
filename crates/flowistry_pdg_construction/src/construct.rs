@@ -5,7 +5,7 @@ use flowistry::mir::FlowistryInput;
 use log::trace;
 use petgraph::graph::DiGraph;
 
-use flowistry_pdg::{CallString, GlobalLocation};
+use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 
 use df::{AnalysisDomain, Results, ResultsVisitor};
 use rustc_error_messages::DiagnosticMessage;
@@ -24,9 +24,7 @@ use crate::{
     async_support::*,
     body_cache::{self, BodyCache, CachedBody},
     calling_convention::PlaceTranslator,
-    graph::{
-        push_call_string_root, DepEdge, DepGraph, DepNode, PartialGraph, SourceUse, TargetUse,
-    },
+    graph::{DepEdge, DepGraph, DepNode, OneHopLocation, PartialGraph, SourceUse, TargetUse},
     local_analysis::{CallHandling, InstructionState, LocalAnalysis},
     mutation::{ModularMutationVisitor, Mutation, Time},
     utils::{manufacture_substs_for, try_resolve_function},
@@ -166,7 +164,6 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         let construct = || {
             let g = LocalAnalysis::new(self, resolution)?.construct_partial();
             trace!("Computed new for {resolution:?}");
-            g.check_invariants();
             Some(g)
         };
         let mut was_constructed = false;
@@ -207,17 +204,17 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             // Note that this deliberately register this result in a separate
             // cache. This is because when this async fn is called somewhere we
             // don't want to use this "fake inlined" version.
-            return push_call_string_root(
-                self.construct_root(generator.def_id().expect_local())
-                    .as_ref(),
-                GlobalLocation {
-                    function: function.to_def_id(),
-                    location: flowistry_pdg::RichLocation::Location(loc),
-                },
-            )
-            .to_petgraph();
+            self.construct_root(generator.def_id().expect_local())
+                .to_petgraph_with_extra_global_location(
+                    self,
+                    GlobalLocation {
+                        function: function.to_def_id(),
+                        location: flowistry_pdg::RichLocation::Location(loc),
+                    }
+                )
+        } else {
+            self.construct_root(function).to_petgraph(self)
         }
-        self.construct_root(function).to_petgraph()
     }
 
     pub fn is_recursion(&self, instance: Instance<'tcx>) -> bool {
@@ -338,10 +335,8 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, LocalAnalysisResults<'tcx, 'mir>>
         location: Location,
     ) {
         if let TerminatorKind::Call { func, args, .. } = &terminator.kind {
-            let constructor = results.analysis;
-
             if matches!(
-                constructor.determine_call_handling(
+                results.analysis.determine_call_handling(
                     location,
                     Cow::Borrowed(func),
                     Cow::Borrowed(args),
@@ -410,11 +405,6 @@ impl<'tcx> PartialGraph<'tcx> {
             return false;
         };
         let constructor = &results.analysis;
-        let gloc = GlobalLocation {
-            location: location.into(),
-            function: constructor.def_id,
-        };
-
         let Some(handling) = constructor.determine_call_handling(
             location,
             Cow::Borrowed(func),
@@ -463,11 +453,10 @@ impl<'tcx> PartialGraph<'tcx> {
             }
         };
 
-        let child_graph = push_call_string_root(child_descriptor.as_ref(), gloc);
+        self.inlined_calls.push((location, child_instance));
+        let child_graph = child_descriptor.as_ref();
 
         trace!("Child graph has generics {:?}", child_descriptor.generics);
-
-        let is_root = |n: CallString| n.len() == 2;
 
         let translator = PlaceTranslator::new(
             constructor.async_info(),
@@ -479,10 +468,16 @@ impl<'tcx> PartialGraph<'tcx> {
             precise,
         );
 
+        let bool_to_loc = |b| OneHopLocation {
+            location: location.into(),
+            in_child: Some((child_instance.def_id(), b)),
+        };
+
         // For each source node CHILD that is parentable to PLACE,
         // add an edge from PLACE -> CHILD.
         trace!("PARENT -> CHILD EDGES:");
-        for (child_src, _kind) in child_graph.parentable_srcs(is_root) {
+        for (child_src, _kind) in child_graph.parentable_srcs() {
+            let child_src = child_src.map_at(|b| bool_to_loc(*b));
             if let Some(translation) = translator.translate_to_parent(child_src.place) {
                 self.register_mutation(
                     results,
@@ -503,13 +498,14 @@ impl<'tcx> PartialGraph<'tcx> {
         // PRECISION TODO: for a given child place, we only want to connect
         // the *last* nodes in the child function to the parent, not *all* of them.
         trace!("CHILD -> PARENT EDGES:");
-        for (child_dst, kind) in child_graph.parentable_dsts(is_root) {
+        for (child_dst, kind) in child_graph.parentable_dsts() {
+            let child_dst = child_dst.map_at(|b| bool_to_loc(*b));
             if let Some(parent_place) = translator.translate_to_parent(child_dst.place) {
                 self.register_mutation(
                     results,
                     state,
                     Inputs::Resolved {
-                        node: child_dst,
+                        node: child_dst.clone(),
                         node_use: SourceUse::Operand,
                     },
                     Either::Left(parent_place),
@@ -518,19 +514,17 @@ impl<'tcx> PartialGraph<'tcx> {
                 );
             }
         }
-        self.edges.extend(
-            constructor
-                .find_control_inputs(location)
-                .into_iter()
-                .flat_map(|(ctrl_src, edge)| {
-                    child_graph
-                        .nodes
-                        .iter()
-                        .map(move |dest| (ctrl_src.clone(), dest.clone(), edge.clone()))
-                }),
-        );
-        self.nodes.extend(child_graph.nodes);
-        self.edges.extend(child_graph.edges);
+        // self.edges.extend(
+        //     constructor
+        //         .find_control_inputs(location)
+        //         .into_iter()
+        //         .flat_map(|(ctrl_src, edge)| {
+        //             child_graph
+        //                 .nodes
+        //                 .iter()
+        //                 .map(move |dest| (ctrl_src.clone(), dest.clone(), edge.clone()))
+        //         }),
+        // );
         true
     }
 }
@@ -541,7 +535,7 @@ impl<'tcx> PartialGraph<'tcx> {
         results: &LocalAnalysisResults<'tcx, '_>,
         state: &InstructionState<'tcx>,
         inputs: Inputs<'tcx>,
-        mutated: Either<Place<'tcx>, DepNode<'tcx>>,
+        mutated: Either<Place<'tcx>, DepNode<'tcx, OneHopLocation>>,
         location: Location,
         target_use: TargetUse,
     ) {
@@ -583,26 +577,24 @@ impl<'tcx> PartialGraph<'tcx> {
 
         for output in &outputs {
             trace!("  Adding node {output}");
-            self.nodes.insert(*output);
+            self.nodes.insert(output.clone());
         }
 
         // Add data dependencies: data_input -> output
         for (data_input, source_use) in data_inputs {
-            let data_edge = DepEdge::data(
-                constructor.make_call_string(location),
-                source_use,
-                target_use,
-            );
+            let data_edge = DepEdge::data(location.into(), source_use, target_use);
             for output in &outputs {
                 trace!("  Adding edge {data_input} -> {output}");
-                self.edges.insert((data_input, *output, data_edge));
+                self.edges
+                    .insert((data_input.clone(), output.clone(), data_edge.clone()));
             }
         }
 
         // Add control dependencies: ctrl_input -> output
         for (ctrl_input, edge) in &ctrl_inputs {
             for output in &outputs {
-                self.edges.insert((*ctrl_input, *output, *edge));
+                self.edges
+                    .insert((ctrl_input.clone(), output.clone(), edge.clone()));
             }
         }
     }
@@ -620,45 +612,137 @@ enum Inputs<'tcx> {
         places: Vec<(Place<'tcx>, Option<u8>)>,
     },
     Resolved {
-        node: DepNode<'tcx>,
+        node: DepNode<'tcx, OneHopLocation>,
         node_use: SourceUse,
     },
 }
 
-impl<'tcx> PartialGraph<'tcx> {
-    pub fn to_petgraph(&self) -> DepGraph<'tcx> {
-        let domain = self;
-        let mut graph: DiGraph<DepNode<'tcx>, DepEdge> = DiGraph::new();
-        let mut nodes = FxHashMap::default();
-        macro_rules! add_node {
-            ($n:expr) => {
-                *nodes.entry($n).or_insert_with(|| graph.add_node($n))
-            };
-        }
+struct GraphAssembler<'tcx, 'c> {
+    memo: &'c MemoPdgConstructor<'tcx>,
+    call_string_stack: Vec<GlobalLocation>,
+    graph: DiGraph<DepNode<'tcx, CallString>, DepEdge<CallString>>,
+    nodes: FxHashMap<DepNode<'tcx, CallString>, petgraph::graph::NodeIndex>,
+    current_function: Option<DefId>,
+}
 
-        for node in &domain.nodes {
-            let _ = add_node!(*node);
+impl<'tcx, 'c> GraphAssembler<'tcx, 'c> {
+    fn new(memo: &'c MemoPdgConstructor<'tcx>) -> Self {
+        Self {
+            memo,
+            call_string_stack: Vec::new(),
+            graph: DiGraph::new(),
+            nodes: FxHashMap::default(),
+            current_function: None,
         }
-
-        for (src, dst, kind) in &domain.edges {
-            let src_idx = add_node!(*src);
-            let dst_idx = add_node!(*dst);
-            graph.add_edge(src_idx, dst_idx, *kind);
-        }
-
-        DepGraph::new(graph)
     }
 
-    fn check_invariants(&self) {
-        let Some(sample) = self.nodes.iter().next() else {
-            return;
-        };
-        let root_function = sample.at.root().function;
-        for n in &self.nodes {
-            assert_eq!(n.at.root().function, root_function);
+    fn add_node(&mut self, node: DepNode<'tcx, CallString>) -> petgraph::graph::NodeIndex {
+        *self
+            .nodes
+            .entry(node.clone())
+            .or_insert_with(|| self.graph.add_node(node))
+    }
+
+    fn globalize_location(&mut self, location: &OneHopLocation) -> CallString {
+        self.with_pushed_stack(
+            GlobalLocation {
+                function: self.current_function.unwrap(),
+                location: location.location,
+            },
+            |slf| {
+                if let Some((c, start)) = location.in_child {
+                    slf.with_pushed_stack(
+                        GlobalLocation {
+                            function: c,
+                            location: if start {
+                                RichLocation::Start
+                            } else {
+                                RichLocation::End
+                            },
+                        },
+                        |slf| CallString::new(&slf.call_string_stack),
+                    )
+                } else {
+                    CallString::new(&slf.call_string_stack)
+                }
+            },
+        )
+    }
+
+    fn globalize_node(
+        &mut self,
+        node: &DepNode<'tcx, OneHopLocation>,
+    ) -> DepNode<'tcx, CallString> {
+        node.map_at(|location| self.globalize_location(location))
+    }
+
+    fn globalize_edge(&mut self, edge: &DepEdge<OneHopLocation>) -> DepEdge<CallString> {
+        edge.map_at(|location| self.globalize_location(location))
+    }
+
+    fn with_pushed_stack<F, R>(&mut self, location: GlobalLocation, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        self.call_string_stack.push(location);
+        let result = f(self);
+        self.call_string_stack.pop();
+        result
+    }
+
+    fn visit_partial_graph(&mut self, graph: &PartialGraph<'tcx>) {
+        for node in &graph.nodes {
+            let new_node = self.globalize_node(node);
+            self.add_node(new_node);
         }
-        for (_, _, e) in &self.edges {
-            assert_eq!(e.at.root().function, root_function);
+
+        for (src, dst, kind) in &graph.edges {
+            let src = self.globalize_node(src);
+            let src_idx = self.add_node(src);
+            let dst = self.globalize_node(dst);
+            let dst_idx = self.add_node(dst);
+            let new_kind = self.globalize_edge(kind);
+            self.graph.add_edge(src_idx, dst_idx, new_kind);
+        }
+
+        for &(loc, inst) in &graph.inlined_calls {
+            self.with_pushed_stack(
+                GlobalLocation {
+                    function: self.current_function.unwrap(),
+                    location: loc.into(),
+                },
+                |slf| {
+                    let old_fn = std::mem::replace(&mut slf.current_function, Some(inst.def_id()));
+                    let graph = slf.memo.construct_for(inst).unwrap();
+                    slf.visit_partial_graph(&graph);
+                    slf.current_function = old_fn;
+                },
+            )
+        }
+    }
+}
+
+impl<'tcx> PartialGraph<'tcx> {
+    pub fn to_petgraph<'c>(&self, memo: &'c MemoPdgConstructor<'tcx>) -> DepGraph<'tcx> {
+        let mut assembler = GraphAssembler::new(memo);
+        assembler.current_function = Some(self.def_id);
+        assembler.visit_partial_graph(self);
+        DepGraph {
+            graph: assembler.graph,
+        }
+    }
+
+    pub fn to_petgraph_with_extra_global_location<'c>(
+        &self,
+        memo: &'c MemoPdgConstructor<'tcx>,
+        extra_global_location: GlobalLocation,
+    ) -> DepGraph<'tcx> {
+        let mut assembler = GraphAssembler::new(memo);
+        assembler.current_function = Some(self.def_id);
+        assembler.call_string_stack.push(extra_global_location);
+        assembler.visit_partial_graph(self);
+        DepGraph {
+            graph: assembler.graph,
         }
     }
 }
