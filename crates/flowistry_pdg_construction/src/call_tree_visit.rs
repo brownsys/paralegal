@@ -1,3 +1,15 @@
+//! Machinery for visiting a monomorphized tree with access to intermediate PDGs.
+//!
+//! Each traversal is comprised of two components:
+//! 1. A `VisitDriver` that drives the traversal and manages associated
+//!    state. Mainly the currently visited function and the call stack.
+//! 2. An object implementing `Visitor` which contains the custom logic of
+//!    the traversal.
+//!
+//! The relation of the to is such that for each visitation step the `*_visit`
+//! method on Visitor is called first. It should then call the corresponding
+//! `*_visit` method on the VisitDriver which will take care of the recursion.
+
 use flowistry_pdg::GlobalLocation;
 use rustc_middle::{mir::Location, ty::Instance};
 
@@ -6,13 +18,13 @@ use crate::{
     MemoPdgConstructor,
 };
 
-pub struct CallTreeVisitor<'tcx, 'c> {
+pub struct VisitDriver<'tcx, 'c> {
     memo: &'c MemoPdgConstructor<'tcx>,
     call_string_stack: Vec<GlobalLocation>,
     current_function: Instance<'tcx>,
 }
 
-impl<'tcx, 'c> CallTreeVisitor<'tcx, 'c> {
+impl<'tcx, 'c> VisitDriver<'tcx, 'c> {
     pub fn new(memo: &'c MemoPdgConstructor<'tcx>, start: Instance<'tcx>) -> Self {
         Self {
             memo,
@@ -40,10 +52,10 @@ impl<'tcx, 'c> CallTreeVisitor<'tcx, 'c> {
     }
 }
 
-pub trait CallTreeVisit<'tcx> {
+pub trait Visitor<'tcx> {
     fn visit_partial_graph(
         &mut self,
-        vis: &mut CallTreeVisitor<'tcx, '_>,
+        vis: &mut VisitDriver<'tcx, '_>,
         partial_graph: &PartialGraph<'tcx>,
     ) {
         vis.visit_partial_graph(self, partial_graph);
@@ -51,7 +63,7 @@ pub trait CallTreeVisit<'tcx> {
 
     fn visit_edge(
         &mut self,
-        vis: &mut CallTreeVisitor<'tcx, '_>,
+        vis: &mut VisitDriver<'tcx, '_>,
         src: &DepNode<'tcx, OneHopLocation>,
         dst: &DepNode<'tcx, OneHopLocation>,
         kind: &DepEdge<OneHopLocation>,
@@ -60,23 +72,24 @@ pub trait CallTreeVisit<'tcx> {
 
     fn visit_node(
         &mut self,
-        vis: &mut CallTreeVisitor<'tcx, '_>,
+        vis: &mut VisitDriver<'tcx, '_>,
         node: &DepNode<'tcx, OneHopLocation>,
     ) {
     }
 
     fn visit_inlined_call(
         &mut self,
-        vis: &mut CallTreeVisitor<'tcx, '_>,
+        vis: &mut VisitDriver<'tcx, '_>,
         loc: Location,
         inst: Instance<'tcx>,
-        ctrl_inputs: &[(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)],
+        _ctrl_inputs: &[(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)],
     ) {
+        vis.visit_inlined_call(self, loc, inst);
     }
 }
 
-impl<'tcx, 'c> CallTreeVisitor<'tcx, 'c> {
-    pub fn visit_partial_graph<V: CallTreeVisit<'tcx> + ?Sized>(
+impl<'tcx, 'c> VisitDriver<'tcx, 'c> {
+    pub fn visit_partial_graph<V: Visitor<'tcx> + ?Sized>(
         &mut self,
         vis: &mut V,
         graph: &PartialGraph<'tcx>,
@@ -92,7 +105,7 @@ impl<'tcx, 'c> CallTreeVisitor<'tcx, 'c> {
         }
     }
 
-    pub fn visit_inlined_call<V: CallTreeVisit<'tcx> + ?Sized>(
+    pub fn visit_inlined_call<V: Visitor<'tcx> + ?Sized>(
         &mut self,
         vis: &mut V,
         loc: Location,
@@ -112,7 +125,7 @@ impl<'tcx, 'c> CallTreeVisitor<'tcx, 'c> {
         );
     }
 
-    pub fn start<V: CallTreeVisit<'tcx> + ?Sized>(&mut self, vis: &mut V) {
+    pub fn start<V: Visitor<'tcx> + ?Sized>(&mut self, vis: &mut V) {
         vis.visit_partial_graph(
             self,
             &self.memo.construct_for(self.current_function).unwrap(),

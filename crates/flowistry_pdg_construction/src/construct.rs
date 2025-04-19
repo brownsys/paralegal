@@ -1,4 +1,4 @@
-use std::{borrow::Cow, rc::Rc};
+use std::{borrow::Cow, fmt, rc::Rc};
 
 use either::Either;
 use flowistry::mir::FlowistryInput;
@@ -23,7 +23,7 @@ use rustc_utils::cache::Cache;
 use crate::{
     async_support::*,
     body_cache::{self, BodyCache, CachedBody},
-    call_tree_visitor::{CallTreeVisit, CallTreeVisitor},
+    call_tree_visit::{self, VisitDriver},
     calling_convention::PlaceTranslator,
     graph::{DepEdge, DepGraph, DepNode, OneHopLocation, PartialGraph, SourceUse, TargetUse},
     local_analysis::{CallHandling, InstructionState, LocalAnalysis},
@@ -163,7 +163,6 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         resolution: Instance<'tcx>,
     ) -> ConstructionResult<Cow<'a, PartialGraph<'tcx>>> {
         let construct = || {
-            log::info!("Constructing new PDG for {resolution:?}");
             let g = LocalAnalysis::new(self, resolution)?.construct_partial();
             Some(g)
         };
@@ -628,7 +627,7 @@ struct GraphAssembler<'tcx> {
     control_inputs: Box<[(NodeIndex, DepEdge<CallString>)]>,
 }
 
-fn globalize_location(vis: &mut CallTreeVisitor<'_, '_>, location: &OneHopLocation) -> CallString {
+fn globalize_location(vis: &mut VisitDriver<'_, '_>, location: &OneHopLocation) -> CallString {
     vis.with_pushed_stack(
         GlobalLocation {
             function: vis.current_function().def_id(),
@@ -655,14 +654,14 @@ fn globalize_location(vis: &mut CallTreeVisitor<'_, '_>, location: &OneHopLocati
 }
 
 fn globalize_node<'tcx>(
-    vis: &mut CallTreeVisitor<'tcx, '_>,
+    vis: &mut VisitDriver<'tcx, '_>,
     node: &DepNode<'tcx, OneHopLocation>,
 ) -> DepNode<'tcx, CallString> {
     node.map_at(|location| globalize_location(vis, location))
 }
 
 fn globalize_edge(
-    vis: &mut CallTreeVisitor<'_, '_>,
+    vis: &mut VisitDriver<'_, '_>,
     edge: &DepEdge<OneHopLocation>,
 ) -> DepEdge<CallString> {
     edge.map_at(|location| globalize_location(vis, location))
@@ -694,12 +693,12 @@ impl<'tcx> GraphAssembler<'tcx> {
     /// these control flow sources are connected to the old ctrl inputs.
     fn with_new_ctr_inputs<'c, F, R>(
         &mut self,
-        vis: &mut CallTreeVisitor<'tcx, 'c>,
+        vis: &mut VisitDriver<'tcx, 'c>,
         new_ctrl_inputs: &[(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)],
         f: F,
     ) -> R
     where
-        F: FnOnce(&mut Self, &mut CallTreeVisitor<'tcx, 'c>) -> R,
+        F: FnOnce(&mut Self, &mut VisitDriver<'tcx, 'c>) -> R,
     {
         let new_ctrl_inputs: Box<[(NodeIndex, DepEdge<CallString>)]> = new_ctrl_inputs
             .iter()
@@ -725,10 +724,10 @@ impl<'tcx> GraphAssembler<'tcx> {
     }
 }
 
-impl<'tcx> CallTreeVisit<'tcx> for GraphAssembler<'tcx> {
+impl<'tcx> call_tree_visit::Visitor<'tcx> for GraphAssembler<'tcx> {
     fn visit_inlined_call(
         &mut self,
-        vis: &mut CallTreeVisitor<'tcx, '_>,
+        vis: &mut VisitDriver<'tcx, '_>,
         loc: Location,
         inst: Instance<'tcx>,
         ctrl_inputs: &[(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)],
@@ -740,7 +739,7 @@ impl<'tcx> CallTreeVisit<'tcx> for GraphAssembler<'tcx> {
 
     fn visit_edge(
         &mut self,
-        vis: &mut CallTreeVisitor<'tcx, '_>,
+        vis: &mut VisitDriver<'tcx, '_>,
         src: &DepNode<'tcx, OneHopLocation>,
         dst: &DepNode<'tcx, OneHopLocation>,
         kind: &DepEdge<OneHopLocation>,
@@ -753,11 +752,7 @@ impl<'tcx> CallTreeVisit<'tcx> for GraphAssembler<'tcx> {
         self.graph.add_edge(src_idx, dst_idx, new_kind);
     }
 
-    fn visit_partial_graph(
-        &mut self,
-        vis: &mut CallTreeVisitor<'tcx, '_>,
-        graph: &PartialGraph<'tcx>,
-    ) {
+    fn visit_partial_graph(&mut self, vis: &mut VisitDriver<'tcx, '_>, graph: &PartialGraph<'tcx>) {
         vis.visit_partial_graph(self, graph);
 
         // This loop connects the control inputs that
@@ -792,24 +787,50 @@ struct GraphSizeEstimator {
     functions: usize,
 }
 
-impl<'tcx> CallTreeVisit<'tcx> for GraphSizeEstimator {
-    fn visit_partial_graph(
-        &mut self,
-        vis: &mut CallTreeVisitor<'tcx, '_>,
-        graph: &PartialGraph<'tcx>,
-    ) {
+impl GraphSizeEstimator {
+    fn new() -> Self {
+        Self {
+            nodes: 0,
+            edges: 0,
+            functions: 0,
+        }
+    }
+}
+
+impl<'tcx> call_tree_visit::Visitor<'tcx> for GraphSizeEstimator {
+    fn visit_partial_graph(&mut self, vis: &mut VisitDriver<'tcx, '_>, graph: &PartialGraph<'tcx>) {
         self.nodes += graph.nodes.len();
         self.edges += graph.edges.len();
         self.functions += 1;
         vis.visit_partial_graph(self, graph);
     }
 }
+struct HumanInt(usize);
+
+impl fmt::Display for HumanInt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let num = self.0;
+        let mut as_str = num.to_string();
+        let len = as_str.len();
+        for i in (3..len).step_by(3) {
+            as_str.insert(len - i, ',');
+        }
+
+        f.write_str(&as_str)
+    }
+}
+
+fn estimate_size(vis: &mut VisitDriver<'_, '_>) -> (usize, usize, usize) {
+    let mut estimator = GraphSizeEstimator::new();
+    vis.start(&mut estimator);
+    (estimator.nodes, estimator.edges, estimator.functions)
+}
 
 impl<'tcx> PartialGraph<'tcx> {
     pub fn to_petgraph<'c>(&self, memo: &'c MemoPdgConstructor<'tcx>) -> DepGraph<'tcx> {
-        log::info!("Converting to petgraph starting from {:?}", self.def_id);
+        log::info!("Converting to petgraph starting from {:?}.", self.def_id);
         let mut assembler = GraphAssembler::new();
-        let mut visitor = CallTreeVisitor::new(
+        let mut visitor = VisitDriver::new(
             memo,
             Instance::expect_resolve(
                 memo.tcx,
@@ -818,6 +839,11 @@ impl<'tcx> PartialGraph<'tcx> {
                 self.generics,
             ),
         );
+        let (nodes, endges, functions) = estimate_size(&mut visitor);
+        let nodes = HumanInt(nodes);
+        let edges = HumanInt(endges);
+        let functions = HumanInt(functions);
+        log::info!("Estimating a size of {nodes} nodes, {edges} edges and {functions} functions");
         visitor.start(&mut assembler);
         DepGraph {
             graph: assembler.graph,
@@ -829,9 +855,9 @@ impl<'tcx> PartialGraph<'tcx> {
         memo: &'c MemoPdgConstructor<'tcx>,
         extra_global_location: GlobalLocation,
     ) -> DepGraph<'tcx> {
-        log::info!("Converting to petgraph starting from {:?}", self.def_id);
+        log::info!("Converting to petgraph starting from {:?}.", self.def_id);
         let mut assembler = GraphAssembler::new();
-        let mut visitor = CallTreeVisitor::new(
+        let mut visitor = VisitDriver::new(
             memo,
             Instance::expect_resolve(
                 memo.tcx,
@@ -840,6 +866,12 @@ impl<'tcx> PartialGraph<'tcx> {
                 self.generics,
             ),
         );
+        let (nodes, endges, functions) = estimate_size(&mut visitor);
+
+        let nodes = HumanInt(nodes);
+        let edges = HumanInt(endges);
+        let functions = HumanInt(functions);
+        log::info!("Estimating a size of {nodes} nodes, {edges} edges and {functions} functions");
         visitor.start(&mut assembler);
         DepGraph {
             graph: assembler.graph,
