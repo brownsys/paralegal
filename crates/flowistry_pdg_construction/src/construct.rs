@@ -785,6 +785,7 @@ struct GraphSizeEstimator {
     nodes: usize,
     edges: usize,
     functions: usize,
+    max_call_string: Box<[GlobalLocation]>,
 }
 
 impl GraphSizeEstimator {
@@ -792,8 +793,34 @@ impl GraphSizeEstimator {
         Self {
             nodes: 0,
             edges: 0,
+            max_call_string: Box::new([]),
             functions: 0,
         }
+    }
+
+    fn format_size(&self) -> String {
+        format!(
+            "nodes: {}, edges: {}, functions: {}, call_string_length: {}",
+            HumanInt(self.nodes),
+            HumanInt(self.edges),
+            HumanInt(self.functions),
+            HumanInt(self.max_call_string.len() as usize),
+        )
+    }
+
+    fn format_max_call_string(&self, tcx: TyCtxt<'_>) -> String {
+        self.max_call_string
+            .iter()
+            .map(|loc| {
+                format!(
+                    "  {} ({:?})\n    {:?}",
+                    tcx.def_path_str(loc.function),
+                    loc.location,
+                    tcx.def_span(loc.function)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
@@ -802,6 +829,10 @@ impl<'tcx> call_tree_visit::Visitor<'tcx> for GraphSizeEstimator {
         self.nodes += graph.nodes.len();
         self.edges += graph.edges.len();
         self.functions += 1;
+        let call_string = vis.call_stack();
+        if self.max_call_string.len() < call_string.len() {
+            self.max_call_string = call_string.into();
+        }
         vis.visit_partial_graph(self, graph);
     }
 }
@@ -820,12 +851,6 @@ impl fmt::Display for HumanInt {
     }
 }
 
-fn estimate_size(vis: &mut VisitDriver<'_, '_>) -> (usize, usize, usize) {
-    let mut estimator = GraphSizeEstimator::new();
-    vis.start(&mut estimator);
-    (estimator.nodes, estimator.edges, estimator.functions)
-}
-
 impl<'tcx> PartialGraph<'tcx> {
     pub fn to_petgraph<'c>(&self, memo: &'c MemoPdgConstructor<'tcx>) -> DepGraph<'tcx> {
         log::info!("Converting to petgraph starting from {:?}.", self.def_id);
@@ -839,11 +864,9 @@ impl<'tcx> PartialGraph<'tcx> {
                 self.generics,
             ),
         );
-        let (nodes, endges, functions) = estimate_size(&mut visitor);
-        let nodes = HumanInt(nodes);
-        let edges = HumanInt(endges);
-        let functions = HumanInt(functions);
-        log::info!("Estimating a size of {nodes} nodes, {edges} edges and {functions} functions");
+        let mut size_estimator = GraphSizeEstimator::new();
+        visitor.start(&mut size_estimator);
+        log::info!("Estimating a size of {}", size_estimator.format_size());
         visitor.start(&mut assembler);
         DepGraph {
             graph: assembler.graph,
@@ -866,13 +889,12 @@ impl<'tcx> PartialGraph<'tcx> {
                 self.generics,
             ),
         );
-        let (nodes, endges, functions) = estimate_size(&mut visitor);
-
-        let nodes = HumanInt(nodes);
-        let edges = HumanInt(endges);
-        let functions = HumanInt(functions);
-        log::info!("Estimating a size of {nodes} nodes, {edges} edges and {functions} functions");
-        visitor.start(&mut assembler);
+        let mut size_estimator = GraphSizeEstimator::new();
+        visitor.start(&mut size_estimator);
+        log::info!("Estimating a size of {}", size_estimator.format_size());
+        visitor.with_pushed_stack(extra_global_location, |visitor| {
+            visitor.start(&mut assembler);
+        });
         DepGraph {
             graph: assembler.graph,
         }

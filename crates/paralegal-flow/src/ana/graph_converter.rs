@@ -75,6 +75,8 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
             Self::create_flowistry_graph(generator, local_def_id)
         })?;
 
+        log::info!("Flowistry graph created for {}", target.name());
+
         if generator.ctx.opts().dbg().dump_flowistry_pdg() {
             dep_graph.generate_graphviz(format!(
                 "{}.flowistry-pdg.pdf",
