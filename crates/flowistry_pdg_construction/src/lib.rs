@@ -32,6 +32,7 @@ use rustc_middle::ty::TyCtxt;
 mod approximation;
 mod async_support;
 pub mod body_cache;
+mod call_tree_visitor;
 pub mod calling_convention;
 mod construct;
 pub mod encoder;

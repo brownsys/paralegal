@@ -92,14 +92,6 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         )
         .unwrap();
 
-        if memo.dump_mir {
-            use std::io::Write;
-            let path = tcx.def_path_str(def_id) + ".mir";
-            let mut f = std::fs::File::create(path.as_str()).unwrap();
-            write!(f, "{}", body.to_string(tcx).unwrap()).unwrap();
-            debug!("Dumped debug MIR {path}");
-        }
-
         let place_info = PlaceInfo::build(tcx, def_id, body_with_facts);
         let control_dependencies = body.control_dependencies();
 
@@ -108,7 +100,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
         let body_assignments = utils::find_body_assignments(&body);
 
-        Some(LocalAnalysis {
+        let slf = LocalAnalysis {
             memo,
             root,
             body_with_facts,
@@ -118,7 +110,19 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             start_loc,
             def_id,
             body_assignments,
-        })
+            param_env,
+        };
+        if memo.dump_mir {
+            slf.dump_mir();
+        }
+        Some(slf)
+    }
+
+    fn dump_mir(&self) {
+        use std::io::Write;
+        let path = self.tcx().def_path_str(self.def_id) + ".mir";
+        let mut f = std::fs::File::create(path.as_str()).unwrap();
+        write!(f, "{}", self.mono_body.to_string(self.tcx()).unwrap()).unwrap();
     }
 
     fn make_dep_node(
@@ -128,13 +132,16 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     ) -> DepNode<'tcx, OneHopLocation> {
         let location = location.into();
         debug!(
-            "Creating dep node for {place:?} ({:?}) (base ty {:?}) in {} at {:?}",
-            place.ty(&self.mono_body, self.tcx()).ty,
+            "Creating dep node for {place:?} (base ty {:?}) in {} at {:?}",
             Place::from(place.local)
                 .ty(self.body_with_facts.body(), self.tcx())
                 .ty,
             self.tcx().def_path_str(self.def_id),
             location,
+        );
+        debug!(
+            "Place type is {:?}",
+            place.ty(&self.mono_body, self.tcx()).ty,
         );
         DepNode::new(
             place,

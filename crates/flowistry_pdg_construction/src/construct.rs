@@ -9,7 +9,7 @@ use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 
 use df::{AnalysisDomain, Results, ResultsVisitor};
 use rustc_error_messages::DiagnosticMessage;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_middle::{
@@ -23,6 +23,7 @@ use rustc_utils::cache::Cache;
 use crate::{
     async_support::*,
     body_cache::{self, BodyCache, CachedBody},
+    call_tree_visitor::{CallTreeVisit, CallTreeVisitor},
     calling_convention::PlaceTranslator,
     graph::{DepEdge, DepGraph, DepNode, OneHopLocation, PartialGraph, SourceUse, TargetUse},
     local_analysis::{CallHandling, InstructionState, LocalAnalysis},
@@ -162,8 +163,8 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         resolution: Instance<'tcx>,
     ) -> ConstructionResult<Cow<'a, PartialGraph<'tcx>>> {
         let construct = || {
+            log::info!("Constructing new PDG for {resolution:?}");
             let g = LocalAnalysis::new(self, resolution)?.construct_partial();
-            trace!("Computed new for {resolution:?}");
             Some(g)
         };
         let mut was_constructed = false;
@@ -621,23 +622,57 @@ enum Inputs<'tcx> {
     },
 }
 
-struct GraphAssembler<'tcx, 'c> {
-    memo: &'c MemoPdgConstructor<'tcx>,
-    call_string_stack: Vec<GlobalLocation>,
+struct GraphAssembler<'tcx> {
     graph: DiGraph<DepNode<'tcx, CallString>, DepEdge<CallString>>,
     nodes: FxHashMap<DepNode<'tcx, CallString>, petgraph::graph::NodeIndex>,
-    current_function: Option<DefId>,
     control_inputs: Box<[(NodeIndex, DepEdge<CallString>)]>,
 }
 
-impl<'tcx, 'c> GraphAssembler<'tcx, 'c> {
-    fn new(memo: &'c MemoPdgConstructor<'tcx>) -> Self {
+fn globalize_location(vis: &mut CallTreeVisitor<'_, '_>, location: &OneHopLocation) -> CallString {
+    vis.with_pushed_stack(
+        GlobalLocation {
+            function: vis.current_function().def_id(),
+            location: location.location,
+        },
+        |vis| {
+            if let Some((c, start)) = location.in_child {
+                vis.with_pushed_stack(
+                    GlobalLocation {
+                        function: c,
+                        location: if start {
+                            RichLocation::Start
+                        } else {
+                            RichLocation::End
+                        },
+                    },
+                    |vis| CallString::new(vis.call_stack()),
+                )
+            } else {
+                CallString::new(vis.call_stack())
+            }
+        },
+    )
+}
+
+fn globalize_node<'tcx>(
+    vis: &mut CallTreeVisitor<'tcx, '_>,
+    node: &DepNode<'tcx, OneHopLocation>,
+) -> DepNode<'tcx, CallString> {
+    node.map_at(|location| globalize_location(vis, location))
+}
+
+fn globalize_edge(
+    vis: &mut CallTreeVisitor<'_, '_>,
+    edge: &DepEdge<OneHopLocation>,
+) -> DepEdge<CallString> {
+    edge.map_at(|location| globalize_location(vis, location))
+}
+
+impl<'tcx> GraphAssembler<'tcx> {
+    fn new() -> Self {
         Self {
-            memo,
-            call_string_stack: Vec::new(),
             graph: DiGraph::new(),
             nodes: FxHashMap::default(),
-            current_function: None,
             control_inputs: Box::new([]),
         }
     }
@@ -649,53 +684,6 @@ impl<'tcx, 'c> GraphAssembler<'tcx, 'c> {
             .or_insert_with(|| self.graph.add_node(node))
     }
 
-    fn globalize_location(&mut self, location: &OneHopLocation) -> CallString {
-        self.with_pushed_stack(
-            GlobalLocation {
-                function: self.current_function.unwrap(),
-                location: location.location,
-            },
-            |slf| {
-                if let Some((c, start)) = location.in_child {
-                    slf.with_pushed_stack(
-                        GlobalLocation {
-                            function: c,
-                            location: if start {
-                                RichLocation::Start
-                            } else {
-                                RichLocation::End
-                            },
-                        },
-                        |slf| CallString::new(&slf.call_string_stack),
-                    )
-                } else {
-                    CallString::new(&slf.call_string_stack)
-                }
-            },
-        )
-    }
-
-    fn globalize_node(
-        &mut self,
-        node: &DepNode<'tcx, OneHopLocation>,
-    ) -> DepNode<'tcx, CallString> {
-        node.map_at(|location| self.globalize_location(location))
-    }
-
-    fn globalize_edge(&mut self, edge: &DepEdge<OneHopLocation>) -> DepEdge<CallString> {
-        edge.map_at(|location| self.globalize_location(location))
-    }
-
-    fn with_pushed_stack<F, R>(&mut self, location: GlobalLocation, f: F) -> R
-    where
-        F: FnOnce(&mut Self) -> R,
-    {
-        self.call_string_stack.push(location);
-        let result = f(self);
-        self.call_string_stack.pop();
-        result
-    }
-
     /// Forwarding of control flow. It is sound to replace the control inputs
     /// here rather than extend them because we are guaranteed that these new
     /// nodes are connected to the old ctrl nodes, possibly transitively.
@@ -704,20 +692,21 @@ impl<'tcx, 'c> GraphAssembler<'tcx, 'c> {
     /// node or to the ones coming from the parent, which is established by
     /// the `visit_partial_graph` function. By induction all nodes, including
     /// these control flow sources are connected to the old ctrl inputs.
-    fn with_new_ctr_inputs<F, R>(
+    fn with_new_ctr_inputs<'c, F, R>(
         &mut self,
+        vis: &mut CallTreeVisitor<'tcx, 'c>,
         new_ctrl_inputs: &[(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)],
         f: F,
     ) -> R
     where
-        F: FnOnce(&mut Self) -> R,
+        F: FnOnce(&mut Self, &mut CallTreeVisitor<'tcx, 'c>) -> R,
     {
         let new_ctrl_inputs: Box<[(NodeIndex, DepEdge<CallString>)]> = new_ctrl_inputs
             .iter()
             .map(|(src, edge)| {
-                let src = self.globalize_node(src);
+                let src = globalize_node(vis, src);
                 let src_idx = self.add_node(src);
-                let new_edge = self.globalize_edge(edge);
+                let new_edge = globalize_edge(vis, edge);
                 (src_idx, new_edge)
             })
             .collect();
@@ -728,52 +717,60 @@ impl<'tcx, 'c> GraphAssembler<'tcx, 'c> {
         } else {
             std::mem::replace(&mut self.control_inputs, new_ctrl_inputs)
         };
-        let r = f(self);
+        let r = f(self, vis);
         if !old_ctrl_inputs.is_empty() {
             self.control_inputs = old_ctrl_inputs;
         }
         r
     }
+}
 
+impl<'tcx> CallTreeVisit<'tcx> for GraphAssembler<'tcx> {
     fn visit_inlined_call(
         &mut self,
+        vis: &mut CallTreeVisitor<'tcx, '_>,
         loc: Location,
         inst: Instance<'tcx>,
         ctrl_inputs: &[(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)],
     ) {
-        self.with_new_ctr_inputs(ctrl_inputs, |slf| {
-            slf.with_pushed_stack(
-                GlobalLocation {
-                    function: slf.current_function.unwrap(),
-                    location: loc.into(),
-                },
-                |slf| {
-                    let old_fn = std::mem::replace(&mut slf.current_function, Some(inst.def_id()));
-                    let graph = slf.memo.construct_for(inst).unwrap();
-                    slf.visit_partial_graph(&graph);
-                    slf.current_function = old_fn;
-                },
-            );
+        self.with_new_ctr_inputs(vis, ctrl_inputs, |slf, vis| {
+            vis.visit_inlined_call(slf, loc, inst)
         })
     }
 
-    fn visit_partial_graph(&mut self, graph: &PartialGraph<'tcx>) {
-        for (src, dst, kind) in &graph.edges {
-            let src = self.globalize_node(src);
-            let src_idx = self.add_node(src);
-            let dst = self.globalize_node(dst);
-            let dst_idx = self.add_node(dst);
-            let new_kind = self.globalize_edge(kind);
-            self.graph.add_edge(src_idx, dst_idx, new_kind);
-        }
+    fn visit_edge(
+        &mut self,
+        vis: &mut CallTreeVisitor<'tcx, '_>,
+        src: &DepNode<'tcx, OneHopLocation>,
+        dst: &DepNode<'tcx, OneHopLocation>,
+        kind: &DepEdge<OneHopLocation>,
+    ) {
+        let src = globalize_node(vis, src);
+        let src_idx = self.add_node(src);
+        let dst = globalize_node(vis, dst);
+        let dst_idx = self.add_node(dst);
+        let new_kind = globalize_edge(vis, kind);
+        self.graph.add_edge(src_idx, dst_idx, new_kind);
+    }
 
-        // This loop served two purposes. It connects the control inputs that
+    fn visit_partial_graph(
+        &mut self,
+        vis: &mut CallTreeVisitor<'tcx, '_>,
+        graph: &PartialGraph<'tcx>,
+    ) {
+        vis.visit_partial_graph(self, graph);
+
+        // This loop connects the control inputs that
         // are incoming to the function to those nodes in the graph who have no
-        // control inputs yet. Secondly the add_node call will ensure that each
-        // node is represented, even if no edges are present (though I suspect
-        // that is an impossible scenario.)
+        // control inputs yet.
+        //
+        // We do this here instead of in "visit_node", because that gets called
+        // before the "visit_edge" function, meaning we can't yet see the
+        // potential control inputs of the node. We could have the visitor use
+        // an opposite ordering, but that is counterintuitive to other potential
+        // users of the visitor.
         for node in &graph.nodes {
-            let new_node = self.globalize_node(node);
+            let new_node = globalize_node(vis, node);
             let node = self.add_node(new_node);
 
             if !self
@@ -786,18 +783,42 @@ impl<'tcx, 'c> GraphAssembler<'tcx, 'c> {
                 }
             }
         }
+    }
+}
 
-        for (loc, inst, ctrl_inputs) in &graph.inlined_calls {
-            self.visit_inlined_call(*loc, *inst, ctrl_inputs);
-        }
+struct GraphSizeEstimator {
+    nodes: usize,
+    edges: usize,
+    functions: usize,
+}
+
+impl<'tcx> CallTreeVisit<'tcx> for GraphSizeEstimator {
+    fn visit_partial_graph(
+        &mut self,
+        vis: &mut CallTreeVisitor<'tcx, '_>,
+        graph: &PartialGraph<'tcx>,
+    ) {
+        self.nodes += graph.nodes.len();
+        self.edges += graph.edges.len();
+        self.functions += 1;
+        vis.visit_partial_graph(self, graph);
     }
 }
 
 impl<'tcx> PartialGraph<'tcx> {
     pub fn to_petgraph<'c>(&self, memo: &'c MemoPdgConstructor<'tcx>) -> DepGraph<'tcx> {
-        let mut assembler = GraphAssembler::new(memo);
-        assembler.current_function = Some(self.def_id);
-        assembler.visit_partial_graph(self);
+        log::info!("Converting to petgraph starting from {:?}", self.def_id);
+        let mut assembler = GraphAssembler::new();
+        let mut visitor = CallTreeVisitor::new(
+            memo,
+            Instance::expect_resolve(
+                memo.tcx,
+                memo.tcx.param_env_reveal_all_normalized(self.def_id),
+                self.def_id,
+                self.generics,
+            ),
+        );
+        visitor.start(&mut assembler);
         DepGraph {
             graph: assembler.graph,
         }
@@ -808,10 +829,18 @@ impl<'tcx> PartialGraph<'tcx> {
         memo: &'c MemoPdgConstructor<'tcx>,
         extra_global_location: GlobalLocation,
     ) -> DepGraph<'tcx> {
-        let mut assembler = GraphAssembler::new(memo);
-        assembler.current_function = Some(self.def_id);
-        assembler.call_string_stack.push(extra_global_location);
-        assembler.visit_partial_graph(self);
+        log::info!("Converting to petgraph starting from {:?}", self.def_id);
+        let mut assembler = GraphAssembler::new();
+        let mut visitor = CallTreeVisitor::new(
+            memo,
+            Instance::expect_resolve(
+                memo.tcx,
+                memo.tcx.param_env_reveal_all_normalized(self.def_id),
+                self.def_id,
+                self.generics,
+            ),
+        );
+        visitor.start(&mut assembler);
         DepGraph {
             graph: assembler.graph,
         }
