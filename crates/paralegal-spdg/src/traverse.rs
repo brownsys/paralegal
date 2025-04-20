@@ -80,15 +80,21 @@ pub fn generic_flows_to(
     }
 
     let graph = edge_selection.filter_graph(&spdg.graph);
-
-    let result = petgraph::visit::depth_first_search(&graph, from, |event| match event {
-        DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(d),
-        _ => Control::Continue,
-    });
-    match result {
-        Control::Break(r) => Some(r),
-        _ => None,
+    for n in petgraph::visit::Dfs::from_parts(from.collect(), graph.visit_map()).iter(&graph) {
+        if targets.contains(&n) {
+            return Some(n);
+        }
     }
+    None
+
+    // let result = petgraph::visit::depth_first_search(&graph, from, |event| match event {
+    //     DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(d),
+    //     _ => Control::Continue,
+    // });
+    // match result {
+    //     Control::Break(r) => Some(r),
+    //     _ => None,
+    // }
 }
 
 /// The current policy for this iterator is that it does not return the start

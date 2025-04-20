@@ -17,7 +17,7 @@ use paralegal_spdg::{
 
 use anyhow::{anyhow, bail, Result};
 use itertools::{Either, Itertools};
-use petgraph::visit::{EdgeRef, IntoNeighborsDirected, Reversed, Topo, Walker};
+use petgraph::visit::{EdgeRef, IntoNeighborsDirected, Reversed, Topo, Visitable, Walker};
 use petgraph::Direction::Outgoing;
 use petgraph::{Direction, Incoming};
 
@@ -713,6 +713,51 @@ where
             sink.iter_nodes(),
         )
         .is_some()
+    }
+
+    /// An optimized version of the following pattern that performs only one
+    /// graph traversal instead of `sink.len()` traversals:
+    ///
+    /// ```rust
+    /// for n in sink {
+    ///     if !self.flows_to(n, ctx, edge_type) {
+    ///         return /* violation */;
+    ///    }
+    /// }
+    /// return /* success */;
+    /// ```
+    ///
+    /// Returns the that are not reachable from `self` through the given edge
+    /// type. If all nodes have been reached the traversal short-circuits.
+    fn flows_to_all(
+        self,
+        sink: impl IntoIterGlobalNodes,
+        ctx: &RootContext,
+        edge_type: EdgeSelection,
+    ) -> Option<NodeCluster> {
+        let cf_id = self.controller_id();
+        if sink.controller_id() != cf_id {
+            return None;
+        }
+
+        let mut targets = sink.iter_nodes().collect::<HashSet<_>>();
+        let mut from = self.iter_nodes().peekable();
+        if from.peek().is_none() {
+            return Some(NodeCluster::new(cf_id, targets));
+        } else if targets.is_empty() {
+            return None;
+        }
+
+        let spdg = &ctx.desc.controllers[&cf_id];
+
+        let graph = edge_type.filter_graph(&spdg.graph);
+        for n in petgraph::visit::Dfs::from_parts(from.collect(), graph.visit_map()).iter(&graph) {
+            targets.remove(&n);
+            if targets.is_empty() {
+                return None;
+            }
+        }
+        Some(NodeCluster::new(cf_id, targets))
     }
 
     /// Returns the sink node that is reached
