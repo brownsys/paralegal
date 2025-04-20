@@ -1,10 +1,11 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::time::{Duration, Instant};
 use std::vec;
 use std::{io::Write, process::exit, sync::Arc};
 
+use fixedbitset::FixedBitSet;
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_spdg::traverse::{
     generic_flows_to, generic_influencees, generic_influencers, EdgeSelection,
@@ -17,6 +18,7 @@ use paralegal_spdg::{
 
 use anyhow::{anyhow, bail, Result};
 use itertools::{Either, Itertools};
+use petgraph::graph::NodeIndex;
 use petgraph::visit::{EdgeRef, IntoNeighborsDirected, Reversed, Topo, Visitable, Walker};
 use petgraph::Direction::Outgoing;
 use petgraph::{Direction, Incoming};
@@ -24,8 +26,8 @@ use petgraph::{Direction, Incoming};
 use crate::algo::flows_to::CtrlFlowsTo;
 
 use crate::diagnostics::HasDiagnosticsBase;
-use crate::Diagnostics;
 use crate::{assert_warning, diagnostics::DiagnosticsRecorder};
+use crate::{Diagnostics, Stats};
 
 /// User-defined PDG markers.
 pub type Marker = Identifier;
@@ -97,6 +99,7 @@ pub struct ContextStats {
     pub pdg_construction: Option<Duration>,
     pub deserialization: Option<Duration>,
     pub precomputation: Duration,
+    pub start: Option<Instant>,
 }
 
 impl RootContext {
@@ -128,6 +131,7 @@ impl RootContext {
                 pdg_construction: None,
                 precomputation: start.elapsed(),
                 deserialization: None,
+                start: None,
             },
         }
     }
@@ -135,6 +139,15 @@ impl RootContext {
     #[doc(hidden)]
     pub fn context_stats(&self) -> &ContextStats {
         &self.stats
+    }
+
+    pub fn stat_snapshot(&self) -> Stats {
+        Stats {
+            analysis: self.stats.pdg_construction,
+            context_contruction: self.stats.precomputation,
+            deserialization: self.stats.deserialization.unwrap(),
+            policy: self.stats.start.unwrap().elapsed(),
+        }
     }
 
     #[deprecated = "Use NodeExt::associated_call_site instead"]
@@ -737,7 +750,7 @@ where
     ) -> Option<NodeCluster> {
         let cf_id = self.controller_id();
         if sink.controller_id() != cf_id {
-            return None;
+            return Some(sink.to_local_cluster());
         }
 
         let mut targets = sink.iter_nodes().collect::<HashSet<_>>();
@@ -821,6 +834,89 @@ where
             || NodeCluster::try_from_iter(self.influencees(ctx, EdgeSelection::Data))
                 .unwrap()
                 .flows_to(target, ctx, EdgeSelection::Control)
+    }
+
+    /// Similar to [`Self::has_ctrl_influence`] but checks that all nodes in
+    /// `target` are reached from `self`. Returns the nodes that weren't reached.
+    fn has_ctrl_influence_all(
+        self,
+        target: impl IntoIterGlobalNodes + Sized + Copy,
+        ctx: &RootContext,
+    ) -> Option<NodeCluster> {
+        let cf_id = self.controller_id();
+        if target.controller_id() != cf_id {
+            return Some(target.to_local_cluster());
+        }
+
+        let mut from = self.iter_nodes().peekable();
+        if from.peek().is_none() {
+            return Some(target.to_local_cluster());
+        } else if target.iter_nodes().next().is_none() {
+            return None;
+        }
+
+        let spdg = &ctx.desc.controllers[&cf_id];
+
+        let graph = &spdg.graph;
+
+        // For targets we track them invertedly so we can use `put` instead of
+        // `remove` later and guard the fullness check with the return from that.
+        let mut targets = FixedBitSet::with_capacity(graph.node_count());
+        // Initialize all as set
+        targets.insert_range(..);
+        // Remove the one's we're after.
+        for n in target.iter_nodes() {
+            //println!("Adding target {}", n.index());
+            targets.remove(n.index());
+        }
+
+        // Tracks the nodes we found via data.
+        let mut data_reachable = FixedBitSet::with_capacity(graph.node_count());
+        // Tracks the nodes we found via control.
+        let mut ctrl_reachable = FixedBitSet::with_capacity(graph.node_count());
+        let mut queue = self
+            .iter_nodes()
+            .inspect(|n| {
+                //println!("Adding source {}", n.index());
+                data_reachable.put(n.index());
+                ctrl_reachable.put(n.index());
+            })
+            .collect::<VecDeque<_>>();
+
+        while let Some(n) = queue.pop_front() {
+            let is_data_reachable = data_reachable[n.index()];
+            let is_ctrl_reachable = ctrl_reachable[n.index()];
+            //println!("Considering node {}, is_data_reachable: {is_data_reachable}, is_ctrl_reachable: {is_ctrl_reachable}", n.index());
+            for next in graph.edges(n) {
+                // println!(
+                //     "Next node is {} with edge kind: {}",
+                //     next.target().index(),
+                //     next.weight().kind,
+                // );
+                if next.weight().is_data() {
+                    if is_data_reachable && !data_reachable.put(next.target().index()) {
+                        //println!("Extending data path");
+                        queue.push_back(next.target());
+                    }
+                } else if is_data_reachable | is_ctrl_reachable {
+                    if !ctrl_reachable.put(next.target().index()) {
+                        //println!("Extending control path");
+                        queue.push_back(next.target());
+                    }
+                    if !targets.put(next.target().index()) {
+                        //println!("Found a target");
+                        if targets.is_full() {
+                            return None;
+                        }
+                    }
+                }
+            }
+        }
+
+        Some(NodeCluster::new(
+            cf_id,
+            targets.into_ones().map(|i| NodeIndex::new(i)),
+        ))
     }
 
     /// Returns iterator over all Nodes that influence the given sink Node.

@@ -250,19 +250,13 @@ impl GraphLocation {
             !ctx.desc().controllers.is_empty(),
             "No controllers found. Your policy is likely to be vacuous."
         );
-        let start = Instant::now();
         let result = prop(ctx.clone())?;
 
         let success = ctx.emit_diagnostics(std::io::stdout())?;
         Ok(PolicyReturn {
             success,
             result,
-            stats: Stats {
-                analysis: ctx.stats.pdg_construction,
-                context_contruction: ctx.stats.precomputation,
-                deserialization: ctx.stats.deserialization.unwrap(),
-                policy: start.elapsed(),
-            },
+            stats: ctx.stat_snapshot(),
         })
     }
 
@@ -272,6 +266,7 @@ impl GraphLocation {
     /// Prefer using [`Self::with_context`] which takes care of emitting any
     /// diagnostic messages after the property is done.
     pub fn build_context(&self, config: Config) -> Result<RootContext> {
+        let start = Instant::now();
         let _ = simple_logger::init_with_env();
 
         let deser_started = Instant::now();
@@ -279,6 +274,7 @@ impl GraphLocation {
         let mut ctx = RootContext::new(desc, config);
         ctx.stats.pdg_construction = self.construction_time;
         ctx.stats.deserialization = Some(deser_started.elapsed());
+        ctx.stats.start = Some(start);
         Ok(ctx)
     }
 }

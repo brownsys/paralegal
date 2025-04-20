@@ -19,6 +19,7 @@ petgraph = { workspace = true }
 colored = "1"
 strum = { workspace = true }
 indexmap = "2.2.6"
+fixedbitset = "0.5.7"
 
 [dev-dependencies]
 paralegal-flow = { path = "../paralegal-flow", features = ["test"] }
