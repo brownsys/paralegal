@@ -51,14 +51,14 @@ impl<'d> VisitDriver<'d> {
     }
 }
 
-pub trait Visitor<'tcx> {
-    fn visit_spdg(&mut self, vis: &mut VisitDriver<'_>, partial_graph: &SPDG) {
+pub trait Visitor<'d> {
+    fn visit_spdg(&mut self, vis: &mut VisitDriver<'d>, partial_graph: &SPDG) {
         vis.visit_spdg(self, partial_graph);
     }
 
     fn visit_inlined_call(
         &mut self,
-        vis: &mut VisitDriver<'_>,
+        vis: &mut VisitDriver<'d>,
         loc: Location,
         meta: &InlinedCallMeta,
     ) {

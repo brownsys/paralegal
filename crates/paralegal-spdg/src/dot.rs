@@ -72,7 +72,7 @@ impl<'a, 'd> dot::GraphWalk<'a, CallString, GlobalEdge> for DotPrintableProgramD
             .flat_map(|&controller_id| {
                 let ctrl = &self.spdg.controllers[&controller_id];
                 ctrl.graph.edge_references().map(move |edge| GlobalEdge {
-                    controller_id,
+                    call_string: controller_id,
                     index: edge.id(),
                 })
             })
@@ -81,13 +81,13 @@ impl<'a, 'd> dot::GraphWalk<'a, CallString, GlobalEdge> for DotPrintableProgramD
     }
 
     fn source(&'a self, edge: &GlobalEdge) -> CallString {
-        let ctrl = &self.spdg.controllers[&edge.controller_id].graph;
+        let ctrl = &self.spdg.controllers[&edge.call_string].graph;
         let (from, _) = ctrl.edge_endpoints(edge.index).unwrap();
         ctrl.node_weight(from).unwrap().at
     }
 
     fn target(&'a self, edge: &GlobalEdge) -> CallString {
-        let ctrl = &self.spdg.controllers[&edge.controller_id].graph;
+        let ctrl = &self.spdg.controllers[&edge.call_string].graph;
         let (_, to) = ctrl.edge_endpoints(edge.index).unwrap();
         ctrl.node_weight(to).unwrap().at
     }
@@ -163,7 +163,7 @@ impl<'a, 'd> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDe
     }
 
     fn edge_color(&'a self, e: &GlobalEdge) -> Option<dot::LabelText<'a>> {
-        let weight = self.spdg.controllers[&e.controller_id]
+        let weight = self.spdg.controllers[&e.call_string]
             .graph
             .edge_weight(e.index)
             .unwrap();
@@ -176,13 +176,13 @@ impl<'a, 'd> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDe
         &'a self,
         edge: &GlobalEdge,
     ) -> (Option<dot::Id<'a>>, Option<dot::CompassPoint>) {
-        let ctrl = &self.spdg.controllers[&edge.controller_id].graph;
+        let ctrl = &self.spdg.controllers[&edge.call_string].graph;
         let (from, _) = ctrl.edge_endpoints(edge.index).unwrap();
         (Some(Id::new(format!("p{}", from.index())).unwrap()), None)
     }
 
     fn target_port_position(&'a self, edge: &GlobalEdge) -> (Option<Id<'a>>, Option<CompassPoint>) {
-        let ctrl = &self.spdg.controllers[&edge.controller_id].graph;
+        let ctrl = &self.spdg.controllers[&edge.call_string].graph;
         let (_, to) = ctrl.edge_endpoints(edge.index).unwrap();
         (Some(Id::new(format!("p{}", to.index())).unwrap()), None)
     }

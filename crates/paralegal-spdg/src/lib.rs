@@ -29,7 +29,7 @@ extern crate strum;
 pub use flowistry_pdg::*;
 
 mod call_tree_visitor;
-pub mod dot;
+//pub mod dot;
 pub mod ser;
 mod tiny_bitset;
 pub mod traverse;
@@ -496,30 +496,42 @@ mod ser_defid_seq {
 }
 
 impl ProgramDescription {
-    /// Gather all data sources that are mentioned in this program description.
-    ///
-    /// Essentially just `self.controllers.flat_map(|c| c.keys())`
-    pub fn all_nodes(&self) -> HashSet<GlobalNode> {
-        self.controllers
-            .iter()
-            .flat_map(|(name, c)| {
-                c.all_sources()
-                    .map(|ds| GlobalNode::from_local_node(*name, ds))
-            })
-            .collect()
+    // /// Gather all data sources that are mentioned in this program description.
+    // ///
+    // /// Essentially just `self.controllers.flat_map(|c| c.keys())`
+    // pub fn all_nodes(&self) -> HashSet<GlobalNode> {
+    //     self.controllers
+    //         .iter()
+    //         .flat_map(|(name, c)| {
+    //             c.all_sources()
+    //                 .map(|ds| GlobalNode::from_local_node(*name, ds))
+    //         })
+    //         .collect()
+    // }
+
+    // /// Gather all [`CallString`]s that are mentioned in this program description.
+    // pub fn all_call_sites(&self) -> HashSet<CallString> {
+    //     self.controllers
+    //         .values()
+    //         .flat_map(|v| {
+    //             v.graph
+    //                 .edge_weights()
+    //                 .map(|e| e.at)
+    //                 .chain(v.graph.node_weights().map(|n| n.at))
+    //         })
+    //         .collect()
+    // }
+
+    pub fn iter_call_tree(&self, instance: Instance) -> CallTreeIter<'_> {
+        CallTreeIter::new(self, instance)
     }
 
-    /// Gather all [`CallString`]s that are mentioned in this program description.
-    pub fn all_call_sites(&self) -> HashSet<CallString> {
-        self.controllers
-            .values()
-            .flat_map(|v| {
-                v.graph
-                    .edge_weights()
-                    .map(|e| e.at)
-                    .chain(v.graph.node_weights().map(|n| n.at))
-            })
-            .collect()
+    pub fn nodes_for_controller(
+        &self,
+        instance: Instance,
+    ) -> impl Iterator<Item = GlobalNode> + '_ {
+        self.iter_call_tree(instance)
+            .flat_map(|(instance, call_string)| self.graphs[&instance].nodes_as_callee(call_string))
     }
 }
 
@@ -634,10 +646,7 @@ pub struct GlobalNodeIter<I: IntoIterGlobalNodes> {
 impl<I: IntoIterGlobalNodes> Iterator for GlobalNodeIter<I> {
     type Item = GlobalNode;
     fn next(&mut self) -> Option<Self::Item> {
-        Some(GlobalNode {
-            controller_id: self.controller_id,
-            node: self.iter.next()?,
-        })
+        self.iter.next()
     }
 }
 
@@ -648,7 +657,7 @@ impl<I: IntoIterGlobalNodes> Iterator for GlobalNodeIter<I> {
 /// not do so directly*, but it's reference `&NodeCluster` does.
 pub trait IntoIterGlobalNodes: Sized + Copy {
     /// The iterator returned by [`Self::iter_nodes`]
-    type Iter: Iterator<Item = Node>;
+    type Iter: Iterator<Item = GlobalNode>;
 
     /// iterate over the local nodes
     fn iter_nodes(self) -> Self::Iter;
@@ -699,34 +708,31 @@ pub struct GlobalNode {
 impl GlobalNode {
     /// Create a new node with no guarantee that it exists in the SPDG of the
     /// controller.
-    pub fn unsafe_new(ctrl_id: Endpoint, index: usize) -> Self {
+    pub fn unsafe_new(call_string: CallString, inode: InstanceNode) -> Self {
         GlobalNode {
-            controller_id: ctrl_id,
-            node: crate::Node::new(index),
-        }
-    }
-
-    /// Create a new globally identified node by pairing a node local to a
-    /// particular SPDG with it's controller id.
-    ///
-    /// Meant for internal use only.
-    pub fn from_local_node(ctrl_id: Endpoint, node: Node) -> Self {
-        GlobalNode {
-            controller_id: ctrl_id,
-            node,
+            parent_call_string: call_string,
+            instance_node: inode,
         }
     }
 
     /// The local node in the SPDG
     pub fn local_node(self) -> LocalNode {
-        self.node
+        self.instance_node.node
+    }
+
+    pub fn instance_node(self) -> InstanceNode {
+        self.instance_node
+    }
+
+    pub fn call_string(self) -> CallString {
+        self.parent_call_string
     }
 }
 
 impl IntoIterGlobalNodes for GlobalNode {
-    type Iter = std::iter::Once<Node>;
+    type Iter = std::iter::Once<GlobalNode>;
     fn iter_nodes(self) -> Self::Iter {
-        std::iter::once(self.local_node())
+        std::iter::once(self)
     }
 
     fn controller_id(self) -> Endpoint {
@@ -763,20 +769,17 @@ pub mod node_cluster {
         type Item = GlobalNode;
         fn next(&mut self) -> Option<Self::Item> {
             let idx = self.idx.next()?;
-            Some(GlobalNode::from_local_node(
-                self.inner.controller_id,
-                self.inner.nodes[idx],
-            ))
+            Some(self.inner.nodes[idx])
         }
     }
 
     /// Iterate over a node cluster but yielding [`GlobalNode`]s
     pub struct Iter<'a> {
-        inner: std::slice::Iter<'a, Node>,
+        inner: std::slice::Iter<'a, GlobalNode>,
     }
 
     impl Iterator for Iter<'_> {
-        type Item = Node;
+        type Item = GlobalNode;
         fn next(&mut self) -> Option<Self::Item> {
             self.inner.next().copied()
         }
@@ -806,7 +809,7 @@ pub mod node_cluster {
 
     impl NodeCluster {
         /// Create a new cluster. This for internal use.
-        pub fn new(controller_id: Endpoint, nodes: impl IntoIterator<Item = Node>) -> Self {
+        pub fn new(controller_id: Endpoint, nodes: impl IntoIterator<Item = GlobalNode>) -> Self {
             Self {
                 controller_id,
                 nodes: nodes.into_iter().collect::<Vec<_>>().into(),
@@ -826,7 +829,7 @@ pub mod node_cluster {
         }
 
         /// Nodes in this cluster
-        pub fn nodes(&self) -> &[Node] {
+        pub fn nodes(&self) -> &[GlobalNode] {
             &self.nodes
         }
 
@@ -840,8 +843,8 @@ pub mod node_cluster {
             let ctrl_id = first.controller_id();
             Some(Self {
                 controller_id: ctrl_id,
-                nodes: std::iter::once(Some(first.local_node()))
-                    .chain(it.map(|n| (n.controller_id() == ctrl_id).then_some(n.local_node())))
+                nodes: std::iter::once(Some(first))
+                    .chain(it.map(|n| (n.controller_id() == ctrl_id).then_some(n)))
                     .collect::<Option<Box<_>>>()?,
             })
         }
@@ -854,13 +857,16 @@ pub use node_cluster::NodeCluster;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct GlobalEdge {
     index: EdgeIndex,
-    controller_id: CallString,
+    instance: Instance,
+    call_string: CallString,
 }
 
 impl GlobalEdge {
     /// The id of the controller that this edge is located in
     pub fn controller_id(self) -> Endpoint {
-        self.controller_id
+        self.call_string
+            .root()
+            .map_or(self.instance.def_id, |p| p.function)
     }
 }
 
@@ -944,6 +950,7 @@ pub type SPDGImpl = petgraph::Graph<NodeInfo, EdgeInfo>;
 /// A semantic PDG, e.g. a graph plus marker annotations
 #[derive(Clone, Serialize, Deserialize, Debug, Allocative)]
 pub struct SPDG {
+    pub instance: Instance,
     /// The PDG
     #[allocative(visit = allocative_visit_petgraph_graph)]
     pub graph: SPDGImpl,
@@ -1009,6 +1016,12 @@ impl<'de> Deserialize<'de> for Generics {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Allocative, Hash, PartialEq, Eq)]
 pub struct LocalNode(#[allocative(visit = allocative_visit_simple_sized)] NodeIndex);
 
+impl std::fmt::Display for LocalNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.index())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Allocative, Hash, PartialEq, Eq)]
 pub struct InstanceNode {
     instance: Instance,
@@ -1047,7 +1060,7 @@ impl CallString {
 
     pub fn root(self) -> Option<GlobalLocation> {
         if let Some(mut slf) = self.0 {
-            while let Some(parent) = slf.parent {
+            while let Some(parent) = slf.parent.0 {
                 slf = parent;
             }
             Some(slf.location)
@@ -1195,15 +1208,36 @@ impl SPDG {
         write!(out, "{dot}")
     }
 
-    /// The arguments of this spdg. The same as the `arguments` field, but
-    /// conveniently paired with the controller id
-    pub fn arguments(&self, call_string: CallString) -> NodeCluster {
-        NodeCluster::new(self.id, self.arguments.iter().copied())
+    /// The arguments of this spdg if it is the controller
+    pub fn root_arguments(&self, call_string: CallString) -> NodeCluster {
+        NodeCluster::try_from_iter(self.arguments.iter().map(|n| {
+            GlobalNode::unsafe_new(
+                CallString::empty(),
+                InstanceNode {
+                    node: *n,
+                    instance: self.instance,
+                },
+            )
+        }))
+        .unwrap()
     }
 
     /// All types (if any) assigned to this node
-    pub fn node_types(&self, node: Node) -> &[TypeId] {
+    pub fn node_types(&self, node: LocalNode) -> &[TypeId] {
         self.type_assigns.get(&node).map_or(&[], |r| &r.0)
+    }
+
+    /// Returns the nodes in this graph as global nodes. *Nodes not include subgraphs*
+    pub fn nodes_as_callee(&self, from: CallString) -> impl Iterator<Item = GlobalNode> + '_ {
+        self.graph.node_identifiers().map(move |n| {
+            GlobalNode::unsafe_new(
+                from,
+                InstanceNode {
+                    node: LocalNode(n),
+                    instance: self.instance,
+                },
+            )
+        })
     }
 }
 
@@ -1258,12 +1292,30 @@ pub struct CallTreeIter<'a> {
     call_string: CallString,
     tree: Vec<(
         Instance,
-        Box<dyn Iterator<Item = (&'a Location, &'a InlinedCallMeta)>>,
+        std::collections::hash_map::Iter<'a, Location, InlinedCallMeta>,
     )>,
 }
 
+impl<'a> CallTreeIter<'a> {
+    /// Create a new iterator over the call tree of the given instance
+    pub fn new(program: &'a ProgramDescription, instance: Instance) -> Self {
+        let mut slf = CallTreeIter {
+            program,
+            call_string: CallString::empty(),
+            tree: Vec::new(),
+        };
+        slf.push_callee(instance);
+        slf
+    }
+
+    fn push_callee(&mut self, instance: Instance) {
+        let spdg: &'a SPDG = &self.program.graphs[&instance];
+        self.tree.push((instance, spdg.inlined_calls.iter()));
+    }
+}
+
 impl<'a> Iterator for CallTreeIter<'a> {
-    type Item = (Instance, CallString, &'a SPDG);
+    type Item = (Instance, CallString);
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some((instance, mut iter)) = self.tree.pop() {
@@ -1273,11 +1325,8 @@ impl<'a> Iterator for CallTreeIter<'a> {
                     function: instance.def_id,
                     location: RichLocation::Location(*location),
                 });
-                let next_instance = meta.instance;
-                let spdg = &self.program.graphs[&next_instance];
-                self.tree
-                    .push((next_instance, Box::new(spdg.inlined_calls.iter())));
-                Some((next_instance, self.call_string, spdg))
+                self.push_callee(meta.instance);
+                Some((meta.instance, self.call_string))
             } else {
                 self.next()
             }
