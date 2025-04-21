@@ -28,6 +28,7 @@ extern crate strum;
 
 pub use flowistry_pdg::*;
 
+mod call_tree_visitor;
 pub mod dot;
 pub mod ser;
 mod tiny_bitset;
@@ -47,7 +48,7 @@ use utils::serde_map_via_vec;
 
 pub use crate::tiny_bitset::pretty as tiny_bitset_pretty;
 pub use crate::tiny_bitset::TinyBitSet;
-use flowistry_pdg::rustc_portable::LocalDefId;
+use flowistry_pdg::rustc_portable::{LocalDefId, Location};
 use petgraph::graph::{EdgeIndex, EdgeReference, NodeIndex};
 use petgraph::prelude::EdgeRef;
 use petgraph::visit::{self, IntoNodeIdentifiers};
@@ -382,10 +383,12 @@ pub type AnalyzedSpans = HashMap<DefId, (Span, FunctionHandling)>;
 #[derive(Serialize, Deserialize, Debug, Allocative)]
 pub struct ProgramDescription {
     /// Entry points we analyzed and their PDGs
-    #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
-    #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
-    #[allocative(visit = allocative_visit_map_coerce_key)]
-    pub controllers: ControllerMap,
+    // #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
+    // #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
+    // #[allocative(visit = allocative_visit_map_coerce_key)]
+    pub controllers: Vec<Instance>,
+
+    pub graphs: HashMap<Instance, SPDG>,
 
     /// Metadata about types
     #[cfg_attr(not(feature = "rustc"), serde(with = "serde_map_via_vec"))]
@@ -408,6 +411,12 @@ pub struct ProgramDescription {
     #[cfg_attr(feature = "rustc", serde(with = "ser_defid_map"))]
     #[allocative(visit = allocative_visit_map_coerce_key)]
     pub analyzed_spans: AnalyzedSpans,
+    /// Statistics
+    pub statistics: SPDGStats,
+
+    /// Store renderings for types. This is tempoary and should be combined with
+    /// type_info later.
+    pub type_info2: HashMap<Type, String>,
 }
 
 /// Statistics about a single run of paralegal-flow
@@ -683,8 +692,8 @@ pub type Node = NodeIndex;
 /// A globally identified node in an SPDG
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct GlobalNode {
-    node: Node,
-    controller_id: Endpoint,
+    instance_node: InstanceNode,
+    parent_call_string: CallString,
 }
 
 impl GlobalNode {
@@ -709,13 +718,8 @@ impl GlobalNode {
     }
 
     /// The local node in the SPDG
-    pub fn local_node(self) -> Node {
+    pub fn local_node(self) -> LocalNode {
         self.node
-    }
-
-    /// The identifier for the SPDG this node is contained in
-    pub fn controller_id(self) -> Endpoint {
-        self.controller_id
     }
 }
 
@@ -726,7 +730,9 @@ impl IntoIterGlobalNodes for GlobalNode {
     }
 
     fn controller_id(self) -> Endpoint {
-        self.controller_id
+        self.parent_call_string
+            .root()
+            .map_or(self.instance_node.instance.def_id, |p| p.function)
     }
 }
 
@@ -744,7 +750,7 @@ pub mod node_cluster {
     #[derive(Debug, Hash, Clone)]
     pub struct NodeCluster {
         controller_id: Endpoint,
-        nodes: Box<[Node]>,
+        nodes: Box<[GlobalNode]>,
     }
 
     /// Owned iterator of a [`NodeCluster`]
@@ -848,7 +854,7 @@ pub use node_cluster::NodeCluster;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct GlobalEdge {
     index: EdgeIndex,
-    controller_id: Endpoint,
+    controller_id: CallString,
 }
 
 impl GlobalEdge {
@@ -861,17 +867,22 @@ impl GlobalEdge {
 /// Node metadata in the [`SPDGImpl`]
 #[derive(Clone, Debug, Serialize, Deserialize, Allocative)]
 pub struct NodeInfo {
-    /// Location of the node in the call stack
-    pub at: CallString,
     /// The debug print of the `mir::Place` that this node represents
     pub description: String,
     /// Span information for this node
     pub span: Span,
+    pub at: RichLocation,
+    #[allocative(visit = allocative_visit_simple_sized)]
+    pub is_in_child: Option<LocalNode>,
 }
 
 impl Display for NodeInfo {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{} @ {}", self.description, self.at)
+        write!(f, "{} @ {}", self.description, self.at);
+        if let Some(c) = self.is_in_child {
+            write!(f, " (in child {})", c)?
+        }
+        Ok(())
     }
 }
 
@@ -881,7 +892,7 @@ pub struct EdgeInfo {
     /// What type of edge it is
     pub kind: EdgeKind,
     /// Where in the program this edge arises from
-    pub at: CallString,
+    pub at: Location,
 
     /// Why the source of this edge is read
     pub source_use: SourceUse,
@@ -891,7 +902,7 @@ pub struct EdgeInfo {
 
 impl Display for EdgeInfo {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{} ({})", self.at, self.kind)
+        write!(f, "{:?} ({})", self.at, self.kind)
     }
 }
 
@@ -933,33 +944,127 @@ pub type SPDGImpl = petgraph::Graph<NodeInfo, EdgeInfo>;
 /// A semantic PDG, e.g. a graph plus marker annotations
 #[derive(Clone, Serialize, Deserialize, Debug, Allocative)]
 pub struct SPDG {
-    /// The identifier of the entry point to this computation
-    pub name: Identifier,
-    /// The module path to this controller function
-    pub path: Box<[Identifier]>,
-    /// The id
-    #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))]
-    #[allocative(visit = allocative_visit_simple_sized)]
-    pub id: Endpoint,
     /// The PDG
     #[allocative(visit = allocative_visit_petgraph_graph)]
     pub graph: SPDGImpl,
     /// Nodes to which markers are assigned.
     #[allocative(visit = allocative_visit_map_coerce_key)]
-    pub markers: HashMap<Node, Box<[Identifier]>>,
+    pub markers: HashMap<LocalNode, Box<[Identifier]>>,
     /// The nodes that represent arguments to the entrypoint
     #[allocative(visit = allocative_visit_box_slice_simple_t)]
-    pub arguments: Box<[Node]>,
+    pub arguments: Box<[LocalNode]>,
     /// If the return is `()` or `!` then this is `None`
     #[allocative(visit = allocative_visit_box_slice_simple_t)]
-    pub return_: Box<[Node]>,
+    pub return_: Box<[LocalNode]>,
+
     /// Stores the assignment of relevant (e.g. marked) types to nodes. Node
     /// that this contains multiple types for a single node, because it hold
     /// top-level types and subtypes that may be marked.
-    #[allocative(visit = allocative_visit_map_coerce_key)]
-    pub type_assigns: HashMap<Node, Types>,
-    /// Statistics
-    pub statistics: SPDGStats,
+    pub type_assigns: HashMap<LocalNode, Types>,
+
+    pub inlined_calls: HashMap<Location, InlinedCallMeta>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, Allocative)]
+pub struct InlinedCallMeta {
+    pub instance: Instance,
+    pub return_mapping: HashMap<LocalNode, LocalNode>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Allocative, Eq, PartialEq, Hash)]
+pub struct Instance {
+    def_id: DefId,
+    generics: Generics,
+}
+
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, Allocative, Hash, PartialEq, Eq, PartialOrd, Ord,
+)]
+pub struct Type(u32);
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub struct Generics(Intern<[Type]>);
+
+impl Allocative for Generics {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        allocative_visit_intern_t(self.0, &mut visitor);
+        visitor.exit();
+    }
+}
+
+impl Serialize for Generics {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.as_ref().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Generics {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let inner = <Box<[Type]>>::deserialize(deserializer)?;
+        Ok(Generics(inner.into()))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Allocative, Hash, PartialEq, Eq)]
+pub struct LocalNode(#[allocative(visit = allocative_visit_simple_sized)] NodeIndex);
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Allocative, Hash, PartialEq, Eq)]
+pub struct InstanceNode {
+    instance: Instance,
+    node: LocalNode,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Allocative, Hash, PartialEq, Eq)]
+pub struct CallStringNode {
+    location: GlobalLocation,
+    pub parent: CallString,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Hash, PartialEq, Eq)]
+pub struct CallString(Option<Intern<CallStringNode>>);
+
+impl CallString {
+    pub fn push(self, location: GlobalLocation) -> Self {
+        CallString(Some(Intern::new(CallStringNode {
+            location,
+            parent: self,
+        })))
+    }
+
+    pub fn empty() -> Self {
+        CallString(None)
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.0.is_none()
+    }
+
+    /// Panics if the call string is empty
+    pub fn pop(self) -> Option<Self> {
+        self.0.map(|cs| cs.parent)
+    }
+
+    pub fn root(self) -> Option<GlobalLocation> {
+        if let Some(mut slf) = self.0 {
+            while let Some(parent) = slf.parent {
+                slf = parent;
+            }
+            Some(slf.location)
+        } else {
+            None
+        }
+    }
+}
+
+impl Allocative for CallString {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        if let Some(slf) = self.0 {
+            allocative_visit_intern_t(slf, &mut visitor);
+        }
+        visitor.exit();
+    }
 }
 
 fn allocative_visit_petgraph_graph<
@@ -1092,7 +1197,7 @@ impl SPDG {
 
     /// The arguments of this spdg. The same as the `arguments` field, but
     /// conveniently paired with the controller id
-    pub fn arguments(&self) -> NodeCluster {
+    pub fn arguments(&self, call_string: CallString) -> NodeCluster {
         NodeCluster::new(self.id, self.arguments.iter().copied())
     }
 
@@ -1144,6 +1249,40 @@ impl<'a> Display for DisplayNode<'a> {
             )
         } else {
             write!(f, "{{{}}} {}", self.node.index(), weight.description)
+        }
+    }
+}
+
+pub struct CallTreeIter<'a> {
+    program: &'a ProgramDescription,
+    call_string: CallString,
+    tree: Vec<(
+        Instance,
+        Box<dyn Iterator<Item = (&'a Location, &'a InlinedCallMeta)>>,
+    )>,
+}
+
+impl<'a> Iterator for CallTreeIter<'a> {
+    type Item = (Instance, CallString, &'a SPDG);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some((instance, mut iter)) = self.tree.pop() {
+            if let Some((location, meta)) = iter.next() {
+                self.tree.push((instance, iter));
+                self.call_string = self.call_string.push(GlobalLocation {
+                    function: instance.def_id,
+                    location: RichLocation::Location(*location),
+                });
+                let next_instance = meta.instance;
+                let spdg = &self.program.graphs[&next_instance];
+                self.tree
+                    .push((next_instance, Box::new(spdg.inlined_calls.iter())));
+                Some((next_instance, self.call_string, spdg))
+            } else {
+                self.next()
+            }
+        } else {
+            None
         }
     }
 }

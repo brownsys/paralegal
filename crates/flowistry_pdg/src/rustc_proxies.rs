@@ -3,6 +3,7 @@
 //! Each type has an identical set of fields to the corresponding Rustc type.
 //! Paralegal serializes the PDG into these types, which are read by downstream property checkers.
 
+use allocative::Allocative;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "rustc")]
@@ -36,6 +37,13 @@ macro_rules! proxy_struct {
                     pub $field: $proxy_ty,
                 )*
             }
+
+            // For some reason deriving this caused errors so I just make it manually.
+            impl Allocative for $name {
+                fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+                    visitor.enter_self_sized::<Self>().exit();
+                }
+            }
         )*
     }
 }
@@ -47,7 +55,7 @@ macro_rules! proxy_index {
         $name:ident($rustc:expr) from $fn:expr
     );*) => {
         $(
-            #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
+            #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Debug, Serialize, Deserialize, Allocative)]
             #[cfg_attr(feature = "rustc", serde(remote = $rustc))]
             $(#[$attr])*
             pub struct $name {
