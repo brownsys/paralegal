@@ -128,9 +128,9 @@ impl From<&Relation> for Template {
 
 impl From<&Operator> for Template {
     fn from(value: &Operator) -> Self {
-        match value {
-            &Operator::And => Template::And,
-            &Operator::Or => Template::Or,
+        match *value {
+            Operator::And => Template::And,
+            Operator::Or => Template::Or,
         }
     }
 }
@@ -157,10 +157,10 @@ impl From<PolicyScope> for Template {
 
 impl From<&ClauseIntro> for Template {
     fn from(value: &ClauseIntro) -> Self {
-        match value {
-            &ClauseIntro::ForEach(_) => Template::ForEach,
-            &ClauseIntro::ThereIs(_) => Template::ThereIs,
-            &ClauseIntro::Conditional(_) => Template::Conditional,
+        match *value {
+            ClauseIntro::ForEach(_) => Template::ForEach,
+            ClauseIntro::ThereIs(_) => Template::ThereIs,
+            ClauseIntro::Conditional(_) => Template::Conditional,
         }
     }
 }

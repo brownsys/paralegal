@@ -189,10 +189,10 @@ pub fn l2_relations(s: &str) -> Res<&str, ASTNode> {
         "l2 relations",
         map(
             pair(
-                preceded(l2_bullet, map(relation, |rel| ASTNode::Relation(rel))),
+                preceded(l2_bullet, map(relation, ASTNode::Relation)),
                 many0(tuple((
                     operator,
-                    (preceded(l2_bullet, map(relation, |rel| ASTNode::Relation(rel)))),
+                    (preceded(l2_bullet, map(relation, ASTNode::Relation))),
                 ))),
             ),
             join_nodes,
@@ -205,10 +205,10 @@ pub fn l3_relations(s: &str) -> Res<&str, ASTNode> {
         "l3 relations",
         map(
             pair(
-                preceded(l3_bullet, map(relation, |rel| ASTNode::Relation(rel))),
+                preceded(l3_bullet, map(relation, ASTNode::Relation)),
                 many0(tuple((
                     operator,
-                    (preceded(l3_bullet, map(relation, |rel| ASTNode::Relation(rel)))),
+                    (preceded(l3_bullet, map(relation, ASTNode::Relation))),
                 ))),
             ),
             join_nodes,
@@ -221,10 +221,10 @@ pub fn l4_relations(s: &str) -> Res<&str, ASTNode> {
         "l4 relations",
         map(
             pair(
-                preceded(l4_bullet, map(relation, |rel| ASTNode::Relation(rel))),
+                preceded(l4_bullet, map(relation, ASTNode::Relation)),
                 many0(tuple((
                     operator,
-                    (preceded(l4_bullet, map(relation, |rel| ASTNode::Relation(rel)))),
+                    (preceded(l4_bullet, map(relation, ASTNode::Relation))),
                 ))),
             ),
             join_nodes,
@@ -237,10 +237,10 @@ pub fn l5_relations(s: &str) -> Res<&str, ASTNode> {
         "l5 relations",
         map(
             pair(
-                preceded(l5_bullet, map(relation, |rel| ASTNode::Relation(rel))),
+                preceded(l5_bullet, map(relation, ASTNode::Relation)),
                 many0(tuple((
                     operator,
-                    (preceded(l5_bullet, map(relation, |rel| ASTNode::Relation(rel)))),
+                    (preceded(l5_bullet, map(relation, ASTNode::Relation))),
                 ))),
             ),
             join_nodes,

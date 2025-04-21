@@ -33,7 +33,7 @@ fn compile_variable_intro(
     };
     (
         intro.variable.clone(),
-        render_template(handlebars, &map, intro.into()),
+        render_template(handlebars, map, intro.into()),
     )
 }
 
@@ -48,7 +48,7 @@ fn compile_relation(
             map.insert("sink", right.into());
         }
         Relation::Negation(inner) => {
-            let value = compile_relation(handlebars, &inner, map);
+            let value = compile_relation(handlebars, inner, map);
             map.insert("value", value);
         }
         Relation::IsMarked(var, marker) => {
@@ -56,7 +56,7 @@ fn compile_relation(
             map.insert("marker", marker.into());
         }
     }
-    render_template(handlebars, &map, relation.into())
+    render_template(handlebars, map, relation.into())
 }
 
 // for joined nodes, we don't know how many expressions we're and/oring together in the whole policy,
@@ -69,7 +69,7 @@ fn compile_ast_node(handlebars: &mut Handlebars, node: &ASTNode, counter: &mut u
             let mut only_via_map: HashMap<&str, Vec<String>> = HashMap::new();
 
             let (src_var, compiled_src_intro) =
-                compile_variable_intro(handlebars, &src_intro, &mut map);
+                compile_variable_intro(handlebars, src_intro, &mut map);
             map.insert("intro", compiled_src_intro);
             let src_intro = render_template(handlebars, &map, Template::OnlyViaIntro);
             map.remove_entry("definition");
@@ -83,7 +83,7 @@ fn compile_ast_node(handlebars: &mut Handlebars, node: &ASTNode, counter: &mut u
                     let mut vars: Vec<String> = vec![];
                     for intro in &sink_intro.1 {
                         let (sink_var, compiled_sink_intro) =
-                            compile_variable_intro(handlebars, &intro, &mut map);
+                            compile_variable_intro(handlebars, intro, &mut map);
                         map.insert("intro", compiled_sink_intro);
                         let only_via_intro =
                             render_template(handlebars, &map, Template::OnlyViaIntro);
@@ -158,12 +158,12 @@ fn compile_ast_node(handlebars: &mut Handlebars, node: &ASTNode, counter: &mut u
             let variable_intro = match &clause.intro {
                 ClauseIntro::ForEach(intro) | ClauseIntro::ThereIs(intro) => {
                     let (variable, variable_intro) =
-                        compile_variable_intro(handlebars, &intro, &mut map);
+                        compile_variable_intro(handlebars, intro, &mut map);
                     map.insert("var", variable);
                     variable_intro
                 }
                 ClauseIntro::Conditional(relation) => {
-                    compile_relation(handlebars, &relation, &mut map)
+                    compile_relation(handlebars, relation, &mut map)
                 }
             };
 
@@ -195,7 +195,7 @@ fn compile_definitions(handlebars: &mut Handlebars, definitions: &Vec<Definition
         results.push(result);
     }
 
-    return results.join("\n");
+    results.join("\n")
 }
 
 pub fn compile(policy: Policy, policy_name: &str, out: &Path, create_bin: bool) -> Result<()> {

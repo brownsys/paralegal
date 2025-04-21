@@ -6,33 +6,33 @@ use parsers::{
 // used for error checking
 #[derive(Debug, PartialEq, Eq)]
 pub enum VarContext {
-    AsRoot,
-    AsItem,
-    AsType,
-    AsSourceOf,
-    AsVarMarked,
+    Root,
+    Item,
+    Type,
+    SourceOf,
+    VarMarked,
 }
 
 impl From<&mut VarContext> for &str {
     fn from(value: &mut VarContext) -> Self {
-        match value {
-            &mut VarContext::AsRoot => "as root",
-            &mut VarContext::AsItem => "as item",
-            &mut VarContext::AsType => "as type",
-            &mut VarContext::AsSourceOf => "as source of",
-            &mut VarContext::AsVarMarked => "as a variable marked",
+        match *value {
+            VarContext::Root => "as root",
+            VarContext::Item => "as item",
+            VarContext::Type => "as type",
+            VarContext::SourceOf => "as source of",
+            VarContext::VarMarked => "as a variable marked",
         }
     }
 }
 
 impl From<&VarContext> for &str {
     fn from(value: &VarContext) -> Self {
-        match value {
-            &VarContext::AsRoot => "as root",
-            &VarContext::AsItem => "as item",
-            &VarContext::AsType => "as type",
-            &VarContext::AsSourceOf => "as source of",
-            &VarContext::AsVarMarked => "as a variable marked",
+        match *value {
+            VarContext::Root => "as root",
+            VarContext::Item => "as item",
+            VarContext::Type => "as type",
+            VarContext::SourceOf => "as source of",
+            VarContext::VarMarked => "as a variable marked",
         }
     }
 }
@@ -40,16 +40,16 @@ impl From<&VarContext> for &str {
 impl From<&VariableIntro> for VarContext {
     fn from(value: &VariableIntro) -> Self {
         match &value.intro {
-            VariableIntroType::Roots => VarContext::AsRoot,
-            VariableIntroType::AllNodes => VarContext::AsItem,
+            VariableIntroType::Roots => VarContext::Root,
+            VariableIntroType::AllNodes => VarContext::Item,
             VariableIntroType::VariableMarked { on_type, .. } => {
                 if *on_type {
-                    VarContext::AsType
+                    VarContext::Type
                 } else {
-                    VarContext::AsVarMarked
+                    VarContext::VarMarked
                 }
             }
-            VariableIntroType::VariableSourceOf(_) => VarContext::AsSourceOf,
+            VariableIntroType::VariableSourceOf(_) => VarContext::SourceOf,
             _ => unimplemented!("no var context for this type of variable intro"),
         }
     }
@@ -112,7 +112,7 @@ pub fn verify_variable_intro_scope(intro: &VariableIntro, env: &mut Vec<(Variabl
             for (existing_var, context) in &mut *env {
                 if existing_var == type_var {
                     present = true;
-                    if *context != VarContext::AsType {
+                    if *context != VarContext::Type {
                         let context_str: &str = context.into();
                         panic!("To reference sources of {}, must previously introduce it as a type; was previously introduced as {}", type_var, context_str);
                     }
@@ -167,9 +167,9 @@ pub fn verify_scope(node: &ASTNode, env: &mut Vec<(Variable, VarContext)>) {
             let env_size_before_clause = env.len();
             match &clause.intro {
                 ClauseIntro::ForEach(intro) | ClauseIntro::ThereIs(intro) => {
-                    verify_variable_intro_scope(&intro, env)
+                    verify_variable_intro_scope(intro, env)
                 }
-                ClauseIntro::Conditional(relation) => verify_relation_scope(&relation, env),
+                ClauseIntro::Conditional(relation) => verify_relation_scope(relation, env),
             };
             verify_scope(&clause.body, env);
 

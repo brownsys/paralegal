@@ -1,13 +1,13 @@
 use anyhow::{ensure, Result};
 use clap::Parser;
 use paralegal_policy::diagnostics::ControllerContext;
-use paralegal_policy::paralegal_spdg::{GlobalNode, Identifier, MarkerAnnotation};
+use paralegal_policy::paralegal_spdg::{GlobalNode, Identifier};
 use paralegal_policy::{
     assert_error, Context, EdgeSelection, GraphLocation, NodeExt, NodeQueries, SPDGGenCommand,
 };
 use parsers::{
-    definitions, parse, ASTNode, Binop, Clause, ClauseIntro, Definition, DefinitionScope, Operator,
-    Policy, PolicyScope, Relation, VariableIntro, VariableIntroType,
+    parse, ASTNode, Binop, Clause, ClauseIntro, Definition, DefinitionScope, Operator, Policy,
+    PolicyScope, Relation, VariableIntro, VariableIntroType,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -88,8 +88,8 @@ impl<'p> Interpreter<'p> {
     ) -> HashSet<GlobalNode> {
         let mut results = HashSet::new();
         let target_var = intro.variable.as_str();
-        self.with_declaration(&intro, |slf| {
-            let matches_filter = filter.map_or(true, |f| slf.run_filter(f));
+        self.with_declaration(intro, |slf| {
+            let matches_filter = filter.is_none_or(|f| slf.run_filter(f));
             if matches_filter {
                 results.insert(slf.lookup(target_var).unwrap().into_node().unwrap());
             }
@@ -107,9 +107,9 @@ impl<'p> Interpreter<'p> {
 
     fn run_filter(&mut self, filter: &'p ASTNode) -> bool {
         match filter {
-            ASTNode::Relation(rel) => self.evaluate_relation(&rel),
+            ASTNode::Relation(rel) => self.evaluate_relation(rel),
             ASTNode::OnlyVia(var_intro, (mid_op, mid), (end_op, end)) => {
-                let start_set = self.evaluate_var_intro_as_set(&var_intro, None);
+                let start_set = self.evaluate_var_intro_as_set(var_intro, None);
                 assert!(mid_op.is_none());
                 assert!(end_op.is_none());
                 assert_eq!(mid.len(), 1);
@@ -146,7 +146,7 @@ impl<'p> Interpreter<'p> {
             ClauseIntro::ThereIs(intro) => (intro, true, false),
         };
 
-        self.with_declaration(&intro, |slf| {
+        self.with_declaration(intro, |slf| {
             let filter_result = slf.run_filter(&clause.body);
             fail_fast_on ^= filter_result;
             fail_fast_on
@@ -231,7 +231,7 @@ impl<'p> Interpreter<'p> {
 
 fn interp(policy: &Policy, ctx: Arc<Context>) -> Result<bool> {
     for ctx in ctx.controller_contexts() {
-        if matches!(policy.scope, PolicyScope::InCtrler(c) if c != ctx.current().name.as_str()) {
+        if matches!(&policy.scope, PolicyScope::InCtrler(c) if c != ctx.current().name.as_str()) {
             continue;
         }
         let mut i = Interpreter::new(policy, ctx);
@@ -239,7 +239,8 @@ fn interp(policy: &Policy, ctx: Arc<Context>) -> Result<bool> {
         match &policy.scope {
             PolicyScope::Somewhere if success => return Ok(true),
             PolicyScope::Everywhere if !success => return Ok(false),
-            PolicyScope::InCtrler(c) if success => return Ok(true),
+            PolicyScope::InCtrler(_) if success => return Ok(true),
+            _ => todo!(),
         }
     }
     Ok(matches!(policy.scope, PolicyScope::Everywhere))

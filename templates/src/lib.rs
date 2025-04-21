@@ -97,7 +97,7 @@ pub fn render_template(
     let name: &str = template.into();
     handlebars
         .render(name, &map)
-        .expect(&format!("Could not render {name} handlebars template"))
+        .unwrap_or_else(|_| panic!("Could not render {name} handlebars template"))
 }
 
 pub fn render_only_via_template(
@@ -107,13 +107,5 @@ pub fn render_only_via_template(
     let name: &str = Template::OnlyVia.into();
     handlebars
         .render(name, &map)
-        .expect(&format!("Could not render {name} handlebars template"))
+        .unwrap_or_else(|_| panic!("Could not render {name} handlebars template"))
 }
-
-/*
-
-for variable marked, template to get all nodes marked marker and name it var
-for variable of type marked, template to get all types marked marker and name it var
-for variable source of, template to get all sources of type_var and name it var
-
-*/
