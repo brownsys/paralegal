@@ -5,6 +5,7 @@ use parsers::{
 };
 use std::fs;
 use std::io::Result;
+use std::process::Command;
 use std::{collections::HashMap, path::Path};
 
 use crate::verify_scope::{verify_definitions_scope, verify_scope, VarContext};
@@ -236,5 +237,6 @@ pub fn compile(policy: Policy, policy_name: &str, out: &Path, create_bin: bool) 
     };
 
     fs::write(out, &main)?;
+    Command::new("rustfmt").arg(out).status()?;
     Ok(())
 }
