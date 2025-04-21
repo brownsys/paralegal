@@ -1,32 +1,71 @@
+use std::fs;
+use std::path::PathBuf;
+
+use clap::Parser;
+use parsers::parse;
+use std::io::Result;
+
 mod compile;
 mod verify_scope;
 
-use std::env;
-use std::fs;
+/// A compiler for Paralegal's Controlled Natural Language (CNL) policies.
+///
+/// By default this generates a Rust namespace (`mod`) that contains a function
+/// `check` which, when called, enforces your policy. You should use the
+/// framework in
+/// [`paralegal_policy`](https://brownsys.github.io/paralegal/libs/paralegal_policy/)
+/// to create a suitable binary that calls this function. It depends on the
+/// crates `paralegal_policy` and `anyhow`.
+///
+/// Alternatively you may use the `--bin` argument, which will instead create a
+/// Rust source file with a `main` function and necessary boilerplate to call
+/// the policy. The file created with this method additionally depends on the
+/// `clap` crate with the `derive` feature enabled.
+#[derive(clap::Parser)]
+struct Args {
+    /// Path to the policy file.
+    path: PathBuf,
+    /// Also generate boilerplate for a runnable policy. The output file
+    /// contains a `main` function that runs both the PDG generation as well as
+    /// the policy.
+    #[clap(long)]
+    bin: bool,
+    /// Name of the output file.
+    #[clap(short, long, default_value = "compiled_policy.rs")]
+    out: PathBuf,
+}
 
-use parsers::parse;
-use compile::compile;
-use std::io::Result;
-
-fn run(args: &Vec<String>) -> Result<()> {
-    if args.len() < 2 {
-        panic!("Need to pass path to policy file");
-    }
-    let policy_file = &args[1];
-    let policy = fs::read_to_string(policy_file)
-        .expect("Could not read policy file");
+fn run(args: &Args) -> Result<()> {
+    let policy = fs::read_to_string(&args.path).expect("Could not read policy file");
 
     let res = parse(&policy);
-    dbg!(&res);
     match res {
-        Ok((_, policy)) => compile(policy),
-        Err(e) => panic!("{}", e),
+        Ok((_, policy)) => compile::compile(
+            policy,
+            args.path
+                .file_name()
+                .map_or("<unnamed>", |n| n.to_str().unwrap()),
+            &args.out,
+            args.bin,
+        ),
+        Err(e) => match e {
+            nom::Err::Incomplete(_) => {
+                panic!("Incomplete parse")
+            }
+            nom::Err::Failure(e) => {
+                panic!("Parse failure: {}", e)
+            }
+            nom::Err::Error(e) => {
+                for (loc, context) in e.errors {
+                    eprintln!("Error in context {context:?}:\n{loc}\n");
+                }
+                panic!("Parse error")
+            }
+        },
     }
 }
 
 fn main() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
-    run(&args)?;
-    // Command::new("rustfmt compiled-policy.rs").output().expect("failed to run cargo fmt");
-    Ok(())
+    let args = Args::parse();
+    run(&args)
 }

@@ -4,11 +4,6 @@ Everywhere
 Definitions:
 1. "stored_resource" is each "resource" marked new_resource where:
     A. There is a "commit" marked commit where:
-        b. There is a "v" marked value_selector:
-            i) "v" goes to "resource"
-            and
-            ii) "commit" does not go to "v"
-        and 
         a. "commit" goes to "resource"
     and
     B. There is a "store" marked sink where:
