@@ -20,9 +20,7 @@ use anyhow::Result;
 use either::Either;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    body_cache::{local_or_remote_paths},
-    calling_convention::CallingConvention,
-    utils::is_async,
+    body_cache::local_or_remote_paths, calling_convention::CallingConvention, utils::is_async,
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
 use inline_judge::{InlineJudgement, K};
@@ -54,7 +52,6 @@ pub struct SPDGGenerator<'tcx> {
     ctx: Pctx<'tcx>,
     stats: Stats,
     pdg_constructor: MemoPdgConstructor<'tcx, K>,
-    judge: Rc<InlineJudge<'tcx>>,
     functions_to_analyze: Vec<FnToAnalyze>,
 }
 
@@ -70,7 +67,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             MemoPdgConstructor::new_with_cache(ctx.tcx(), ctx.body_cache().clone());
         pdg_constructor
             .with_call_change_callback(MyCallback {
-                judge: judge.clone(),
+                judge,
                 tcx: ctx.tcx(),
             })
             .with_dump_mir(ctx.opts().dbg().dump_mir())
@@ -80,7 +77,6 @@ impl<'tcx> SPDGGenerator<'tcx> {
             pdg_constructor,
             ctx,
             stats,
-            judge,
             functions_to_analyze,
         }
     }
@@ -478,6 +474,7 @@ fn type_info_sanity_check(controllers: &ControllerMap, types: &TypeInfoMap) {
         })
 }
 
+#[allow(deprecated)]
 fn def_kind_for_item(id: DefId, tcx: TyCtxt) -> DefKind {
     match tcx.def_kind(id) {
         def::DefKind::Closure => DefKind::Closure,

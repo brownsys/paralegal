@@ -61,7 +61,11 @@ impl TryFrom<ClapArgs> for Args {
             cargo_args,
             trace,
             attach_to_debugger,
+            strict,
         } = value;
+        if relaxed {
+            log::warn!("The `--relaxed` flag is deprecated. This is now the default behavior and therefore the flag is ignored.");
+        }
         let mut dump: DumpArgs = dump.into();
         if let Some(from_env) = env_var_expect_unicode("PARALEGAL_DUMP")? {
             let from_env =
@@ -106,7 +110,7 @@ impl TryFrom<ClapArgs> for Args {
             verbosity,
             log_level_config,
             result_path,
-            relaxed,
+            relaxed: !strict,
             target,
             abort_after_analysis,
             anactrl: anactrl.try_into()?,
@@ -196,8 +200,14 @@ pub struct ClapArgs {
     #[clap(long, default_value = paralegal_spdg::FLOW_GRAPH_OUT_NAME)]
     result_path: std::path::PathBuf,
     /// Emit warnings instead of aborting the analysis on sanity checks
-    #[clap(long, env = "PARALEGAL_RELAXED")]
+    ///
+    /// This is now the default behavior and this flag is deprecated. Use
+    /// `--strict` to turn off this behavior.
+    #[clap(long, env = "PARALEGAL_RELAXED", hide = true)]
     relaxed: bool,
+    /// Emit errors instead if warnings for potential soundness risks
+    #[clap(long, env = "PARALEGAL_STRICT")]
+    strict: bool,
     /// Run paralegal only on this crate
     #[clap(long, env = "PARALEGAL_TARGET")]
     target: Option<String>,
