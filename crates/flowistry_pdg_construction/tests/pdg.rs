@@ -657,6 +657,9 @@ pdg_test! {
 
     fn nested_layer_two(e: &mut i32, f: i32) {}
 
+    fn nested_layer_three(g: &mut i32, h: i32) {
+    }
+
     fn main() {
       let mut x = 0;
       let y = 1;
@@ -665,6 +668,10 @@ pdg_test! {
       let mut w = 0;
       let z = 1;
       nested_layer_one(&mut w, z);
+
+      let mut a = 0;
+      let b = 1;
+      nested_layer_three(&mut a, b);
     }
   },
   |tcx, params| {
@@ -682,7 +689,8 @@ pdg_test! {
     }));
   },
   (y -> x),
-  (z -> w)
+  (z -> w),
+  (a -/> b)
 }
 
 pdg_test! {
