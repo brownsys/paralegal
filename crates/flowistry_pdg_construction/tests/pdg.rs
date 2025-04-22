@@ -34,13 +34,13 @@ fn get_main(tcx: TyCtxt<'_>) -> LocalDefId {
         .expect("Missing main")
 }
 
-struct LocalLoadingOnly<'tcx>(Rc<dyn CallChangeCallback<'tcx, ()> + 'tcx>);
+struct LocalLoadingOnly<'tcx>(Rc<dyn CallChangeCallback<'tcx, u32> + 'tcx>);
 
-impl<'tcx> CallChangeCallback<'tcx, ()> for LocalLoadingOnly<'tcx> {
+impl<'tcx> CallChangeCallback<'tcx, u32> for LocalLoadingOnly<'tcx> {
     fn on_inline(
         &self,
-        info: flowistry_pdg_construction::CallInfo<'tcx, '_, ()>,
-    ) -> CallChanges<'tcx, ()> {
+        info: flowistry_pdg_construction::CallInfo<'tcx, '_, u32>,
+    ) -> CallChanges<'tcx, u32> {
         let is_local = info.callee.def_id().is_local();
         let mut changes = self.0.on_inline(info);
         if !is_local {
@@ -49,14 +49,14 @@ impl<'tcx> CallChangeCallback<'tcx, ()> for LocalLoadingOnly<'tcx> {
         changes
     }
 
-    fn root_k(&self, _info: rustc_middle::ty::Instance<'tcx>) -> () {
-        ()
+    fn root_k(&self, _info: rustc_middle::ty::Instance<'tcx>) -> u32 {
+        0
     }
 }
 
 fn pdg(
     input: impl Into<String>,
-    configure: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &mut MemoPdgConstructor<'tcx, ()>) + Send,
+    configure: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &mut MemoPdgConstructor<'tcx, u32>) + Send,
     tests: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &BodyCache<'tcx>, DepGraph<'tcx>) + Send,
 ) {
     let _ = env_logger::try_init();
@@ -672,17 +672,17 @@ pdg_test! {
       let name = tcx.opt_item_name(info.callee.def_id());
       let skip = if matches!(name.as_ref().map(|sym| sym.as_str()), Some("no_inline"))
       {
-          SkipCall::Skip
+        SkipCall::Skip
+      } else if *info.cache_key < 1 {
+        SkipCall::NoSkip(info.cache_key + 1)
       } else {
-          SkipCall::NoSkip(())
+        SkipCall::Skip
       };
       CallChanges::default().with_skip(skip)
     }));
   },
-  (y -> x)
-  // TODO the way that graphs are constructed currently doesn't allow limiting
-  // call string depth
-  // (z -> w)
+  (y -> x),
+  (z -> w)
 }
 
 pdg_test! {
