@@ -1,14 +1,12 @@
 use anyhow::{ensure, Result};
 use clap::Parser;
+use common::{ast::*, *};
 use paralegal_policy::diagnostics::ControllerContext;
 use paralegal_policy::paralegal_spdg::{GlobalNode, Identifier};
 use paralegal_policy::{
     assert_error, Context, EdgeSelection, GraphLocation, NodeExt, NodeQueries, SPDGGenCommand,
 };
-use parsers::{
-    parse, ASTNode, Binop, Clause, ClauseIntro, Definition, DefinitionScope, Operator, Policy,
-    PolicyScope, Relation, VariableIntro, VariableIntroType,
-};
+use parsers::parse;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;

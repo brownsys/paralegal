@@ -1,15 +1,12 @@
+use common::{ast::*, Policy, PolicyScope};
 use handlebars::Handlebars;
-use parsers::{
-    ASTNode, ClauseIntro, Definition, DefinitionScope, Operator, Policy, PolicyScope, Relation,
-    Variable, VariableIntro, VariableIntroType,
-};
 use std::fs;
 use std::io::Result;
 use std::process::Command;
 use std::{collections::HashMap, path::Path};
 
 use crate::verify_scope::{verify_definitions_scope, verify_scope, VarContext};
-use templates::{register_templates, render_only_via_template, render_template, Template};
+use common::templates::*;
 
 fn compile_variable_intro(
     handlebars: &mut Handlebars,

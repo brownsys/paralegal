@@ -1,3 +1,4 @@
+use common::ast::*;
 use nom::{
     branch::alt,
     bytes::complete::tag,
@@ -8,7 +9,7 @@ use nom::{
     sequence::{pair, preceded, separated_pair, terminated, tuple},
 };
 
-use crate::{common::*, ASTNode, Binop, Relation, Res};
+use crate::{shared::*, Res};
 
 // this is flows_to(EdgeSelection::DataAndControl)
 fn influences_relation(s: &str) -> Res<&str, Relation> {

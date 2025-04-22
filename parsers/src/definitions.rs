@@ -1,3 +1,7 @@
+use crate::{
+    clause::l2_clauses, relations::l2_relations, shared::*, variable_intro::variable_intro, Res,
+};
+use common::ast::*;
 use nom::{
     branch::alt,
     bytes::complete::tag,
@@ -6,11 +10,6 @@ use nom::{
     error::context,
     multi::many1,
     sequence::{delimited, preceded, tuple},
-};
-
-use crate::{
-    clause::l2_clauses, common::*, relations::l2_relations, variable_intro::variable_intro,
-    Definition, DefinitionScope, Res,
 };
 
 fn definition_scope(s: &str) -> Res<&str, DefinitionScope> {

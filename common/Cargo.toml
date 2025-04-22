@@ -1,0 +1,10 @@
+[package]
+name = "common"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+handlebars = { version = "6.3.2", features = ["rust-embed"] }
+rust-embed = "8.7.0"
+strum = "0.27.1"
+strum_macros = "0.27.1"

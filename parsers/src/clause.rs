@@ -1,3 +1,10 @@
+use crate::{
+    relations::*,
+    shared::*,
+    variable_intro::{variable_def, variable_intro, variable_marked},
+    Res,
+};
+use common::ast::*;
 use nom::{
     branch::alt,
     bytes::complete::tag,
@@ -6,13 +13,6 @@ use nom::{
     error::context,
     multi::many0,
     sequence::{delimited, pair, preceded, tuple},
-};
-
-use crate::{
-    common::*,
-    relations::*,
-    variable_intro::{variable_def, variable_intro, variable_marked},
-    ASTNode, Clause, ClauseIntro, Res,
 };
 
 fn l4_clause(s: &str) -> Res<&str, ASTNode> {

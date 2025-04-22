@@ -6,7 +6,11 @@ use nom::{
     sequence::{delimited, separated_pair, terminated},
 };
 
-use crate::{common::*, Res, VariableIntro};
+use crate::{
+    shared::{marker, variable},
+    Res,
+};
+use common::ast::*;
 
 pub fn variable_def(s: &str) -> Res<&str, VariableIntro> {
     let mut combinator = context("variable (introduction)", variable);
@@ -15,7 +19,7 @@ pub fn variable_def(s: &str) -> Res<&str, VariableIntro> {
         remainder,
         VariableIntro {
             variable,
-            intro: crate::VariableIntroType::Variable,
+            intro: VariableIntroType::Variable,
         },
     ))
 }
@@ -30,7 +34,7 @@ pub fn variable_marked(s: &str) -> Res<&str, VariableIntro> {
         remainder,
         VariableIntro {
             variable,
-            intro: crate::VariableIntroType::VariableMarked {
+            intro: VariableIntroType::VariableMarked {
                 marker,
                 on_type: false,
             },
@@ -48,7 +52,7 @@ fn variable_type_marked(s: &str) -> Res<&str, VariableIntro> {
         remainder,
         VariableIntro {
             variable,
-            intro: crate::VariableIntroType::VariableMarked {
+            intro: VariableIntroType::VariableMarked {
                 marker,
                 on_type: true,
             },
@@ -66,7 +70,7 @@ fn variable_source_of(s: &str) -> Res<&str, VariableIntro> {
         remainder,
         VariableIntro {
             variable: source_of_var,
-            intro: crate::VariableIntroType::VariableSourceOf(var),
+            intro: VariableIntroType::VariableSourceOf(var),
         },
     ))
 }
@@ -78,7 +82,7 @@ fn roots(s: &str) -> Res<&str, VariableIntro> {
         remainder,
         VariableIntro {
             variable: var,
-            intro: crate::VariableIntroType::Roots,
+            intro: VariableIntroType::Roots,
         },
     ))
 }
@@ -90,7 +94,7 @@ fn nodes(s: &str) -> Res<&str, VariableIntro> {
         remainder,
         VariableIntro {
             variable: var,
-            intro: crate::VariableIntroType::AllNodes,
+            intro: VariableIntroType::AllNodes,
         },
     ))
 }

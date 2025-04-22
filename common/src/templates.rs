@@ -1,6 +1,11 @@
-use handlebars::{no_escape, Handlebars};
+use handlebars::{Handlebars, no_escape};
 use std::collections::HashMap;
 use strum_macros::EnumIter;
+
+use crate::{
+    PolicyScope,
+    ast::{ASTNode, Binop, ClauseIntro, Operator, Relation, VariableIntro},
+};
 
 #[derive(Debug, EnumIter)]
 pub enum Template {
@@ -78,6 +83,81 @@ impl From<Template> for &str {
             Template::Somewhere => "scope/somewhere.handlebars",
             Template::InCtrler => "scope/in-ctrler.handlebars",
             Template::Negation => "relations/negation.handlebars",
+        }
+    }
+}
+
+// map templates to their handlebars template file names
+impl From<&VariableIntro> for Template {
+    fn from(value: &VariableIntro) -> Self {
+        use crate::ast::VariableIntroType::*;
+        match value.intro {
+            Roots => Template::Roots,
+            AllNodes => Template::AllNodes,
+            Variable => Template::Variable,
+            VariableMarked { on_type, .. } => {
+                if on_type {
+                    Template::VariableOfTypeMarked
+                } else {
+                    Template::VariableMarked
+                }
+            }
+            VariableSourceOf(_) => Template::VariableSourceOf,
+        }
+    }
+}
+
+impl From<&Relation> for Template {
+    fn from(value: &Relation) -> Self {
+        match &value {
+            Relation::Binary { typ, .. } => match typ {
+                Binop::AssociatedCallSite => Template::AssociatedCallSite,
+                Binop::Data => Template::FlowsTo,
+                Binop::Control => Template::ControlFlow,
+                Binop::Both => Template::Influences,
+            },
+            Relation::IsMarked { .. } => Template::IsMarked,
+            Relation::Negation(_) => Template::Negation,
+        }
+    }
+}
+
+impl From<&Operator> for Template {
+    fn from(value: &Operator) -> Self {
+        match *value {
+            Operator::And => Template::And,
+            Operator::Or => Template::Or,
+        }
+    }
+}
+
+impl From<PolicyScope> for Template {
+    fn from(value: PolicyScope) -> Self {
+        match value {
+            PolicyScope::Everywhere => Template::Everywhere,
+            PolicyScope::Somewhere => Template::Somewhere,
+            PolicyScope::InCtrler(_) => Template::InCtrler,
+        }
+    }
+}
+
+impl From<&ClauseIntro> for Template {
+    fn from(value: &ClauseIntro) -> Self {
+        match *value {
+            ClauseIntro::ForEach(_) => Template::ForEach,
+            ClauseIntro::ThereIs(_) => Template::ThereIs,
+            ClauseIntro::Conditional(_) => Template::Conditional,
+        }
+    }
+}
+
+impl From<&ASTNode> for Template {
+    fn from(value: &ASTNode) -> Self {
+        match value {
+            ASTNode::Relation(relation) => relation.into(),
+            ASTNode::OnlyVia { .. } => Template::OnlyVia,
+            ASTNode::Clause(clause) => (&clause.intro).into(),
+            ASTNode::JoinedNodes(obligation) => (&obligation.op).into(),
         }
     }
 }

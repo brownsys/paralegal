@@ -1,5 +1,5 @@
 [workspace]
-members = ["parsers/", "compiler/", "templates/", "interp"]
+members = ["parsers/", "compiler/", "interp", "optimizer", "common"]
 
 [workspace.dependencies.paralegal-policy]
 git = "https://github.com/brownsys/paralegal"

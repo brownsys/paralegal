@@ -6,7 +6,8 @@ use nom::{
     sequence::{preceded, tuple},
 };
 
-use crate::{common::*, PolicyScope, Res};
+use crate::{shared::*, Res};
+use common::*;
 
 fn everywhere(s: &str) -> Res<&str, PolicyScope> {
     let mut combinator = context("everywhere", preceded(multispace0, tag("Everywhere")));

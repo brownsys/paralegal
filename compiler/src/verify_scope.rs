@@ -1,6 +1,4 @@
-use parsers::{
-    ASTNode, ClauseIntro, Definition, Relation, Variable, VariableIntro, VariableIntroType,
-};
+use common::ast::*;
 
 // context to add to the environment for each variable: was it introduced as a type?
 // used for error checking

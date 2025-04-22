@@ -10,7 +10,9 @@ use nom::{
     sequence::{delimited, preceded, terminated, tuple},
 };
 
-use crate::{ASTNode, Marker, Operator, Res, TwoNodeObligation, Variable, VariableIntro};
+use common::ast::*;
+
+use crate::Res;
 
 pub fn colon(s: &str) -> Res<&str, &str> {
     context("colon", delimited(space0, tag(":"), multispace0))(s)
