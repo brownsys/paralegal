@@ -17,6 +17,8 @@ use crate::{
     Args, MarkerCtx, Pctx, TyCtxt,
 };
 
+pub type K = u32;
+
 /// The interpretation of marker placement as it pertains to inlining and inline
 /// elision.
 ///
@@ -32,7 +34,7 @@ pub struct InlineJudge<'tcx> {
 #[derive(strum::AsRefStr)]
 pub enum InlineJudgement {
     /// Construct a graph for the called function and merge it
-    Inline,
+    Inline(bool),
     /// Use a stub instead of the call
     UseStub(&'static Stub),
     /// Abstract the call via type signature
@@ -64,7 +66,7 @@ impl<'tcx> InlineJudge<'tcx> {
     }
 
     /// Should we perform inlining on this function?
-    pub fn should_inline(&self, info: &CallInfo<'tcx, '_>) -> InlineJudgement {
+    pub fn should_inline(&self, info: &CallInfo<'tcx, '_, K>) -> InlineJudgement {
         let marker_target = info.async_parent.unwrap_or(info.callee);
         let marker_target_def_id = marker_target.def_id();
         if let Some(model) = self.ctx.marker_ctx().has_stub(marker_target_def_id) {
@@ -93,19 +95,42 @@ impl<'tcx> InlineJudge<'tcx> {
                 InlineJudgement::AbstractViaType("is constructor")
             }
             _ if is_marked => InlineJudgement::AbstractViaType("marked"),
-            InliningDepth::Adaptive
+            InliningDepth::Adaptive(k) => {
                 if self
                     .ctx
                     .marker_ctx()
-                    .has_transitive_reachable_markers(marker_target) =>
-            {
-                InlineJudgement::Inline
+                    .has_transitive_reachable_markers(marker_target)
+                {
+                    InlineJudgement::Inline(false)
+                } else if *k == 0 {
+                    InlineJudgement::AbstractViaType("adaptive inlining")
+                } else if info.cache_key == k {
+                    InlineJudgement::AbstractViaType("adaptive inlining, k-depth reached")
+                } else {
+                    assert!(
+                        info.cache_key < k,
+                        "cache key {} is greater than k {k}",
+                        info.cache_key,
+                    );
+                    InlineJudgement::Inline(true)
+                }
             }
-            InliningDepth::Adaptive => InlineJudgement::AbstractViaType("adaptive inlining"),
-            InliningDepth::Shallow => {
-                InlineJudgement::AbstractViaType("shallow inlining configured")
+            InliningDepth::K(k) => {
+                if *k == 0 {
+                    InlineJudgement::AbstractViaType("shallow inlining configured")
+                } else if info.cache_key == k {
+                    InlineJudgement::AbstractViaType("k-depth reached")
+                } else {
+                    assert!(
+                        info.cache_key < k,
+                        "cache key {} is greater than k {k}",
+                        info.cache_key,
+                    );
+                    InlineJudgement::Inline(true)
+                }
             }
-            InliningDepth::Unconstrained => InlineJudgement::Inline,
+
+            InliningDepth::Unconstrained => InlineJudgement::Inline(false),
         };
         if let InlineJudgement::AbstractViaType(reason) = judgement {
             let emit_err = !(is_marked || self.ctx.opts().relaxed());

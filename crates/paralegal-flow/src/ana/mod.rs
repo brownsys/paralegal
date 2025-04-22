@@ -25,7 +25,7 @@ use flowistry_pdg_construction::{
     utils::is_async,
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
-use inline_judge::InlineJudgement;
+use inline_judge::{InlineJudgement, K};
 use itertools::Itertools;
 use petgraph::visit::GraphBase;
 
@@ -53,7 +53,7 @@ pub use self::inline_judge::InlineJudge;
 pub struct SPDGGenerator<'tcx> {
     ctx: Pctx<'tcx>,
     stats: Stats,
-    pdg_constructor: MemoPdgConstructor<'tcx>,
+    pdg_constructor: MemoPdgConstructor<'tcx, K>,
     judge: Rc<InlineJudge<'tcx>>,
     functions_to_analyze: Vec<FnToAnalyze>,
 }
@@ -214,7 +214,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .pdg_cache
             .borrow()
             .keys()
-            .map(|k| k.def.def_id())
+            .map(|k| k.0.def.def_id())
             .collect::<HashSet<_>>();
 
         let mut seen_locs = 0;
@@ -656,12 +656,11 @@ impl Stub {
     }
 }
 
-impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
-    fn on_inline(&self, info: CallInfo<'tcx, '_>) -> CallChanges<'tcx> {
+impl<'tcx> CallChangeCallback<'tcx, K> for MyCallback<'tcx> {
+    fn on_inline(&self, info: CallInfo<'tcx, '_, K>) -> CallChanges<'tcx, K> {
         let changes = CallChanges::default();
 
         let judgement = self.judge.should_inline(&info);
-
         debug!("Judgement for {:?}: {judgement}", info.callee.def_id(),);
 
         let skip = match judgement {
@@ -677,12 +676,17 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
                     SkipCall::Replace {
                         instance,
                         calling_convention,
+                        cache_key: *info.cache_key,
                     }
                 } else {
                     SkipCall::Skip
                 }
             }
-            InlineJudgement::Inline => SkipCall::NoSkip,
+            InlineJudgement::Inline(advance_k) => SkipCall::NoSkip(if advance_k {
+                *info.cache_key + 1
+            } else {
+                *info.cache_key
+            }),
         };
         changes.with_skip(skip)
     }
@@ -705,6 +709,10 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
                 InlineMissReason::TraitMethod => "virtual trait method",
             },
         );
+    }
+
+    fn root_k(&self, info: Instance<'tcx>) -> K {
+        0
     }
 }
 

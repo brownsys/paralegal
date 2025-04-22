@@ -478,6 +478,11 @@ struct ClapAnalysisCtrl {
     local_crate_only: bool,
     #[clap(long)]
     no_pdg_cache: bool,
+    /// Add an additional k inlining steps on top of what the marker guided
+    /// setup recommends. If adaptive approximation is enabled this defaults to
+    /// 0, if it is enabled it defaults to no limit.
+    #[clap(long, conflicts_with = "no_interprocedural_analysis")]
+    k_depth: Option<u32>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -499,7 +504,7 @@ impl Default for AnalysisCtrl {
     fn default() -> Self {
         Self {
             analyze: Vec::new(),
-            inlining_depth: InliningDepth::Adaptive,
+            inlining_depth: InliningDepth::Adaptive(0),
             include: Default::default(),
             no_pdg_cache: false,
             local_crate_only: false,
@@ -517,14 +522,15 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             no_interprocedural_analysis,
             no_adaptive_approximation,
             local_crate_only,
+            k_depth,
         } = value;
 
         let inlining_depth = if no_interprocedural_analysis {
-            InliningDepth::Shallow
+            InliningDepth::K(0)
         } else if no_adaptive_approximation {
-            InliningDepth::Unconstrained
+            k_depth.map_or(InliningDepth::Unconstrained, InliningDepth::K)
         } else {
-            InliningDepth::Adaptive
+            InliningDepth::Adaptive(k_depth.unwrap_or(0))
         };
 
         Ok(Self {
@@ -541,10 +547,10 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
 pub enum InliningDepth {
     /// Inline to arbitrary depth
     Unconstrained,
-    /// Perform no inlining
-    Shallow,
-    /// Inline so long as markers are reachable
-    Adaptive,
+    /// Perform inlining until depth k
+    K(u32),
+    /// Inline so long as markers are reachable + k steps
+    Adaptive(u32),
 }
 
 impl AnalysisCtrl {
@@ -555,7 +561,7 @@ impl AnalysisCtrl {
 
     /// Are we recursing into (unmarked) called functions with the analysis?
     pub fn use_recursive_analysis(&self) -> bool {
-        !matches!(self.inlining_depth, InliningDepth::Shallow)
+        !matches!(self.inlining_depth, InliningDepth::K(0))
     }
 
     pub fn inlining_depth(&self) -> &InliningDepth {

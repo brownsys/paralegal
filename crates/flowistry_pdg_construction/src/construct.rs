@@ -1,4 +1,4 @@
-use std::{borrow::Cow, fmt, rc::Rc};
+use std::{borrow::Cow, fmt, hash::Hash, rc::Rc};
 
 use either::Either;
 use flowistry::mir::FlowistryInput;
@@ -24,6 +24,7 @@ use crate::{
     async_support::*,
     body_cache::{self, BodyCache, CachedBody},
     call_tree_visit::{self, VisitDriver},
+    callback::DefaultCallback,
     calling_convention::PlaceTranslator,
     graph::{DepEdge, DepGraph, DepNode, OneHopLocation, PartialGraph, SourceUse, TargetUse},
     local_analysis::{CallHandling, InstructionState, LocalAnalysis},
@@ -70,41 +71,50 @@ impl<T> ConstructionResult<T> {
 ///
 /// Each `(LocalDefId, GenericArgs)` pair is guaranteed to be constructed only
 /// once.
-pub struct MemoPdgConstructor<'tcx> {
+pub struct MemoPdgConstructor<'tcx, K> {
     pub(crate) tcx: TyCtxt<'tcx>,
-    pub(crate) call_change_callback: Option<Rc<dyn CallChangeCallback<'tcx> + 'tcx>>,
+    pub(crate) call_change_callback: Rc<dyn CallChangeCallback<'tcx, K> + 'tcx>,
     pub(crate) dump_mir: bool,
     pub(crate) async_info: Rc<AsyncInfo>,
-    pub pdg_cache: PdgCache<'tcx>,
+    pub pdg_cache: PdgCache<'tcx, K>,
     pub(crate) body_cache: Rc<body_cache::BodyCache<'tcx>>,
     disable_cache: bool,
     relaxed: bool,
 }
 
-impl<'tcx> MemoPdgConstructor<'tcx> {
+impl<'tcx, K: Default> MemoPdgConstructor<'tcx, K> {
     /// Initialize the constructor.
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
-        Self {
-            tcx,
-            call_change_callback: None,
-            dump_mir: false,
-            async_info: AsyncInfo::make(tcx).expect("Async functions are not defined"),
-            pdg_cache: Default::default(),
-            body_cache: Rc::new(BodyCache::new(tcx)),
-            disable_cache: false,
-            relaxed: false,
-        }
+        Self::new_with_callbacks(tcx, DefaultCallback)
     }
-
     /// Initialize the constructor.
     pub fn new_with_cache(tcx: TyCtxt<'tcx>, body_cache: Rc<body_cache::BodyCache<'tcx>>) -> Self {
         Self {
             tcx,
-            call_change_callback: None,
+            call_change_callback: Rc::new(DefaultCallback),
             dump_mir: false,
             async_info: AsyncInfo::make(tcx).expect("Async functions are not defined"),
             pdg_cache: Default::default(),
             body_cache,
+            disable_cache: false,
+            relaxed: false,
+        }
+    }
+}
+
+impl<'tcx, K> MemoPdgConstructor<'tcx, K> {
+    /// Initialize the constructor.
+    pub fn new_with_callbacks(
+        tcx: TyCtxt<'tcx>,
+        callback: impl CallChangeCallback<'tcx, K> + 'tcx,
+    ) -> Self {
+        Self {
+            tcx,
+            call_change_callback: Rc::new(callback),
+            dump_mir: false,
+            async_info: AsyncInfo::make(tcx).expect("Async functions are not defined"),
+            pdg_cache: Default::default(),
+            body_cache: Rc::new(BodyCache::new(tcx)),
             disable_cache: false,
             relaxed: false,
         }
@@ -130,15 +140,41 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     /// Overwrites any previously registered callback with no warning.
     pub fn with_call_change_callback(
         &mut self,
-        callback: impl CallChangeCallback<'tcx> + 'tcx,
+        callback: impl CallChangeCallback<'tcx, K> + 'tcx,
     ) -> &mut Self {
-        self.call_change_callback.replace(Rc::new(callback));
+        self.call_change_callback = Rc::new(callback);
         self
     }
 
+    /// Try to retrieve or load a body for this id.
+    ///
+    /// Make sure the body is retrievable or this function will panic.
+    pub fn body_for_def_id(&self, key: DefId) -> &'tcx CachedBody<'tcx> {
+        self.body_cache.get(key)
+    }
+
+    /// Access to the underlying body cache.
+    pub fn body_cache(&self) -> &Rc<BodyCache<'tcx>> {
+        &self.body_cache
+    }
+    /// Used for testing.
+    pub fn take_call_changes_policy(&mut self) -> Rc<dyn CallChangeCallback<'tcx, K> + 'tcx> {
+        self.call_change_callback.clone()
+    }
+
+    pub(crate) fn maybe_span_err(&self, span: rustc_span::Span, msg: impl Into<DiagnosticMessage>) {
+        if self.relaxed {
+            self.tcx.sess.span_warn(span, msg.into());
+        } else {
+            self.tcx.sess.span_err(span, msg.into());
+        }
+    }
+}
+
+impl<'tcx, K: std::hash::Hash + Eq + Clone> MemoPdgConstructor<'tcx, K> {
     /// Construct the intermediate PDG for this function. Instantiates any
     /// generic arguments as `dyn <constraints>`.
-    pub fn construct_root<'a>(&'a self, function: LocalDefId) -> Cow<'a, PartialGraph<'tcx>> {
+    pub fn construct_root<'a>(&'a self, function: LocalDefId) -> Cow<'a, PartialGraph<'tcx, K>> {
         let generics = manufacture_substs_for(self.tcx, function.to_def_id())
             .map_err(|i| vec![i])
             .unwrap();
@@ -150,7 +186,9 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
         )
         .unwrap();
 
-        self.construct_for(resolution).unwrap_or_msg(|| {
+        let key = (resolution, self.call_change_callback.root_k(resolution));
+
+        self.construct_for(key).unwrap_or_msg(|| {
             format!("Failed to construct PDG for {function:?} with generics {generics:?}")
         })
     }
@@ -160,21 +198,23 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     /// Returns `None` if this is a recursive call trying to construct the graph again.
     pub(crate) fn construct_for<'a>(
         &'a self,
-        resolution: Instance<'tcx>,
-    ) -> ConstructionResult<Cow<'a, PartialGraph<'tcx>>> {
-        let construct = || {
-            let g = LocalAnalysis::new(self, resolution)?.construct_partial();
+        descriptor: (Instance<'tcx>, K),
+    ) -> ConstructionResult<Cow<'a, PartialGraph<'tcx, K>>> {
+        let (resolution, k) = descriptor.clone();
+        let mut construct = Some(|| {
+            let g = LocalAnalysis::new(self, resolution, k)?.construct_partial();
             Some(g)
-        };
+        });
         let mut was_constructed = false;
-        let result = self.pdg_cache.get_maybe_recursive(resolution, |_| {
+        let result = self.pdg_cache.get_maybe_recursive(descriptor, |_| {
             was_constructed = true;
-            construct()
+            (construct.take().unwrap())()
         });
         if self.disable_cache && result.is_some() && !was_constructed {
-            return construct().map_or(ConstructionResult::Unconstructible, |r| {
-                ConstructionResult::Success(Cow::Owned(r))
-            });
+            return (construct.take().unwrap())()
+                .map_or(ConstructionResult::Unconstructible, |r| {
+                    ConstructionResult::Success(Cow::Owned(r))
+                });
         }
         match result {
             None => ConstructionResult::Recursive,
@@ -184,8 +224,13 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
     }
 
     /// Has a PDG been constructed for this instance before?
-    pub fn is_in_cache(&self, resolution: PdgCacheKey<'tcx>) -> bool {
+    pub fn is_in_cache(&self, resolution: PdgCacheKey<'tcx, K>) -> bool {
         self.pdg_cache.is_in_cache(&resolution)
+    }
+
+    pub fn is_recursion(&self, instance: &PdgCacheKey<'tcx, K>) -> bool {
+        // This should be provided by the cache itself.
+        matches!(self.pdg_cache.as_ref().borrow().get(instance), Some(None))
     }
 
     /// Construct a final PDG for this function. Same as
@@ -216,48 +261,18 @@ impl<'tcx> MemoPdgConstructor<'tcx> {
             self.construct_root(function).to_petgraph(self)
         }
     }
-
-    pub fn is_recursion(&self, instance: Instance<'tcx>) -> bool {
-        // This should be provided by the cache itself.
-        matches!(self.pdg_cache.as_ref().borrow().get(&instance), Some(None))
-    }
-
-    /// Try to retrieve or load a body for this id.
-    ///
-    /// Make sure the body is retrievable or this function will panic.
-    pub fn body_for_def_id(&self, key: DefId) -> &'tcx CachedBody<'tcx> {
-        self.body_cache.get(key)
-    }
-
-    /// Access to the underlying body cache.
-    pub fn body_cache(&self) -> &Rc<BodyCache<'tcx>> {
-        &self.body_cache
-    }
-
-    /// Used for testing.
-    pub fn take_call_changes_policy(&mut self) -> Option<Rc<dyn CallChangeCallback<'tcx> + 'tcx>> {
-        self.call_change_callback.take()
-    }
-
-    pub(crate) fn maybe_span_err(&self, span: rustc_span::Span, msg: impl Into<DiagnosticMessage>) {
-        if self.relaxed {
-            self.tcx.sess.span_warn(span, msg.into());
-        } else {
-            self.tcx.sess.span_err(span, msg.into());
-        }
-    }
 }
 
-type LocalAnalysisResults<'tcx, 'mir> = Results<'tcx, &'mir LocalAnalysis<'tcx, 'mir>>;
+type LocalAnalysisResults<'tcx, 'mir, K> = Results<'tcx, &'mir LocalAnalysis<'tcx, 'mir, K>>;
 
-impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, LocalAnalysisResults<'tcx, 'mir>>
-    for PartialGraph<'tcx>
+impl<'mir, 'tcx, K: Hash + Eq + Clone>
+    ResultsVisitor<'mir, 'tcx, LocalAnalysisResults<'tcx, 'mir, K>> for PartialGraph<'tcx, K>
 {
-    type FlowState = <&'mir LocalAnalysis<'tcx, 'mir> as AnalysisDomain<'tcx>>::Domain;
+    type FlowState = <&'mir LocalAnalysis<'tcx, 'mir, K> as AnalysisDomain<'tcx>>::Domain;
 
     fn visit_statement_before_primary_effect(
         &mut self,
-        results: &LocalAnalysisResults<'tcx, 'mir>,
+        results: &LocalAnalysisResults<'tcx, 'mir, K>,
         state: &Self::FlowState,
         statement: &'mir rustc_middle::mir::Statement<'tcx>,
         location: Location,
@@ -285,7 +300,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, LocalAnalysisResults<'tcx, 'mir>>
     /// call site.
     fn visit_terminator_before_primary_effect(
         &mut self,
-        results: &LocalAnalysisResults<'tcx, 'mir>,
+        results: &LocalAnalysisResults<'tcx, 'mir, K>,
         state: &Self::FlowState,
         terminator: &'mir rustc_middle::mir::Terminator<'tcx>,
         location: Location,
@@ -329,7 +344,7 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, LocalAnalysisResults<'tcx, 'mir>>
 
     fn visit_terminator_after_primary_effect(
         &mut self,
-        results: &LocalAnalysisResults<'tcx, 'mir>,
+        results: &LocalAnalysisResults<'tcx, 'mir, K>,
         state: &Self::FlowState,
         terminator: &'mir rustc_middle::mir::Terminator<'tcx>,
         location: Location,
@@ -367,10 +382,10 @@ impl<'mir, 'tcx> ResultsVisitor<'mir, 'tcx, LocalAnalysisResults<'tcx, 'mir>>
     }
 }
 
-impl<'tcx> PartialGraph<'tcx> {
+impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
     fn modular_mutation_visitor<'a, 'mir>(
         &'a mut self,
-        results: &'a LocalAnalysisResults<'tcx, 'mir>,
+        results: &'a LocalAnalysisResults<'tcx, 'mir, K>,
         state: &'a InstructionState<'tcx>,
     ) -> ModularMutationVisitor<'a, 'tcx, impl FnMut(Location, Mutation<'tcx>) + 'a> {
         ModularMutationVisitor::new(&results.analysis.place_info, move |location, mutation| {
@@ -390,7 +405,7 @@ impl<'tcx> PartialGraph<'tcx> {
     /// returns whether we were able to successfully handle this as inline
     fn handle_as_inline<'a>(
         &mut self,
-        results: &LocalAnalysisResults<'tcx, 'a>,
+        results: &LocalAnalysisResults<'tcx, 'a, K>,
         state: &'a InstructionState<'tcx>,
         terminator: &Terminator<'tcx>,
         location: Location,
@@ -414,13 +429,13 @@ impl<'tcx> PartialGraph<'tcx> {
             return false;
         };
 
-        let (child_instance, child_descriptor, calling_convention, precise) = match handling {
+        let ((child_instance, k), child_descriptor, calling_convention, precise) = match handling {
             CallHandling::Ready {
                 calling_convention,
                 descriptor,
                 precise,
             } => (
-                descriptor,
+                descriptor.clone(),
                 constructor
                     .memo
                     .construct_for(descriptor)
@@ -456,6 +471,7 @@ impl<'tcx> PartialGraph<'tcx> {
         self.inlined_calls.push((
             location,
             child_instance,
+            k,
             constructor.find_control_inputs(location),
         ));
         let child_graph = child_descriptor.as_ref();
@@ -531,18 +547,18 @@ impl<'tcx> PartialGraph<'tcx> {
         // );
         true
     }
-}
 
-impl<'tcx> PartialGraph<'tcx> {
     fn register_mutation(
         &mut self,
-        results: &LocalAnalysisResults<'tcx, '_>,
+        results: &LocalAnalysisResults<'tcx, '_, K>,
         state: &InstructionState<'tcx>,
         inputs: Inputs<'tcx>,
         mutated: Either<Place<'tcx>, DepNode<'tcx, OneHopLocation>>,
         location: Location,
         target_use: TargetUse,
-    ) {
+    ) where
+        K: Hash + Eq + Clone,
+    {
         trace!("Registering mutation to {mutated:?} with inputs {inputs:?} at {location:?}");
         let constructor = &results.analysis;
         let ctrl_inputs = constructor.find_control_inputs(location);
@@ -605,10 +621,10 @@ impl<'tcx> PartialGraph<'tcx> {
 }
 
 /// How we are indexing into [`PdgCache`]
-pub type PdgCacheKey<'tcx> = Instance<'tcx>;
+pub type PdgCacheKey<'tcx, K> = (Instance<'tcx>, K);
 /// Stores PDG's we have already computed and which we know we can use again
 /// given a certain key.
-pub type PdgCache<'tcx> = Rc<Cache<PdgCacheKey<'tcx>, Option<PartialGraph<'tcx>>>>;
+pub type PdgCache<'tcx, K> = Rc<Cache<PdgCacheKey<'tcx, K>, Option<PartialGraph<'tcx, K>>>>;
 
 #[derive(Debug)]
 enum Inputs<'tcx> {
@@ -627,7 +643,10 @@ struct GraphAssembler<'tcx> {
     control_inputs: Box<[(NodeIndex, DepEdge<CallString>)]>,
 }
 
-fn globalize_location(vis: &mut VisitDriver<'_, '_>, location: &OneHopLocation) -> CallString {
+fn globalize_location<T>(
+    vis: &mut VisitDriver<'_, '_, T>,
+    location: &OneHopLocation,
+) -> CallString {
     vis.with_pushed_stack(
         GlobalLocation {
             function: vis.current_function().def_id(),
@@ -653,15 +672,15 @@ fn globalize_location(vis: &mut VisitDriver<'_, '_>, location: &OneHopLocation) 
     )
 }
 
-fn globalize_node<'tcx>(
-    vis: &mut VisitDriver<'tcx, '_>,
+fn globalize_node<'tcx, K>(
+    vis: &mut VisitDriver<'tcx, '_, K>,
     node: &DepNode<'tcx, OneHopLocation>,
 ) -> DepNode<'tcx, CallString> {
     node.map_at(|location| globalize_location(vis, location))
 }
 
-fn globalize_edge(
-    vis: &mut VisitDriver<'_, '_>,
+fn globalize_edge<K>(
+    vis: &mut VisitDriver<'_, '_, K>,
     edge: &DepEdge<OneHopLocation>,
 ) -> DepEdge<CallString> {
     edge.map_at(|location| globalize_location(vis, location))
@@ -691,14 +710,14 @@ impl<'tcx> GraphAssembler<'tcx> {
     /// node or to the ones coming from the parent, which is established by
     /// the `visit_partial_graph` function. By induction all nodes, including
     /// these control flow sources are connected to the old ctrl inputs.
-    fn with_new_ctr_inputs<'c, F, R>(
+    fn with_new_ctr_inputs<'c, F, R, K>(
         &mut self,
-        vis: &mut VisitDriver<'tcx, 'c>,
+        vis: &mut VisitDriver<'tcx, 'c, K>,
         new_ctrl_inputs: &[(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)],
         f: F,
     ) -> R
     where
-        F: FnOnce(&mut Self, &mut VisitDriver<'tcx, 'c>) -> R,
+        F: FnOnce(&mut Self, &mut VisitDriver<'tcx, 'c, K>) -> R,
     {
         let new_ctrl_inputs: Box<[(NodeIndex, DepEdge<CallString>)]> = new_ctrl_inputs
             .iter()
@@ -724,22 +743,23 @@ impl<'tcx> GraphAssembler<'tcx> {
     }
 }
 
-impl<'tcx> call_tree_visit::Visitor<'tcx> for GraphAssembler<'tcx> {
+impl<'tcx, K: Hash + Eq + Clone> call_tree_visit::Visitor<'tcx, K> for GraphAssembler<'tcx> {
     fn visit_inlined_call(
         &mut self,
-        vis: &mut VisitDriver<'tcx, '_>,
+        vis: &mut VisitDriver<'tcx, '_, K>,
         loc: Location,
         inst: Instance<'tcx>,
+        k: &K,
         ctrl_inputs: &[(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)],
     ) {
         self.with_new_ctr_inputs(vis, ctrl_inputs, |slf, vis| {
-            vis.visit_inlined_call(slf, loc, inst)
+            vis.visit_inlined_call(slf, loc, inst, k)
         })
     }
 
     fn visit_edge(
         &mut self,
-        vis: &mut VisitDriver<'tcx, '_>,
+        vis: &mut VisitDriver<'tcx, '_, K>,
         src: &DepNode<'tcx, OneHopLocation>,
         dst: &DepNode<'tcx, OneHopLocation>,
         kind: &DepEdge<OneHopLocation>,
@@ -752,7 +772,11 @@ impl<'tcx> call_tree_visit::Visitor<'tcx> for GraphAssembler<'tcx> {
         self.graph.add_edge(src_idx, dst_idx, new_kind);
     }
 
-    fn visit_partial_graph(&mut self, vis: &mut VisitDriver<'tcx, '_>, graph: &PartialGraph<'tcx>) {
+    fn visit_partial_graph(
+        &mut self,
+        vis: &mut VisitDriver<'tcx, '_, K>,
+        graph: &PartialGraph<'tcx, K>,
+    ) {
         vis.visit_partial_graph(self, graph);
 
         // This loop connects the control inputs that
@@ -824,8 +848,12 @@ impl GraphSizeEstimator {
     }
 }
 
-impl<'tcx> call_tree_visit::Visitor<'tcx> for GraphSizeEstimator {
-    fn visit_partial_graph(&mut self, vis: &mut VisitDriver<'tcx, '_>, graph: &PartialGraph<'tcx>) {
+impl<'tcx, K: Hash + Eq + Clone> call_tree_visit::Visitor<'tcx, K> for GraphSizeEstimator {
+    fn visit_partial_graph(
+        &mut self,
+        vis: &mut VisitDriver<'tcx, '_, K>,
+        graph: &PartialGraph<'tcx, K>,
+    ) {
         self.nodes += graph.nodes.len();
         self.edges += graph.edges.len();
         self.functions += 1;
@@ -851,8 +879,8 @@ impl fmt::Display for HumanInt {
     }
 }
 
-impl<'tcx> PartialGraph<'tcx> {
-    pub fn to_petgraph<'c>(&self, memo: &'c MemoPdgConstructor<'tcx>) -> DepGraph<'tcx> {
+impl<'tcx, K: Clone + Hash + Eq> PartialGraph<'tcx, K> {
+    pub fn to_petgraph<'c>(&self, memo: &'c MemoPdgConstructor<'tcx, K>) -> DepGraph<'tcx> {
         log::info!("Converting to petgraph starting from {:?}.", self.def_id);
         let mut assembler = GraphAssembler::new();
         let mut visitor = VisitDriver::new(
@@ -863,6 +891,7 @@ impl<'tcx> PartialGraph<'tcx> {
                 self.def_id,
                 self.generics,
             ),
+            self.k.clone(),
         );
         let mut size_estimator = GraphSizeEstimator::new();
         visitor.start(&mut size_estimator);
@@ -875,7 +904,7 @@ impl<'tcx> PartialGraph<'tcx> {
 
     pub fn to_petgraph_with_extra_global_location<'c>(
         &self,
-        memo: &'c MemoPdgConstructor<'tcx>,
+        memo: &'c MemoPdgConstructor<'tcx, K>,
         extra_global_location: GlobalLocation,
     ) -> DepGraph<'tcx> {
         log::info!("Converting to petgraph starting from {:?}.", self.def_id);
@@ -888,6 +917,7 @@ impl<'tcx> PartialGraph<'tcx> {
                 self.def_id,
                 self.generics,
             ),
+            self.k.clone(),
         );
         let mut size_estimator = GraphSizeEstimator::new();
         visitor.start(&mut size_estimator);

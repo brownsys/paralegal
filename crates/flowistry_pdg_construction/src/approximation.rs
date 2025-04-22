@@ -12,10 +12,15 @@ use rustc_span::Span;
 
 use crate::local_analysis::LocalAnalysis;
 
-pub(crate) type ApproximationHandler<'tcx, 'a> =
-    fn(&LocalAnalysis<'tcx, 'a>, &mut dyn Visitor<'tcx>, &[Operand<'tcx>], Place<'tcx>, Location);
+pub(crate) type ApproximationHandler<'tcx, 'a, K> = fn(
+    &LocalAnalysis<'tcx, 'a, K>,
+    &mut dyn Visitor<'tcx>,
+    &[Operand<'tcx>],
+    Place<'tcx>,
+    Location,
+);
 
-impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
+impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
     /// Special case behavior for calls to functions used in desugaring `await` desugarings.
     ///
     /// Ensures that functions like `Pin::new_unchecked` are not modularly-approximated.
@@ -23,7 +28,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         &self,
         def_id: DefId,
         span: Span,
-    ) -> Option<ApproximationHandler<'tcx, 'a>> {
+    ) -> Option<ApproximationHandler<'tcx, 'a, K>> {
         if span.desugaring_kind() != Some(rustc_span::DesugaringKind::Await) {
             return None;
         }

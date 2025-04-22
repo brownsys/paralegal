@@ -1,7 +1,6 @@
 use std::rc::Rc;
 
 use either::Either;
-use itertools::Itertools;
 use log::debug;
 
 use rustc_abi::{FieldIdx, VariantIdx};
@@ -209,7 +208,7 @@ pub fn is_async_fn_or_block(tcx: TyCtxt, instance: Instance) -> bool {
     tcx.generator_is_async(instance.def_id())
 }
 
-impl<'tcx, 'mir> LocalAnalysis<'tcx, 'mir> {
+impl<'tcx, 'mir, K> LocalAnalysis<'tcx, 'mir, K> {
     /// Given the arguments to a `Future::poll` call, walk back through the
     /// body to find the original future being polled, and get the arguments to the future.
     pub fn find_async_args<'a>(
@@ -285,7 +284,7 @@ impl<'tcx, 'mir> LocalAnalysis<'tcx, 'mir> {
 
         let future_aliases = self
             .aliases(self.tcx().mk_place_deref(new_pin_args[0].place().unwrap()))
-            .collect_vec();
+            .collect::<Vec<_>>();
         debug_assert!(future_aliases.len() == 1);
         let future = *future_aliases.first().unwrap();
 

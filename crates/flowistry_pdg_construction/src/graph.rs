@@ -309,7 +309,7 @@ impl<'tcx> DepGraph<'tcx> {
 }
 
 #[derive(Debug, Clone)]
-pub struct PartialGraph<'tcx> {
+pub struct PartialGraph<'tcx, K> {
     pub(crate) nodes: FxHashSet<DepNode<'tcx, OneHopLocation>>,
     pub(crate) edges: FxHashSet<(
         DepNode<'tcx, OneHopLocation>,
@@ -320,25 +320,28 @@ pub struct PartialGraph<'tcx> {
     pub(crate) def_id: DefId,
     arg_count: usize,
     local_decls: IndexVec<Local, LocalDecl<'tcx>>,
+    pub(crate) k: K,
     pub(crate) inlined_calls: Vec<(
         Location,
         Instance<'tcx>,
+        K,
         Vec<(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)>,
     )>,
 }
 
-impl<'tcx> HasLocalDecls<'tcx> for PartialGraph<'tcx> {
+impl<'tcx, K> HasLocalDecls<'tcx> for PartialGraph<'tcx, K> {
     fn local_decls(&self) -> &LocalDecls<'tcx> {
         &self.local_decls
     }
 }
 
-impl<'tcx> PartialGraph<'tcx> {
+impl<'tcx, K> PartialGraph<'tcx, K> {
     pub fn new(
         generics: GenericArgsRef<'tcx>,
         def_id: DefId,
         arg_count: usize,
         local_decls: &LocalDecls<'tcx>,
+        k: K,
     ) -> Self {
         Self {
             nodes: Default::default(),
@@ -348,6 +351,7 @@ impl<'tcx> PartialGraph<'tcx> {
             arg_count,
             local_decls: local_decls.to_owned(),
             inlined_calls: Default::default(),
+            k,
         }
     }
 

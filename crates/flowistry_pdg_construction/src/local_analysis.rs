@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashSet, fmt::Display, iter, rc::Rc};
+use std::{borrow::Cow, collections::HashSet, fmt::Display, hash::Hash, iter, rc::Rc};
 
 use flowistry::mir::{placeinfo::PlaceInfo, FlowistryInput};
 use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
@@ -57,8 +57,8 @@ impl<'tcx> df::JoinSemiLattice for InstructionState<'tcx> {
     }
 }
 
-pub(crate) struct LocalAnalysis<'tcx, 'a> {
-    pub(crate) memo: &'a MemoPdgConstructor<'tcx>,
+pub(crate) struct LocalAnalysis<'tcx, 'a, K> {
+    pub(crate) memo: &'a MemoPdgConstructor<'tcx, K>,
     pub(super) root: Instance<'tcx>,
     body_with_facts: &'tcx CachedBody<'tcx>,
     pub(crate) mono_body: Body<'tcx>,
@@ -68,95 +68,16 @@ pub(crate) struct LocalAnalysis<'tcx, 'a> {
     pub(crate) body_assignments: utils::BodyAssignments,
     start_loc: FxHashSet<RichLocation>,
     param_env: ParamEnv<'tcx>,
+    k: K,
 }
 
-impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
-    /// Creates [`GraphConstructor`] for a function resolved as `fn_resolution`
-    /// in a given `calling_context`.
-    ///
-    /// Returns `None`, if this body should not be analyzed.
-    pub(crate) fn new(
-        memo: &'a MemoPdgConstructor<'tcx>,
-        root: Instance<'tcx>,
-    ) -> Option<LocalAnalysis<'tcx, 'a>> {
-        let tcx = memo.tcx;
-        let def_id = root.def_id();
-        let body_with_facts = memo.body_cache.try_get(def_id)?;
-        let param_env = tcx.param_env_reveal_all_normalized(def_id);
-        let body = try_monomorphize(
-            root,
-            tcx,
-            param_env,
-            body_with_facts.body(),
-            tcx.def_span(def_id),
-        )
-        .unwrap();
-
-        let place_info = PlaceInfo::build(tcx, def_id, body_with_facts);
-        let control_dependencies = body.control_dependencies();
-
-        let mut start_loc = FxHashSet::default();
-        start_loc.insert(RichLocation::Start);
-
-        let body_assignments = utils::find_body_assignments(&body);
-
-        let slf = LocalAnalysis {
-            memo,
-            root,
-            body_with_facts,
-            mono_body: body,
-            place_info,
-            control_dependencies,
-            start_loc,
-            def_id,
-            body_assignments,
-            param_env,
-        };
-        if memo.dump_mir {
-            slf.dump_mir();
-        }
-        Some(slf)
-    }
-
+impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
     fn dump_mir(&self) {
         use std::io::Write;
         let path = self.tcx().def_path_str(self.def_id) + ".mir";
         let mut f = std::fs::File::create(path.as_str()).unwrap();
         write!(f, "{}", self.mono_body.to_string(self.tcx()).unwrap()).unwrap();
     }
-
-    fn make_dep_node(
-        &self,
-        place: Place<'tcx>,
-        location: impl Into<RichLocation>,
-    ) -> DepNode<'tcx, OneHopLocation> {
-        let location = location.into();
-        debug!(
-            "Creating dep node for {place:?} (base ty {:?}) in {} at {:?}",
-            Place::from(place.local)
-                .ty(self.body_with_facts.body(), self.tcx())
-                .ty,
-            self.tcx().def_path_str(self.def_id),
-            location,
-        );
-        debug!(
-            "Place type is {:?}",
-            place.ty(&self.mono_body, self.tcx()).ty,
-        );
-        DepNode::new(
-            place,
-            location.into(),
-            self.tcx(),
-            &self.mono_body,
-            self.def_id,
-            is_split(
-                place.ty(&self.mono_body, self.tcx()).ty,
-                self.def_id,
-                self.tcx(),
-            ),
-        )
-    }
-
     /// Returns all pairs of `(src, edge)`` such that the given `location` is control-dependent on `edge`
     /// with input `src`.
     pub(crate) fn find_control_inputs(
@@ -202,12 +123,44 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         out
     }
 
-    fn call_change_callback(&self) -> Option<&dyn CallChangeCallback<'tcx>> {
-        self.memo.call_change_callback.as_ref().map(Rc::as_ref)
+    fn call_change_callback(&self) -> &dyn CallChangeCallback<'tcx, K> {
+        self.memo.call_change_callback.as_ref()
     }
 
     pub(crate) fn async_info(&self) -> &AsyncInfo {
         &self.memo.async_info
+    }
+
+    fn make_dep_node(
+        &self,
+        place: Place<'tcx>,
+        location: impl Into<RichLocation>,
+    ) -> DepNode<'tcx, OneHopLocation> {
+        let location = location.into();
+        debug!(
+            "Creating dep node for {place:?} (base ty {:?}) in {} at {:?}",
+            Place::from(place.local)
+                .ty(self.body_with_facts.body(), self.tcx())
+                .ty,
+            self.tcx().def_path_str(self.def_id),
+            location,
+        );
+        debug!(
+            "Place type is {:?}",
+            place.ty(&self.mono_body, self.tcx()).ty,
+        );
+        DepNode::new(
+            place,
+            location.into(),
+            self.tcx(),
+            &self.mono_body,
+            self.def_id,
+            is_split(
+                place.ty(&self.mono_body, self.tcx()).ty,
+                self.def_id,
+                self.tcx(),
+            ),
+        )
     }
 
     /// Returns the aliases of `place`. See [`PlaceInfo::aliases`] for details.
@@ -382,13 +335,68 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         self.tcx().def_path_str(def_id)
     }
 
+    pub(super) fn generic_args(&self) -> GenericArgsRef<'tcx> {
+        self.root.args
+    }
+}
+
+impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
+    /// Creates [`GraphConstructor`] for a function resolved as `fn_resolution`
+    /// in a given `calling_context`.
+    ///
+    /// Returns `None`, if this body should not be analyzed.
+    pub(crate) fn new(
+        memo: &'a MemoPdgConstructor<'tcx, K>,
+        root: Instance<'tcx>,
+        k: K,
+    ) -> Option<LocalAnalysis<'tcx, 'a, K>> {
+        let tcx = memo.tcx;
+        let def_id = root.def_id();
+        let body_with_facts = memo.body_cache.try_get(def_id)?;
+        let param_env = tcx.param_env_reveal_all_normalized(def_id);
+        let body = try_monomorphize(
+            root,
+            tcx,
+            param_env,
+            body_with_facts.body(),
+            tcx.def_span(def_id),
+        )
+        .unwrap();
+
+        let place_info = PlaceInfo::build(tcx, def_id, body_with_facts);
+        let control_dependencies = body.control_dependencies();
+
+        let mut start_loc = FxHashSet::default();
+        start_loc.insert(RichLocation::Start);
+
+        let body_assignments = utils::find_body_assignments(&body);
+
+        let slf = LocalAnalysis {
+            memo,
+            root,
+            body_with_facts,
+            mono_body: body,
+            place_info,
+            control_dependencies,
+            start_loc,
+            def_id,
+            body_assignments,
+            param_env,
+            k,
+        };
+        if memo.dump_mir {
+            slf.dump_mir();
+        }
+        Some(slf)
+    }
+
     pub(crate) fn determine_call_handling<'b>(
         &'b self,
         location: Location,
         func: Cow<'_, Operand<'tcx>>,
         args: Cow<'b, [Operand<'tcx>]>,
         span: Span,
-    ) -> Option<CallHandling<'tcx, 'b>> {
+    ) -> Option<CallHandling<'tcx, 'b, K>> {
         let tcx = self.tcx();
 
         trace!(
@@ -486,35 +494,31 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         trace!("  Handling call! with kind {}", call_kind);
 
         // Recursively generate the PDG for the child function.
-        let cache_key = resolved_fn;
 
-        let is_cached = self.memo.is_in_cache(cache_key);
+        let info = CallInfo {
+            callee: resolved_fn,
+            call_string: location,
+            async_parent: if let CallKind::AsyncPoll(poll) = &call_kind {
+                // Special case for async. We ask for skipping not on the closure, but
+                // on the "async" function that created it. This is needed for
+                // consistency in skipping. Normally, when "poll" is inlined, mutations
+                // introduced by the creator of the future are not recorded and instead
+                // handled here, on the closure. But if the closure is skipped we need
+                // those mutations to occur. To ensure this we always ask for the
+                // "CallChanges" on the creator so that both creator and closure have
+                // the same view of whether they are inlined or "Skip"ped.
+                poll.async_fn_parent
+            } else {
+                None
+            },
+            span,
+            arguments: &args,
+            caller_body: &self.mono_body,
+            param_env,
+            cache_key: &self.k,
+        };
 
-        let call_changes = self.call_change_callback().map(|callback| {
-            let info = CallInfo {
-                callee: resolved_fn,
-                call_string: location,
-                is_cached,
-                async_parent: if let CallKind::AsyncPoll(poll) = &call_kind {
-                    // Special case for async. We ask for skipping not on the closure, but
-                    // on the "async" function that created it. This is needed for
-                    // consistency in skipping. Normally, when "poll" is inlined, mutations
-                    // introduced by the creator of the future are not recorded and instead
-                    // handled here, on the closure. But if the closure is skipped we need
-                    // those mutations to occur. To ensure this we always ask for the
-                    // "CallChanges" on the creator so that both creator and closure have
-                    // the same view of whether they are inlined or "Skip"ped.
-                    poll.async_fn_parent
-                } else {
-                    None
-                },
-                span,
-                arguments: &args,
-                caller_body: &self.mono_body,
-                param_env,
-            };
-            callback.on_inline(info)
-        });
+        let call_changes = self.call_change_callback().on_inline(info);
 
         // Handle async functions at the time of polling, not when the future is created.
         if is_async(tcx, resolved_def_id) {
@@ -525,56 +529,56 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             // "Some", knowing that handling "poll" later will handle the mutations.
             return (!matches!(
                 &call_changes,
-                Some(CallChanges {
+                CallChanges {
                     skip: SkipCall::Skip,
                     ..
-                })
+                }
             ))
             .then_some(CallHandling::ApproxAsyncFn);
         }
 
-        let (calling_convention, precise) = match call_changes {
-            Some(CallChanges {
-                skip: SkipCall::Skip,
-            }) => {
+        let (calling_convention, precise, new_cache_key) = match call_changes.skip {
+            SkipCall::Skip => {
                 trace!("  Bailing because user callback said to bail");
                 return None;
             }
-            Some(CallChanges {
-                skip:
-                    SkipCall::Replace {
-                        instance,
-                        calling_convention,
-                    },
-            }) => {
+            SkipCall::Replace {
+                instance,
+                calling_convention,
+                cache_key,
+            } => {
                 trace!("  Replacing call as instructed by user");
                 resolved_fn = instance;
-                (calling_convention, false)
+                (calling_convention, false, cache_key)
             }
-            _ => (CallingConvention::from_call_kind(&call_kind, args), true),
+            SkipCall::NoSkip(cache_key) => (
+                CallingConvention::from_call_kind(&call_kind, args),
+                true,
+                cache_key,
+            ),
         };
         if is_virtual(tcx, resolved_def_id) {
             trace!("  bailing because is unresolvable trait method");
-            if let Some(callback) = self.call_change_callback() {
-                callback.on_inline_miss(
-                    resolved_fn,
-                    param_env,
-                    location,
-                    self.root,
-                    InlineMissReason::TraitMethod,
-                    span,
-                );
-            }
+            self.call_change_callback().on_inline_miss(
+                resolved_fn,
+                param_env,
+                location,
+                self.root,
+                InlineMissReason::TraitMethod,
+                span,
+            );
             return None;
         }
 
-        if self.memo.is_recursion(resolved_fn) {
+        let cache_key = (resolved_fn, new_cache_key);
+
+        if self.memo.is_recursion(&cache_key) {
             trace!("  bailing because recursion");
             None
         } else {
             Some(CallHandling::Ready {
                 calling_convention,
-                descriptor: resolved_fn,
+                descriptor: cache_key,
                 precise,
             })
         }
@@ -603,13 +607,13 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
 
         debug!("Call handling is {}", preamble.as_ref());
 
-        let (instance, child_constructor, calling_convention, precise) = match preamble {
+        let (_descriptor, child_constructor, calling_convention, precise) = match preamble {
             CallHandling::Ready {
                 descriptor,
                 calling_convention,
                 precise,
             } => (
-                descriptor,
+                descriptor.clone(),
                 self.memo
                     .construct_for(descriptor)
                     .expect("Existence check should have already happened"),
@@ -685,11 +689,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         )
     }
 
-    pub(super) fn generic_args(&self) -> GenericArgsRef<'tcx> {
-        self.root.args
-    }
-
-    pub(crate) fn construct_partial(&'a self) -> PartialGraph<'tcx> {
+    pub(crate) fn construct_partial(&'a self) -> PartialGraph<'tcx, K> {
         let mut analysis = self
             .into_engine(self.tcx(), &self.mono_body)
             .iterate_to_fixpoint();
@@ -699,6 +699,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             self.def_id,
             self.mono_body.arg_count,
             self.mono_body.local_decls(),
+            self.k.clone(),
         );
 
         analysis.visit_reachable_with(&self.mono_body, &mut final_state);
@@ -792,16 +793,16 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         vis.set_time(time);
         vis
     }
-}
 
-impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     fn handle_terminator(
         &self,
         terminator: &Terminator<'tcx>,
         state: &mut InstructionState<'tcx>,
         location: Location,
         time: Time,
-    ) {
+    ) where
+        K: Clone + Eq + Hash,
+    {
         if let TerminatorKind::Call {
             func,
             args,
@@ -826,7 +827,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     }
 }
 
-impl<'tcx, 'a> df::AnalysisDomain<'tcx> for &'a LocalAnalysis<'tcx, 'a> {
+impl<'tcx, 'a, K> df::AnalysisDomain<'tcx> for &'a LocalAnalysis<'tcx, 'a, K> {
     type Domain = InstructionState<'tcx>;
 
     const NAME: &'static str = "LocalPdgConstruction";
@@ -838,7 +839,7 @@ impl<'tcx, 'a> df::AnalysisDomain<'tcx> for &'a LocalAnalysis<'tcx, 'a> {
     fn initialize_start_block(&self, _body: &Body<'tcx>, _state: &mut Self::Domain) {}
 }
 
-impl<'a, 'tcx> df::Analysis<'tcx> for &'a LocalAnalysis<'tcx, 'a> {
+impl<'a, 'tcx, K: Hash + Eq + Clone> df::Analysis<'tcx> for &'a LocalAnalysis<'tcx, 'a, K> {
     fn apply_statement_effect(
         &mut self,
         state: &mut Self::Domain,
@@ -894,14 +895,14 @@ impl Display for CallKind<'_> {
 }
 
 #[derive(strum::AsRefStr)]
-pub(crate) enum CallHandling<'tcx, 'a> {
+pub(crate) enum CallHandling<'tcx, 'a, K> {
     ApproxAsyncFn,
     Ready {
         calling_convention: CallingConvention<'tcx>,
-        descriptor: Instance<'tcx>,
+        descriptor: (Instance<'tcx>, K),
         precise: bool,
     },
-    ApproxAsyncSM(ApproximationHandler<'tcx, 'a>),
+    ApproxAsyncSM(ApproximationHandler<'tcx, 'a, K>),
 }
 
 fn other_as_arg<'tcx>(place: Place<'tcx>, body: &Body<'tcx>) -> Option<u8> {
