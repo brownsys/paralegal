@@ -34,25 +34,29 @@ fn get_main(tcx: TyCtxt<'_>) -> LocalDefId {
         .expect("Missing main")
 }
 
-struct LocalLoadingOnly<'tcx>(Option<Rc<dyn CallChangeCallback<'tcx> + 'tcx>>);
+struct LocalLoadingOnly<'tcx>(Rc<dyn CallChangeCallback<'tcx, ()> + 'tcx>);
 
-impl<'tcx> CallChangeCallback<'tcx> for LocalLoadingOnly<'tcx> {
-    fn on_inline(&self, info: flowistry_pdg_construction::CallInfo<'tcx, '_>) -> CallChanges<'tcx> {
+impl<'tcx> CallChangeCallback<'tcx, ()> for LocalLoadingOnly<'tcx> {
+    fn on_inline(
+        &self,
+        info: flowistry_pdg_construction::CallInfo<'tcx, '_, ()>,
+    ) -> CallChanges<'tcx, ()> {
         let is_local = info.callee.def_id().is_local();
-        let mut changes = self
-            .0
-            .as_ref()
-            .map_or_else(CallChanges::default, |cb| cb.on_inline(info));
+        let mut changes = self.0.on_inline(info);
         if !is_local {
             changes = changes.with_skip(SkipCall::Skip);
         }
         changes
     }
+
+    fn root_k(&self, info: rustc_middle::ty::Instance<'tcx>) -> () {
+        ()
+    }
 }
 
 fn pdg(
     input: impl Into<String>,
-    configure: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &mut MemoPdgConstructor<'tcx>) + Send,
+    configure: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &mut MemoPdgConstructor<'tcx, ()>) + Send,
     tests: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &BodyCache<'tcx>, DepGraph<'tcx>) + Send,
 ) {
     let _ = env_logger::try_init();
