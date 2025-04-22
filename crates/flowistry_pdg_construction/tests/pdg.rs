@@ -49,7 +49,7 @@ impl<'tcx> CallChangeCallback<'tcx, ()> for LocalLoadingOnly<'tcx> {
         changes
     }
 
-    fn root_k(&self, info: rustc_middle::ty::Instance<'tcx>) -> () {
+    fn root_k(&self, _info: rustc_middle::ty::Instance<'tcx>) -> () {
         ()
     }
 }
@@ -674,7 +674,7 @@ pdg_test! {
       {
           SkipCall::Skip
       } else {
-          SkipCall::NoSkip
+          SkipCall::NoSkip(())
       };
       CallChanges::default().with_skip(skip)
     }));

@@ -7,7 +7,7 @@ use paralegal_spdg::Identifier;
 
 #[test]
 fn adaptive_inlines_if_reachable() -> Result<()> {
-    let mut test = Test::new(stringify!(
+    let test = Test::new(stringify!(
         #[paralegal::marker(source, return)]
         fn source() -> usize {
             0
@@ -46,7 +46,7 @@ fn adaptive_inlines_if_reachable() -> Result<()> {
 
 #[test]
 fn adaptive_inlines_if_reachable_async() -> Result<()> {
-    let mut test = Test::new(stringify!(
+    let test = Test::new(stringify!(
         #[paralegal::marker(source, return)]
         async fn source() -> usize {
             0

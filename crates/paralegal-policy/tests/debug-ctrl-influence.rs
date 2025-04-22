@@ -260,7 +260,7 @@ fn nested_ctrl_influence_2() -> Result<()> {
         }
     ))?
     .run(|ctx| {
-        let mut sensitive =
+        let sensitive =
             NodeCluster::try_from_iter(ctx.marked_nodes(Identifier::new_intern("sensitive")))
                 .unwrap();
         let checks =

@@ -7,7 +7,6 @@
 
 use crate::{
     ana::{InlineJudge, SPDGGenerator},
-    desc::*,
     stats::Stats,
     sym_vec,
     utils::*,

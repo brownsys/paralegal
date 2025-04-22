@@ -7,7 +7,7 @@ mod helpers;
 
 #[test]
 fn higher_order_futures() -> Result<()> {
-    let mut test = Test::new(stringify!(
+    let test = Test::new(stringify!(
         use std::future;
         use std::time;
         #[paralegal::marker(source, return)]
