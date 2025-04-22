@@ -6,7 +6,7 @@ use std::{
     path::Path,
 };
 
-use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
+use flowistry_pdg::{CallString, RichLocation};
 use internment::Intern;
 use petgraph::{dot, graph::DiGraph};
 
@@ -22,7 +22,7 @@ use rustc_utils::PlaceExt;
 
 pub use flowistry_pdg::{SourceUse, TargetUse};
 
-use super::utils::Captures;
+
 
 /// Usually a location in a MIR body but can also cross "one hop" into a called function.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]

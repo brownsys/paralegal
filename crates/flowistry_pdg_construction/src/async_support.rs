@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use either::Either;
-use log::debug;
+
 
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_hir::def_id::DefId;
@@ -17,7 +17,7 @@ use rustc_span::Span;
 use crate::utils::{is_async, TyAsFnResult};
 
 use super::{
-    local_analysis::{CallKind, LocalAnalysis},
+    local_analysis::{LocalAnalysis},
     utils,
 };
 

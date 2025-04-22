@@ -1,6 +1,6 @@
 use std::{fmt::Display, rc::Rc};
 
-use flowistry_pdg_construction::{body_cache::BodyCache, CallInfo};
+use flowistry_pdg_construction::{CallInfo};
 use paralegal_spdg::{utils::write_sep, Identifier};
 use rustc_hir::def_id::{CrateNum, DefId};
 use rustc_middle::ty::{
@@ -12,9 +12,7 @@ use rustc_type_ir::TyKind;
 
 use crate::{
     ana::Print,
-    ann::db::MarkerDatabase,
-    args::{InliningDepth, Stub},
-    Args, MarkerCtx, Pctx, TyCtxt,
+    args::{InliningDepth, Stub}, MarkerCtx, Pctx,
 };
 
 pub type K = u32;

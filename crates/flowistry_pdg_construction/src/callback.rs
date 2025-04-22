@@ -1,6 +1,6 @@
 //! Callbacks to influence graph construction and their supporting types.
 
-use flowistry_pdg::{rustc_portable::Location, CallString};
+use flowistry_pdg::{rustc_portable::Location};
 
 use rustc_middle::{
     mir::{self, Operand},
@@ -34,7 +34,7 @@ impl<'tcx, K: Default> CallChangeCallback<'tcx, K> for DefaultCallback {
         CallChanges::default()
     }
 
-    fn root_k(&self, info: Instance<'tcx>) -> K {
+    fn root_k(&self, _info: Instance<'tcx>) -> K {
         Default::default()
     }
 }
@@ -54,7 +54,7 @@ impl<'tcx, K: Default> CallChangeCallback<'tcx, K> for CallChangeCallbackFn<'tcx
         (self.f)(info)
     }
 
-    fn root_k(&self, info: Instance<'tcx>) -> K {
+    fn root_k(&self, _info: Instance<'tcx>) -> K {
         Default::default()
     }
 }

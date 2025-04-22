@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use petgraph::visit::{
-    Bfs, Control, Data, DfsEvent, EdgeFiltered, EdgeRef, IntoEdgeReferences, IntoEdges,
+    Bfs, Data, EdgeFiltered, EdgeRef, IntoEdgeReferences, IntoEdges,
     IntoEdgesDirected, IntoNeighbors, VisitMap, Visitable, Walker, WalkerIter,
 };
 

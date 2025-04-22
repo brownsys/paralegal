@@ -619,14 +619,13 @@ mod call_string_resolver {
 
     use flowistry_pdg::CallString;
     use flowistry_pdg_construction::{
-        body_cache::BodyCache,
         utils::{manufacture_substs_for, try_monomorphize, try_resolve_function},
     };
     use paralegal_spdg::Endpoint;
     use rustc_middle::{mir::TerminatorKind, ty::Instance};
     use rustc_utils::cache::Cache;
 
-    use crate::{Either, MarkerCtx, Pctx, TyCtxt};
+    use crate::{Either, Pctx};
 
     use super::{func_of_term, map_either, match_async_trait_assign, AsFnAndArgs};
 

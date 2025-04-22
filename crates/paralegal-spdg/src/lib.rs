@@ -50,7 +50,7 @@ pub use crate::tiny_bitset::TinyBitSet;
 use flowistry_pdg::rustc_portable::LocalDefId;
 use petgraph::graph::{EdgeIndex, EdgeReference, NodeIndex};
 use petgraph::prelude::EdgeRef;
-use petgraph::visit::{self, IntoNodeIdentifiers};
+use petgraph::visit::{IntoNodeIdentifiers};
 pub use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 

@@ -28,7 +28,7 @@ use flowistry_pdg_construction::{
 };
 use paralegal_spdg::Identifier;
 
-use rustc_errors::{json, DiagnosticMessage};
+use rustc_errors::{DiagnosticMessage};
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{DefId, LOCAL_CRATE};
 use rustc_hir::{def::DefKind, def_id::CrateNum};

@@ -9,7 +9,7 @@ use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 
 use df::{AnalysisDomain, Results, ResultsVisitor};
 use rustc_error_messages::DiagnosticMessage;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap};
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_middle::{

@@ -20,7 +20,7 @@ use rustc_middle::{
 };
 use rustc_span::{ErrorGuaranteed, Span};
 use rustc_type_ir::{fold::TypeFoldable, AliasKind};
-use rustc_utils::mir::places_conflict::{AccessDepth, Overlap};
+use rustc_utils::mir::places_conflict::{Overlap};
 use rustc_utils::{BodyExt, PlaceExt};
 pub trait Captures<'a> {}
 impl<'a, T: ?Sized> Captures<'a> for T {}

@@ -67,17 +67,17 @@ pub trait Visitor<'tcx, K: Hash + Eq + Clone> {
 
     fn visit_edge(
         &mut self,
-        vis: &mut VisitDriver<'tcx, '_, K>,
-        src: &DepNode<'tcx, OneHopLocation>,
-        dst: &DepNode<'tcx, OneHopLocation>,
-        kind: &DepEdge<OneHopLocation>,
+        _vis: &mut VisitDriver<'tcx, '_, K>,
+        _src: &DepNode<'tcx, OneHopLocation>,
+        _dst: &DepNode<'tcx, OneHopLocation>,
+        _kind: &DepEdge<OneHopLocation>,
     ) {
     }
 
     fn visit_node(
         &mut self,
-        vis: &mut VisitDriver<'tcx, '_, K>,
-        node: &DepNode<'tcx, OneHopLocation>,
+        _vis: &mut VisitDriver<'tcx, '_, K>,
+        _node: &DepNode<'tcx, OneHopLocation>,
     ) {
     }
 

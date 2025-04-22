@@ -20,7 +20,7 @@ use anyhow::Result;
 use either::Either;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    body_cache::{local_or_remote_paths, BodyCache},
+    body_cache::{local_or_remote_paths},
     calling_convention::CallingConvention,
     utils::is_async,
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
@@ -711,7 +711,7 @@ impl<'tcx> CallChangeCallback<'tcx, K> for MyCallback<'tcx> {
         );
     }
 
-    fn root_k(&self, info: Instance<'tcx>) -> K {
+    fn root_k(&self, _info: Instance<'tcx>) -> K {
         0
     }
 }

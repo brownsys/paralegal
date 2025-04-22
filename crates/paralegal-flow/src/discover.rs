@@ -3,7 +3,7 @@
 //!
 //! Essentially this discovers all local `paralegal_flow::*` annotations.
 
-use std::rc::Rc;
+
 
 use crate::{
     ana::{InlineJudge, SPDGGenerator},
@@ -14,7 +14,7 @@ use crate::{
     Pctx,
 };
 
-use flowistry_pdg_construction::body_cache::BodyCache;
+
 
 use rustc_hir::{
     def_id::LocalDefId,
@@ -24,7 +24,7 @@ use rustc_hir::{
 use rustc_middle::{hir::nested_filter::OnlyBodies, ty::TyCtxt};
 use rustc_span::{symbol::Ident, Span, Symbol};
 
-use anyhow::Result;
+
 
 use self::resolve::expect_resolve_string_to_def_id;
 

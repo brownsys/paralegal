@@ -1,7 +1,6 @@
 use std::{
     cell::RefCell,
     path::PathBuf,
-    process::Command,
     time::{Duration, Instant},
 };
 
@@ -25,7 +24,7 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 
-use rustc_span::Symbol;
+
 use rustc_utils::cache::Cache;
 
 use crate::{
