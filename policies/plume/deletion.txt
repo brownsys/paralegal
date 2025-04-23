@@ -1,5 +1,5 @@
 Scope:
-In delete
+Somewhere
 
 Policy:
 1. For each "stored_data" type marked user_data:
