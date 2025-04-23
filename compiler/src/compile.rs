@@ -66,9 +66,6 @@ fn compile_ast_node(handlebars: &mut Handlebars, node: &ASTNode, counter: &mut u
     match node {
         ASTNode::Relation(relation) => compile_relation(handlebars, relation, &mut map),
         ASTNode::OnlyVia(src_intro, sink_intro, checkpoint_intro) => {
-            // TODO this logic is overcomplicated and gross
-            // but I have an SOSP deadline and it works, so fix later...
-
             let mut only_via_map: HashMap<&str, Vec<String>> = HashMap::new();
 
             let (src_var, compiled_src_intro) =
@@ -118,14 +115,14 @@ fn compile_ast_node(handlebars: &mut Handlebars, node: &ASTNode, counter: &mut u
                     let mut compiled_intros: Vec<String> = vec![];
                     let mut vars: Vec<String> = vec![];
                     for intro in &checkpoint_intro.1 {
-                        let (sink_var, compiled_checkpoint_intro) =
+                        let (checkpoint_var, compiled_checkpoint_intro) =
                             compile_variable_intro(handlebars, &intro, &mut map);
                         map.insert("intro", compiled_checkpoint_intro);
                         let only_via_intro =
                             render_template(handlebars, &map, Template::OnlyViaIntro);
                         map.remove_entry("definition");
                         compiled_intros.push(only_via_intro);
-                        vars.push(sink_var);
+                        vars.push(checkpoint_var);
                     }
                     only_via_map.insert("checkpoint-intros", compiled_intros);
                     only_via_map.insert("checkpoint-names", vars);
@@ -136,9 +133,9 @@ fn compile_ast_node(handlebars: &mut Handlebars, node: &ASTNode, counter: &mut u
                 }
                 // no operator, so just a single variable intro in the vector
                 None => {
-                    let (checkpoint_var, compiled_sink_intro) =
-                        compile_variable_intro(handlebars, &sink_intro.1[0], &mut map);
-                    map.insert("intro", compiled_sink_intro);
+                    let (checkpoint_var, compiled_checkpoint_intro) =
+                        compile_variable_intro(handlebars, &checkpoint_intro.1[0], &mut map);
+                    map.insert("intro", compiled_checkpoint_intro);
                     let only_via_intro = render_template(handlebars, &map, Template::OnlyViaIntro);
                     map.remove_entry("definition");
                     only_via_map.insert("checkpoint-intros", vec![only_via_intro]);
@@ -202,6 +199,7 @@ fn compile_definitions(handlebars: &mut Handlebars, definitions: &Vec<Definition
 }
 
 pub fn compile(policy: Policy, policy_name: &str, out: &Path, create_bin: bool) -> Result<()> {
+    dbg!(&policy);
     let mut handlebars = Handlebars::new();
     handlebars.set_strict_mode(true);
     register_templates(&mut handlebars);
