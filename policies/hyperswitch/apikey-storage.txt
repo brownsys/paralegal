@@ -2,4 +2,4 @@ Scope:
 Everywhere
 
 Policy:
-1. Each "apikey" marked apikey goes to a "expose" marked externalize only via a "hash" marked hashed
+1. Each "apikey" marked apikey goes to a "expose" marked externalize only via a "hash" marked hashed or "response" marked apikey_response

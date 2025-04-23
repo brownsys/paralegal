@@ -2,4 +2,4 @@ Scope:
 Everywhere
 
 Policy:
-1. Each "card" marked credit_card goes to a "store" marked store only via a "encrypt" marked encrypts
+1. Each "card" marked credit_card goes to a "store" marked store only via a "encrypt" marked encrypt
