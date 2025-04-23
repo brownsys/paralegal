@@ -1,8 +1,7 @@
-let found = ctx.all_controllers().find(|(ct_id, ctrl)| {
-    ctrl.name.as_str() == "{{ctrler}}"
+let found = ctx.controller_contexts().find(|ctx| {
+    ctx.current().name.as_str() == "{{ctrler}}"
     &&
     {
-        let c_id = *ct_id;
         {{definitions}}
         {{body}}
     }

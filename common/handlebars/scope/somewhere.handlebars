@@ -1,5 +1,4 @@
-let found = ctx.all_controllers().find(|(ct_id, _ctrl)| {
-    let c_id = *ct_id;
+let found = ctx.controller_contexts().find(|ctx| {
     {{definitions}}
     {{body}}
 });
