@@ -13,10 +13,10 @@ fn env_setup() {
     use std::env;
     for (k, _) in env::vars() {
         if k.starts_with("CARGO") || k.starts_with("RUSTUP") {
-            env::remove_var(k)
+            unsafe { env::remove_var(k) }
         }
     }
-    env::set_var("CARGO_INCREMENTAL", "false");
+    unsafe { env::set_var("CARGO_INCREMENTAL", "false") };
 }
 
 /// Runnable Paralegal policy generated from '{{policy-file}}'.
