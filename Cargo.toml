@@ -1,6 +1,12 @@
 [workspace]
 members = ["parsers/", "compiler/", "interp", "optimizer", "common"]
 
+[workspace.dependencies]
+clap = { version = "4.5.23", features = ["derive"] }
+handlebars = { version = "6.3.2", features = ["rust-embed"] }
+nom = "7.1.3"
+rust-embed = "8.7.0"
+
 [workspace.dependencies.paralegal-policy]
 git = "https://github.com/brownsys/paralegal"
 rev = "c52fc5ccb2b9a14d307381b5567eb154b86667a9"

@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.94"
-clap = { version = "4.5.23", features = ["derive"] }
+clap = { workspace = true }
 common = { path = "../common" }
 paralegal-policy = { workspace = true }
 parsers = { path = "../parsers" }
