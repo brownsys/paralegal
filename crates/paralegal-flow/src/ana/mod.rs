@@ -210,7 +210,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .pdg_cache
             .borrow()
             .keys()
-            .map(|k| k.0.def.def_id())
+            .map(|k| k.def.def_id())
             .collect::<HashSet<_>>();
 
         let mut seen_locs = 0;

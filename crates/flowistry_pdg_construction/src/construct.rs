@@ -1,4 +1,4 @@
-use std::{borrow::Cow, fmt, hash::Hash, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, fmt, hash::Hash, pin::Pin, rc::Rc};
 
 use either::Either;
 use flowistry::mir::FlowistryInput;
@@ -9,7 +9,7 @@ use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 
 use df::{AnalysisDomain, Results, ResultsVisitor};
 use rustc_error_messages::DiagnosticMessage;
-use rustc_hash::{FxHashMap};
+use rustc_hash::FxHashMap;
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_middle::{
@@ -29,6 +29,7 @@ use crate::{
     graph::{DepEdge, DepGraph, DepNode, OneHopLocation, PartialGraph, SourceUse, TargetUse},
     local_analysis::{CallHandling, InstructionState, LocalAnalysis},
     mutation::{ModularMutationVisitor, Mutation, Time},
+    two_level_cache::TwoLevelCache,
     utils::{manufacture_substs_for, try_resolve_function},
     CallChangeCallback,
 };
@@ -228,9 +229,13 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> MemoPdgConstructor<'tcx, K> {
         self.pdg_cache.is_in_cache(&resolution)
     }
 
-    pub fn is_recursion(&self, instance: &PdgCacheKey<'tcx, K>) -> bool {
+    pub fn is_recursion(&self, instance: Instance<'tcx>) -> bool {
         // This should be provided by the cache itself.
-        matches!(self.pdg_cache.as_ref().borrow().get(instance), Some(None))
+        self.pdg_cache
+            .as_ref()
+            .borrow()
+            .get(&instance)
+            .map_or(false, |v| v.0)
     }
 
     /// Construct a final PDG for this function. Same as
@@ -624,7 +629,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
 pub type PdgCacheKey<'tcx, K> = (Instance<'tcx>, K);
 /// Stores PDG's we have already computed and which we know we can use again
 /// given a certain key.
-pub type PdgCache<'tcx, K> = Rc<Cache<PdgCacheKey<'tcx, K>, Option<PartialGraph<'tcx, K>>>>;
+pub type PdgCache<'tcx, K> = Rc<TwoLevelCache<Instance<'tcx>, K, Option<PartialGraph<'tcx, K>>>>;
 
 #[derive(Debug)]
 enum Inputs<'tcx> {

@@ -1,17 +1,17 @@
 use std::{borrow::Cow, collections::HashSet, fmt::Display, hash::Hash, iter};
 
 use flowistry::mir::{placeinfo::PlaceInfo, FlowistryInput};
-use flowistry_pdg::{RichLocation};
+use flowistry_pdg::RichLocation;
 use itertools::Itertools;
 use log::{debug, log_enabled, trace, Level};
-
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{
-        visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, Location, Operand, Place, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
+        visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, Location, Operand, Place,
+        Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
     ty::{
         AdtKind, EarlyBinder, GenericArgKind, GenericArgsRef, Instance, ParamEnv, Ty, TyCtxt,
@@ -20,10 +20,7 @@ use rustc_middle::{
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 use rustc_span::{DesugaringKind, Span};
-use rustc_utils::{
-    mir::{control_dependencies::ControlDependencies},
-    AdtDefExt, BodyExt, PlaceExt,
-};
+use rustc_utils::{mir::control_dependencies::ControlDependencies, AdtDefExt, BodyExt, PlaceExt};
 
 use crate::{
     approximation::ApproximationHandler,
@@ -571,7 +568,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
 
         let cache_key = (resolved_fn, new_cache_key);
 
-        if self.memo.is_recursion(&cache_key) {
+        if self.memo.is_recursion(resolved_fn) {
             trace!("  bailing because recursion");
             None
         } else {
