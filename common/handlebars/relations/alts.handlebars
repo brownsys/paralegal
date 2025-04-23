@@ -1,8 +1,0 @@
-// Not used -- these are alternate ways of expressing some of the relations
-// note that these are not necessarily equivalent; some are relaxations that we may use if bugs don't get fixed in time
-
-// control flow (ideal version; after flowistry bug is fixed)
-ctx.has_ctrl_influence({{src}}, &{{sink}})
-
-// flows to
-ctx.flows_to({{src}}, {{sink}}, EdgeSelection::Data)
