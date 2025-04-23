@@ -9,7 +9,6 @@ use nom::{
     sequence::{delimited, tuple},
     IResult,
 };
-use optimizer::optimize;
 use scope::scope;
 use shared::colon;
 
@@ -37,11 +36,10 @@ pub fn parse(s: &str) -> Res<&str, Policy> {
     );
 
     let (remainder, (scope, option_defs, body)) = combinator(s)?;
-    let mut policy = Policy {
+    let policy = Policy {
         definitions: option_defs.unwrap_or_default(),
         scope,
         body,
     };
-    optimize(&mut policy);
     Ok((remainder, policy))
 }

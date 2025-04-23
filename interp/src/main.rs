@@ -99,7 +99,7 @@ impl<'p> Interpreter<'p> {
     fn handle_definition(&mut self, definition: &'p Definition) {
         assert!(matches!(definition.scope, DefinitionScope::Everywhere));
         let results =
-            self.evaluate_var_intro_as_set(&definition.declaration, Some(&definition.filter));
+            self.evaluate_var_intro_as_set(&definition.declaration, definition.filter.as_ref());
         self.define(&definition.variable, Value::Set(results));
     }
 

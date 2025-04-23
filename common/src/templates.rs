@@ -1,10 +1,10 @@
-use handlebars::{Handlebars, no_escape};
+use handlebars::{no_escape, Handlebars};
 use std::collections::HashMap;
 use strum_macros::EnumIter;
 
 use crate::{
-    PolicyScope,
     ast::{ASTNode, Binop, ClauseIntro, Operator, Relation, VariableIntro},
+    PolicyScope,
 };
 
 #[derive(Debug, EnumIter)]

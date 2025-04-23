@@ -2,9 +2,6 @@
     {{intro}}{{#if intro}};{{/if}}
 
     {{var}}_nodes
-    {{#if definition}}
-    .clone().into_iter()
-    {{/if}}
     .any(|{{var}}| {
         {{body}}
     })

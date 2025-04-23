@@ -184,7 +184,9 @@ pub fn verify_definitions_scope(
     for definition in definitions {
         let env_size_before_definition = env.len();
         verify_variable_intro_scope(&definition.declaration, env);
-        verify_scope(&definition.filter, env);
+        if let Some(filter) = &definition.filter {
+            verify_scope(filter, env);
+        }
         // variables introduced in this definition must go out of scope once it ends
         remove_from_env(env, env_size_before_definition);
         env.push((

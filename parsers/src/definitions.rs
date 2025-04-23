@@ -50,7 +50,7 @@ fn definition(s: &str) -> Res<&str, Definition> {
             variable,
             scope,
             declaration,
-            filter,
+            filter: Some(filter),
         },
     ))
 }

@@ -1,29 +1,29 @@
 // definitions are controller-specific by default, but can be specified to be anywhere in the application
 // usually, controller-specific is what you would want
 // I added "Everywhere" support for the websubmit deletion policy, which reasons about all sensitive types that are stored anywhere in the application
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DefinitionScope {
     Ctrler,
     Everywhere,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Definition {
     // quantifier is everywhere "all" bc definitions are over *each* var that satisifes condition
     pub variable: Variable,
     pub scope: DefinitionScope,
     pub declaration: VariableIntro,
-    pub filter: ASTNode,
+    pub filter: Option<ASTNode>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct VariableIntro {
     pub variable: Variable,
     pub intro: VariableIntroType,
 }
 
 // AST data
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum VariableIntroType {
     Roots,
     AllNodes,
@@ -32,7 +32,7 @@ pub enum VariableIntroType {
     VariableSourceOf(Variable),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Relation {
     Binary {
         left: Variable,
@@ -43,7 +43,7 @@ pub enum Relation {
     IsMarked(Variable, Marker),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Binop {
     Data,
     Control,
@@ -54,7 +54,7 @@ pub enum Binop {
 pub type Variable = String;
 pub type Marker = String;
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Operator {
     And,
     Or,
@@ -70,27 +70,27 @@ impl From<&str> for Operator {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TwoNodeObligation {
     pub op: Operator,
     pub src: ASTNode,
     pub sink: ASTNode,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ClauseIntro {
     ForEach(VariableIntro),
     ThereIs(VariableIntro),
     Conditional(Relation),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Clause {
     pub intro: ClauseIntro,
     pub body: ASTNode,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ASTNode {
     Relation(Relation),
     OnlyVia(

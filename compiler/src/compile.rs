@@ -186,8 +186,10 @@ fn compile_definitions(handlebars: &mut Handlebars, definitions: &Vec<Definition
         map.insert("var", definition.variable.clone());
         map.insert("intro", variable_intro);
         let mut counter = 0;
-        let filter = compile_ast_node(handlebars, &definition.filter, &mut counter);
-        map.insert("filter", filter);
+        if let Some(filter) = &definition.filter {
+            let filter = compile_ast_node(handlebars, filter, &mut counter);
+            map.insert("filter", filter);
+        }
         let result = render_template(handlebars, &map, Template::Definition);
         results.push(result);
     }
