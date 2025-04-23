@@ -2,6 +2,7 @@
     {{intro}}{{#if intro}};{{/if}}
 
     {{var}}_nodes
+    {{#if definition}}.iter(){{/if}}
     .all(|{{var}}| {
         {{body}}
     })

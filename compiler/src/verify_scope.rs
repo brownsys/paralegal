@@ -1,9 +1,11 @@
 use common::ast::*;
 
+pub type Environment = Vec<(Variable, VarContext)>;
+
 // context to add to the environment for each variable: was it introduced as a type?
 // used for error checking
-#[derive(Debug, PartialEq, Eq)]
-pub enum VarContext {
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum VarContextType {
     Root,
     Item,
     Type,
@@ -11,57 +13,63 @@ pub enum VarContext {
     VarMarked,
 }
 
-impl From<&mut VarContext> for &str {
-    fn from(value: &mut VarContext) -> Self {
+#[derive(Debug, PartialEq, Eq)]
+pub struct VarContext {
+    typ: VarContextType,
+    pub is_definition: bool,
+}
+
+impl From<&mut VarContextType> for &str {
+    fn from(value: &mut VarContextType) -> Self {
         match *value {
-            VarContext::Root => "as root",
-            VarContext::Item => "as item",
-            VarContext::Type => "as type",
-            VarContext::SourceOf => "as source of",
-            VarContext::VarMarked => "as a variable marked",
+            VarContextType::Root => "as root",
+            VarContextType::Item => "as item",
+            VarContextType::Type => "as type",
+            VarContextType::SourceOf => "as source of",
+            VarContextType::VarMarked => "as a variable marked",
         }
     }
 }
 
-impl From<&VarContext> for &str {
-    fn from(value: &VarContext) -> Self {
-        match *value {
-            VarContext::Root => "as root",
-            VarContext::Item => "as item",
-            VarContext::Type => "as type",
-            VarContext::SourceOf => "as source of",
-            VarContext::VarMarked => "as a variable marked",
+impl From<VarContextType> for &str {
+    fn from(value: VarContextType) -> Self {
+        match value {
+            VarContextType::Root => "as root",
+            VarContextType::Item => "as item",
+            VarContextType::Type => "as type",
+            VarContextType::SourceOf => "as source of",
+            VarContextType::VarMarked => "as a variable marked",
         }
     }
 }
 
-impl From<&VariableIntro> for VarContext {
+impl From<&VariableIntro> for VarContextType {
     fn from(value: &VariableIntro) -> Self {
         match &value.intro {
-            VariableIntroType::Roots => VarContext::Root,
-            VariableIntroType::AllNodes => VarContext::Item,
+            VariableIntroType::Roots => VarContextType::Root,
+            VariableIntroType::AllNodes => VarContextType::Item,
             VariableIntroType::VariableMarked { on_type, .. } => {
                 if *on_type {
-                    VarContext::Type
+                    VarContextType::Type
                 } else {
-                    VarContext::VarMarked
+                    VarContextType::VarMarked
                 }
             }
-            VariableIntroType::VariableSourceOf(_) => VarContext::SourceOf,
+            VariableIntroType::VariableSourceOf(_) => VarContextType::SourceOf,
             _ => unimplemented!("no var context for this type of variable intro"),
         }
     }
 }
 
 // variables must go out of scope once we reach an expression on the same level
-pub fn remove_from_env(env: &mut Vec<(Variable, VarContext)>, len_before: usize) {
+pub fn remove_from_env(env: &mut Environment, len_before: usize) {
     while env.len() > len_before {
         env.pop();
     }
 }
 
 // variable must be in environment before using it
-pub fn verify_var_in_scope(var: &Variable, env: &Vec<(Variable, VarContext)>) {
+pub fn verify_var_in_scope(var: &Variable, env: &Environment) {
     let present = env.iter().any(|(existing_var, _)| var == existing_var);
     if !present {
         dbg!(&env);
@@ -70,7 +78,7 @@ pub fn verify_var_in_scope(var: &Variable, env: &Vec<(Variable, VarContext)>) {
 }
 
 // variable must not already be in environment before introducing it (i.e., no duplicate variable declarations)
-pub fn verify_var_not_in_scope(var: &Variable, env: &Vec<(Variable, VarContext)>) {
+pub fn verify_var_not_in_scope(var: &Variable, env: &Environment) {
     let mut context = None;
     for (existing_var, existing_context) in env {
         if var == existing_var {
@@ -80,7 +88,7 @@ pub fn verify_var_not_in_scope(var: &Variable, env: &Vec<(Variable, VarContext)>
     }
     if context.is_some() {
         dbg!(&env);
-        let context_str: &str = context.unwrap().into();
+        let context_str: &str = context.unwrap().typ.into();
         panic!(
             "Duplicate introduction of variable {}; previously introduced {}.\n",
             var, context_str
@@ -88,7 +96,7 @@ pub fn verify_var_not_in_scope(var: &Variable, env: &Vec<(Variable, VarContext)>
     }
 }
 
-pub fn verify_variable_intro_scope(intro: &VariableIntro, env: &mut Vec<(Variable, VarContext)>) {
+pub fn verify_variable_intro_scope(intro: &VariableIntro, env: &mut Environment) {
     let var = &intro.variable;
     match &intro.intro {
         VariableIntroType::Variable => {
@@ -99,7 +107,11 @@ pub fn verify_variable_intro_scope(intro: &VariableIntro, env: &mut Vec<(Variabl
         | VariableIntroType::AllNodes
         | VariableIntroType::VariableMarked { .. } => {
             verify_var_not_in_scope(var, env);
-            env.push((var.into(), intro.into()));
+            let def = VarContext {
+                typ: intro.into(),
+                is_definition: false,
+            };
+            env.push((var.into(), def));
         }
         VariableIntroType::VariableSourceOf(type_var) => {
             verify_var_not_in_scope(var, env);
@@ -110,8 +122,8 @@ pub fn verify_variable_intro_scope(intro: &VariableIntro, env: &mut Vec<(Variabl
             for (existing_var, context) in &mut *env {
                 if existing_var == type_var {
                     present = true;
-                    if *context != VarContext::Type {
-                        let context_str: &str = context.into();
+                    if context.typ != VarContextType::Type {
+                        let context_str: &str = context.typ.into();
                         panic!("To reference sources of {}, must previously introduce it as a type; was previously introduced as {}", type_var, context_str);
                     }
                 }
@@ -120,12 +132,17 @@ pub fn verify_variable_intro_scope(intro: &VariableIntro, env: &mut Vec<(Variabl
                 panic!("Tried to introduce {} as a source of {}, but {} was not previously introduced as a type", type_var, var, type_var);
             }
 
-            env.push((var.into(), intro.into()));
+            let def = VarContext {
+                typ: intro.into(),
+                is_definition: false,
+            };
+
+            env.push((var.into(), def));
         }
     };
 }
 
-pub fn verify_relation_scope(relation: &Relation, env: &mut Vec<(Variable, VarContext)>) {
+pub fn verify_relation_scope(relation: &Relation, env: &mut Environment) {
     match relation {
         Relation::Binary { left, right, .. } => {
             verify_var_in_scope(left, env);
@@ -141,7 +158,7 @@ pub fn verify_relation_scope(relation: &Relation, env: &mut Vec<(Variable, VarCo
 }
 
 // Verify that the policy is structured properly, i.e., that every variable is in scope (introduced in a clause) before being referenced in a relation.
-pub fn verify_scope(node: &ASTNode, env: &mut Vec<(Variable, VarContext)>) {
+pub fn verify_scope(node: &ASTNode, env: &mut Environment) {
     match node {
         ASTNode::Relation(relation) => {
             verify_relation_scope(relation, env);
@@ -177,10 +194,7 @@ pub fn verify_scope(node: &ASTNode, env: &mut Vec<(Variable, VarContext)>) {
     }
 }
 
-pub fn verify_definitions_scope(
-    definitions: &Vec<Definition>,
-    env: &mut Vec<(Variable, VarContext)>,
-) {
+pub fn verify_definitions_scope(definitions: &Vec<Definition>, env: &mut Environment) {
     for definition in definitions {
         let env_size_before_definition = env.len();
         verify_variable_intro_scope(&definition.declaration, env);
@@ -189,9 +203,11 @@ pub fn verify_definitions_scope(
         }
         // variables introduced in this definition must go out of scope once it ends
         remove_from_env(env, env_size_before_definition);
-        env.push((
-            definition.variable.clone(),
-            (&definition.declaration).into(),
-        ));
+        // reasoning here is that this the variable under which the definition is declared, and everything else is just internal irrelevant stuff
+        let def = VarContext {
+            typ: (&definition.declaration).into(),
+            is_definition: true,
+        };
+        env.push((definition.variable.clone(), def));
     }
 }
