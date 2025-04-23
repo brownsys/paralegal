@@ -28,6 +28,11 @@ pub fn optimize(policy: &mut Policy) {
             ASTNode::Clause(clause) => {
                 match &mut clause.intro {
                     ClauseIntro::ForEach(var_intro) | ClauseIntro::ThereIs(var_intro) => {
+                        // don't handle types for now
+                        if matches!(var_intro.intro, VariableIntroType::VariableSourceOf(_)) {
+                            *policy = og_policy;
+                            return;
+                        }
                         if !intros.contains(&var_intro) {
                             intros.insert(var_intro.clone());
                         }
