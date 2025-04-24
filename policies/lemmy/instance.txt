@@ -1,11 +1,14 @@
 Scope:
 Everywhere
 
+Definitions:
+1. "safe_db_access" is each "db_access" marked instance where:
+    A. "db_access" is not marked instance_safe
+
 Policy:
-1. For each "db_access" marked instance:
-    A. If "db_access" is not marked instance_safe then:
-        a. There is a "dc" marked instance_delete_check where:
-            i) "dc" influences "db_access"
-        and
-        b. There is a "bc" marked instance_ban_check where:
-            i) "bc" influences "db_access"
+1. For each "safe_db_access":
+    A. There is a "dc" marked instance_delete_check where:
+        a. "dc" influences "safe_db_access"
+    and
+    B. There is a "bc" marked instance_ban_check where:
+        a. "bc" influences "safe_db_access"
