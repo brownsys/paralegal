@@ -42,9 +42,9 @@ impl<'tcx> Pctx<'tcx> {
     /// Emit an errror or a warning if relaxed.
     pub fn maybe_span_err(&self, span: Span, msg: impl Into<DiagnosticMessage>) {
         if self.opts().relaxed() {
-            self.tcx().sess.span_err(span, msg);
-        } else {
             self.tcx().sess.span_warn(span, msg);
+        } else {
+            self.tcx().sess.span_err(span, msg);
         }
     }
 }
