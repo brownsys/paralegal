@@ -13,12 +13,19 @@ pub fn optimize(policy: &mut Policy) {
             ASTNode::Clause(clause) => {
                 match &clause.intro {
                     ClauseIntro::ForEach(var_intro) | ClauseIntro::ThereIs(var_intro) => {
-                        // Sources of types need to be nested; do not attempt to move them
-                        if !matches!(var_intro.intro, VariableIntroType::VariableSourceOf(_)) {
-                            intros
-                                .entry(&var_intro.variable)
-                                .and_modify(|intros| intros.push(var_intro))
-                                .or_insert(vec![var_intro]);
+                        match var_intro.intro {
+                            VariableIntroType::AllNodes
+                            | VariableIntroType::Roots
+                            | VariableIntroType::VariableMarked { .. } => {
+                                intros
+                                    .entry(&var_intro.variable)
+                                    .and_modify(|intros| intros.push(var_intro))
+                                    .or_insert(vec![var_intro]);
+                            }
+                            // Sources of types need to be nested; do not attempt to move them
+                            // Variables by themselves refer to existing definitions, so don't attempt to redefine them
+                            VariableIntroType::VariableSourceOf(_)
+                            | VariableIntroType::Variable => {}
                         }
                     }
                     ClauseIntro::Conditional(_) => {}
