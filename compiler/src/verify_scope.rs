@@ -72,7 +72,6 @@ pub fn remove_from_env(env: &mut Environment, len_before: usize) {
 pub fn verify_var_in_scope(var: &Variable, env: &Environment) {
     let present = env.iter().any(|(existing_var, _)| var == existing_var);
     if !present {
-        dbg!(&env);
         panic!("Must introduce variable {} before using it.\n", var);
     }
 }
@@ -87,7 +86,6 @@ pub fn verify_var_not_in_scope(var: &Variable, env: &Environment) {
         }
     }
     if context.is_some() {
-        dbg!(&env);
         let context_str: &str = context.unwrap().typ.into();
         panic!(
             "Duplicate introduction of variable {}; previously introduced {}.\n",

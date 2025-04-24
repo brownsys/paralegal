@@ -12,6 +12,7 @@ fn compile_variable_intro(
     handlebars: &mut Handlebars,
     intro: &VariableIntro,
     map: &mut HashMap<&str, String>,
+    env: &Environment,
 ) -> (String, String) {
     map.insert("var", intro.variable.clone());
 
@@ -19,13 +20,23 @@ fn compile_variable_intro(
         VariableIntroType::Roots | VariableIntroType::AllNodes => (),
         VariableIntroType::Variable => {
             // just insert a non-null string
-            map.insert("definition", String::from("true"));
+            map.insert("var-definition", String::from("true"));
         }
         VariableIntroType::VariableMarked { marker, .. } => {
             map.insert("marker", marker.into());
         }
         VariableIntroType::VariableSourceOf(type_var) => {
             map.insert("type-var", type_var.into());
+
+            for (env_var, ctx) in env {
+                if !ctx.is_definition {
+                    continue;
+                }
+
+                if env_var == type_var {
+                    map.insert("typ-definition", String::from("true"));
+                }
+            }
         }
     };
     (
@@ -45,7 +56,6 @@ fn compile_relation(
             map.insert("src", left.into());
             map.insert("sink", right.into());
 
-            dbg!(&env, &left, &right);
             for (env_var, ctx) in env {
                 if !ctx.is_definition {
                     continue;
@@ -94,10 +104,10 @@ fn compile_ast_node(
             let mut only_via_map: HashMap<&str, Vec<String>> = HashMap::new();
 
             let (src_var, compiled_src_intro) =
-                compile_variable_intro(handlebars, src_intro, &mut map);
+                compile_variable_intro(handlebars, src_intro, &mut map, env);
             map.insert("intro", compiled_src_intro);
             let src_intro = render_template(handlebars, &map, Template::OnlyViaIntro);
-            map.remove_entry("definition");
+            map.remove_entry("var-definition");
             only_via_map.insert("src-intros", vec![src_intro]);
             only_via_map.insert("src", vec![src_var]);
 
@@ -108,11 +118,11 @@ fn compile_ast_node(
                     let mut vars: Vec<String> = vec![];
                     for intro in &sink_intro.1 {
                         let (sink_var, compiled_sink_intro) =
-                            compile_variable_intro(handlebars, intro, &mut map);
+                            compile_variable_intro(handlebars, intro, &mut map, env);
                         map.insert("intro", compiled_sink_intro);
                         let only_via_intro =
                             render_template(handlebars, &map, Template::OnlyViaIntro);
-                        map.remove_entry("definition");
+                        map.remove_entry("var-definition");
                         compiled_intros.push(only_via_intro);
                         vars.push(sink_var);
                     }
@@ -125,10 +135,10 @@ fn compile_ast_node(
                 // no operator, so just a single variable intro in the vector
                 None => {
                     let (sink_var, compiled_sink_intro) =
-                        compile_variable_intro(handlebars, &sink_intro.1[0], &mut map);
+                        compile_variable_intro(handlebars, &sink_intro.1[0], &mut map, env);
                     map.insert("intro", compiled_sink_intro);
                     let only_via_intro = render_template(handlebars, &map, Template::OnlyViaIntro);
-                    map.remove_entry("definition");
+                    map.remove_entry("var-definition");
                     only_via_map.insert("sink-intros", vec![only_via_intro]);
                     only_via_map.insert("sink-names", vec![sink_var]);
                 }
@@ -141,11 +151,11 @@ fn compile_ast_node(
                     let mut vars: Vec<String> = vec![];
                     for intro in &checkpoint_intro.1 {
                         let (checkpoint_var, compiled_checkpoint_intro) =
-                            compile_variable_intro(handlebars, &intro, &mut map);
+                            compile_variable_intro(handlebars, intro, &mut map, env);
                         map.insert("intro", compiled_checkpoint_intro);
                         let only_via_intro =
                             render_template(handlebars, &map, Template::OnlyViaIntro);
-                        map.remove_entry("definition");
+                        map.remove_entry("var-definition");
                         compiled_intros.push(only_via_intro);
                         vars.push(checkpoint_var);
                     }
@@ -159,10 +169,10 @@ fn compile_ast_node(
                 // no operator, so just a single variable intro in the vector
                 None => {
                     let (checkpoint_var, compiled_checkpoint_intro) =
-                        compile_variable_intro(handlebars, &checkpoint_intro.1[0], &mut map);
+                        compile_variable_intro(handlebars, &checkpoint_intro.1[0], &mut map, env);
                     map.insert("intro", compiled_checkpoint_intro);
                     let only_via_intro = render_template(handlebars, &map, Template::OnlyViaIntro);
-                    map.remove_entry("definition");
+                    map.remove_entry("var-definition");
                     only_via_map.insert("checkpoint-intros", vec![only_via_intro]);
                     only_via_map.insert("checkpoint-names", vec![checkpoint_var]);
                 }
@@ -183,7 +193,7 @@ fn compile_ast_node(
             let variable_intro = match &clause.intro {
                 ClauseIntro::ForEach(intro) | ClauseIntro::ThereIs(intro) => {
                     let (variable, variable_intro) =
-                        compile_variable_intro(handlebars, intro, &mut map);
+                        compile_variable_intro(handlebars, intro, &mut map, env);
                     for (env_var, ctx) in env {
                         if !ctx.is_definition {
                             continue;
@@ -217,11 +227,8 @@ fn compile_definitions(
     let mut map: HashMap<&str, String> = HashMap::new();
     let mut results: Vec<String> = Vec::new();
     for definition in definitions {
-        if let DefinitionScope::Everywhere = definition.scope {
-            map.insert("everywhere", String::from("true"));
-        }
         let (inner_var, variable_intro) =
-            compile_variable_intro(handlebars, &definition.declaration, &mut map);
+            compile_variable_intro(handlebars, &definition.declaration, &mut map, env);
         map.insert("inner_var", inner_var);
         map.insert("var", definition.variable.clone());
         map.insert("intro", variable_intro);
@@ -230,7 +237,12 @@ fn compile_definitions(
             let filter = compile_ast_node(handlebars, filter, &mut counter, env);
             map.insert("filter", filter);
         }
-        let result = render_template(handlebars, &map, Template::Definition);
+        let result = if let DefinitionScope::Everywhere = definition.scope {
+            render_template(handlebars, &map, Template::GlobalDefinition)
+        } else {
+            render_template(handlebars, &map, Template::Definition)
+        };
+
         results.push(result);
     }
 
@@ -238,7 +250,6 @@ fn compile_definitions(
 }
 
 pub fn compile(policy: Policy, policy_name: &str, out: &Path, create_bin: bool) -> Result<()> {
-    dbg!(&policy);
     let mut handlebars = Handlebars::new();
     handlebars.set_strict_mode(true);
     register_templates(&mut handlebars);
@@ -250,8 +261,17 @@ pub fn compile(policy: Policy, policy_name: &str, out: &Path, create_bin: bool) 
 
     // compile definitions & policy
     let mut map: HashMap<&str, String> = HashMap::new();
-    let compiled_definitions = compile_definitions(&mut handlebars, &policy.definitions, &env);
-    map.insert("definitions", compiled_definitions);
+    let (global_definitions, ctrler_definitions): (Vec<_>, Vec<_>) = policy
+        .definitions
+        .into_iter()
+        .partition(|def| matches!(def.scope, DefinitionScope::Everywhere));
+    let compiled_global_definitions =
+        compile_definitions(&mut handlebars, &global_definitions, &env);
+    let compiled_ctrler_definitions =
+        compile_definitions(&mut handlebars, &ctrler_definitions, &env);
+    map.insert("global-definitions", compiled_global_definitions);
+    map.insert("definitions", compiled_ctrler_definitions);
+
     let mut counter = 0;
     let compiled_body = compile_ast_node(&mut handlebars, &policy.body, &mut counter, &env);
     map.insert("body", compiled_body);

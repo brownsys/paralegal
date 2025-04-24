@@ -7,12 +7,13 @@ use crate::{
     PolicyScope,
 };
 
-#[derive(Debug, EnumIter)]
+#[derive(Clone, Debug, EnumIter, strum_macros::Display)]
 pub enum Template {
     // all policies use base
     Base,
     // If we are creating a runnable binary we use this, which also includes base
     Main,
+    GlobalDefinition,
     Definition,
     // variable intro
     Roots,
@@ -52,7 +53,8 @@ impl From<Template> for &str {
         match value {
             Template::Base => "misc/base.handlebars",
             Template::Main => "misc/main.handlebars",
-            Template::Definition => "misc/definition.handlebars",
+            Template::GlobalDefinition => "definitions/global-definition.handlebars",
+            Template::Definition => "definitions/definition.handlebars",
             Template::Roots => "variable-intros/roots.handlebars",
             Template::AllNodes => "variable-intros/all-nodes.handlebars",
             Template::Variable => "variable-intros/variable.handlebars",
@@ -166,18 +168,19 @@ pub fn render_template(
     map: &HashMap<&str, String>,
     template: Template,
 ) -> String {
-    let name: &str = template.into();
+    let name: &str = template.clone().into();
     handlebars
         .render(name, &map)
-        .unwrap_or_else(|_| panic!("Could not render {name} handlebars template"))
+        .unwrap_or_else(|e| panic!("Could not render {name} handlebars template {template}: {e}"))
 }
 
 pub fn render_only_via_template(
     handlebars: &mut Handlebars,
     map: &HashMap<&str, Vec<String>>,
 ) -> String {
+    let template = Template::OnlyVia;
     let name: &str = Template::OnlyVia.into();
     handlebars
         .render(name, &map)
-        .unwrap_or_else(|_| panic!("Could not render {name} handlebars template"))
+        .unwrap_or_else(|e| panic!("Could not render {name} handlebars template {template}: {e}"))
 }

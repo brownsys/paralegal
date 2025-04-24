@@ -22,8 +22,7 @@ pub fn optimize(policy: &mut Policy) {
     let mut queue: Vec<&mut ASTNode> = vec![];
     queue.push(&mut policy.body);
 
-    while !queue.is_empty() {
-        let node = queue.pop().unwrap();
+    while let Some(node) = queue.pop() {
         match node {
             ASTNode::Clause(clause) => {
                 match &mut clause.intro {
@@ -33,7 +32,7 @@ pub fn optimize(policy: &mut Policy) {
                             *policy = og_policy;
                             return;
                         }
-                        if !intros.contains(&var_intro) {
+                        if !intros.contains(var_intro) {
                             intros.insert(var_intro.clone());
                         }
                         var_intro.intro = VariableIntroType::Variable;
@@ -72,8 +71,6 @@ pub fn optimize(policy: &mut Policy) {
     policy
         .definitions
         .sort_by(|a, b| a.variable.cmp(&b.variable));
-
-    dbg!(policy);
 }
 
 #[cfg(test)]

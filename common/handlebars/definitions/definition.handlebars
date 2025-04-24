@@ -4,9 +4,7 @@
     ;
     let {{var}}_nodes = {{inner_var}}_nodes.filter(|n| {
     let {{inner_var}} = *n;
-    {{#if everywhere}}ctx.controller_contexts().any(|ctx| { {{/if}}
     {{{filter}}}
-    {{#if everywhere}}}){{/if}}
     })
 {{/if}}
 .collect::<Vec<_>>();
