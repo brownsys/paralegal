@@ -1,7 +1,17 @@
 use std::env;
 use std::path::PathBuf;
+use std::process::Command;
 
 fn rustup_toolchain_path() -> PathBuf {
+    if let Ok(sysroot) = Command::new("rustc").arg("--print").arg("sysroot").output() {
+        return PathBuf::from(
+            String::from_utf8(sysroot.stdout)
+                .unwrap()
+                .trim()
+                .to_string(),
+        );
+    }
+
     let rustup_home = env::var("RUSTUP_HOME").unwrap();
     let rustup_tc = env::var("RUSTUP_TOOLCHAIN").unwrap();
     [&rustup_home, "toolchains", &rustup_tc]
