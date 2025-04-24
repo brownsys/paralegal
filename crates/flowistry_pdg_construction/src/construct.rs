@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cell::RefCell, fmt, hash::Hash, pin::Pin, rc::Rc};
+use std::{borrow::Cow, fmt, hash::Hash, rc::Rc};
 
 use either::Either;
 use flowistry::mir::FlowistryInput;
@@ -17,8 +17,6 @@ use rustc_middle::{
     ty::{Instance, TyCtxt},
 };
 use rustc_mir_dataflow::{self as df};
-
-use rustc_utils::cache::Cache;
 
 use crate::{
     async_support::*,
@@ -837,6 +835,7 @@ impl GraphSizeEstimator {
         )
     }
 
+    #[allow(dead_code)]
     fn format_max_call_string(&self, tcx: TyCtxt<'_>) -> String {
         self.max_call_string
             .iter()

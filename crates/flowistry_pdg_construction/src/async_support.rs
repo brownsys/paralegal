@@ -2,7 +2,6 @@ use std::rc::Rc;
 
 use either::Either;
 
-
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
@@ -16,10 +15,7 @@ use rustc_span::Span;
 
 use crate::utils::{is_async, TyAsFnResult};
 
-use super::{
-    local_analysis::{LocalAnalysis},
-    utils,
-};
+use super::{local_analysis::LocalAnalysis, utils};
 
 /// Describe in which way a function is `async`.
 ///
@@ -190,13 +186,6 @@ pub fn determine_async<'tcx>(
     let param_env = tcx.param_env_reveal_all_normalized(def_id);
     let generator_fn = utils::try_resolve_function(tcx, generator_def_id, param_env, args)?;
     Some((generator_fn, loc, asyncness))
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AsyncDeterminationResult<T> {
-    Resolved(T),
-    Unresolvable(String),
-    NotAsync,
 }
 
 /// Does this instance refer to an `async fn` or `async {}`.

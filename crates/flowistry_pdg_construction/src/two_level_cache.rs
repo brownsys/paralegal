@@ -110,6 +110,8 @@ impl<K1: Eq + Hash + Clone, K2: Eq + Hash + Clone, Out> TwoLevelCache<K1, K2, Ou
             .get(k1)
             .map_or(false, |v| v.1.contains_key(k2))
     }
+
+    #[allow(dead_code)]
     /// Safety: Invalidates all references
     pub(crate) unsafe fn clear(&self) {
         self.0.borrow_mut().clear()
