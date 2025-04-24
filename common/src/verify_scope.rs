@@ -56,7 +56,7 @@ impl From<&VariableIntro> for VarContextType {
                 }
             }
             VariableIntroType::VariableSourceOf(_) => VarContextType::SourceOf,
-            _ => unimplemented!("no var context for this type of variable intro"),
+            VariableIntroType::Variable => unimplemented!("no var context for {}", &value.intro),
         }
     }
 }

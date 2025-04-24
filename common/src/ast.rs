@@ -23,7 +23,7 @@ pub struct VariableIntro {
 }
 
 // AST data
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, strum_macros::Display)]
 pub enum VariableIntroType {
     Roots,
     AllNodes,
