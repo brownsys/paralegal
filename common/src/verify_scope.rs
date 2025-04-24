@@ -15,7 +15,7 @@ pub enum VarContextType {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct VarContext {
-    typ: VarContextType,
+    pub typ: VarContextType,
     pub is_definition: bool,
 }
 
@@ -198,7 +198,10 @@ pub fn verify_definitions_scope(definitions: &Vec<Definition>, env: &mut Environ
         }
         // variables introduced in this definition must go out of scope once it ends
         remove_from_env(env, env_size_before_definition);
-        // reasoning here is that this the variable under which the definition is declared, and everything else is just internal irrelevant stuff
+
+        // Add this so that the body of the policy can reference the definitions.
+        // Only the body should use this environment; when compiling definitions, we construct a separate environment
+        // that only knows about the definitions declared above it.
         let def = VarContext {
             typ: (&definition.declaration).into(),
             is_definition: true,

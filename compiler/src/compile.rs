@@ -221,30 +221,43 @@ fn compile_ast_node(
     }
 }
 
-fn compile_definitions(
+fn compile_definition(
     handlebars: &mut Handlebars,
-    definitions: &Vec<Definition>,
+    definition: &Definition,
     env: &Environment,
 ) -> String {
     let mut map: HashMap<&str, String> = HashMap::new();
-    let mut results: Vec<String> = Vec::new();
+    let (inner_var, variable_intro) =
+        compile_variable_intro(handlebars, &definition.declaration, &mut map, env);
+    map.insert("inner_var", inner_var);
+    map.insert("var", definition.variable.clone());
+    map.insert("intro", variable_intro);
+    let mut counter = 0;
+    if let Some(filter) = &definition.filter {
+        let filter = compile_ast_node(handlebars, filter, &mut counter, env);
+        map.insert("filter", filter);
+    }
+    if let DefinitionScope::Everywhere = definition.scope {
+        render_template(handlebars, &map, Template::GlobalDefinition)
+    } else {
+        render_template(handlebars, &map, Template::Definition)
+    }
+}
+
+fn compile_definitions(handlebars: &mut Handlebars, definitions: &[Definition]) -> String {
+    // Definitions use their own environment so that each definition only knows about the definition above it.
+    let mut env = Environment::new();
+    let mut results = vec![];
+
+    // should be compiling everything in the same order it was declared... I think?
+    // so that the env doesn't reference stuff that's declared later
     for definition in definitions {
-        let (inner_var, variable_intro) =
-            compile_variable_intro(handlebars, &definition.declaration, &mut map, env);
-        map.insert("inner_var", inner_var);
-        map.insert("var", definition.variable.clone());
-        map.insert("intro", variable_intro);
-        let mut counter = 0;
-        if let Some(filter) = &definition.filter {
-            let filter = compile_ast_node(handlebars, filter, &mut counter, env);
-            map.insert("filter", filter);
-        }
-        let result = if let DefinitionScope::Everywhere = definition.scope {
-            render_template(handlebars, &map, Template::GlobalDefinition)
-        } else {
-            render_template(handlebars, &map, Template::Definition)
+        let result = compile_definition(handlebars, &definition, &env);
+        let def = VarContext {
+            typ: (&definition.declaration).into(),
+            is_definition: true,
         };
-        map.remove_entry("filter");
+        env.push((definition.variable.clone(), def));
 
         results.push(result);
     }
@@ -269,10 +282,8 @@ pub fn compile(
         .definitions
         .into_iter()
         .partition(|def| matches!(def.scope, DefinitionScope::Everywhere));
-    let compiled_global_definitions =
-        compile_definitions(&mut handlebars, &global_definitions, env);
-    let compiled_ctrler_definitions =
-        compile_definitions(&mut handlebars, &ctrler_definitions, env);
+    let compiled_global_definitions = compile_definitions(&mut handlebars, &global_definitions);
+    let compiled_ctrler_definitions = compile_definitions(&mut handlebars, &ctrler_definitions);
     map.insert("global-definitions", compiled_global_definitions);
     map.insert("definitions", compiled_ctrler_definitions);
 
