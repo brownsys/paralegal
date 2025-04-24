@@ -5,8 +5,8 @@ use std::io::Result;
 use std::process::Command;
 use std::{collections::HashMap, path::Path};
 
-use crate::verify_scope::{verify_definitions_scope, verify_scope, Environment};
 use common::templates::*;
+use common::verify_scope::*;
 
 fn compile_variable_intro(
     handlebars: &mut Handlebars,
@@ -249,15 +249,16 @@ fn compile_definitions(
     results.join("\n")
 }
 
-pub fn compile(policy: Policy, policy_name: &str, out: &Path, create_bin: bool) -> Result<()> {
+pub fn compile(
+    policy: Policy,
+    policy_name: &str,
+    out: &Path,
+    env: &Environment,
+    create_bin: bool,
+) -> Result<()> {
     let mut handlebars = Handlebars::new();
     handlebars.set_strict_mode(true);
     register_templates(&mut handlebars);
-
-    // verify that variables in definitions & policy are properly scoped
-    let mut env: Environment = Vec::new();
-    verify_definitions_scope(&policy.definitions, &mut env);
-    verify_scope(&policy.body, &mut env);
 
     // compile definitions & policy
     let mut map: HashMap<&str, String> = HashMap::new();
@@ -266,14 +267,14 @@ pub fn compile(policy: Policy, policy_name: &str, out: &Path, create_bin: bool) 
         .into_iter()
         .partition(|def| matches!(def.scope, DefinitionScope::Everywhere));
     let compiled_global_definitions =
-        compile_definitions(&mut handlebars, &global_definitions, &env);
+        compile_definitions(&mut handlebars, &global_definitions, env);
     let compiled_ctrler_definitions =
-        compile_definitions(&mut handlebars, &ctrler_definitions, &env);
+        compile_definitions(&mut handlebars, &ctrler_definitions, env);
     map.insert("global-definitions", compiled_global_definitions);
     map.insert("definitions", compiled_ctrler_definitions);
 
     let mut counter = 0;
-    let compiled_body = compile_ast_node(&mut handlebars, &policy.body, &mut counter, &env);
+    let compiled_body = compile_ast_node(&mut handlebars, &policy.body, &mut counter, env);
     map.insert("body", compiled_body);
 
     // render final policy

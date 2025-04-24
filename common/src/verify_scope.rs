@@ -1,4 +1,4 @@
-use common::ast::*;
+use crate::ast::*;
 
 pub type Environment = Vec<(Variable, VarContext)>;
 
@@ -114,9 +114,6 @@ pub fn verify_variable_intro_scope(intro: &VariableIntro, env: &mut Environment)
         VariableIntroType::VariableSourceOf(type_var) => {
             verify_var_not_in_scope(var, env);
             let mut present = false;
-            // TODO this &mut *env is weird... is this really the best way of doing it?
-            // just need to be able to push var at the end w/o moving the value here
-            // I also do not need mutable references to existing_var or context
             for (existing_var, context) in &mut *env {
                 if existing_var == type_var {
                     present = true;

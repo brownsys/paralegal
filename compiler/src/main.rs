@@ -6,7 +6,8 @@ use parsers::parse;
 use std::io::Result;
 
 mod compile;
-mod verify_scope;
+
+use common::{verify_scope::*, Policy};
 
 /// A compiler for Paralegal's Controlled Natural Language (CNL) policies.
 ///
@@ -35,19 +36,31 @@ struct Args {
     out: PathBuf,
 }
 
+fn create_environment(policy: &Policy) -> Environment {
+    let mut env = Environment::new();
+    verify_definitions_scope(&policy.definitions, &mut env);
+    verify_scope(&policy.body, &mut env);
+    env
+}
+
 fn run(args: &Args) -> Result<()> {
     let policy = fs::read_to_string(&args.path).expect("Could not read policy file");
 
     let res = parse(&policy);
     match res {
         Ok((_, mut policy)) => {
+            // Verify that variables in definitions & policy are properly scoped.
+            // If this fails, then the user made a mistake writing their policy.
+            create_environment(&policy);
             optimizer::optimize(&mut policy);
+            let env = create_environment(&policy);
             compile::compile(
                 policy,
                 args.path
                     .file_name()
                     .map_or("<unnamed>", |n| n.to_str().unwrap()),
                 &args.out,
+                &env,
                 args.bin,
             )
         }
