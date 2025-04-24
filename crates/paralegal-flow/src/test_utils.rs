@@ -6,6 +6,7 @@ extern crate rustc_span;
 
 use hir::def_id::DefId;
 use rustc_interface::interface;
+use rustc_middle::ty::TyCtxt;
 
 use crate::{
     ann::dump_markers,
@@ -238,6 +239,13 @@ impl InlineTestBuilder {
     }
 
     pub fn run(&self, f: impl FnOnce(PreFrg) + Send) -> interface::Result<()> {
+        self.run_with_tcx(|_, graph| f(graph))
+    }
+
+    pub fn run_with_tcx(
+        &self,
+        f: impl for<'tcx> FnOnce(TyCtxt<'tcx>, PreFrg) + Send,
+    ) -> interface::Result<()> {
         use clap::Parser;
 
         #[derive(clap::Parser)]
@@ -267,7 +275,7 @@ impl InlineTestBuilder {
                     .run_in_context_without_writing_stats(tcx)
                     .unwrap();
                 let graph = PreFrg::from_description(pdg);
-                f(graph)
+                f(tcx, graph)
             })
     }
 }
