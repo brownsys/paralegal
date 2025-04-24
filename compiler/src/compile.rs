@@ -11,9 +11,10 @@ use common::verify_scope::*;
 fn compile_variable_intro(
     handlebars: &mut Handlebars,
     intro: &VariableIntro,
-    map: &mut HashMap<&str, String>,
+    _map: &mut HashMap<&str, String>,
     env: &Environment,
 ) -> (String, String) {
+    let mut map: HashMap<&str, String> = HashMap::new();
     map.insert("var", intro.variable.clone());
 
     match &intro.intro {
@@ -41,16 +42,17 @@ fn compile_variable_intro(
     };
     (
         intro.variable.clone(),
-        render_template(handlebars, map, intro.into()),
+        render_template(handlebars, &map, intro.into()),
     )
 }
 
 fn compile_relation(
     handlebars: &mut Handlebars,
     relation: &Relation,
-    map: &mut HashMap<&str, String>,
+    _map: &mut HashMap<&str, String>,
     env: &Environment,
 ) -> String {
+    let mut map: HashMap<&str, String> = HashMap::new();
     match relation {
         Relation::Binary { left, right, .. } => {
             map.insert("src", left.into());
@@ -69,7 +71,7 @@ fn compile_relation(
             }
         }
         Relation::Negation(inner) => {
-            let value = compile_relation(handlebars, inner, map, env);
+            let value = compile_relation(handlebars, inner, &mut map, env);
             map.insert("value", value);
         }
         Relation::IsMarked(var, marker) => {
@@ -86,7 +88,7 @@ fn compile_relation(
             }
         }
     }
-    render_template(handlebars, map, relation.into())
+    render_template(handlebars, &map, relation.into())
 }
 
 // for joined nodes, we don't know how many expressions we're and/oring together in the whole policy,
@@ -242,6 +244,7 @@ fn compile_definitions(
         } else {
             render_template(handlebars, &map, Template::Definition)
         };
+        map.remove_entry("filter");
 
         results.push(result);
     }
