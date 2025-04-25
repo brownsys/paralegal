@@ -51,6 +51,7 @@ fn definition(s: &str) -> Res<&str, Definition> {
             scope,
             declaration,
             filter: Some(filter),
+            lifted_from: None,
         },
     ))
 }

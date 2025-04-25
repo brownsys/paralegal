@@ -1,1 +1,3 @@
-ctx.influencers({{#if sink-definition}}*{{/if}}{{sink}}, EdgeSelection::Both).any(|n| n == {{#if src-definition}}*{{/if}}{{src}})
+{{src}}
+    .flows_to_all(&{{sink}}, &ctx, EdgeSelection::Both)
+    .is_none()

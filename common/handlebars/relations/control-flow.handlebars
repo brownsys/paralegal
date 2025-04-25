@@ -1,1 +1,3 @@
-ctx.has_ctrl_influence({{#if src-definition}}*{{/if}}{{src}}, {{#if sink-definition}}*{{/if}}{{sink}})
+{{src}}
+    .has_ctrl_influence_all(&{{sink}}, &ctx)
+    .is_none()

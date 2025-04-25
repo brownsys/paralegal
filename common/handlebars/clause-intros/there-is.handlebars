@@ -1,9 +1,13 @@
+{{#if lifted}}
+{{body}}
+{{else}}
 {
-    {{intro}}{{#if intro}};{{/if}}
+    let mut {{var}} = {{intro}};
 
-    {{var}}_nodes
+    {{var}}
     {{#if definition}}.iter(){{/if}}
     .any(|{{var}}| {
         {{body}}
     })
 }
+{{/if}}

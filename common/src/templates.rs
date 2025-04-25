@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use strum_macros::EnumIter;
 
 use crate::{
-    ast::{ASTNode, Binop, ClauseIntro, Operator, Relation, VariableIntro},
+    ast::{ASTNode, Binop, ClauseIntro, Operator, Position, Relation, VariableIntro},
     PolicyScope,
 };
 
@@ -18,7 +18,7 @@ pub enum Template {
     // variable intro
     Roots,
     AllNodes,
-    Variable, // TODO not sure this needs one? but may be easier to just give it one bc everything else has one
+    Variable,
     VariableMarked,
     VariableOfTypeMarked,
     VariableSourceOf,
@@ -42,6 +42,13 @@ pub enum Template {
     Everywhere,
     Somewhere,
     InCtrler,
+    // Fused clause templates
+    BothSource,
+    BothTarget,
+    ControlSource,
+    ControlTarget,
+    DataSource,
+    DataTarget,
 }
 
 #[derive(rust_embed::RustEmbed)]
@@ -77,6 +84,12 @@ impl From<Template> for &str {
             Template::Somewhere => "scope/somewhere.handlebars",
             Template::InCtrler => "scope/in-ctrler.handlebars",
             Template::Negation => "relations/negation.handlebars",
+            Template::BothSource => "fused-clauses/both-source.handlebars",
+            Template::BothTarget => "fused-clauses/both-target.handlebars",
+            Template::ControlSource => "fused-clauses/control-source.handlebars",
+            Template::ControlTarget => "fused-clauses/control-target.handlebars",
+            Template::DataSource => "fused-clauses/data-source.handlebars",
+            Template::DataTarget => "fused-clauses/data-target.handlebars",
         }
     }
 }
@@ -152,6 +165,15 @@ impl From<&ASTNode> for Template {
             ASTNode::OnlyVia { .. } => Template::OnlyVia,
             ASTNode::Clause(clause) => (&clause.intro).into(),
             ASTNode::JoinedNodes(obligation) => (&obligation.op).into(),
+            ASTNode::FusedClause(clause) => match (&clause.binop, &clause.pos) {
+                (Binop::AssociatedCallSite, _) => unreachable!("not eligible for fusing"),
+                (Binop::Both, Position::Source) => Template::BothSource,
+                (Binop::Both, Position::Target) => Template::BothTarget,
+                (Binop::Control, Position::Source) => Template::ControlSource,
+                (Binop::Control, Position::Target) => Template::ControlTarget,
+                (Binop::Data, Position::Source) => Template::DataSource,
+                (Binop::Data, Position::Target) => Template::DataTarget,
+            },
         }
     }
 }

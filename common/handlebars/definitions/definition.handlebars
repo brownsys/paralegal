@@ -1,10 +1,15 @@
+{{#if lifted}}
 {{intro}}
-
+{{else}}
+let mut {{var}} = {{intro}})
+{{/if}}
 {{#if filter}}
-    ;
-    let {{var}}_nodes = {{inner_var}}_nodes.filter(|n| {
-    let {{inner_var}} = *n;
-    {{{filter}}}
+    .filter(|n| {
+        let {{inner_var}} = *n;
+        {{{filter}}}
     })
 {{/if}}
-.collect::<Vec<_>>();
+{{#if lifted}}
+) else { return {{short-circuit}}; }
+{{/if}}
+;

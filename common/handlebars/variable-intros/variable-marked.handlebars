@@ -1,1 +1,5 @@
-let mut {{var}}_nodes = ctx.nodes_marked_any_way(marker!({{marker}}))
+{{#if lifted}}
+let Some({{var}}) = NodeCluster::try_from_iter(ctx.nodes_marked_any_way(marker!({{marker}}))
+{{else}}
+ctx.nodes_marked_any_way(marker!({{marker}}))
+{{/if}}

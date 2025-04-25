@@ -36,11 +36,10 @@ struct Args {
     out: PathBuf,
 }
 
-fn create_environment(policy: &Policy) -> Environment {
+fn check_environment(policy: &Policy) {
     let mut env = Environment::new();
     verify_definitions_scope(&policy.definitions, &mut env);
     verify_scope(&policy.body, &mut env);
-    env
 }
 
 fn run(args: &Args) -> Result<()> {
@@ -51,16 +50,14 @@ fn run(args: &Args) -> Result<()> {
         Ok((_, mut policy)) => {
             // Verify that variables in definitions & policy are properly scoped.
             // If this fails, then the user made a mistake writing their policy.
-            create_environment(&policy);
-            optimizer::optimize(&mut policy);
-            let env = create_environment(&policy);
+            check_environment(&policy);
+            let policy = optimizer::optimize(&mut policy);
             compile::compile(
                 policy,
                 args.path
                     .file_name()
                     .map_or("<unnamed>", |n| n.to_str().unwrap()),
                 &args.out,
-                &env,
                 args.bin,
             )
         }
