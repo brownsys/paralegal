@@ -1,10 +1,15 @@
-{{#unless refers-to-definition}}
+{{#if refers-to-definition}}
     {{#if node-cluster}}
-        {{intro}}) else { return true; };
+        let Some(mut {{var}}) = {{var}}.clone() else { return true; };
+    {{/if}}
+{{else}}
+    {{#if node-cluster}}
+        {{intro}});
+        let Some(mut {{var}}) = {{var}} else { return true; };
     {{else}}
         let mut {{var}} = {{intro}};
     {{/if}}
-{{/unless}}
+{{/if}}
 
 {{#if node-cluster}}
 {{body}}
