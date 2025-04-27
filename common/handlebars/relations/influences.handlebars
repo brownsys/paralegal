@@ -1,3 +1,2 @@
 {{src}}
-    .flows_to_all({{#if node-cluster}}&{{/if}}{{sink}}, &ctx, EdgeSelection::Both)
-    .is_none()
+    .flows_to({{#if node-cluster}}&{{/if}}{{sink}}, &ctx, EdgeSelection::Both)
