@@ -1,33 +1,50 @@
-use std::collections::HashMap;
-
 use common::{ast::*, Policy};
 
+/// Traverse the policy body and lift variable declarations to be definitions where possible.
+/// This lets us avoid repeated graph searches for the same variables.
 type LiftedIntros = Vec<(VariableIntro, OgClauseIntroType)>;
 
 /// Traverse the policy body and lift variable declarations to be definitions where possible.
 /// This lets us avoid repeated graph searches for the same variables.
 fn lift_definitions(policy: &mut Policy) {
-    let mut intros: HashMap<&Variable, LiftedIntros> = HashMap::new();
+    // This needs to be a vector, rather than a HashMap, to preserve the order that the policy declares variables.
+    // This is so that when we short-circuit on NodeCluster initialization failure, we short-circuit with the right value.
+    // For example, see the Lemmy community policy--the "there is" definitions should be after the "for each" so that we only
+    // fail for a lack of deletion/ban checks if there is a write.
+    let mut intros: Vec<(&Variable, LiftedIntros)> = Vec::new();
     let mut queue: Vec<&ASTNode> = vec![];
     queue.push(&policy.body);
 
+    fn add_intro_to_vec<'a>(
+        intros: &mut Vec<(&'a Variable, LiftedIntros)>,
+        var_intro: &'a VariableIntro,
+        clause_intro: &'a ClauseIntro,
+    ) {
+        let var = &var_intro.variable;
+        if let Some((_, intros_list)) = intros.iter_mut().find(|(v, _)| **v == *var) {
+            intros_list.push((var_intro.clone(), clause_intro.into()));
+        } else {
+            intros.push((var, vec![(var_intro.clone(), clause_intro.into())]));
+        }
+    }
+
     // Conditionals require reasoning about individual elements, so their clause intros are ineligible for lifting
-    // Remove them from the hashmap.
-    fn handle_ineligibility(relation: &Relation, intros: &mut HashMap<&Variable, LiftedIntros>) {
+    // Remove them from the vector.
+    fn handle_ineligibility(relation: &Relation, intros: &mut Vec<(&Variable, LiftedIntros)>) {
         match relation {
             Relation::Binary {
                 left,
                 right,
                 typ: _,
             } => {
-                intros.remove_entry(left);
-                intros.remove_entry(right);
+                intros.retain(|(v, _)| **v != *left);
+                intros.retain(|(v, _)| **v != *right);
             }
             Relation::Negation(relation) => {
                 handle_ineligibility(relation, intros);
             }
             Relation::IsMarked(var, _) => {
-                intros.remove_entry(var);
+                intros.retain(|(v, _)| **v != *var);
             }
         }
     }
@@ -40,20 +57,10 @@ fn lift_definitions(policy: &mut Policy) {
                     ClauseIntro::ForEach(var_intro) | ClauseIntro::ThereIs(var_intro) => {
                         match var_intro.intro {
                             VariableIntroType::AllNodes | VariableIntroType::Roots => {
-                                intros
-                                    .entry(&var_intro.variable)
-                                    .and_modify(|intros| {
-                                        intros.push((var_intro.clone(), (&clause.intro).into()))
-                                    })
-                                    .or_insert(vec![(var_intro.clone(), (&clause.intro).into())]);
+                                add_intro_to_vec(&mut intros, var_intro, &clause.intro);
                             }
                             VariableIntroType::VariableMarked { on_type, .. } if !on_type => {
-                                intros
-                                    .entry(&var_intro.variable)
-                                    .and_modify(|intros| {
-                                        intros.push((var_intro.clone(), (&clause.intro).into()))
-                                    })
-                                    .or_insert(vec![(var_intro.clone(), (&clause.intro).into())]);
+                                add_intro_to_vec(&mut intros, var_intro, &clause.intro);
                             }
                             // Sources of types need to be nested; do not attempt to move them
                             // Variables by themselves refer to existing definitions, so don't attempt to redefine them
@@ -128,7 +135,6 @@ fn lift_definitions(policy: &mut Policy) {
         .extend(unique.iter().map(|(var_intro, clause_intro_typ)| {
             Definition {
                 variable: var_intro.variable.clone(),
-                // we're using this as a
                 scope: DefinitionScope::Ctrler,
                 // this is what really matters, since the template ends up just rendering this intro since filter is None
                 declaration: var_intro.clone(),
