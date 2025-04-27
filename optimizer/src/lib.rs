@@ -6,16 +6,14 @@ type LiftedIntros = Vec<(VariableIntro, OgClauseIntroType)>;
 
 /// Traverse the policy body and lift variable declarations to be definitions where possible.
 /// This lets us avoid repeated graph searches for the same variables.
-fn lift_definitions(
-    policy: &mut Policy,
-) -> Vec<(common::ast::VariableIntro, common::ast::OgClauseIntroType)> {
+fn lift_definitions(policy: &mut Policy) {
     let mut intros: HashMap<&Variable, LiftedIntros> = HashMap::new();
     let mut queue: Vec<&ASTNode> = vec![];
     queue.push(&policy.body);
 
     // Conditionals require reasoning about individual elements, so their clause intros are ineligible for lifting
     // Remove them from the hashmap.
-    fn handle_conditional(relation: &Relation, intros: &mut HashMap<&Variable, LiftedIntros>) {
+    fn handle_ineligibility(relation: &Relation, intros: &mut HashMap<&Variable, LiftedIntros>) {
         match relation {
             Relation::Binary {
                 left,
@@ -26,7 +24,7 @@ fn lift_definitions(
                 intros.remove_entry(right);
             }
             Relation::Negation(relation) => {
-                handle_conditional(relation, intros);
+                handle_ineligibility(relation, intros);
             }
             Relation::IsMarked(var, _) => {
                 intros.remove_entry(var);
@@ -41,9 +39,15 @@ fn lift_definitions(
                 match &clause.intro {
                     ClauseIntro::ForEach(var_intro) | ClauseIntro::ThereIs(var_intro) => {
                         match var_intro.intro {
-                            VariableIntroType::AllNodes
-                            | VariableIntroType::Roots
-                            | VariableIntroType::VariableMarked { .. } => {
+                            VariableIntroType::AllNodes | VariableIntroType::Roots => {
+                                intros
+                                    .entry(&var_intro.variable)
+                                    .and_modify(|intros| {
+                                        intros.push((var_intro.clone(), (&clause.intro).into()))
+                                    })
+                                    .or_insert(vec![(var_intro.clone(), (&clause.intro).into())]);
+                            }
+                            VariableIntroType::VariableMarked { on_type, .. } if !on_type => {
                                 intros
                                     .entry(&var_intro.variable)
                                     .and_modify(|intros| {
@@ -54,10 +58,13 @@ fn lift_definitions(
                             // Sources of types need to be nested; do not attempt to move them
                             // Variables by themselves refer to existing definitions, so don't attempt to redefine them
                             VariableIntroType::VariableSourceOf(_)
-                            | VariableIntroType::Variable => {}
+                            | VariableIntroType::Variable
+                            | VariableIntroType::VariableMarked { .. } => {}
                         }
                     }
-                    ClauseIntro::Conditional(relation) => handle_conditional(relation, &mut intros),
+                    ClauseIntro::Conditional(relation) => {
+                        handle_ineligibility(relation, &mut intros)
+                    }
                 }
                 queue.push(&clause.body);
             }
@@ -65,7 +72,33 @@ fn lift_definitions(
                 queue.push(&obligation.src);
                 queue.push(&obligation.sink);
             }
-            ASTNode::Relation(_) | ASTNode::OnlyVia(_, _, _) => {}
+            ASTNode::Relation(ref relation) => {
+                let is_eligible = match relation {
+                    Relation::Binary {
+                        left: _,
+                        right: _,
+                        typ,
+                    } => !matches!(typ, Binop::AssociatedCallSite),
+                    Relation::Negation(relation) => match *relation.clone() {
+                        Relation::Binary {
+                            left: _,
+                            right: _,
+                            typ,
+                        } => !matches!(typ, Binop::AssociatedCallSite),
+                        Relation::Negation(_) => unreachable!("Double negation should not parse"),
+                        Relation::IsMarked(..) => true,
+                    },
+                    Relation::IsMarked(..) => true,
+                };
+                if !is_eligible {
+                    handle_ineligibility(relation, &mut intros);
+                }
+            }
+            // The body of the always_happens_before() call uses contains() to check for membership,
+            // which doesn't exist if we
+            ASTNode::OnlyVia(_, _, _) => {
+                return;
+            }
             ASTNode::FusedClause(_) => {
                 unreachable!(
                     "
@@ -136,8 +169,6 @@ fn lift_definitions(
             }
         }
     }
-
-    unique
 }
 
 // Search for this pattern:

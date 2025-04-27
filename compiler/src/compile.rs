@@ -8,45 +8,84 @@ use std::{collections::HashMap, path::Path};
 use common::templates::*;
 use common::verify_scope::*;
 
+// ok, I think we should have a HashMap of <Variable, bool> mapping each variable to whether or not it's a NodeCluster initialized or not
+// I think overwriting in the map should take care of duplicate variable names
+// could also remove entries once clauses end and that would work too
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum InitializationType {
+    NodeCluster,
+    GlobalNodesIterator,
+}
+
 fn compile_variable_intro(
     handlebars: &mut Handlebars,
     intro: &VariableIntro,
-    is_definition: bool,
+    vars_to_initialization_typ: &mut HashMap<Variable, InitializationType>,
+    inside_definition_filter: bool,
+    inside_only_via: bool,
 ) -> (String, String) {
     let mut map: HashMap<&str, String> = HashMap::new();
     map.insert("var", intro.variable.clone());
 
-    match &intro.intro {
-        VariableIntroType::Roots | VariableIntroType::AllNodes => (),
-        VariableIntroType::Variable => {}
-        VariableIntroType::VariableMarked { marker, .. } => {
+    let initialization_typ = match &intro.intro {
+        VariableIntroType::Roots | VariableIntroType::AllNodes => {
+            Some(InitializationType::GlobalNodesIterator)
+        }
+        VariableIntroType::Variable => None,
+        VariableIntroType::VariableMarked { marker, on_type } => {
             map.insert("marker", marker.into());
-            if is_definition {
-                map.insert("lifted", is_definition.to_string());
+            // Variable source of doesn't play well with node clusters, so don't use them for types
+            // Node cluster initializations short-circuit with a boolean upon failure, but for checkpoints,
+            // we can't determine a static short-circuit value; it depends on whether source goes to a sink.
+            // So just use regular iterators for those too.
+            if *on_type || inside_only_via {
+                Some(InitializationType::GlobalNodesIterator)
+            } else {
+                map.insert("node-cluster", "true".to_string());
+                Some(InitializationType::NodeCluster)
             }
         }
         VariableIntroType::VariableSourceOf(type_var) => {
             map.insert("type-var", type_var.into());
-            if is_definition {
-                map.insert("lifted", is_definition.to_string());
+
+            // The filter() in a defintion requires an extra dereference
+            if inside_definition_filter {
+                map.insert("typ-definition", "true".to_string());
             }
+
+            Some(InitializationType::GlobalNodesIterator)
         }
     };
+
+    if let Some(typ) = initialization_typ {
+        vars_to_initialization_typ.insert(intro.variable.clone(), typ);
+    }
+
     (
         intro.variable.clone(),
         render_template(handlebars, &map, intro.into()),
     )
 }
 
-fn compile_relation(handlebars: &mut Handlebars, relation: &Relation) -> String {
+fn compile_relation(
+    handlebars: &mut Handlebars,
+    relation: &Relation,
+    vars_to_initialization_typ: &HashMap<Variable, InitializationType>,
+) -> String {
     let mut map: HashMap<&str, String> = HashMap::new();
     match relation {
         Relation::Binary { left, right, .. } => {
             map.insert("src", left.into());
             map.insert("sink", right.into());
+            if let Some(typ) = vars_to_initialization_typ.get(right) {
+                if matches!(typ, InitializationType::NodeCluster) {
+                    map.insert("node-cluster", "true".to_string());
+                }
+            }
         }
         Relation::Negation(inner) => {
-            let value = compile_relation(handlebars, inner);
+            let value = compile_relation(handlebars, inner, vars_to_initialization_typ);
             map.insert("value", value);
         }
         Relation::IsMarked(var, marker) => {
@@ -57,124 +96,180 @@ fn compile_relation(handlebars: &mut Handlebars, relation: &Relation) -> String 
     render_template(handlebars, &map, relation.into())
 }
 
+fn compile_only_via(
+    handlebars: &mut Handlebars,
+    node: &ASTNode,
+    vars_to_initialization_typ: &mut HashMap<Variable, InitializationType>,
+) -> String {
+    let ASTNode::OnlyVia(src_intro, sink_intro, checkpoint_intro) = node else {
+        panic!("Called render_only_via on the wrong kind of node");
+    };
+    let mut map: HashMap<&str, Vec<String>> = HashMap::new();
+
+    fn render_only_via_intro(
+        handlebars: &mut Handlebars,
+        intro: &VariableIntro,
+        vars_to_initialization_typ: &mut HashMap<Variable, InitializationType>,
+    ) -> (Variable, String) {
+        let mut regular_template_map: HashMap<&str, String> = HashMap::new();
+        let (var, intro) =
+            compile_variable_intro(handlebars, intro, vars_to_initialization_typ, false, true);
+        regular_template_map.insert("var", var.clone());
+        // If the intro refers to a previously defined variable, `intro` will be an empty string, which the template will detect so it doesn't render anything
+        regular_template_map.insert("intro", intro);
+        (
+            var,
+            render_template(handlebars, &regular_template_map, Template::OnlyViaIntro),
+        )
+    }
+
+    // Prepare the sink or checkpoint intros, which may need to handle multiple collections
+    fn prepare_multiple_intros<'a>(
+        handlebars: &mut Handlebars,
+        joined_intros: &(Option<Operator>, Vec<VariableIntro>),
+        map: &mut HashMap<&'a str, Vec<String>>,
+        vars_to_initialization_typ: &mut HashMap<Variable, InitializationType>,
+        intro_key: &'a str,
+        name_key: &'a str,
+        operator_key: &'a str,
+    ) {
+        let (operator, intros) = joined_intros;
+        if let Some(Operator::Or) = operator {
+            map.insert(operator_key, vec![String::from("true")]);
+        }
+        let mut compiled_intros: Vec<String> = vec![];
+        let mut vars: Vec<String> = vec![];
+        for intro in intros {
+            let (var, intro) = render_only_via_intro(handlebars, intro, vars_to_initialization_typ);
+            compiled_intros.push(intro);
+            vars.push(var);
+        }
+        map.insert(intro_key, compiled_intros);
+        map.insert(name_key, vars);
+    }
+
+    let (src, src_intro) = render_only_via_intro(handlebars, src_intro, vars_to_initialization_typ);
+    map.insert("src", vec![src]);
+    map.insert("src-intro", vec![src_intro]);
+    prepare_multiple_intros(
+        handlebars,
+        sink_intro,
+        &mut map,
+        vars_to_initialization_typ,
+        "sink-intros",
+        "sink-names",
+        "sink-or",
+    );
+    prepare_multiple_intros(
+        handlebars,
+        checkpoint_intro,
+        &mut map,
+        vars_to_initialization_typ,
+        "checkpoint-intros",
+        "checkpoint-names",
+        "checkpoint-or",
+    );
+
+    render_only_via_template(handlebars, &map)
+}
+
 // for joined nodes, we don't know how many expressions we're and/oring together in the whole policy,
 // so use the counter to give each variable a unique name -- see and/or templates for more context
-fn compile_ast_node(handlebars: &mut Handlebars, node: &ASTNode, counter: &mut u32) -> String {
+fn compile_ast_node(
+    handlebars: &mut Handlebars,
+    node: &ASTNode,
+    counter: &mut u32,
+    vars_to_initialization_typ: &mut HashMap<Variable, InitializationType>,
+    inside_definition_filter: bool,
+) -> String {
     let mut map: HashMap<&str, String> = HashMap::new();
     match node {
-        ASTNode::Relation(relation) => compile_relation(handlebars, relation),
-        ASTNode::OnlyVia(src_intro, sink_intro, checkpoint_intro) => {
-            let mut only_via_map: HashMap<&str, Vec<String>> = HashMap::new();
-
-            let (src_var, compiled_src_intro) =
-                compile_variable_intro(handlebars, src_intro, false);
-            map.insert("intro", compiled_src_intro);
-            let src_intro = render_template(handlebars, &map, Template::OnlyViaIntro);
-            map.remove_entry("var-definition");
-            only_via_map.insert("src-intros", vec![src_intro]);
-            only_via_map.insert("src", vec![src_var]);
-
-            match &sink_intro.0 {
-                // an operator is present, so there are multiple variable intros in the vector
-                Some(op) => {
-                    let mut compiled_intros: Vec<String> = vec![];
-                    let mut vars: Vec<String> = vec![];
-                    for intro in &sink_intro.1 {
-                        let (sink_var, compiled_sink_intro) =
-                            compile_variable_intro(handlebars, intro, false);
-                        map.insert("intro", compiled_sink_intro);
-                        let only_via_intro =
-                            render_template(handlebars, &map, Template::OnlyViaIntro);
-                        map.remove_entry("var-definition");
-                        compiled_intros.push(only_via_intro);
-                        vars.push(sink_var);
-                    }
-                    only_via_map.insert("sink-intros", compiled_intros);
-                    only_via_map.insert("sink-names", vars);
-                    if let &Operator::Or = op {
-                        only_via_map.insert("sink-or", vec![String::from("true")]);
-                    }
-                }
-                // no operator, so just a single variable intro in the vector
-                None => {
-                    let (sink_var, compiled_sink_intro) =
-                        compile_variable_intro(handlebars, &sink_intro.1[0], false);
-                    map.insert("intro", compiled_sink_intro);
-                    let only_via_intro = render_template(handlebars, &map, Template::OnlyViaIntro);
-                    map.remove_entry("var-definition");
-                    only_via_map.insert("sink-intros", vec![only_via_intro]);
-                    only_via_map.insert("sink-names", vec![sink_var]);
-                }
-            }
-
-            match &checkpoint_intro.0 {
-                // an operator is present, so there are multiple variable intros in the vector
-                Some(op) => {
-                    let mut compiled_intros: Vec<String> = vec![];
-                    let mut vars: Vec<String> = vec![];
-                    for intro in &checkpoint_intro.1 {
-                        let (checkpoint_var, compiled_checkpoint_intro) =
-                            compile_variable_intro(handlebars, intro, false);
-                        map.insert("intro", compiled_checkpoint_intro);
-                        let only_via_intro =
-                            render_template(handlebars, &map, Template::OnlyViaIntro);
-                        map.remove_entry("var-definition");
-                        compiled_intros.push(only_via_intro);
-                        vars.push(checkpoint_var);
-                    }
-                    only_via_map.insert("checkpoint-intros", compiled_intros);
-                    only_via_map.insert("checkpoint-names", vars);
-
-                    if let &Operator::Or = op {
-                        only_via_map.insert("checkpoint-or", vec![String::from("true")]);
-                    }
-                }
-                // no operator, so just a single variable intro in the vector
-                None => {
-                    let (checkpoint_var, compiled_checkpoint_intro) =
-                        compile_variable_intro(handlebars, &checkpoint_intro.1[0], false);
-                    map.insert("intro", compiled_checkpoint_intro);
-                    let only_via_intro = render_template(handlebars, &map, Template::OnlyViaIntro);
-                    map.remove_entry("var-definition");
-                    only_via_map.insert("checkpoint-intros", vec![only_via_intro]);
-                    only_via_map.insert("checkpoint-names", vec![checkpoint_var]);
-                }
-            }
-
-            render_only_via_template(handlebars, &only_via_map)
+        ASTNode::Relation(relation) => {
+            compile_relation(handlebars, relation, vars_to_initialization_typ)
         }
+        ASTNode::OnlyVia(..) => compile_only_via(handlebars, node, vars_to_initialization_typ),
         ASTNode::JoinedNodes(obligation) => {
-            let src_res = compile_ast_node(handlebars, &obligation.src, counter);
+            let src_res = compile_ast_node(
+                handlebars,
+                &obligation.src,
+                counter,
+                vars_to_initialization_typ,
+                inside_definition_filter,
+            );
             map.insert("src", src_res);
-            let sink_res = compile_ast_node(handlebars, &obligation.sink, counter);
+            let sink_res = compile_ast_node(
+                handlebars,
+                &obligation.sink,
+                counter,
+                vars_to_initialization_typ,
+                inside_definition_filter,
+            );
             map.insert("sink", sink_res);
             map.insert("counter", counter.to_string());
             *counter += 1;
             render_template(handlebars, &map, node.into())
         }
         ASTNode::Clause(clause) => {
-            let variable_intro = match &clause.intro {
+            let (variable_to_remove, variable_intro) = match &clause.intro {
                 ClauseIntro::ForEach(intro) | ClauseIntro::ThereIs(intro) => {
-                    let (variable, variable_intro) =
-                        compile_variable_intro(handlebars, intro, false);
-                    map.insert("var", variable);
-                    // if we're referring to a definition
-                    if matches!(intro.intro, VariableIntroType::Variable) {
-                        map.insert("lifted", "true".to_string());
+                    // Only remove a variable when the clause goes out of scope if it's one we're introducing here
+                    let already_present = vars_to_initialization_typ.get(&intro.variable).is_some();
+                    let (variable, variable_intro) = compile_variable_intro(
+                        handlebars,
+                        intro,
+                        vars_to_initialization_typ,
+                        inside_definition_filter,
+                        false,
+                    );
+
+                    let Some(typ) = vars_to_initialization_typ.get(&variable) else {
+                        panic!("variable has been initialized but not in map")
+                    };
+                    if matches!(typ, InitializationType::NodeCluster) {
+                        map.insert("node-cluster", "true".to_string());
                     }
-                    variable_intro
+                    if already_present {
+                        map.insert("refers-to-definition", "true".to_string());
+                    }
+
+                    map.insert("var", variable.clone());
+
+                    let variable_to_remove = if already_present {
+                        None
+                    } else {
+                        Some(variable)
+                    };
+                    (variable_to_remove, variable_intro)
                 }
-                ClauseIntro::Conditional(relation) => compile_relation(handlebars, relation),
+                ClauseIntro::Conditional(relation) => (
+                    None,
+                    compile_relation(handlebars, relation, vars_to_initialization_typ),
+                ),
             };
 
             map.insert("intro", variable_intro);
-            let body = compile_ast_node(handlebars, &clause.body, counter);
+            let body = compile_ast_node(
+                handlebars,
+                &clause.body,
+                counter,
+                vars_to_initialization_typ,
+                inside_definition_filter,
+            );
+
+            // variable going out of scope
+            if let Some(variable) = variable_to_remove {
+                vars_to_initialization_typ.remove_entry(&variable);
+            }
+
             map.insert("body", body);
             render_template(handlebars, &map, node.into())
         }
         ASTNode::FusedClause(fused_clause) => {
-            map.insert("outer_var", fused_clause.outer_var.clone());
-            map.insert("inner_var", fused_clause.filter.variable.clone());
+            let outer_var = &fused_clause.outer_var;
+            let inner_var = &fused_clause.filter.variable;
+
+            map.insert("outer_var", outer_var.clone());
+            map.insert("inner_var", inner_var.clone());
             let VariableIntroType::VariableMarked {
                 ref marker,
                 on_type: _,
@@ -185,12 +280,34 @@ fn compile_ast_node(handlebars: &mut Handlebars, node: &ASTNode, counter: &mut u
             map.insert("marker", marker.clone());
             map.insert("conditional", fused_clause.is_conditional.to_string());
 
-            dbg!(&fused_clause);
+            // Only remove a variable when the clause goes out of scope if it's one we're introducing here
+            // Fused clause outer variables should have been initialized in the intro
+            assert!(vars_to_initialization_typ
+                .get(&fused_clause.outer_var)
+                .is_some());
+
+            // Inner clauses introduce two variables; one named {{outer_var}}_{{marker}}
+            // and one named {{inner_var}} (see templates/fused-clauses) for details.
+            let outer_var_marker = format!("{}_{}", &outer_var, marker);
+            vars_to_initialization_typ.insert(
+                outer_var_marker.clone(),
+                InitializationType::GlobalNodesIterator,
+            );
+            vars_to_initialization_typ.insert(inner_var.clone(), InitializationType::NodeCluster);
+
             if let Some(rest) = &fused_clause.rest {
-                let rest = compile_ast_node(handlebars, rest, counter);
-                dbg!(&rest);
+                let rest = compile_ast_node(
+                    handlebars,
+                    rest,
+                    counter,
+                    vars_to_initialization_typ,
+                    inside_definition_filter,
+                );
                 map.insert("rest", rest);
             }
+
+            vars_to_initialization_typ.remove_entry(&outer_var_marker);
+            vars_to_initialization_typ.remove_entry(inner_var);
 
             render_template(handlebars, &map, node.into())
         }
@@ -201,6 +318,7 @@ fn compile_definition(
     handlebars: &mut Handlebars,
     definition: &Definition,
     policy_scope: &PolicyScope,
+    vars_to_initialization_typ: &mut HashMap<Variable, InitializationType>,
 ) -> String {
     let mut map: HashMap<&str, String> = HashMap::new();
     let (_, variable_intro) = compile_variable_intro(
@@ -209,16 +327,42 @@ fn compile_definition(
             variable: definition.variable.clone(),
             intro: definition.declaration.intro.clone(),
         },
-        true,
+        vars_to_initialization_typ,
+        false,
+        false,
     );
-    map.insert("inner_var", definition.declaration.variable.clone());
+
+    let Some(typ) = vars_to_initialization_typ.get(&definition.variable) else {
+        panic!("compile_variable_intro did not initialize the defintion variable in the map")
+    };
+    if matches!(typ, InitializationType::NodeCluster) {
+        map.insert("node-cluster", "true".to_string());
+    }
+
+    let inner_var = definition.declaration.variable.clone();
+    map.insert("inner_var", inner_var.clone());
     map.insert("var", definition.variable.clone());
     map.insert("intro", variable_intro);
-    map.insert("lifted", "true".to_string());
     let mut counter = 0;
     if let Some(filter) = &definition.filter {
-        let filter = compile_ast_node(handlebars, filter, &mut counter);
+        // just need to insert it so that we don't try to take a reference to it
+        let already_present = vars_to_initialization_typ
+            .insert(inner_var.clone(), InitializationType::GlobalNodesIterator)
+            .is_some();
+        let filter = compile_ast_node(
+            handlebars,
+            filter,
+            &mut counter,
+            vars_to_initialization_typ,
+            true,
+        );
         map.insert("filter", filter);
+
+        // If the inner var wasn't already in the map, then remove it.
+        // If it was already in the map, it had to refer to a previous definition (I think?)
+        if !already_present {
+            vars_to_initialization_typ.remove_entry(&inner_var);
+        }
     }
 
     // what to return if creating the node cluster fails, i.e. there are no nodes that fit the definition
@@ -241,6 +385,7 @@ fn compile_definitions(
     handlebars: &mut Handlebars,
     definitions: &[Definition],
     policy_scope: &PolicyScope,
+    vars_to_initialization_typ: &mut HashMap<Variable, InitializationType>,
 ) -> String {
     // Definitions use their own environment so that each definition only knows about the definition(s) above it.
     // This is important if the filter in one definition uses the same variable name as the name of a later definition;
@@ -251,7 +396,12 @@ fn compile_definitions(
     // should be compiling everything in the same order it was declared
     // so that the env doesn't reference stuff that's declared later
     for definition in definitions {
-        let result = compile_definition(handlebars, definition, policy_scope);
+        let result = compile_definition(
+            handlebars,
+            definition,
+            policy_scope,
+            vars_to_initialization_typ,
+        );
         let def = VarContext {
             typ: (&definition.declaration).into(),
             is_definition: true,
@@ -271,19 +421,35 @@ pub fn compile(policy: Policy, policy_name: &str, out: &Path, create_bin: bool) 
 
     // compile definitions & policy
     let mut map: HashMap<&str, String> = HashMap::new();
+    let mut vars_to_initialization_typ = HashMap::new();
     let (global_definitions, ctrler_definitions): (Vec<_>, Vec<_>) = policy
         .definitions
         .into_iter()
         .partition(|def| matches!(def.scope, DefinitionScope::Everywhere));
-    let compiled_global_definitions =
-        compile_definitions(&mut handlebars, &global_definitions, &policy.scope);
-    let compiled_ctrler_definitions =
-        compile_definitions(&mut handlebars, &ctrler_definitions, &policy.scope);
+    let compiled_global_definitions = compile_definitions(
+        &mut handlebars,
+        &global_definitions,
+        &policy.scope,
+        &mut vars_to_initialization_typ,
+    );
+    let compiled_ctrler_definitions = compile_definitions(
+        &mut handlebars,
+        &ctrler_definitions,
+        &policy.scope,
+        &mut vars_to_initialization_typ,
+    );
     map.insert("global-definitions", compiled_global_definitions);
     map.insert("definitions", compiled_ctrler_definitions);
 
     let mut counter = 0;
-    let compiled_body = compile_ast_node(&mut handlebars, &policy.body, &mut counter);
+
+    let compiled_body = compile_ast_node(
+        &mut handlebars,
+        &policy.body,
+        &mut counter,
+        &mut vars_to_initialization_typ,
+        false,
+    );
     map.insert("body", compiled_body);
 
     // render final policy

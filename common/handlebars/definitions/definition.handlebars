@@ -1,7 +1,7 @@
-{{#if lifted}}
+{{#if node-cluster}}
 {{intro}}
 {{else}}
-let mut {{var}} = {{intro}})
+let mut {{var}} = {{intro}};
 {{/if}}
 {{#if filter}}
     .filter(|n| {
@@ -9,7 +9,7 @@ let mut {{var}} = {{intro}})
         {{{filter}}}
     })
 {{/if}}
-{{#if lifted}}
+{{#if node-cluster}}
 ) else { return {{short-circuit}}; }
-{{/if}}
 ;
+{{/if}}

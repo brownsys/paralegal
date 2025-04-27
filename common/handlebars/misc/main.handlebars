@@ -50,7 +50,7 @@ fn main() -> Result<()> {
     let args = Args::parse();
     env_setup();
     let mut cmd = paralegal_policy::SPDGGenCommand::global();
-    if let Some(p) = args.external_annotations.as_ref() {
+    if let Some(mut p) = args.external_annotations.as_ref() {
         cmd.external_annotations(p);
     }
     cmd.get_command()

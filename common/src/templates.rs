@@ -191,6 +191,14 @@ pub fn render_template(
     template: Template,
 ) -> String {
     let name: &str = template.clone().into();
+    if let Some(partial_content) = TemplateDirectory::get("fused-clauses/partial.handlebars") {
+        let partial_str = std::str::from_utf8(partial_content.data.as_ref())
+            .expect("Failed to convert partial template to UTF-8");
+        handlebars
+            .register_partial("fused-partial", partial_str)
+            .unwrap();
+    }
+
     handlebars
         .render(name, &map)
         .unwrap_or_else(|e| panic!("Could not render {name} handlebars template {template}: {e}"))

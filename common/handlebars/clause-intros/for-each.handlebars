@@ -1,13 +1,16 @@
-{{#if lifted}}
+{{#unless refers-to-definition}}
+    {{#if node-cluster}}
+        {{intro}}) else { return true; };
+    {{else}}
+        let mut {{var}} = {{intro}};
+    {{/if}}
+{{/unless}}
+
+{{#if node-cluster}}
 {{body}}
 {{else}}
-{
-    let mut {{var}} = {{intro}};
-
     {{var}}
-    {{#if definition}}.iter(){{/if}}
-    .all(|{{var}}| {
-        {{body}}
-    })
-}
+        .all(|{{var}}| {
+            {{body}}
+        })
 {{/if}}

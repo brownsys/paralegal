@@ -1,13 +1,31 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use paralegal_policy::{paralegal_spdg::{Identifier, traverse::EdgeSelection}, RootContext, Context, Marker,
-assert_error};
+use paralegal_policy::{
+    assert_error, paralegal_spdg::{traverse::EdgeSelection, Identifier, NodeCluster}, Context, GlobalNode, IntoIterGlobalNodes, Marker, NodeExt, NodeQueries, RootContext
+};
 
 macro_rules! marker {
-($id:ident) => {
-Marker::new_intern(stringify!($id))
-};
+    ($id:ident) => {
+        Marker::new_intern(stringify!($id))
+    };
+}
+
+// For always_happens_before -- lets us call "find" agnostic of whether it's a NodeCluster
+// or collection of GlobalNodes
+trait FindNodeExt: Sized {
+    fn find<P>(&mut self, predicate: P) -> Option<GlobalNode>
+    where
+        Self: Sized,
+        P: FnMut(&GlobalNode) -> bool;
+}
+
+impl FindNodeExt for NodeCluster {
+    fn find<P>(&mut self, mut predicate: P) -> Option<GlobalNode> where
+    Self: Sized,
+    P: FnMut(&GlobalNode) -> bool{
+        self.iter_global_nodes().find(|n| predicate(n))
+    }
 }
 
 pub fn check(ctx: Arc<RootContext>) -> Result<()> {

@@ -1,1 +1,5 @@
-let mut {{var}}_nodes = ctx.marked_type(marker!({{marker}})).iter()
+{{#if node-cluster}}
+let Some(mut {{var}}) = NodeCluster::try_from_iter(ctx.marked_type(marker!({{marker}})).iter()
+{{else}}
+ctx.marked_type(marker!({{marker}})).iter()
+{{/if}}
