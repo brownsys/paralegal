@@ -595,6 +595,7 @@ impl AnalysisCtrl {
                         .iter()
                         .copied()
                         .filter(move |c| !std_crates.contains(&c))
+                        .chain([LOCAL_CRATE])
                         .collect()
                 } else {
                     let mut included_crate_names = self
