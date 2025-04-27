@@ -13,6 +13,7 @@ use anyhow::Error;
 use clap::ValueEnum;
 use flowistry_pdg_construction::body_cache::std_crates;
 use rustc_data_structures::fx::FxHashSet;
+use rustc_hash::FxHashMap;
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Symbol;
@@ -20,6 +21,7 @@ use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use crate::utils::TinyBitSet;
 use crate::{num_derive, num_traits::FromPrimitive};
@@ -484,8 +486,6 @@ struct ClapAnalysisCtrl {
     /// projects.
     #[clap(long)]
     include: Vec<String>,
-    #[clap(hide = true, long, conflicts_with = "include")]
-    local_crate_only: bool,
     #[clap(long)]
     no_pdg_cache: bool,
     /// Add an additional k inlining steps on top of what the marker guided
@@ -506,7 +506,8 @@ pub struct AnalysisCtrl {
     /// Flowistry's recursive analysis).
     inlining_depth: InliningDepth,
     include: Vec<String>,
-    local_crate_only: bool,
+    #[serde(skip)]
+    included_crate_cache: OnceLock<FxHashSet<CrateNum>>,
     no_pdg_cache: bool,
 }
 
@@ -517,7 +518,7 @@ impl Default for AnalysisCtrl {
             inlining_depth: InliningDepth::Adaptive(0),
             include: Default::default(),
             no_pdg_cache: false,
-            local_crate_only: false,
+            included_crate_cache: OnceLock::new(),
         }
     }
 }
@@ -531,7 +532,6 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             no_pdg_cache,
             no_interprocedural_analysis,
             no_adaptive_approximation,
-            local_crate_only,
             k_depth,
         } = value;
 
@@ -548,7 +548,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             inlining_depth,
             include,
             no_pdg_cache,
-            local_crate_only,
+            included_crate_cache: OnceLock::new(),
         })
     }
 }
@@ -579,67 +579,61 @@ impl AnalysisCtrl {
     }
 
     pub fn included(&self, crate_name: &str) -> bool {
-        if self.local_crate_only {
-            false
-        } else if self.include.is_empty() {
+        if self.include.is_empty() {
             true
         } else {
             self.include.iter().any(|s| s == crate_name)
         }
     }
 
-    pub fn included_crates<'tcx>(
-        &self,
+    fn crate_inclusion_set<'a, 'tcx>(&'a self, tcx: TyCtxt<'tcx>) -> &'a FxHashSet<CrateNum> {
+        self.included_crate_cache
+            .get_or_init(|| {
+                if self.include.is_empty() {
+                    let std_crates = std_crates(tcx).collect::<FxHashSet<_>>();
+                    tcx.crates(())
+                        .iter()
+                        .copied()
+                        .filter(move |c| !std_crates.contains(&c))
+                        .collect()
+                } else {
+                    let mut included_crate_names = self
+                        .include
+                        .iter()
+                        // "--include=crate" can be used to force only the local crate
+                        // to be included.
+                        .filter(|c| c.as_str() != "crate")
+                        .map(|s| (Symbol::intern(s), false))
+                        .collect::<FxHashMap<_, bool>>();
+                    let set = tcx.crates(())
+                        .iter()
+                        .copied()
+                        .filter(|cnum| included_crate_names.get_mut(&tcx.crate_name(*cnum)).map_or(false, |v| {
+                            *v = true;
+                            true
+                        }))
+                        .chain([LOCAL_CRATE])
+                        .collect();
+                    for (k, v) in included_crate_names {
+                        if !v {
+                            tcx.sess.warn(format!("The crate `{k}` was configured for inclusion but is not part of the dependencies."));
+                        }
+                    }
+                    set
+                }
+            })
+    }
+
+    pub fn included_crates<'tcx, 'a>(
+        &'a self,
         tcx: TyCtxt<'tcx>,
-    ) -> impl Iterator<Item = CrateNum> + 'tcx {
-        if self.local_crate_only {
-            Box::new([LOCAL_CRATE].into_iter()) as Box<dyn Iterator<Item = CrateNum> + 'tcx>
-        } else if self.include.is_empty() {
-            let std_crates = std_crates(tcx).collect::<FxHashSet<_>>();
-            Box::new(
-                tcx.crates(())
-                    .iter()
-                    .copied()
-                    .filter(move |c| !std_crates.contains(&c)),
-            ) as Box<_>
-        } else {
-            let included_crate_names = self
-                .include
-                .iter()
-                .map(|s| Symbol::intern(s))
-                .collect::<FxHashSet<_>>();
-            Box::new(
-                tcx.crates(())
-                    .iter()
-                    .copied()
-                    .filter(move |cnum| included_crate_names.contains(&tcx.crate_name(*cnum)))
-                    .chain([LOCAL_CRATE]),
-            ) as Box<_>
-        }
+    ) -> impl Iterator<Item = CrateNum> + 'a {
+        self.crate_inclusion_set(tcx).iter().copied()
     }
 
     pub fn inclusion_predicate(&self, tcx: TyCtxt<'_>) -> impl Fn(CrateNum) -> bool {
-        let local_crate_only = self.local_crate_only;
-        let include_restricted_set = !self.include.is_empty();
-        let hs: FxHashSet<CrateNum> = if include_restricted_set {
-            self.included_crates(tcx).collect()
-        } else {
-            std_crates(tcx).collect()
-        };
-        move |c| {
-            if local_crate_only {
-                // We're only supposed to analyze the local crate
-                c == LOCAL_CRATE
-            } else if include_restricted_set {
-                // We are supposed to analyze a specific set of crates. This does
-                // that selection.
-                hs.contains(&c)
-            } else {
-                // We're supposed to analyze all crates, but crates from the stdlib
-                // cannot be loaded so we exclude them here.
-                !hs.contains(&c)
-            }
-        }
+        let included_crates = self.crate_inclusion_set(tcx).clone();
+        move |cnum| included_crates.contains(&cnum)
     }
 
     pub fn pdg_cache(&self) -> bool {
