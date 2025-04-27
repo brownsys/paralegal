@@ -237,12 +237,12 @@ fn fuse(original_policy: Policy) -> Policy {
             Relation::Binary { left, right, typ } => {
                 let (position, binop) = match (outer_var == left, outer_var == right) {
                     (true, false) => match typ {
-                        Binop::AssociatedCallSite => return None,
-                        Binop::Both | Binop::Control | Binop::Data => (Position::Source, typ),
+                        Binop::AssociatedCallSite | Binop::Control => return None,
+                        Binop::Both | Binop::Data => (Position::Source, typ),
                     },
                     (false, true) => match typ {
-                        Binop::AssociatedCallSite => return None,
-                        Binop::Both | Binop::Control | Binop::Data => (Position::Target, typ),
+                        Binop::AssociatedCallSite | Binop::Control => return None,
+                        Binop::Both | Binop::Data => (Position::Target, typ),
                     },
                     (true, true) | (false, false) => return None,
                 };
