@@ -49,7 +49,7 @@ fn compile_variable_intro(
         VariableIntroType::VariableSourceOf(type_var) => {
             map.insert("type-var", type_var.into());
 
-            // The filter() in a defintion requires an extra dereference
+            // The filter() in a definition requires an extra dereference
             if inside_definition_filter {
                 map.insert("typ-definition", "true".to_string());
             }

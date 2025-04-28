@@ -8,9 +8,6 @@ type LiftedIntros = Vec<(VariableIntro, OgClauseIntroType)>;
 /// This lets us avoid repeated graph searches for the same variables.
 fn lift_definitions(policy: &mut Policy) {
     // This needs to be a vector, rather than a HashMap, to preserve the order that the policy declares variables.
-    // This is so that when we short-circuit on NodeCluster initialization failure, we short-circuit with the right value.
-    // For example, see the Lemmy community policy--the "there is" definitions should be after the "for each" so that we only
-    // fail for a lack of deletion/ban checks if there is a write.
     let mut intros: Vec<(&Variable, LiftedIntros)> = Vec::new();
     let mut queue: Vec<&ASTNode> = vec![];
     queue.push(&policy.body);
@@ -117,7 +114,7 @@ fn lift_definitions(policy: &mut Policy) {
     }
 
     // Get all the variables that are only introduced once in the whole policy
-    // We can reclassify these as definitions and initialize them once, so we don't repeat graph traversals in inner loops
+    // We can reclassify these as definitions and initialize them once, so we don't repeat graph traversals in inner loops.
     let unique = intros
         .into_iter()
         .filter_map(|(_, vec)| {
@@ -183,7 +180,7 @@ fn lift_definitions(policy: &mut Policy) {
 //     a. If BinaryRelation(A, B), then: ...
 // and replace the inner clause with a FusedClause
 // TODO: it would be nice if this could mutate the policy in-place, but I gave up after fighting with the borrow checker for awhile.
-// I'm not sure it's trivial to do that since you need to save
+// I'm not sure it's trivial to do that.
 fn fuse(original_policy: Policy) -> Policy {
     #[derive(Default, Debug)]
     struct FuseState {
