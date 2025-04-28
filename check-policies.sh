@@ -44,6 +44,3 @@ for dir in */; do
     # Go back to policies directory
     cd ..
 done
-
-# Clean up the playground main.rs file as well
-rm ~/paralegal-playground/src/main.rs
