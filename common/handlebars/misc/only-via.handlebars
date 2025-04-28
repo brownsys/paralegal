@@ -11,7 +11,7 @@
 
     ctx.always_happens_before(
         {{#each src}}{{this}}{{/each}},
-        |checkpoint| {{#each checkpoint-names}}{{this}}.find(|n| *n == checkpoint).is_some(){{#unless @last}}{{#if checkpoint-or}} || {{else}} || {{/if}}{{/unless}}{{/each}},
-        |sink| {{#each sink-names}}{{this}}.find(|n| *n == sink).is_some(){{#unless @last}}{{#if sink-or}} || {{else}} && {{/if}}{{/unless}}{{/each}},
+        |checkpoint| {{#each checkpoint-names}}{{this}}.contains(&checkpoint){{#unless @last}}{{#if checkpoint-or}} || {{else}} || {{/if}}{{/unless}}{{/each}},
+        |sink| {{#each sink-names}}{{this}}.contains(&sink){{#unless @last}}{{#if sink-or}} || {{else}} && {{/if}}{{/unless}}{{/each}},
     ).unwrap().holds()
 }

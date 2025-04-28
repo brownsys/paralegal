@@ -1,1 +1,7 @@
-{{#if intro}}let mut {{var}} = {{intro}};{{/if}}
+{{#if intro}}
+let mut {{var}} = {{intro}}.collect::<Vec<_>>();
+{{else}}
+    {{#unless node-cluster}}
+    let mut {{var}} = {{var}}.collect::<Vec<_>>();
+    {{/unless}}
+{{/if}}

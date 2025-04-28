@@ -11,33 +11,33 @@ macro_rules! marker {
     };
 }
 
-// For always_happens_before -- lets us call "find" agnostic of whether it's a NodeCluster
+// For always_happens_before -- lets us call "contains" agnostic of whether it's a NodeCluster
 // or collection of GlobalNodes
-trait FindNodeExt: Sized {
-    fn find<P>(&mut self, predicate: P) -> Option<GlobalNode>
+trait ContainsNodeExt: Sized {
+    fn contains(&self, node: &GlobalNode) -> bool
     where
-        Self: Sized,
-        P: FnMut(&GlobalNode) -> bool;
+        Self: Sized;
 }
 
-impl FindNodeExt for NodeCluster {
-    fn find<P>(&mut self, mut predicate: P) -> Option<GlobalNode> where
-    Self: Sized,
-    P: FnMut(&GlobalNode) -> bool{
-        self.iter_global_nodes().find(|n| predicate(n))
+impl ContainsNodeExt for NodeCluster {
+    fn contains(&self, node: &GlobalNode) -> bool
+    where
+        Self: Sized,
+    {
+        let nodes = self.iter_global_nodes().collect::<Vec<_>>();
+        nodes.contains(node)
     }
 }
 
-impl FindNodeExt for Option<NodeCluster> {
-    fn find<P>(&mut self, mut predicate: P) -> Option<GlobalNode>
+impl ContainsNodeExt for Option<NodeCluster> {
+    fn contains(&self, node: &GlobalNode) -> bool
     where
         Self: Sized,
-        P: FnMut(&GlobalNode) -> bool,
     {
         if self.is_none() {
-            return None;
+            return false;
         }
-        self.as_mut()?.find(|n| predicate(n))
+        self.clone().unwrap().contains(node)
     }
 }
 

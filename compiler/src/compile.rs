@@ -114,6 +114,13 @@ fn compile_only_via(
         regular_template_map.insert("var", var.clone());
         // If the intro refers to a previously defined variable, `intro` will be an empty string, which the template will detect so it doesn't render anything
         regular_template_map.insert("intro", intro);
+
+        if matches!(
+            vars_to_initialization_typ.get(&var),
+            Some(InitializationType::NodeCluster)
+        ) {
+            regular_template_map.insert("node-cluster", "true".to_string());
+        }
         (
             var,
             render_template(handlebars, &regular_template_map, Template::OnlyViaIntro),
