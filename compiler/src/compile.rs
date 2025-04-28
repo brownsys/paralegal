@@ -6,7 +6,7 @@ use std::process::Command;
 use std::{collections::HashMap, path::Path};
 
 use crate::initialization_typ::{
-    compute_initialization_typ, there_is_initialization_typ, InitializationType,
+    compute_initialization_typ, override_initialization_typ, InitializationType,
 };
 use common::templates::*;
 use common::verify_scope::*;
@@ -207,16 +207,12 @@ fn compile_ast_node(
             render_template(handlebars, &map, node.into())
         }
         ASTNode::Clause(clause) => {
-            let initialization_typ_override = if let ClauseIntro::ThereIs(intro) = &clause.intro {
-                there_is_initialization_typ(intro, &clause.body)
-            } else {
-                None
-            };
-
             let (variable_to_remove, variable_intro) = match &clause.intro {
                 ClauseIntro::ForEach(intro) | ClauseIntro::ThereIs(intro) => {
                     // Only remove a variable when the clause goes out of scope if it's one we're introducing here
                     let already_present = vars_to_initialization_typ.get(&intro.variable).is_some();
+                    let initialization_typ_override =
+                        override_initialization_typ(intro, &clause.body);
                     let (variable, variable_intro) = compile_variable_intro(
                         handlebars,
                         intro,
@@ -329,9 +325,11 @@ fn compile_definition(
 
     let mut initialization_typ_override = None;
     if let Some(origin) = definition.lifted_from {
-        if matches!(origin, OgClauseIntroType::ThereIs) {
+        if matches!(origin, OgClauseIntroType::ThereIs)
+            || matches!(origin, OgClauseIntroType::ForEach)
+        {
             initialization_typ_override =
-                there_is_initialization_typ(&definition.declaration, policy_body);
+                override_initialization_typ(&definition.declaration, policy_body);
         }
     }
 
@@ -346,8 +344,6 @@ fn compile_definition(
         false,
         initialization_typ_override,
     );
-
-    dbg!(&definition.variable, &initialization_typ_override);
 
     let Some(typ) = vars_to_initialization_typ.get(&definition.variable) else {
         panic!("compile_variable_intro did not initialize the defintion variable in the map")
