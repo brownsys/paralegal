@@ -318,20 +318,9 @@ fn compile_definition(
     handlebars: &mut Handlebars,
     definition: &Definition,
     policy_scope: &PolicyScope,
-    policy_body: &ASTNode,
     vars_to_initialization_typ: &mut HashMap<Variable, InitializationType>,
 ) -> String {
     let mut map: HashMap<&str, String> = HashMap::new();
-
-    let mut initialization_typ_override = None;
-    if let Some(origin) = definition.lifted_from {
-        if matches!(origin, OgClauseIntroType::ThereIs)
-            || matches!(origin, OgClauseIntroType::ForEach)
-        {
-            initialization_typ_override =
-                override_initialization_typ(&definition.declaration, policy_body);
-        }
-    }
 
     let (_, variable_intro) = compile_variable_intro(
         handlebars,
@@ -342,7 +331,10 @@ fn compile_definition(
         vars_to_initialization_typ,
         false,
         false,
-        initialization_typ_override,
+        // Don't need this for definitions because we only life something if it is referred to at most once,
+        // or if it's referred to multiple times but the references are idempotent, c.f. optimizer::lift_definitions.
+        // So if it's lifted, we can trust that we can use a NodeCluster if that's what's chosen.
+        None,
     );
 
     let Some(typ) = vars_to_initialization_typ.get(&definition.variable) else {
@@ -398,7 +390,6 @@ fn compile_definitions(
     handlebars: &mut Handlebars,
     definitions: &[Definition],
     policy_scope: &PolicyScope,
-    policy_body: &ASTNode,
     vars_to_initialization_typ: &mut HashMap<Variable, InitializationType>,
 ) -> String {
     // Definitions use their own environment so that each definition only knows about the definition(s) above it.
@@ -414,7 +405,6 @@ fn compile_definitions(
             handlebars,
             definition,
             policy_scope,
-            policy_body,
             vars_to_initialization_typ,
         );
         let def = VarContext {
@@ -445,14 +435,12 @@ pub fn compile(policy: Policy, policy_name: &str, out: &Path, create_bin: bool) 
         &mut handlebars,
         &global_definitions,
         &policy.scope,
-        &policy.body,
         &mut vars_to_initialization_typ,
     );
     let compiled_ctrler_definitions = compile_definitions(
         &mut handlebars,
         &ctrler_definitions,
         &policy.scope,
-        &policy.body,
         &mut vars_to_initialization_typ,
     );
     map.insert("global-definitions", compiled_global_definitions);
