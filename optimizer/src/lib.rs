@@ -118,7 +118,14 @@ fn lift_definitions(policy: &mut Policy) {
     let unique = intros
         .into_iter()
         .filter_map(|(_, vec)| {
-            if vec.len() == 1 {
+            // If the variable is only referenced once
+            // or if it's referenced multiple times, but all the referes are to AllNodes or Roots, which are idempotent
+            if vec.len() == 1
+                || vec.iter().all(|(intro, _)| {
+                    matches!(intro.intro, VariableIntroType::AllNodes)
+                        || matches!(intro.intro, VariableIntroType::Roots)
+                })
+            {
                 Some(vec[0].clone())
             } else {
                 None
