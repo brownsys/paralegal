@@ -1,4 +1,4 @@
-use common::{ast::*, Policy};
+use common::{ast::*, count_references_to_variable, Policy};
 
 /// Traverse the policy body and lift variable declarations to be definitions where possible.
 /// This lets us avoid repeated graph searches for the same variables.
@@ -284,21 +284,44 @@ fn fuse(original_policy: Policy) -> Policy {
                                                     &inner_clause.body,
                                                     &mut body_state,
                                                 );
-                                                if let Some(fused) = state.try_create_fused_clause(
-                                                    relation,
-                                                    var_intro,
-                                                    Some(new_body),
-                                                    true,
-                                                ) {
-                                                    return fused;
+
+                                                let mut count = 0;
+                                                count_references_to_variable(
+                                                    &var_intro.variable,
+                                                    &clause.body,
+                                                    &mut count,
+                                                );
+                                                // If the variable ("B" in the example) is referred to more than once, that means it gets referenced outside of this conditional,
+                                                // so it is not eligible for fusing. If we fused it, we would not be able to refer to the same object multiple times.
+                                                if count <= 1 {
+                                                    if let Some(fused) = state
+                                                        .try_create_fused_clause(
+                                                            relation,
+                                                            var_intro,
+                                                            Some(new_body),
+                                                            true,
+                                                        )
+                                                    {
+                                                        return fused;
+                                                    }
                                                 }
                                             }
                                         }
                                         ASTNode::Relation(relation) => {
-                                            if let Some(fused) = state.try_create_fused_clause(
-                                                relation, var_intro, None, false,
-                                            ) {
-                                                return fused;
+                                            let mut count = 0;
+                                            count_references_to_variable(
+                                                &var_intro.variable,
+                                                &clause.body,
+                                                &mut count,
+                                            );
+                                            // If the variable ("B" in the example) is referred to more than once, that means it gets referenced outside of this conditional,
+                                            // so it is not eligible for fusing. If we fused it, we would not be able to refer to the same object multiple times.
+                                            if count <= 1 {
+                                                if let Some(fused) = state.try_create_fused_clause(
+                                                    relation, var_intro, None, false,
+                                                ) {
+                                                    return fused;
+                                                }
                                             }
                                         }
                                         _ => {}
