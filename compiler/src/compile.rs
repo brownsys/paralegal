@@ -5,18 +5,11 @@ use std::io::Result;
 use std::process::Command;
 use std::{collections::HashMap, path::Path};
 
+use crate::initialization_typ::{
+    compute_initialization_typ, there_is_initialization_typ, InitializationType,
+};
 use common::templates::*;
 use common::verify_scope::*;
-
-// ok, I think we should have a HashMap of <Variable, bool> mapping each variable to whether or not it's a NodeCluster initialized or not
-// I think overwriting in the map should take care of duplicate variable names
-// could also remove entries once clauses end and that would work too
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum InitializationType {
-    NodeCluster,
-    GlobalNodesIterator,
-}
 
 fn compile_variable_intro(
     handlebars: &mut Handlebars,
@@ -24,26 +17,26 @@ fn compile_variable_intro(
     vars_to_initialization_typ: &mut HashMap<Variable, InitializationType>,
     inside_definition_filter: bool,
     inside_only_via: bool,
+    initialization_typ_override: Option<InitializationType>,
 ) -> (String, String) {
     let mut map: HashMap<&str, String> = HashMap::new();
     map.insert("var", intro.variable.clone());
 
-    let initialization_typ = match &intro.intro {
-        VariableIntroType::Roots | VariableIntroType::AllNodes => {
-            Some(InitializationType::GlobalNodesIterator)
-        }
-        VariableIntroType::Variable => None,
-        VariableIntroType::VariableMarked { marker, on_type } => {
+    let initialization_typ = if initialization_typ_override.is_some() {
+        initialization_typ_override
+    } else {
+        compute_initialization_typ(&intro.intro, inside_only_via)
+    };
+
+    match &intro.intro {
+        VariableIntroType::Roots | VariableIntroType::AllNodes | VariableIntroType::Variable => {}
+        VariableIntroType::VariableMarked { marker, on_type: _ } => {
             map.insert("marker", marker.into());
-            // Variable source of doesn't play well with node clusters, so don't use them for types
-            // Node cluster initializations short-circuit with a boolean upon failure, but for checkpoints,
-            // we can't determine a static short-circuit value; it depends on whether source goes to a sink.
-            // So just use regular iterators for those too.
-            if *on_type || inside_only_via {
-                Some(InitializationType::GlobalNodesIterator)
-            } else {
+            let Some(typ) = initialization_typ else {
+                panic!("variables marked need to be initialized");
+            };
+            if matches!(typ, InitializationType::NodeCluster) {
                 map.insert("node-cluster", "true".to_string());
-                Some(InitializationType::NodeCluster)
             }
         }
         VariableIntroType::VariableSourceOf(type_var) => {
@@ -53,8 +46,6 @@ fn compile_variable_intro(
             if inside_definition_filter {
                 map.insert("typ-definition", "true".to_string());
             }
-
-            Some(InitializationType::GlobalNodesIterator)
         }
     };
 
@@ -112,8 +103,14 @@ fn compile_only_via(
         vars_to_initialization_typ: &mut HashMap<Variable, InitializationType>,
     ) -> (Variable, String) {
         let mut regular_template_map: HashMap<&str, String> = HashMap::new();
-        let (var, intro) =
-            compile_variable_intro(handlebars, intro, vars_to_initialization_typ, false, true);
+        let (var, intro) = compile_variable_intro(
+            handlebars,
+            intro,
+            vars_to_initialization_typ,
+            false,
+            true,
+            None,
+        );
         regular_template_map.insert("var", var.clone());
         // If the intro refers to a previously defined variable, `intro` will be an empty string, which the template will detect so it doesn't render anything
         regular_template_map.insert("intro", intro);
@@ -210,6 +207,12 @@ fn compile_ast_node(
             render_template(handlebars, &map, node.into())
         }
         ASTNode::Clause(clause) => {
+            let initialization_typ_override = if let ClauseIntro::ThereIs(intro) = &clause.intro {
+                there_is_initialization_typ(intro, &clause.body)
+            } else {
+                None
+            };
+
             let (variable_to_remove, variable_intro) = match &clause.intro {
                 ClauseIntro::ForEach(intro) | ClauseIntro::ThereIs(intro) => {
                     // Only remove a variable when the clause goes out of scope if it's one we're introducing here
@@ -220,6 +223,7 @@ fn compile_ast_node(
                         vars_to_initialization_typ,
                         inside_definition_filter,
                         false,
+                        initialization_typ_override,
                     );
 
                     let Some(typ) = vars_to_initialization_typ.get(&variable) else {
@@ -318,9 +322,19 @@ fn compile_definition(
     handlebars: &mut Handlebars,
     definition: &Definition,
     policy_scope: &PolicyScope,
+    policy_body: &ASTNode,
     vars_to_initialization_typ: &mut HashMap<Variable, InitializationType>,
 ) -> String {
     let mut map: HashMap<&str, String> = HashMap::new();
+
+    let mut initialization_typ_override = None;
+    if let Some(origin) = definition.lifted_from {
+        if matches!(origin, OgClauseIntroType::ThereIs) {
+            initialization_typ_override =
+                there_is_initialization_typ(&definition.declaration, policy_body);
+        }
+    }
+
     let (_, variable_intro) = compile_variable_intro(
         handlebars,
         &VariableIntro {
@@ -330,7 +344,10 @@ fn compile_definition(
         vars_to_initialization_typ,
         false,
         false,
+        initialization_typ_override,
     );
+
+    dbg!(&definition.variable, &initialization_typ_override);
 
     let Some(typ) = vars_to_initialization_typ.get(&definition.variable) else {
         panic!("compile_variable_intro did not initialize the defintion variable in the map")
@@ -385,6 +402,7 @@ fn compile_definitions(
     handlebars: &mut Handlebars,
     definitions: &[Definition],
     policy_scope: &PolicyScope,
+    policy_body: &ASTNode,
     vars_to_initialization_typ: &mut HashMap<Variable, InitializationType>,
 ) -> String {
     // Definitions use their own environment so that each definition only knows about the definition(s) above it.
@@ -400,6 +418,7 @@ fn compile_definitions(
             handlebars,
             definition,
             policy_scope,
+            policy_body,
             vars_to_initialization_typ,
         );
         let def = VarContext {
@@ -430,12 +449,14 @@ pub fn compile(policy: Policy, policy_name: &str, out: &Path, create_bin: bool) 
         &mut handlebars,
         &global_definitions,
         &policy.scope,
+        &policy.body,
         &mut vars_to_initialization_typ,
     );
     let compiled_ctrler_definitions = compile_definitions(
         &mut handlebars,
         &ctrler_definitions,
         &policy.scope,
+        &policy.body,
         &mut vars_to_initialization_typ,
     );
     map.insert("global-definitions", compiled_global_definitions);

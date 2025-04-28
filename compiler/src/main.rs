@@ -6,6 +6,7 @@ use parsers::parse;
 use std::io::Result;
 
 mod compile;
+mod initialization_typ;
 
 use common::{verify_scope::*, Policy};
 
