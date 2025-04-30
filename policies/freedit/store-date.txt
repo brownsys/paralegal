@@ -9,4 +9,4 @@ Definitions:
 Policy:
 1. For each "pageview_store":
 	A. There is a "date" marked time where:
-		a. "date" goes to "pageview_store"
+		a. "date" goes to "pageview_store"'s operation
