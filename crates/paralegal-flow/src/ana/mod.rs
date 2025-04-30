@@ -20,7 +20,9 @@ use anyhow::Result;
 use either::Either;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    body_cache::local_or_remote_paths, calling_convention::CallingConvention, utils::is_async,
+    body_cache::local_or_remote_paths,
+    calling_convention::CallingConvention,
+    utils::{is_async, type_as_fn},
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
 use inline_judge::{InlineJudgement, K};
@@ -32,7 +34,7 @@ use rustc_hir::{
     def_id::{DefId, LOCAL_CRATE},
 };
 use rustc_middle::{
-    mir::{Location, Operand},
+    mir::{self, Location, Operand},
     ty::{Instance, ParamEnv, TyCtxt},
 };
 use rustc_span::{ErrorGuaranteed, FileNameDisplayPreference, Span as RustSpan, Symbol};
@@ -346,7 +348,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                     RichLocation::Start => (InstructionKind::Start, "end".to_owned()),
                     RichLocation::Location(loc) => match body.stmt_at(loc) {
                         crate::Either::Right(term) => {
-                            let kind = if let Ok((id, ..)) = term.as_fn_and_args(tcx) {
+                            let kind = if let Some(id) = dirty_try_resolve_func_id(tcx, term) {
                                 InstructionKind::FunctionCall(FunctionCallInfo {
                                     id,
                                     is_inlined: id.is_local(),
@@ -532,6 +534,18 @@ fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: S
     } else {
         f()
     }
+}
+
+fn dirty_try_resolve_func_id<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    term: &mir::Terminator<'tcx>,
+) -> Option<DefId> {
+    let mir::TerminatorKind::Call { func, .. } = &term.kind else {
+        return None;
+    };
+    let c = func.constant()?;
+    let (id, _) = type_as_fn(tcx, ty_of_const(c)).to_option()?;
+    Some(id)
 }
 
 struct MyCallback<'tcx> {

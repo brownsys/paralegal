@@ -618,8 +618,8 @@ mod call_string_resolver {
     //! internal invariants of the resolver.
 
     use flowistry_pdg::CallString;
-    use flowistry_pdg_construction::{
-        utils::{manufacture_substs_for, try_monomorphize, try_resolve_function},
+    use flowistry_pdg_construction::utils::{
+        manufacture_substs_for, try_monomorphize, try_resolve_function,
     };
     use paralegal_spdg::Endpoint;
     use rustc_middle::{mir::TerminatorKind, ty::Instance};
