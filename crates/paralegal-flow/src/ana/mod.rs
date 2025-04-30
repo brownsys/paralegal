@@ -167,7 +167,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     ) -> (ProgramDescription, AnalyzerStats) {
         let tcx = self.ctx.tcx();
 
-        let instruction_info = self.collect_instruction_info(&controllers);
+        let instruction_info = self.collect_instruction_info(&controllers, &mut known_def_ids);
 
         let called_functions = instruction_info
             .keys()
@@ -327,6 +327,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     fn collect_instruction_info(
         &self,
         controllers: &HashMap<Endpoint, SPDG>,
+        known_def_ids: &mut impl Extend<DefId>,
     ) -> HashMap<GlobalLocation, InstructionInfo> {
         let tcx = self.ctx.tcx();
         let all_instructions = controllers
@@ -349,6 +350,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                     RichLocation::Location(loc) => match body.stmt_at(loc) {
                         crate::Either::Right(term) => {
                             let kind = if let Some(id) = dirty_try_resolve_func_id(tcx, term) {
+                                known_def_ids.extend([id]);
                                 InstructionKind::FunctionCall(FunctionCallInfo {
                                     id,
                                     is_inlined: id.is_local(),
