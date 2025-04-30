@@ -63,6 +63,7 @@ fn compile_relation(
     handlebars: &mut Handlebars,
     relation: &Relation,
     vars_to_initialization_typ: &HashMap<Variable, InitializationType>,
+    vars_to_clause_typ: &HashMap<Variable, OgClauseIntroType>,
 ) -> String {
     let mut map: HashMap<&str, String> = HashMap::new();
     match relation {
@@ -71,12 +72,29 @@ fn compile_relation(
             map.insert("sink", right.into());
             if let Some(typ) = vars_to_initialization_typ.get(right) {
                 if matches!(typ, InitializationType::NodeCluster) {
-                    map.insert("node-cluster", "true".to_string());
+                    map.insert("sink-node-cluster", "true".to_string());
                 }
+            } else {
+                panic!(
+                    "Tried to compile a relation whose sink is not in vars_to_initialization_typ"
+                );
+            }
+            if let Some(typ) = vars_to_clause_typ.get(right) {
+                // dbg!(&relation, &vars_to_clause_typ);
+                if matches!(typ, OgClauseIntroType::ForEach) {
+                    map.insert("sink-for-each", "true".to_string());
+                }
+            } else {
+                panic!("Tried to compile a relation whose sink is not in vars_to_clause_typ");
             }
         }
         Relation::Negation(inner) => {
-            let value = compile_relation(handlebars, inner, vars_to_initialization_typ);
+            let value = compile_relation(
+                handlebars,
+                inner,
+                vars_to_initialization_typ,
+                vars_to_clause_typ,
+            );
             map.insert("value", value);
         }
         Relation::IsMarked(var, marker) => {
@@ -184,13 +202,17 @@ fn compile_ast_node(
     node: &ASTNode,
     counter: &mut u32,
     vars_to_initialization_typ: &mut HashMap<Variable, InitializationType>,
+    vars_to_clause_typ: &mut HashMap<Variable, OgClauseIntroType>,
     inside_definition_filter: bool,
 ) -> String {
     let mut map: HashMap<&str, String> = HashMap::new();
     match node {
-        ASTNode::Relation(relation) => {
-            compile_relation(handlebars, relation, vars_to_initialization_typ)
-        }
+        ASTNode::Relation(relation) => compile_relation(
+            handlebars,
+            relation,
+            vars_to_initialization_typ,
+            vars_to_clause_typ,
+        ),
         ASTNode::OnlyVia(..) => compile_only_via(handlebars, node, vars_to_initialization_typ),
         ASTNode::JoinedNodes(obligation) => {
             let src_res = compile_ast_node(
@@ -198,6 +220,7 @@ fn compile_ast_node(
                 &obligation.src,
                 counter,
                 vars_to_initialization_typ,
+                vars_to_clause_typ,
                 inside_definition_filter,
             );
             map.insert("src", src_res);
@@ -206,6 +229,7 @@ fn compile_ast_node(
                 &obligation.sink,
                 counter,
                 vars_to_initialization_typ,
+                vars_to_clause_typ,
                 inside_definition_filter,
             );
             map.insert("sink", sink_res);
@@ -237,6 +261,8 @@ fn compile_ast_node(
                     }
                     if already_present {
                         map.insert("refers-to-definition", "true".to_string());
+                    } else {
+                        vars_to_clause_typ.insert(variable.clone(), (&clause.intro).into());
                     }
 
                     map.insert("var", variable.clone());
@@ -250,22 +276,30 @@ fn compile_ast_node(
                 }
                 ClauseIntro::Conditional(relation) => (
                     None,
-                    compile_relation(handlebars, relation, vars_to_initialization_typ),
+                    compile_relation(
+                        handlebars,
+                        relation,
+                        vars_to_initialization_typ,
+                        vars_to_clause_typ,
+                    ),
                 ),
             };
 
             map.insert("intro", variable_intro);
+
             let body = compile_ast_node(
                 handlebars,
                 &clause.body,
                 counter,
                 vars_to_initialization_typ,
+                vars_to_clause_typ,
                 inside_definition_filter,
             );
 
             // variable going out of scope
             if let Some(variable) = variable_to_remove {
                 vars_to_initialization_typ.remove_entry(&variable);
+                vars_to_clause_typ.remove_entry(&variable);
             }
 
             map.insert("body", body);
@@ -308,6 +342,7 @@ fn compile_ast_node(
                     rest,
                     counter,
                     vars_to_initialization_typ,
+                    vars_to_clause_typ,
                     inside_definition_filter,
                 );
                 map.insert("rest", rest);
@@ -326,6 +361,7 @@ fn compile_definition(
     definition: &Definition,
     policy_scope: &PolicyScope,
     vars_to_initialization_typ: &mut HashMap<Variable, InitializationType>,
+    vars_to_clause_typ: &mut HashMap<Variable, OgClauseIntroType>,
 ) -> String {
     let mut map: HashMap<&str, String> = HashMap::new();
 
@@ -338,7 +374,7 @@ fn compile_definition(
         vars_to_initialization_typ,
         false,
         false,
-        // Don't need this for definitions because we only life something if it is referred to at most once,
+        // Don't need this for definitions because we only lift something if it is referred to at most once,
         // or if it's referred to multiple times but the references are idempotent, c.f. optimizer::lift_definitions.
         // So if it's lifted, we can trust that we can use a NodeCluster if that's what's chosen.
         None,
@@ -351,12 +387,22 @@ fn compile_definition(
         map.insert("node-cluster", "true".to_string());
     }
 
-    let inner_var = definition.declaration.variable.clone();
+    let inner_var = &definition.declaration.variable;
     map.insert("inner_var", inner_var.clone());
     map.insert("var", definition.variable.clone());
     map.insert("intro", variable_intro);
     let mut counter = 0;
     if let Some(filter) = &definition.filter {
+        // Relations in filters need access to the inner variable to compile
+        if let Some(typ) = definition.lifted_from {
+            vars_to_clause_typ.insert(inner_var.clone(), typ);
+        } else {
+            // If it's not a lifted definition, then it must be all objects that satisfy the definition
+            // since that's the only kind that parses.
+            // The declaration's variable is the one that the relations are in terms of.
+            vars_to_clause_typ.insert(inner_var.clone(), OgClauseIntroType::ForEach);
+        }
+
         // just need to insert it so that we don't try to take a reference to it
         let already_present = vars_to_initialization_typ
             .insert(inner_var.clone(), InitializationType::GlobalNodesIterator)
@@ -366,15 +412,24 @@ fn compile_definition(
             filter,
             &mut counter,
             vars_to_initialization_typ,
+            vars_to_clause_typ,
             true,
         );
         map.insert("filter", filter);
 
         // If the inner var wasn't already in the map, then remove it.
-        // If it was already in the map, it had to refer to a previous definition (I think?)
+        // If it was already in the map, it had to refer to a previous definition
         if !already_present {
-            vars_to_initialization_typ.remove_entry(&inner_var);
+            vars_to_initialization_typ.remove_entry(inner_var);
         }
+        vars_to_clause_typ.remove_entry(inner_var);
+    }
+
+    // Now that the definition is there, the outer variable should be referenceable
+    if let Some(typ) = definition.lifted_from {
+        vars_to_clause_typ.insert(definition.variable.clone(), typ);
+    } else {
+        vars_to_clause_typ.insert(definition.variable.clone(), OgClauseIntroType::ForEach);
     }
 
     // what to return if creating the node cluster fails, i.e. there are no nodes that fit the definition
@@ -398,6 +453,7 @@ fn compile_definitions(
     definitions: &[Definition],
     policy_scope: &PolicyScope,
     vars_to_initialization_typ: &mut HashMap<Variable, InitializationType>,
+    vars_to_clause_typ: &mut HashMap<Variable, OgClauseIntroType>,
 ) -> String {
     // Definitions use their own environment so that each definition only knows about the definition(s) above it.
     // This is important if the filter in one definition uses the same variable name as the name of a later definition;
@@ -413,6 +469,7 @@ fn compile_definitions(
             definition,
             policy_scope,
             vars_to_initialization_typ,
+            vars_to_clause_typ,
         );
         let def = VarContext {
             typ: (&definition.declaration).into(),
@@ -433,7 +490,10 @@ pub fn compile(policy: Policy, policy_name: &str, out: &Path, create_bin: bool) 
 
     // compile definitions & policy
     let mut map: HashMap<&str, String> = HashMap::new();
+    // Map each variable to whether it should be initialized with a NodeCluster or Iterator<Item = GlobalNode> in the policy
     let mut vars_to_initialization_typ = HashMap::new();
+    // Map each variable to its clause intro type in the policy
+    let mut vars_to_clause_typ = HashMap::new();
     let (global_definitions, ctrler_definitions): (Vec<_>, Vec<_>) = policy
         .definitions
         .into_iter()
@@ -443,12 +503,14 @@ pub fn compile(policy: Policy, policy_name: &str, out: &Path, create_bin: bool) 
         &global_definitions,
         &policy.scope,
         &mut vars_to_initialization_typ,
+        &mut vars_to_clause_typ,
     );
     let compiled_ctrler_definitions = compile_definitions(
         &mut handlebars,
         &ctrler_definitions,
         &policy.scope,
         &mut vars_to_initialization_typ,
+        &mut vars_to_clause_typ,
     );
     map.insert("global-definitions", compiled_global_definitions);
     map.insert("definitions", compiled_ctrler_definitions);
@@ -460,6 +522,7 @@ pub fn compile(policy: Policy, policy_name: &str, out: &Path, create_bin: bool) 
         &policy.body,
         &mut counter,
         &mut vars_to_initialization_typ,
+        &mut vars_to_clause_typ,
         false,
     );
     map.insert("body", compiled_body);

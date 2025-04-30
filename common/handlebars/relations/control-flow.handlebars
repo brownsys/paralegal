@@ -1,2 +1,9 @@
-{{src}}
-    .has_ctrl_influence({{#if node-cluster}}&{{/if}}{{sink}}, &ctx)
+{{#if sink-node-cluster}}
+  {{#if sink-for-each}}
+    {{src}}.has_ctrl_influence_all(&{{sink}}, &ctx).is_none()
+  {{else}}
+    {{src}}.has_ctrl_influence(&{{sink}}, &ctx)
+  {{/if}}
+{{else}}
+    {{src}}.has_ctrl_influence({{sink}}, &ctx)
+{{/if}}
