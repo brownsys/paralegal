@@ -16,3 +16,7 @@ Policy:
             i) "pageview" goes to "deleter"
             and
 			ii) "expiration_check" affects whether "deleter" happens
+and
+2. There is a "pageview" marked pageviews where:
+	A. There is a "deleter" marked deletes where:
+		a. "pageview" goes to "deleter"
