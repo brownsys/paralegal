@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Check that the policies compile. This assumes the existence of a `paralegal-playground` package
+# with Paralegal set up as a dependency.
+
 # Navigate to the policies directory
 cd policies
 
