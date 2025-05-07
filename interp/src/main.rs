@@ -4,7 +4,8 @@ use common::{ast::*, *};
 use paralegal_policy::diagnostics::ControllerContext;
 use paralegal_policy::paralegal_spdg::{GlobalNode, Identifier};
 use paralegal_policy::{
-    assert_error, Context, EdgeSelection, GraphLocation, NodeExt, NodeQueries, SPDGGenCommand,
+    assert_error, Context, EdgeSelection, GraphLocation, NodeExt, NodeQueries, RootContext,
+    SPDGGenCommand,
 };
 use parsers::parse;
 use std::collections::{HashMap, HashSet};
@@ -228,7 +229,7 @@ impl<'p> Interpreter<'p> {
     }
 }
 
-fn interp(policy: &Policy, ctx: Arc<Context>) -> Result<bool> {
+fn interp(policy: &Policy, ctx: Arc<RootContext>) -> Result<bool> {
     for ctx in ctx.controller_contexts() {
         if matches!(&policy.scope, PolicyScope::InCtrler(c) if c != ctx.current().name.as_str()) {
             continue;

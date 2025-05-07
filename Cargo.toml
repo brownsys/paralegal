@@ -9,8 +9,8 @@ rust-embed = "8.7.0"
 
 [workspace.dependencies.paralegal-policy]
 git = "https://github.com/brownsys/paralegal"
-rev = "c52fc5ccb2b9a14d307381b5567eb154b86667a9"
+rev = "402f10d56"
 
 [workspace.dependencies.paralegal]
 git = "https://github.com/brownsys/paralegal"
-rev = "c52fc5ccb2b9a14d307381b5567eb154b86667a9"
+rev = "402f10d56"
