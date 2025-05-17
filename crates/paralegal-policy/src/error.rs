@@ -68,6 +68,14 @@ impl Cause {
         ctx: &impl Context,
     ) {
         match &self.ty {
+            CauseTy::Vacuous => {
+                msg.with_note(format!(
+                    "{} {}\nis vacuously {}",
+                    DisplaySpan(self.description.as_str()),
+                    DisplayRule(self.clause_ident.as_str()),
+                    if result { "true" } else { "false" }
+                ));
+            }
             CauseTy::Binop {
                 left,
                 right,
@@ -199,6 +207,7 @@ pub enum CauseTy {
     },
     /// The inner cause type now describes successes
     Not(Box<Cause>),
+    Vacuous,
 }
 
 impl CauseTy {
@@ -266,6 +275,7 @@ impl CauseTy {
                 inner_cause.as_ref().map_or(0, |inner| inner.ty.progress()) + 1
             }
             Self::Connective { fail, .. } => fail.ty.progress() + 1,
+            Self::Vacuous => 1,
         }
     }
 }
@@ -369,8 +379,22 @@ impl CauseBuilder {
         self.binop(Relation::GoesToAll, left, right, ctx)
     }
 
-    pub fn influences(self, left: GlobalNode, right: GlobalNode, ctx: &impl Context) -> EvalResult {
+    pub fn influences(
+        self,
+        left: impl IntoIterGlobalNodes,
+        right: impl IntoIterGlobalNodes,
+        ctx: &impl Context,
+    ) -> EvalResult {
         self.binop(Relation::Influences, left, right, ctx)
+    }
+
+    pub fn influences_all(
+        self,
+        left: impl IntoIterGlobalNodes,
+        right: impl IntoIterGlobalNodes,
+        ctx: &impl Context,
+    ) -> EvalResult {
+        self.binop(Relation::InfluencesAll, left, right, ctx)
     }
 
     pub fn has_ctrl_influence(
@@ -455,15 +479,25 @@ impl CauseBuilder {
 
     pub fn only_via(
         self,
-        starting: impl IntoIterGlobalNodes,
+        starting: impl IntoIterator<Item = GlobalNode>,
         is_checkpoint: impl FnMut(GlobalNode) -> bool,
         is_terminal: impl FnMut(GlobalNode) -> bool,
         ctx: &impl Context,
     ) -> EvalResult {
-        let a_start = starting.one();
+        let mut starting = starting.into_iter().peekable();
+        let Some(a_start) = starting.peek().copied() else {
+            return (
+                true,
+                Cause {
+                    description: self.description,
+                    clause_ident: self.clause_num,
+                    ty: CauseTy::Vacuous,
+                },
+            );
+        };
         let result = ctx
             .root()
-            .always_happens_before(starting.iter_global_nodes(), is_checkpoint, is_terminal)
+            .always_happens_before(starting, is_checkpoint, is_terminal)
             .unwrap();
         let (from, to) = if result.holds() {
             let res = result.reached().expect(
