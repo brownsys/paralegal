@@ -36,6 +36,30 @@ pub struct Cause {
     ty: CauseTy,
 }
 
+struct DisplayRule<'a>(&'a str);
+
+impl Display for DisplayRule<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0.is_empty() {
+            Ok(())
+        } else {
+            write!(f, "(Rule {})", self.0)
+        }
+    }
+}
+
+struct DisplaySpan<'a>(&'a str);
+
+impl Display for DisplaySpan<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0.is_empty() {
+            Ok(())
+        } else {
+            write!(f, "`{}`", self.0)
+        }
+    }
+}
+
 impl Cause {
     fn report<'a, B: HasDiagnosticsBase>(
         &self,
@@ -52,8 +76,9 @@ impl Cause {
                 msg.with_node_note(
                     *left,
                     format!(
-                        "`{}` (Rule {})\nwith source",
-                        self.description, self.clause_ident
+                        "{} {}\nwith source",
+                        DisplaySpan(self.description.as_str()),
+                        DisplayRule(self.clause_ident.as_str())
                     ),
                 )
                 .with_node_note(
@@ -70,6 +95,30 @@ impl Cause {
                     ),
                 );
             }
+            CauseTy::OnlyVia { from, to } => {
+                msg.with_node_note(
+                    *from,
+                    format!(
+                        "{} {}\nsource",
+                        DisplaySpan(self.description.as_str()),
+                        DisplayRule(self.clause_ident.as_str())
+                    ),
+                );
+                if let Some(to) = to {
+                    msg.with_node_note(
+                        *to,
+                        format!(
+                            "{} data flow influence on this target without passing checkpoint",
+                            if result { "does not have" } else { "has" },
+                        ),
+                    );
+                } else {
+                    msg.with_note(format!(
+                        "{} data flow influence without passing checkpoint",
+                        if result { "does not have" } else { "has" },
+                    ));
+                }
+            }
             CauseTy::Not(inner) => {
                 inner.report(!result, msg, ctx);
             }
@@ -78,10 +127,10 @@ impl Cause {
                 fail,
             } => {
                 msg.with_note(format!(
-                    "`{}` {} (Rule {})",
-                    self.description,
+                    "{} {} {}",
+                    DisplaySpan(self.description.as_str()),
                     if result { "succeeded" } else { "failed" },
-                    self.clause_ident
+                    DisplayRule(self.clause_ident.as_str())
                 ));
                 fail.report(result, msg, ctx);
             }
@@ -95,8 +144,10 @@ impl Cause {
                     msg.with_node_note(
                         *n,
                         format!(
-                            "`{}` (Rule {})\n{} because of item",
-                            self.description, self.clause_ident, classification
+                            "{} {}\n{} because of item",
+                            DisplaySpan(self.description.as_str()),
+                            DisplayRule(self.clause_ident.as_str()),
+                            classification
                         ),
                     );
                 } else {
@@ -112,8 +163,9 @@ impl Cause {
                         QuantifierItem::Node(_) => unreachable!(),
                     };
                     msg.with_note(format!(
-                        "`{}` (Rule {})\n{classification} because of {item_name}",
-                        self.description, self.clause_ident,
+                        "{} {}\n{classification} because of {item_name}",
+                        DisplaySpan(self.description.as_str()),
+                        DisplayRule(self.clause_ident.as_str()),
                     ));
                 }
                 if let Some(inner) = inner_cause {
@@ -129,6 +181,10 @@ pub enum CauseTy {
         left: GlobalNode,
         right: GlobalNode,
         relation: Relation,
+    },
+    OnlyVia {
+        from: GlobalNode,
+        to: Option<GlobalNode>,
     },
     /// In case of `Connective::Or` the item is the one with "lowest-down"
     /// failure, e.g. that made "the most progress" in the policy.
@@ -204,7 +260,7 @@ impl From<&ControllerContext> for QuantifierItem {
 impl CauseTy {
     fn progress(&self) -> u32 {
         match self {
-            Self::Binop { .. } => 1,
+            Self::Binop { .. } | Self::OnlyVia { .. } => 1,
             Self::Not(inner) => inner.ty.progress() + 1,
             Self::Quantifier { inner_cause, .. } => {
                 inner_cause.as_ref().map_or(0, |inner| inner.ty.progress()) + 1
@@ -216,6 +272,7 @@ impl CauseTy {
 
 type EvalResult = (bool, Cause);
 
+#[derive(Clone, Copy)]
 pub struct CauseBuilder {
     description: Identifier,
     clause_num: Identifier,
@@ -394,6 +451,37 @@ impl CauseBuilder {
                 clause_from_cluster(left.has_ctrl_influence_all(right, ctx.root()))
             }
         }
+    }
+
+    pub fn only_via(
+        self,
+        starting: impl IntoIterGlobalNodes,
+        is_checkpoint: impl FnMut(GlobalNode) -> bool,
+        is_terminal: impl FnMut(GlobalNode) -> bool,
+        ctx: &impl Context,
+    ) -> EvalResult {
+        let a_start = starting.one();
+        let result = ctx
+            .root()
+            .always_happens_before(starting.iter_global_nodes(), is_checkpoint, is_terminal)
+            .unwrap();
+        let (from, to) = if result.holds() {
+            let res = result.reached().expect(
+                "With error message the only-via trace level needs to be at least start-and-end",
+            );
+            let (a, b) = res.first().expect("Trace should not be empty");
+            (*a, Some(*b))
+        } else {
+            (a_start, None)
+        };
+        (
+            result.holds(),
+            Cause {
+                description: self.description,
+                clause_ident: self.clause_num,
+                ty: CauseTy::OnlyVia { from, to },
+            },
+        )
     }
 
     pub fn all<I: Into<QuantifierItem>>(
