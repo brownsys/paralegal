@@ -1,19 +1,27 @@
 use std::{
     cmp::{max_by, max_by_key},
     fmt::Display,
+    sync::Arc,
 };
 
-use paralegal_spdg::{traverse::EdgeSelection, DisplayPath, Endpoint, GlobalNode, Identifier};
+use paralegal_spdg::{
+    traverse::EdgeSelection, DisplayPath, Endpoint, GlobalNode, Identifier, IntoIterGlobalNodes,
+    NodeCluster,
+};
 
 use crate::{
-    diagnostics::{Diagnostic, DiagnosticBuilder, HasDiagnosticsBase},
+    diagnostics::{ControllerContext, Diagnostic, DiagnosticBuilder, HasDiagnosticsBase},
     Context, Diagnostics, NodeQueries,
 };
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Relation {
     GoesTo,
+    GoesToAll,
     Influences,
+    InfluencesAll,
     HasCtrlInfluence,
+    HasCtrlInfluenceAll,
 }
 
 #[derive(Clone, Copy)]
@@ -54,9 +62,10 @@ impl Cause {
                         "does {}{}",
                         if result { "" } else { "not " },
                         match relation {
-                            Relation::GoesTo => "go to",
-                            Relation::Influences => "influence",
-                            Relation::HasCtrlInfluence => "have control influence on",
+                            Relation::GoesTo | Relation::GoesToAll => "go to",
+                            Relation::Influences | Relation::InfluencesAll => "influence",
+                            Relation::HasCtrlInfluence | Relation::HasCtrlInfluenceAll =>
+                                "have control influence on",
                         }
                     ),
                 );
@@ -136,6 +145,16 @@ pub enum CauseTy {
     Not(Box<Cause>),
 }
 
+impl CauseTy {
+    pub fn empty_quantifier(connective: Connective) -> Self {
+        Self::Quantifier {
+            connective,
+            item: QuantifierItem::Empty,
+            inner_cause: None,
+        }
+    }
+}
+
 pub enum QuantifierItem {
     Node(GlobalNode),
     Endpoint(Endpoint),
@@ -167,6 +186,21 @@ impl From<&Endpoint> for QuantifierItem {
     }
 }
 
+impl<T> From<Arc<T>> for QuantifierItem
+where
+    QuantifierItem: for<'a> From<&'a T>,
+{
+    fn from(value: Arc<T>) -> Self {
+        QuantifierItem::from(value.as_ref())
+    }
+}
+
+impl From<&ControllerContext> for QuantifierItem {
+    fn from(value: &ControllerContext) -> Self {
+        QuantifierItem::Endpoint(value.id())
+    }
+}
+
 impl CauseTy {
     fn progress(&self) -> u32 {
         match self {
@@ -192,6 +226,14 @@ impl CauseBuilder {
         Self {
             description: description.into(),
             clause_num: clause_num.into(),
+        }
+    }
+
+    pub fn with_type(self, ty: CauseTy) -> Cause {
+        Cause {
+            description: self.description.into(),
+            clause_ident: self.clause_num.into(),
+            ty,
         }
     }
 
@@ -252,48 +294,106 @@ impl CauseBuilder {
         )
     }
 
-    pub fn goes_to(self, left: GlobalNode, right: GlobalNode, ctx: &impl Context) -> EvalResult {
+    pub fn goes_to(
+        self,
+        left: impl IntoIterGlobalNodes,
+        right: impl IntoIterGlobalNodes,
+        ctx: &impl Context,
+    ) -> EvalResult {
         self.binop(Relation::GoesTo, left, right, ctx)
+    }
+
+    pub fn goes_to_all(
+        self,
+        left: impl IntoIterGlobalNodes,
+        right: impl IntoIterGlobalNodes,
+        ctx: &impl Context,
+    ) -> EvalResult {
+        self.binop(Relation::GoesToAll, left, right, ctx)
     }
 
     pub fn influences(self, left: GlobalNode, right: GlobalNode, ctx: &impl Context) -> EvalResult {
         self.binop(Relation::Influences, left, right, ctx)
     }
 
-    pub fn has_ctr_influence(
+    pub fn has_ctrl_influence(
         self,
-        left: GlobalNode,
-        right: GlobalNode,
+        left: impl IntoIterGlobalNodes,
+        right: impl IntoIterGlobalNodes,
         ctx: &impl Context,
     ) -> EvalResult {
         self.binop(Relation::HasCtrlInfluence, left, right, ctx)
     }
 
+    pub fn has_ctrl_influence_all(
+        self,
+        left: impl IntoIterGlobalNodes,
+        right: impl IntoIterGlobalNodes,
+        ctx: &impl Context,
+    ) -> EvalResult {
+        self.binop(Relation::HasCtrlInfluenceAll, left, right, ctx)
+    }
+
     fn binop(
         self,
         relation: Relation,
-        left: GlobalNode,
-        right: GlobalNode,
+        left: impl IntoIterGlobalNodes,
+        right: impl IntoIterGlobalNodes,
         ctx: &impl Context,
     ) -> EvalResult {
-        let result = match relation {
-            Relation::GoesTo => left.flows_to(right, ctx.root(), EdgeSelection::Data),
-            Relation::HasCtrlInfluence => left.has_ctrl_influence(right, ctx.root()),
-            Relation::Influences => left.flows_to(right, ctx.root(), EdgeSelection::Both),
+        let sample_left = left.iter_global_nodes().next().unwrap();
+        let sample_right = right.iter_global_nodes().next().unwrap();
+
+        let mk_clause = |left, right| Cause {
+            description: self.description,
+            clause_ident: self.clause_num,
+            ty: CauseTy::Binop {
+                left,
+                right,
+                relation,
+            },
         };
 
-        (
-            result,
-            Cause {
-                description: self.description,
-                clause_ident: self.clause_num,
-                ty: CauseTy::Binop {
-                    left,
-                    right,
-                    relation,
-                },
-            },
-        )
+        let clause_from_option = |opt: Option<(GlobalNode, GlobalNode)>| {
+            (
+                opt.is_some(),
+                opt.map_or_else(
+                    || mk_clause(sample_left, sample_right),
+                    |(src, sink)| mk_clause(src, sink),
+                ),
+            )
+        };
+
+        let clause_from_cluster = |cluster: Option<NodeCluster>| {
+            (
+                !cluster.is_some(),
+                cluster.map_or_else(
+                    || mk_clause(sample_left, sample_right),
+                    |cluster| mk_clause(sample_left, cluster.iter_global_nodes().next().unwrap()),
+                ),
+            )
+        };
+
+        match relation {
+            Relation::GoesTo => {
+                clause_from_option(left.find_flow(right, ctx.root(), EdgeSelection::Data))
+            }
+            Relation::HasCtrlInfluence => {
+                clause_from_option(left.find_ctrl_influence(right, ctx.root()))
+            }
+            Relation::Influences => {
+                clause_from_option(left.find_flow(right, ctx.root(), EdgeSelection::Both))
+            }
+            Relation::InfluencesAll => {
+                clause_from_cluster(left.flows_to_all(right, ctx.root(), EdgeSelection::Both))
+            }
+            Relation::GoesToAll => {
+                clause_from_cluster(left.flows_to_all(right, ctx.root(), EdgeSelection::Data))
+            }
+            Relation::HasCtrlInfluenceAll => {
+                clause_from_cluster(left.has_ctrl_influence_all(right, ctx.root()))
+            }
+        }
     }
 
     pub fn all<I: Into<QuantifierItem>>(

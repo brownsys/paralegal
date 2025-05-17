@@ -727,7 +727,6 @@ where
         )
         .is_some()
     }
-
     /// An optimized version of the following pattern that performs only one
     /// graph traversal instead of `sink.len()` traversals:
     ///
@@ -783,29 +782,34 @@ where
         sink: impl IntoIterGlobalNodes,
         ctx: &RootContext,
         edge_type: EdgeSelection,
-    ) -> Option<GlobalNode> {
+    ) -> Option<(GlobalNode, GlobalNode)> {
         let cf_id = self.controller_id();
         if sink.controller_id() != cf_id {
             return None;
         }
 
-        if let Some(index) = ctx.flows_to.as_ref() {
-            if edge_type.is_data() {
-                let flows_to = &index[&cf_id];
-                return self.iter_nodes().find_map(|src| {
-                    sink.iter_nodes()
-                        .find(|sink| flows_to.data_flows_to[src.index()][sink.index()])
-                        .map(|n| GlobalNode::from_local_node(cf_id, n))
-                });
-            }
-        }
+        // if let Some(index) = ctx.flows_to.as_ref() {
+        //     if edge_type.is_data() {
+        //         let flows_to = &index[&cf_id];
+        //         return self.iter_nodes().find_map(|src| {
+        //             sink.iter_nodes()
+        //                 .find(|sink| flows_to.data_flows_to[src.index()][sink.index()])
+        //                 .map(|n| GlobalNode::from_local_node(cf_id, n))
+        //         });
+        //     }
+        // }
         generic_flows_to(
             self.iter_nodes(),
             edge_type,
             &ctx.desc.controllers[&cf_id],
             sink.iter_nodes(),
         )
-        .map(|n| GlobalNode::from_local_node(cf_id, n))
+        .map(|(start, end)| {
+            (
+                GlobalNode::from_local_node(cf_id, start),
+                GlobalNode::from_local_node(cf_id, end),
+            )
+        })
     }
 
     /// Call sites that consume this node directly. E.g. the outgoing edges.
@@ -834,6 +838,22 @@ where
             || NodeCluster::try_from_iter(self.influencees(ctx, EdgeSelection::Data))
                 .unwrap()
                 .flows_to(target, ctx, EdgeSelection::Control)
+    }
+
+    /// Returns whether there is direct control flow influence from influencer to sink, or there is some node which is data-flow influenced by `influencer` and has direct control flow influence on `target`. Or as expressed in code:
+    ///
+    /// `some n where self.flows_to(influencer, n, EdgeSelection::Data) && self.flows_to(n, target, EdgeSelection::Control)`.
+    fn find_ctrl_influence(
+        self,
+        target: impl IntoIterGlobalNodes + Sized + Copy,
+        ctx: &RootContext,
+    ) -> Option<(GlobalNode, GlobalNode)> {
+        self.find_flow(target, ctx, EdgeSelection::Control)
+            .or_else(|| {
+                NodeCluster::try_from_iter(self.influencees(ctx, EdgeSelection::Data))
+                    .unwrap()
+                    .find_flow(target, ctx, EdgeSelection::Control)
+            })
     }
 
     /// Similar to [`Self::has_ctrl_influence`] but checks that all nodes in

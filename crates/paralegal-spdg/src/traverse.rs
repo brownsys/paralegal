@@ -3,8 +3,8 @@
 use std::collections::HashSet;
 
 use petgraph::visit::{
-    Bfs, Data, EdgeFiltered, EdgeRef, IntoEdgeReferences, IntoEdges,
-    IntoEdgesDirected, IntoNeighbors, VisitMap, Visitable, Walker, WalkerIter,
+    self, Bfs, Data, EdgeFiltered, EdgeRef, IntoEdgeReferences, IntoEdges, IntoEdgesDirected,
+    IntoNeighbors, VisitMap, Visitable, Walker, WalkerIter,
 };
 
 use crate::{EdgeInfo, EdgeKind, Node, SPDGImpl};
@@ -72,7 +72,7 @@ pub fn generic_flows_to(
     edge_selection: EdgeSelection,
     spdg: &SPDG,
     other: impl IntoIterator<Item = Node>,
-) -> Option<Node> {
+) -> Option<(Node, Node)> {
     let targets = other.into_iter().collect::<HashSet<_>>();
     let mut from = from.into_iter().peekable();
     if from.peek().is_none() || targets.is_empty() {
@@ -80,9 +80,13 @@ pub fn generic_flows_to(
     }
 
     let graph = edge_selection.filter_graph(&spdg.graph);
-    for n in petgraph::visit::Dfs::from_parts(from.collect(), graph.visit_map()).iter(&graph) {
-        if targets.contains(&n) {
-            return Some(n);
+    let mut search = petgraph::visit::Dfs::from_parts(vec![], graph.visit_map());
+    for n in from {
+        search.move_to(n);
+        while let Some(end) = search.next(&graph) {
+            if targets.contains(&end) {
+                return Some((n, end));
+            }
         }
     }
     None

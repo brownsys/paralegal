@@ -50,7 +50,7 @@ pub use crate::tiny_bitset::TinyBitSet;
 use flowistry_pdg::rustc_portable::LocalDefId;
 use petgraph::graph::{EdgeIndex, EdgeReference, NodeIndex};
 use petgraph::prelude::EdgeRef;
-use petgraph::visit::{IntoNodeIdentifiers};
+use petgraph::visit::IntoNodeIdentifiers;
 pub use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 
@@ -674,6 +674,23 @@ pub trait IntoIterGlobalNodes: Sized + Copy {
     /// Collect the iterator into a cluster
     fn to_local_cluster(self) -> NodeCluster {
         NodeCluster::new(self.controller_id(), self.iter_nodes())
+    }
+
+    fn one(&self) -> GlobalNode {
+        self.iter_global_nodes()
+            .next()
+            .expect("Invariant broken: no nodes")
+    }
+}
+
+impl<T: IntoIterGlobalNodes> IntoIterGlobalNodes for &T {
+    type Iter = T::Iter;
+    fn iter_nodes(self) -> Self::Iter {
+        (*self).iter_nodes()
+    }
+
+    fn controller_id(self) -> Endpoint {
+        (*self).controller_id()
     }
 }
 
