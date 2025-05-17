@@ -70,6 +70,7 @@ pub mod algo;
 mod context;
 #[macro_use]
 pub mod diagnostics;
+pub mod error;
 #[cfg(test)]
 mod test_utils;
 
