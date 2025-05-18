@@ -518,15 +518,11 @@ impl CauseBuilder {
             .root()
             .always_happens_before(starting, is_checkpoint, is_terminal)
             .unwrap();
-        let (from, to) = if result.holds() {
-            let res = result.reached().expect(
-                "With error message the only-via trace level needs to be at least start-and-end",
-            );
-            let (a, b) = res.first().expect("Trace should not be empty");
-            (*a, Some(*b))
-        } else {
-            (a_start, None)
-        };
+        let (from, to) = result
+            .reached()
+            .ok()
+            .and_then(|r| r.first().copied())
+            .map_or((a_start, None), |(a, b)| (a, Some(b)));
         (
             result.holds(),
             Cause {
