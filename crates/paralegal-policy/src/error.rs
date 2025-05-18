@@ -6,7 +6,7 @@ use paralegal_spdg::{
 };
 
 use crate::{
-    diagnostics::{ControllerContext, Diagnostic, DiagnosticBuilder, HasDiagnosticsBase},
+    diagnostics::{ControllerContext, DiagnosticBuilder, HasDiagnosticsBase},
     Context, Diagnostics, NodeExt, NodeQueries,
 };
 
