@@ -1,8 +1,4 @@
-use std::{
-    cmp::{max_by, max_by_key},
-    fmt::Display,
-    sync::Arc,
-};
+use std::{fmt::Display, sync::Arc};
 
 use paralegal_spdg::{
     traverse::EdgeSelection, DisplayPath, Endpoint, GlobalNode, Identifier, IntoIterGlobalNodes,
@@ -11,7 +7,7 @@ use paralegal_spdg::{
 
 use crate::{
     diagnostics::{ControllerContext, Diagnostic, DiagnosticBuilder, HasDiagnosticsBase},
-    Context, Diagnostics, NodeQueries,
+    Context, Diagnostics, NodeExt, NodeQueries,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -31,14 +27,15 @@ pub enum Connective {
 }
 
 pub struct Cause {
-    description: Identifier,
-    clause_ident: Identifier,
+    description: CNLSpan,
+    clause_ident: ClauseIdentifier,
     ty: CauseTy,
 }
 
-struct DisplayRule<'a>(&'a str);
+#[derive(Clone, Copy)]
+struct ClauseIdentifier(&'static str);
 
-impl Display for DisplayRule<'_> {
+impl Display for ClauseIdentifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.0.is_empty() {
             Ok(())
@@ -48,9 +45,10 @@ impl Display for DisplayRule<'_> {
     }
 }
 
-struct DisplaySpan<'a>(&'a str);
+#[derive(Clone, Copy)]
+struct CNLSpan(&'static str);
 
-impl Display for DisplaySpan<'_> {
+impl Display for CNLSpan {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.0.is_empty() {
             Ok(())
@@ -68,11 +66,22 @@ impl Cause {
         ctx: &impl Context,
     ) {
         match &self.ty {
+            CauseTy::IsMarked { node, .. } => {
+                msg.with_node_note(
+                    *node,
+                    format!(
+                        "{} {}\n{} satisfied",
+                        self.description,
+                        self.clause_ident,
+                        if result { "is" } else { "is not" }
+                    ),
+                );
+            }
             CauseTy::Vacuous => {
                 msg.with_note(format!(
                     "{} {}\nis vacuously {}",
-                    DisplaySpan(self.description.as_str()),
-                    DisplayRule(self.clause_ident.as_str()),
+                    self.description,
+                    self.clause_ident,
                     if result { "true" } else { "false" }
                 ));
             }
@@ -83,11 +92,7 @@ impl Cause {
             } => {
                 msg.with_node_note(
                     *left,
-                    format!(
-                        "{} {}\nwith source",
-                        DisplaySpan(self.description.as_str()),
-                        DisplayRule(self.clause_ident.as_str())
-                    ),
+                    format!("{} {}\nwith source", self.description, self.clause_ident),
                 )
                 .with_node_note(
                     *right,
@@ -106,11 +111,7 @@ impl Cause {
             CauseTy::OnlyVia { from, to } => {
                 msg.with_node_note(
                     *from,
-                    format!(
-                        "{} {}\nsource",
-                        DisplaySpan(self.description.as_str()),
-                        DisplayRule(self.clause_ident.as_str())
-                    ),
+                    format!("{} {}\nsource", self.description, self.clause_ident),
                 );
                 if let Some(to) = to {
                     msg.with_node_note(
@@ -136,9 +137,9 @@ impl Cause {
             } => {
                 msg.with_note(format!(
                     "{} {} {}",
-                    DisplaySpan(self.description.as_str()),
+                    self.description,
                     if result { "succeeded" } else { "failed" },
-                    DisplayRule(self.clause_ident.as_str())
+                    self.clause_ident
                 ));
                 fail.report(result, msg, ctx);
             }
@@ -153,9 +154,7 @@ impl Cause {
                         *n,
                         format!(
                             "{} {}\n{} because of item",
-                            DisplaySpan(self.description.as_str()),
-                            DisplayRule(self.clause_ident.as_str()),
-                            classification
+                            self.description, self.clause_ident, classification
                         ),
                     );
                 } else {
@@ -172,8 +171,7 @@ impl Cause {
                     };
                     msg.with_note(format!(
                         "{} {}\n{classification} because of {item_name}",
-                        DisplaySpan(self.description.as_str()),
-                        DisplayRule(self.clause_ident.as_str()),
+                        self.description, self.clause_ident
                     ));
                 }
                 if let Some(inner) = inner_cause {
@@ -207,6 +205,10 @@ pub enum CauseTy {
     },
     /// The inner cause type now describes successes
     Not(Box<Cause>),
+    IsMarked {
+        node: GlobalNode,
+        marker: Identifier,
+    },
     Vacuous,
 }
 
@@ -276,6 +278,7 @@ impl CauseTy {
             }
             Self::Connective { fail, .. } => fail.ty.progress() + 1,
             Self::Vacuous => 1,
+            Self::IsMarked { .. } => 1,
         }
     }
 }
@@ -284,22 +287,22 @@ type EvalResult = (bool, Cause);
 
 #[derive(Clone, Copy)]
 pub struct CauseBuilder {
-    description: Identifier,
-    clause_num: Identifier,
+    description: CNLSpan,
+    clause_num: ClauseIdentifier,
 }
 
 impl CauseBuilder {
-    pub fn new(description: impl Into<Identifier>, clause_num: impl Into<Identifier>) -> Self {
+    pub fn new(description: &'static str, clause_num: &'static str) -> Self {
         Self {
-            description: description.into(),
-            clause_num: clause_num.into(),
+            description: CNLSpan(description),
+            clause_num: ClauseIdentifier(clause_num),
         }
     }
 
     pub fn with_type(self, ty: CauseTy) -> Cause {
         Cause {
-            description: self.description.into(),
-            clause_ident: self.clause_num.into(),
+            description: self.description,
+            clause_ident: self.clause_num,
             ty,
         }
     }
@@ -357,6 +360,22 @@ impl CauseBuilder {
                     connective,
                     fail: Box::new(cause),
                 },
+            },
+        )
+    }
+
+    pub fn is_marked(
+        self,
+        node: GlobalNode,
+        marker: Identifier,
+        ctx: &(impl Context + HasDiagnosticsBase),
+    ) -> EvalResult {
+        (
+            node.has_marker(ctx, marker),
+            Cause {
+                description: self.description,
+                clause_ident: self.clause_num,
+                ty: CauseTy::IsMarked { node, marker },
             },
         )
     }
