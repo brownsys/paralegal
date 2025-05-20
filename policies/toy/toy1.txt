@@ -1,3 +1,0 @@
-In gdpr_deletes:
-1. For each "stored data" type marked user_data:
-    A. "retrieval" goes to "deletes"

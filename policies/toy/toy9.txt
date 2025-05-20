@@ -1,4 +1,0 @@
-Everywhere:
-1. For each input:
-    A. There is a "test" marked test where:
-        a. input goes to "test"

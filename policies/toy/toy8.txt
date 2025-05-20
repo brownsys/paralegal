@@ -1,8 +1,0 @@
-Somewhere:
-1. There is a "dc" marked community_delete_check where:
-    A. For each "earl grey" marked tea:
-        a. For each "hello" marked world:
-            i) "data" influences "hello"
-or
-2. For each "test" marked this_is_a_test:
-    A. "test" goes to "flowers"
