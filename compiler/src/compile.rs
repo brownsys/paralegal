@@ -66,43 +66,50 @@ fn compile_relation(
     vars_to_clause_typ: &HashMap<Variable, OgClauseIntroType>,
 ) -> String {
     let mut map: HashMap<&str, String> = HashMap::new();
+
+    let mut compile_inner_relation = |relation: &Relation, inside_negation: bool| -> String {
+        match relation {
+            Relation::Binary { left, right, .. } => {
+                map.insert("src", left.into());
+                map.insert("sink", right.into());
+                if let Some(typ) = vars_to_initialization_typ.get(right) {
+                    if matches!(typ, InitializationType::NodeCluster) {
+                        map.insert("sink-node-cluster", "true".to_string());
+                    }
+                } else {
+                    panic!(
+                        "Tried to compile a relation whose sink is not in vars_to_initialization_typ"
+                    );
+                }
+                if let Some(typ) = vars_to_clause_typ.get(right) {
+                    if inside_negation ^ matches!(typ, OgClauseIntroType::ForEach) {
+                        map.insert("sink-all-method", "true".to_string());
+                    }
+                } else {
+                    panic!("Tried to compile a relation whose sink is not in vars_to_clause_typ");
+                }
+            }
+            Relation::Negation(_) => {
+                unreachable!("called compile_inner_relation on a negation")
+            }
+            Relation::IsMarked(var, marker) => {
+                map.insert("src", var.into());
+                map.insert("marker", marker.into());
+            }
+        }
+        render_template(handlebars, &map, relation.into())
+    };
+
     match relation {
-        Relation::Binary { left, right, .. } => {
-            map.insert("src", left.into());
-            map.insert("sink", right.into());
-            if let Some(typ) = vars_to_initialization_typ.get(right) {
-                if matches!(typ, InitializationType::NodeCluster) {
-                    map.insert("sink-node-cluster", "true".to_string());
-                }
-            } else {
-                panic!(
-                    "Tried to compile a relation whose sink is not in vars_to_initialization_typ"
-                );
-            }
-            if let Some(typ) = vars_to_clause_typ.get(right) {
-                // dbg!(&relation, &vars_to_clause_typ);
-                if matches!(typ, OgClauseIntroType::ForEach) {
-                    map.insert("sink-for-each", "true".to_string());
-                }
-            } else {
-                panic!("Tried to compile a relation whose sink is not in vars_to_clause_typ");
-            }
+        Relation::Binary { .. } | Relation::IsMarked { .. } => {
+            compile_inner_relation(relation, false)
         }
         Relation::Negation(inner) => {
-            let value = compile_relation(
-                handlebars,
-                inner,
-                vars_to_initialization_typ,
-                vars_to_clause_typ,
-            );
+            let value = compile_inner_relation(inner, true);
             map.insert("value", value);
-        }
-        Relation::IsMarked(var, marker) => {
-            map.insert("src", var.into());
-            map.insert("marker", marker.into());
+            render_template(handlebars, &map, relation.into())
         }
     }
-    render_template(handlebars, &map, relation.into())
 }
 
 fn compile_only_via(
