@@ -1,9 +1,0 @@
-Somewhere:
-1. There is a "dc" marked community_delete_check where:
-    A. "data" goes to "dc"
-and
-2. There is a "bc" marked community_ban_check where:
-    A. "data" goes to "bc"
-and
-3. There is a "test" marked this_is_a_test where:
-    A. "data" goes to "test"

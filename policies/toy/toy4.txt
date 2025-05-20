@@ -1,5 +1,0 @@
-Everywhere:
-1. For each "data" marked community_data:
-    A. For each "write" marked db_write:
-        a. If "data" goes to "write" then:
-            i) "data" goes to "dc"

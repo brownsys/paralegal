@@ -1,3 +1,0 @@
-In gdpr_deletes:
-1. There is a "retrieval" that is a source of "stored data" where:
-	A. "retrieval" goes to "deletes"
