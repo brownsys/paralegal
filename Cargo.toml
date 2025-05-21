@@ -1,5 +1,6 @@
 [workspace]
 members = ["parsers/", "compiler/", "interp", "optimizer", "common"]
+resolver = "2"
 
 [workspace.dependencies]
 clap = { version = "4.5.23", features = ["derive"] }
