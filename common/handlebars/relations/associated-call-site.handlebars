@@ -1,8 +1,4 @@
 {
 let {{sink}}_callsite = {{sink}}.siblings(&ctx);
-{{#if sink-for-each}}
-    {{src}}.flows_to_all(&{{sink}}_callsite, &ctx, EdgeSelection::Data).is_none() || {{src}}.flows_to_all(&{{sink}}, &ctx, EdgeSelection::Data).is_none()
-{{else}}
-    {{src}}.flows_to(&{{sink}}_callsite, &ctx, EdgeSelection::Data) || {{src}}.flows_to(&{{sink}}, &ctx, EdgeSelection::Data)
-{{/if}}
+{{src}}.flows_to(&{{sink}}_callsite, &ctx, EdgeSelection::Data) || {{src}}.flows_to({{sink}}, &ctx, EdgeSelection::Data)
 }
