@@ -135,7 +135,6 @@ impl<'p> Interpreter<'p> {
                     Operator::Or => left | right,
                 }
             }
-            ASTNode::FusedClause(_) => todo!(),
         }
     }
 

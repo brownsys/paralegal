@@ -52,7 +52,7 @@ fn run(args: &Args) -> Result<()> {
             // Verify that variables in definitions & policy are properly scoped.
             // If this fails, then the user made a mistake writing their policy.
             check_environment(&policy);
-            let policy = optimizer::optimize(&mut policy);
+            optimizer::optimize(&mut policy);
             compile::compile(
                 policy,
                 args.path

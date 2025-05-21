@@ -186,9 +186,6 @@ pub fn verify_scope(node: &ASTNode, env: &mut Environment) {
             // variables introduced in this clause must go out of scope once it ends
             remove_from_env(env, env_size_before_clause);
         }
-        // This only results from compiler optimizations, so no need to check the user's work here
-        // But we still need to make sure that the environment is updated.
-        ASTNode::FusedClause(_) => {}
     }
 }
 

@@ -309,54 +309,6 @@ fn compile_ast_node(
             map.insert("body", body);
             render_template(handlebars, &map, node.into())
         }
-        ASTNode::FusedClause(fused_clause) => {
-            let outer_var = &fused_clause.outer_var;
-            let inner_var = &fused_clause.filter.variable;
-
-            map.insert("outer_var", outer_var.clone());
-            map.insert("inner_var", inner_var.clone());
-            let VariableIntroType::VariableMarked {
-                ref marker,
-                on_type: _,
-            } = fused_clause.filter.intro
-            else {
-                unreachable!()
-            };
-            map.insert("marker", marker.clone());
-            map.insert("conditional", fused_clause.is_conditional.to_string());
-
-            // Only remove a variable when the clause goes out of scope if it's one we're introducing here
-            // Fused clause outer variables should have been initialized in the intro
-            assert!(vars_to_initialization_typ
-                .get(&fused_clause.outer_var)
-                .is_some());
-
-            // Inner clauses introduce two variables; one named {{outer_var}}_{{marker}}
-            // and one named {{inner_var}} (see templates/fused-clauses) for details.
-            let outer_var_marker = format!("{}_{}", &outer_var, marker);
-            vars_to_initialization_typ.insert(
-                outer_var_marker.clone(),
-                InitializationType::GlobalNodesIterator,
-            );
-            vars_to_initialization_typ.insert(inner_var.clone(), InitializationType::NodeCluster);
-
-            if let Some(rest) = &fused_clause.rest {
-                let rest = compile_ast_node(
-                    handlebars,
-                    rest,
-                    counter,
-                    vars_to_initialization_typ,
-                    vars_to_clause_typ,
-                    inside_definition_filter,
-                );
-                map.insert("rest", rest);
-            }
-
-            vars_to_initialization_typ.remove_entry(&outer_var_marker);
-            vars_to_initialization_typ.remove_entry(inner_var);
-
-            render_template(handlebars, &map, node.into())
-        }
     }
 }
 

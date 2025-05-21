@@ -118,44 +118,9 @@ pub enum Position {
     Target,
 }
 
-/// Product of "fusing" a clause with an operation below it.
-/// E.g., starting from:
-/// For each "A" marked A
-///     There is a "B" marked B where:
-///         "A" goes to "B"
-///         ...
-/// The compiler would usually collect all the "B"s, then filter by which ones "A"s go to.
-/// This indicates to the compiler that it should instead
-/// collect all the items that "A" goes to, then filter by those marked B,
-/// which is faster if there are many Bs.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct FusedClause {
-    // "A" in our example
-    pub outer_var: Variable,
-    pub binop: Binop,
-    /// Used in combination with binop to know the position of var.
-    /// E.g., for BinOp::Data, Position::Source indicates that we should fetch everything that
-    /// var goes to, while Position::Target indicates we should fetch everything that goes to var.
-    pub pos: Position,
-    /// "There is a B marked B" in our example.
-    /// We use this to filter the results of the binop, hence the name.
-    pub filter: VariableIntro,
-    /// Whatever was below the initial clause to begin with (the ...) in our example,
-    /// i.e. the rest of the policy body.
-    /// (We could call this body, but it's not really the "body" of this relation
-    /// as much as whatever comes after it, which we just store here to keep the tree struture).
-    /// There may not be anything after it if we just have two clauses and a relation, hence the Option.
-    pub rest: Option<ASTNode>,
-    // We can fuse in two situations: if we have two clauses and a relation,
-    // or two clauses and a conditional. This boolean indicates which it is,
-    // which is important for compilation so we know whether the relation in this clause must hold.
-    pub is_conditional: bool,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ASTNode {
     Clause(Box<Clause>),
-    FusedClause(Box<FusedClause>),
     OnlyVia(
         VariableIntro,
         (Option<Operator>, Vec<VariableIntro>),

@@ -1,4 +1,4 @@
-use common::{ast::*, count_references_to_variable, Policy};
+use common::{ast::*, Policy};
 
 /// Traverse the policy body and lift variable declarations to be definitions where possible.
 /// This lets us avoid repeated graph searches for the same variables.
@@ -103,13 +103,6 @@ fn lift_definitions(policy: &mut Policy) {
             ASTNode::OnlyVia(_, _, _) => {
                 return;
             }
-            ASTNode::FusedClause(_) => {
-                unreachable!(
-                    "
-                    Encountered a fused node while peforming the lifting optimization.
-                    This indicates a compiler bug; fusing must come after lifting."
-                )
-            }
         }
     }
 
@@ -170,205 +163,10 @@ fn lift_definitions(policy: &mut Policy) {
                 queue.push(&mut obligation.sink);
             }
             ASTNode::Relation(_) | ASTNode::OnlyVia(_, _, _) => {}
-            ASTNode::FusedClause(_) => {
-                unreachable!(
-                    "
-                    Encountered a fused node while peforming the lifting optimization.
-                    This indicates a compiler bug; fusing must come after lifting."
-                )
-            }
         }
     }
 }
 
-// Search for this pattern:
-// 1. For A marked a:
-//   A. For B marked b:
-//     a. If BinaryRelation(A, B), then: ...
-// and replace the inner clause with a FusedClause
-// TODO: it would be nice if this could mutate the policy in-place, but I gave up after fighting with the borrow checker for awhile.
-// I'm not sure it's trivial to do that.
-fn fuse(original_policy: Policy) -> Policy {
-    #[derive(Default, Debug)]
-    struct FuseState {
-        /// Have we seen two clauses introducing marked variables?
-        ready_to_fuse: bool,
-        /// The variable from the outer loop that we'll use in the fused clause
-        outer_var: Option<String>,
-    }
-
-    impl FuseState {
-        fn reset(&mut self) {
-            self.ready_to_fuse = false;
-            self.outer_var = None;
-        }
-
-        fn update_vars(&mut self, new_var: String) {
-            match &self.outer_var {
-                Some(_) => self.ready_to_fuse = true,
-                None => self.outer_var = Some(new_var),
-            }
-        }
-
-        fn try_create_fused_clause(
-            &self,
-            relation: &Relation,
-            var_intro: &VariableIntro,
-            rest: Option<ASTNode>,
-            is_conditional: bool,
-        ) -> Option<ASTNode> {
-            if !self.ready_to_fuse {
-                return None;
-            }
-
-            let outer_var = self.outer_var.as_ref()?;
-            let (pos, binop) = get_binop_and_position(relation, outer_var)?;
-
-            Some(ASTNode::FusedClause(Box::new(FusedClause {
-                outer_var: outer_var.clone(),
-                binop,
-                pos,
-                filter: var_intro.clone(),
-                rest,
-                is_conditional,
-            })))
-        }
-    }
-
-    // If this relation is eligible for fusing, return the appropriate postion and binop.
-    fn get_binop_and_position(relation: &Relation, outer_var: &str) -> Option<(Position, Binop)> {
-        match relation {
-            Relation::Binary { left, right, typ } => {
-                let (position, binop) = match (outer_var == left, outer_var == right) {
-                    (true, false) => match typ {
-                        Binop::AssociatedCallSite | Binop::Control => return None,
-                        Binop::Both | Binop::Data => (Position::Source, typ),
-                    },
-                    (false, true) => match typ {
-                        Binop::AssociatedCallSite | Binop::Control => return None,
-                        Binop::Both | Binop::Data => (Position::Target, typ),
-                    },
-                    (true, true) | (false, false) => return None,
-                };
-                Some((position, binop.clone()))
-            }
-            Relation::IsMarked(..) => None,
-            Relation::Negation(relation) => get_binop_and_position(relation, outer_var),
-        }
-    }
-    /// Given a reference to a node in the policy, return its replacement fused node if possible;
-    /// otherwise, return the original node
-    fn process_node(node: &ASTNode, state: &mut FuseState) -> ASTNode {
-        match node {
-            ASTNode::Clause(clause) => {
-                match &clause.intro {
-                    ClauseIntro::ForEach(var_intro) | ClauseIntro::ThereIs(var_intro) => {
-                        // Only support double loops of "variable marked" for now
-                        match var_intro.intro {
-                            VariableIntroType::AllNodes
-                            | VariableIntroType::Roots
-                            | VariableIntroType::VariableSourceOf(_)
-                            | VariableIntroType::Variable => state.reset(),
-                            VariableIntroType::VariableMarked { .. } => {
-                                state.update_vars(var_intro.variable.clone());
-
-                                if state.ready_to_fuse {
-                                    // Look ahead to see if the body is a conditional or relation we can fuse
-                                    match &clause.body {
-                                        ASTNode::Clause(inner_clause) => {
-                                            if let ClauseIntro::Conditional(relation) =
-                                                &inner_clause.intro
-                                            {
-                                                let mut body_state = FuseState::default();
-                                                let new_body = process_node(
-                                                    &inner_clause.body,
-                                                    &mut body_state,
-                                                );
-
-                                                let mut count = 0;
-                                                count_references_to_variable(
-                                                    &var_intro.variable,
-                                                    &clause.body,
-                                                    &mut count,
-                                                );
-                                                // If the variable ("B" in the example) is referred to more than once, that means it gets referenced outside of this conditional,
-                                                // so it is not eligible for fusing. If we fused it, we would not be able to refer to the same object multiple times.
-                                                if count <= 1 {
-                                                    if let Some(fused) = state
-                                                        .try_create_fused_clause(
-                                                            relation,
-                                                            var_intro,
-                                                            Some(new_body),
-                                                            true,
-                                                        )
-                                                    {
-                                                        return fused;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        ASTNode::Relation(relation) => {
-                                            let mut count = 0;
-                                            count_references_to_variable(
-                                                &var_intro.variable,
-                                                &clause.body,
-                                                &mut count,
-                                            );
-                                            // If the variable ("B" in the example) is referred to more than once, that means it gets referenced outside of this conditional,
-                                            // so it is not eligible for fusing. If we fused it, we would not be able to refer to the same object multiple times.
-                                            if count <= 1 {
-                                                if let Some(fused) = state.try_create_fused_clause(
-                                                    relation, var_intro, None, false,
-                                                ) {
-                                                    return fused;
-                                                }
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    ClauseIntro::Conditional(_) => {
-                        state.reset();
-                    }
-                }
-
-                let new_body = process_node(&clause.body, state);
-                ASTNode::Clause(Box::new(Clause {
-                    intro: clause.intro.clone(),
-                    body: new_body,
-                }))
-            }
-            ASTNode::Relation(_) => node.clone(),
-            ASTNode::JoinedNodes(_) => {
-                state.reset();
-                node.clone()
-            }
-            ASTNode::OnlyVia(..) => {
-                state.reset();
-                node.clone()
-            }
-            ASTNode::FusedClause(_) => {
-                unreachable!(
-                    "Encountered a fused node before inserting any.
-                    This indicates a compiler bug; fusing must come after lifting."
-                )
-            }
-        }
-    }
-
-    let mut state = FuseState::default();
-    let new_body = process_node(&original_policy.body, &mut state);
-
-    Policy {
-        body: new_body,
-        ..original_policy.clone()
-    }
-}
-
-pub fn optimize(policy: &mut Policy) -> Policy {
+pub fn optimize(policy: &mut Policy) {
     lift_definitions(policy);
-    fuse(policy.clone())
 }

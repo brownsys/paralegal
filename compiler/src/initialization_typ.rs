@@ -192,9 +192,6 @@ fn for_each_initialization_typ(
             // Since the templates implement contains() for NodeClusters that just collect the nodes and iterate over them one at a time anyway,
             // there's no need to override here; it doesn't matter which typ we use.
         }
-        ASTNode::FusedClause(..) => {
-            todo!()
-        }
     }
 }
 
@@ -224,7 +221,6 @@ fn there_is_initialization_typ(
                 Relation::IsMarked(..) => false,
             },
             ASTNode::Clause(clause) => var_in_associated_call_site_relation(variable, &clause.body),
-            ASTNode::FusedClause(_) => unreachable!(),
             ASTNode::OnlyVia(..) => false,
             ASTNode::JoinedNodes(obligation) => {
                 var_in_associated_call_site_relation(variable, &obligation.src)
