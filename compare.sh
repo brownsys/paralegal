@@ -22,11 +22,9 @@ echo ""
 TEMP_DIR=$(mktemp -d)
 echo "Created temporary directory: $TEMP_DIR"
 
-# Clone the repository at the previous commit
-echo "Cloning repository at previous commit..."
-git clone --quiet $(git config --get remote.origin.url) $TEMP_DIR
-cd $TEMP_DIR
-git checkout --quiet $PREV_COMMIT
+# Copy current repository state to temp directory
+echo "Copying repository content at previous commit..."
+git archive $PREV_COMMIT | tar x -C $TEMP_DIR
 
 # Find all .txt files in subdirectories of policies/ except toy/ at previous commit
 txt_files=$(find policies/ -path "policies/toy" -prune -o -name "*.txt" -print)
@@ -37,6 +35,7 @@ path_to_safe_name() {
 }
 
 # Compile each file using the previous commit's code
+cd $TEMP_DIR
 for file in $txt_files; do
     echo "Compiling $file with previous code..."
     safe_name=$(path_to_safe_name "$file")
