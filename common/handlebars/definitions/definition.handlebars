@@ -1,7 +1,7 @@
 {{#if node-cluster}}
 {{intro}}
 {{else}}
-let mut {{var}} = {{intro}};
+let mut {{var}} = {{intro}}
 {{/if}}
 {{#if filter}}
     .filter(|n| {
@@ -11,5 +11,7 @@ let mut {{var}} = {{intro}};
 {{/if}}
 {{#if node-cluster}}
 )
+{{else}}
+.collect::<Vec<_>>()
 {{/if}}
 ;

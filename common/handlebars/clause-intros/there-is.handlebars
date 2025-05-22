@@ -15,6 +15,7 @@
 {{body}}
 {{else}}
     {{var}}
+        {{#if refers-to-definition}}.clone().into_iter(){{/if}}
         .any(|{{var}}| {
             {{body}}
         })

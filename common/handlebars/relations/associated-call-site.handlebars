@@ -1,4 +1,4 @@
 {
 let {{sink}}_callsite = {{sink}}.siblings(&ctx);
-{{src}}.flows_to(&{{sink}}_callsite, &ctx, EdgeSelection::Data) || {{src}}.flows_to(&{{sink}}, &ctx, EdgeSelection::Data)
+{{src}}.flows_to(&{{sink}}_callsite, &ctx, EdgeSelection::Data) || {{src}}.flows_to({{sink}}, &ctx, EdgeSelection::Data)
 }

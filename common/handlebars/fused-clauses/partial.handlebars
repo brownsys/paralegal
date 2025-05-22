@@ -1,8 +1,0 @@
-    .into_iter()
-    .filter(|n| n.has_marker(&ctx, marker!({{marker}})));
-
-let Some(mut {{inner_var}}) = NodeCluster::try_from_iter({{outer_var}}_{{marker}}s) else {
-    return {{#if conditional}}true{{else}}false{{/if}};
-};
-
-{{rest}}
