@@ -63,8 +63,34 @@ pub fn link_rustc_lib() {
     }
 }
 
+fn get_rustc_version(verbose: bool) -> String {
+    let rustc_path = std::env::var("RUSTC").unwrap();
+    let mut cmd = std::process::Command::new(rustc_path);
+    if verbose {
+        cmd.arg("--verbose");
+    }
+    let rustc_version = cmd.arg("--version").output().unwrap();
+    // This is not the best kind of escaping but works for now.
+    String::from_utf8(rustc_version.stdout)
+        .unwrap()
+        .replace('\n', "\\n")
+}
+
+fn set_version_info() {
+    println!(
+        "cargo:rustc-env=RUSTC_SHORT_VERSION={}",
+        get_rustc_version(false)
+    );
+    println!(
+        "cargo:rustc-env=RUSTC_LONG_VERSION={}",
+        get_rustc_version(true)
+    );
+    println!("cargo:rustc-env=HOST={}", std::env::var("TARGET").unwrap());
+}
+
 fn main() {
     link_rustc_lib();
+    set_version_info();
     println!(
         "cargo:rustc-env=COMMIT_HASH={}",
         Command::new("git")
