@@ -58,10 +58,8 @@ impl VersionArgs {
     }
 }
 
-#[cfg(feature = "real-rustc-version")]
-const SHORT_VERSION: &str = env!("RUSTC_SHORT_VERSION");
-#[cfg(feature = "real-rustc-version")]
-const LONG_VERSION: &str = env!("RUSTC_LONG_VERSION");
+const REAL_SHORT_VERSION: &str = env!("RUSTC_SHORT_VERSION");
+const REAL_LONG_VERSION: &str = env!("RUSTC_LONG_VERSION");
 
 #[cfg(not(feature = "real-rustc-version"))]
 const SHORT_VERSION: &str = "rustc 1.73.0 (cc66ad468 2023-10-03)
@@ -83,16 +81,27 @@ fn unescape_version(s: &str) -> String {
 }
 
 fn main() {
+    let use_real_version = matches!(std::env::var("PARALEGAL_USE_REAL_RUSTC_VERSION"), Ok(v) if v == "1" || v.to_ascii_lowercase() == "true");
     let args = std::env::args();
     let version_args = VersionArgs::parse_args(args);
+    let long_version = if use_real_version {
+        REAL_LONG_VERSION
+    } else {
+        LONG_VERSION
+    };
+    let short_version = if use_real_version {
+        REAL_SHORT_VERSION
+    } else {
+        SHORT_VERSION
+    };
     if version_args.version {
         if version_args.verbose {
             print!(
                 "{}",
-                unescape_version(&LONG_VERSION.replace("no-host-defined", HOST))
+                unescape_version(&long_version.replace("no-host-defined", HOST))
             );
         } else {
-            print!("{}", unescape_version(SHORT_VERSION));
+            print!("{}", unescape_version(short_version));
         }
         std::process::exit(0);
     }

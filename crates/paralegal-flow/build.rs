@@ -64,7 +64,7 @@ pub fn link_rustc_lib() {
 }
 
 fn get_rustc_version(verbose: bool) -> String {
-    let rustc_path = std::env::var("RUSTC").unwrap();
+    let rustc_path = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
     let mut cmd = std::process::Command::new(rustc_path);
     if verbose {
         cmd.arg("--verbose");
@@ -108,7 +108,7 @@ fn main() {
     let toolchain_path = rustup_toolchain_path();
     println!("cargo:rustc-env=SYSROOT_PATH={}", toolchain_path.display());
 
-    let rustc_path = std::env::var("RUSTC").unwrap();
+    let rustc_path = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
     let rustc_version = std::process::Command::new(rustc_path)
         .arg("--version")
         .output()

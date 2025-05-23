@@ -10,7 +10,6 @@ rustc_private = true
 
 [features]
 test = ["rustc_utils/test"]
-real-rustc-version = []
 
 [dependencies]
 paralegal-spdg = { path = "../paralegal-spdg", features = ["rustc"] }
