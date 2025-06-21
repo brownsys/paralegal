@@ -1,6 +1,6 @@
 //! The representation of the PDG.
 
-use std::{cell::OnceCell, collections::HashMap, fmt};
+use std::{collections::HashMap, fmt};
 
 use allocative::{ident_key, Allocative};
 use internment::Intern;

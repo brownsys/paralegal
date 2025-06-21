@@ -49,6 +49,7 @@
 
 #![warn(missing_docs)]
 #![cfg_attr(not(rustc_1_75), feature(return_position_impl_trait_in_trait))]
+#![cfg_attr(test, feature(rustc_private))]
 
 extern crate core;
 
