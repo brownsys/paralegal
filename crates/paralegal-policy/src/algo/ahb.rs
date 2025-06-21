@@ -20,17 +20,18 @@ use crate::{
 };
 use crate::{Diagnostics, NodeExt};
 
-/// Statistics about the result of running [`crate::Context::always_happens_before`]
-/// that are useful to understand how the property failed.
+/// Statistics about the result of running
+/// [`crate::RootContext::always_happens_before`] that are useful to understand
+/// how the property failed.
 ///
 /// The [`std::fmt::Display`] implementation presents the information in human
 /// readable form.
 ///
 /// Note: Both the number of seen paths and the number of violation paths are
 /// approximations. This is because the traversal terminates when it reaches a
-/// node that was already seen. However it is guaranteed that if there
-/// are any violating paths, then the number of reaching paths reported in this
-/// struct is at least one (e.g. [`Self::holds`] is sound).
+/// node that was already seen. However it is guaranteed that if there are any
+/// violating paths, then the number of reaching paths reported in this struct
+/// is at least one (e.g. [`Self::holds`] is sound).
 ///
 /// The stable API of this struct is [`Self::holds`], [`Self::assert_holds`] and
 /// [`Self::is_vacuous`]. Otherwise the information in this struct and its
@@ -148,7 +149,7 @@ impl crate::RootContext {
         let select_data = |e: <&SPDGImpl as IntoEdgeReferences>::EdgeRef| e.weight().is_data();
 
         for (ctrl_id, starts) in &start_map {
-            let spdg = &self.desc().controllers[&ctrl_id];
+            let spdg = &self.desc().controllers[ctrl_id];
             let g = EdgeFiltered::from_fn(&spdg.graph, select_data);
             let mut tracer =
                 Tracer::new(&mut trace, g.node_bound(), starts.iter().copied(), *ctrl_id);

@@ -5,6 +5,7 @@ use flowistry_pdg::RichLocation;
 use itertools::Itertools;
 use log::{debug, log_enabled, trace, Level};
 
+use rustc_errors::DiagCtxtHandle;
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
@@ -15,11 +16,11 @@ use rustc_middle::{
     },
     ty::{
         AdtKind, EarlyBinder, GenericArgKind, GenericArgsRef, Instance, ParamEnv, Ty, TyCtxt,
-        TyKind,
+        TyKind, TypingEnv,
     },
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
-use rustc_span::{DesugaringKind, Span};
+use rustc_span::{source_map::Spanned, DesugaringKind, Span};
 use rustc_utils::{mir::control_dependencies::ControlDependencies, AdtDefExt, BodyExt, PlaceExt};
 
 use crate::{
@@ -43,7 +44,7 @@ pub(crate) struct InstructionState<'tcx> {
 
 impl<C> DebugWithContext<C> for InstructionState<'_> {}
 
-impl<'tcx> df::JoinSemiLattice for InstructionState<'tcx> {
+impl df::JoinSemiLattice for InstructionState<'_> {
     fn join(&mut self, other: &Self) -> bool {
         utils::hashmap_join(
             &mut self.last_mutation,
@@ -56,6 +57,9 @@ impl<'tcx> df::JoinSemiLattice for InstructionState<'tcx> {
 pub(crate) struct LocalAnalysis<'tcx, 'a, K> {
     pub(crate) memo: &'a MemoPdgConstructor<'tcx, K>,
     pub(super) root: Instance<'tcx>,
+    // TODO: We should generally be using mono_body, this one is only used in
+    // retyping. Try and find out if I can use mono_body there too or
+    // encapsulate this away so we don't accidentally use this polymorphic one.
     body_with_facts: &'tcx CachedBody<'tcx>,
     pub(crate) mono_body: Body<'tcx>,
     pub(crate) def_id: DefId,
@@ -63,11 +67,14 @@ pub(crate) struct LocalAnalysis<'tcx, 'a, K> {
     control_dependencies: ControlDependencies<BasicBlock>,
     pub(crate) body_assignments: utils::BodyAssignments,
     start_loc: FxHashSet<RichLocation>,
-    param_env: ParamEnv<'tcx>,
+    pub(crate) param_env: TypingEnv<'tcx>,
     k: K,
 }
 
 impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
+    pub(super) fn generic_args(&self) -> GenericArgsRef<'tcx> {
+        self.root.args
+    }
     fn dump_mir(&self) {
         use std::io::Write;
         let path = self.tcx().def_path_str(self.def_id) + ".mir";
@@ -186,7 +193,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                 let alias = self.tcx().erase_regions(*alias);
                 let alias = self
                     .tcx()
-                    .try_subst_and_normalize_erasing_regions(
+                    .try_instantiate_and_normalize_erasing_regions(
                         self.generic_args(),
                         self.param_env,
                         EarlyBinder::bind(alias),
@@ -214,6 +221,10 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
 
     pub(crate) fn tcx(&self) -> TyCtxt<'tcx> {
         self.memo.tcx
+    }
+
+    pub(crate) fn dcx(&self) -> DiagCtxtHandle<'tcx> {
+        self.tcx().dcx()
     }
 
     /// Returns all nodes `src` such that `src` is:
@@ -330,10 +341,6 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
     fn fmt_fn(&self, def_id: DefId) -> String {
         self.tcx().def_path_str(def_id)
     }
-
-    pub(super) fn generic_args(&self) -> GenericArgsRef<'tcx> {
-        self.root.args
-    }
 }
 
 impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
@@ -349,7 +356,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
         let tcx = memo.tcx;
         let def_id = root.def_id();
         let body_with_facts = memo.body_cache.try_get(def_id)?;
-        let param_env = tcx.param_env_reveal_all_normalized(def_id);
+        let param_env = TypingEnv::post_analysis(tcx, def_id).with_post_analysis_normalized(tcx);
         let body = try_monomorphize(
             root,
             tcx,
@@ -390,7 +397,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
         &'b self,
         location: Location,
         func: Cow<'_, Operand<'tcx>>,
-        args: Cow<'b, [Operand<'tcx>]>,
+        args: Cow<'b, [Spanned<Operand<'tcx>>]>,
         span: Span,
     ) -> Option<CallHandling<'tcx, 'b, K>> {
         let tcx = self.tcx();
@@ -411,16 +418,22 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
                 return None;
             }
             TyAsFnResult::NotAFunction => {
-                self.tcx().sess.span_err(span, "Operand is not a function");
+                self.dcx().span_err(span, "Operand is not a function");
                 return None;
             }
         };
-        trace!("Resolved call to function: {}", self.fmt_fn(called_def_id));
+        trace!(
+            "Resolved call to function: {} with generic args {generic_args:?}",
+            self.fmt_fn(called_def_id)
+        );
 
         // Monomorphize the called function with the known generic_args.
-        let param_env = tcx.param_env(self.def_id);
+        let typing_env = self
+            .mono_body
+            .typing_env(tcx)
+            .with_post_analysis_normalized(tcx);
         let Some(mut resolved_fn) =
-            utils::try_resolve_function(self.tcx(), called_def_id, param_env, generic_args)
+            utils::try_resolve_function(self.tcx(), called_def_id, typing_env, generic_args)
         else {
             let dynamics = generic_args.iter()
                 .flat_map(|g| g.walk())
@@ -452,14 +465,14 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
                     trait definition and no refutation (`?Sized` constraint) is present."
                 )
                 .unwrap();
-                self.tcx().sess.span_warn(span, msg);
+                self.dcx().span_warn(span, msg);
             } else {
-                self.tcx().sess.span_err(span, msg);
+                self.dcx().span_err(span, msg);
             }
             return None;
         };
 
-        let call_kind = match handle_shims(resolved_fn, self.tcx(), param_env) {
+        let call_kind = match handle_shims(resolved_fn, self.tcx(), typing_env, span) {
             ShimResult::IsHandledShim {
                 instance,
                 shim_type,
@@ -510,7 +523,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
             span,
             arguments: &args,
             caller_body: &self.mono_body,
-            param_env,
+            param_env: typing_env,
             cache_key: &self.k,
         };
 
@@ -557,7 +570,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
             trace!("  bailing because is unresolvable trait method");
             self.call_change_callback().on_inline_miss(
                 resolved_fn,
-                param_env,
+                typing_env,
                 location,
                 self.root,
                 InlineMissReason::TraitMethod,
@@ -588,7 +601,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
         state: &mut InstructionState<'tcx>,
         location: Location,
         func: &Operand<'tcx>,
-        args: &[Operand<'tcx>],
+        args: &[Spanned<Operand<'tcx>>],
         destination: Place<'tcx>,
         span: Span,
     ) -> bool {
@@ -620,7 +633,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
                 // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
                 let rvalue = Rvalue::Aggregate(
                     Box::new(AggregateKind::Tuple),
-                    IndexVec::from_iter(args.iter().cloned()),
+                    IndexVec::from_iter(args.iter().map(|o| o.node.clone())),
                 );
                 self.modular_mutation_visitor(state)
                     .visit_assign(&destination, &rvalue, location);
@@ -686,9 +699,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
     }
 
     pub(crate) fn construct_partial(&'a self) -> PartialGraph<'tcx, K> {
-        let mut analysis = self
-            .into_engine(self.tcx(), &self.mono_body)
-            .iterate_to_fixpoint();
+        let mut analysis = self.iterate_to_fixpoint(self.tcx(), &self.mono_body, None);
 
         let mut final_state = PartialGraph::new(
             self.generic_args(),
@@ -749,7 +760,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
         &'b self,
         def_id: DefId,
         resolved_fn: Instance<'tcx>,
-        original_args: &'b [Operand<'tcx>],
+        original_args: &'b [Spanned<Operand<'tcx>>],
         span: Span,
     ) -> CallKind<'tcx> {
         let lang_items = self.tcx().lang_items();
@@ -767,7 +778,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
         {
             return match self.find_async_args(resolved_fn, original_args, span) {
                 Ok(poll) => CallKind::AsyncPoll(poll),
-                Err(str) => self.tcx().sess.span_fatal(span, str),
+                Err(str) => self.tcx().dcx().span_fatal(span, str),
             };
         }
         self.try_indirect_call_kind(resolved_fn.def_id())
@@ -776,7 +787,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
 
     fn try_indirect_call_kind(&self, def_id: DefId) -> Option<CallKind<'tcx>> {
         self.tcx()
-            .is_closure(def_id)
+            .is_closure_like(def_id)
             .then_some(CallKind::Indirect { shim: None })
     }
 
@@ -823,7 +834,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
     }
 }
 
-impl<'tcx, 'a, K> df::AnalysisDomain<'tcx> for &'a LocalAnalysis<'tcx, 'a, K> {
+impl<'a, 'tcx, K: Hash + Eq + Clone> df::Analysis<'tcx> for &'a LocalAnalysis<'tcx, 'a, K> {
     type Domain = InstructionState<'tcx>;
 
     const NAME: &'static str = "LocalPdgConstruction";
@@ -833,10 +844,7 @@ impl<'tcx, 'a, K> df::AnalysisDomain<'tcx> for &'a LocalAnalysis<'tcx, 'a, K> {
     }
 
     fn initialize_start_block(&self, _body: &Body<'tcx>, _state: &mut Self::Domain) {}
-}
-
-impl<'a, 'tcx, K: Hash + Eq + Clone> df::Analysis<'tcx> for &'a LocalAnalysis<'tcx, 'a, K> {
-    fn apply_statement_effect(
+    fn apply_primary_statement_effect(
         &mut self,
         state: &mut Self::Domain,
         statement: &Statement<'tcx>,
@@ -846,7 +854,7 @@ impl<'a, 'tcx, K: Hash + Eq + Clone> df::Analysis<'tcx> for &'a LocalAnalysis<'t
             .visit_statement(statement, location)
     }
 
-    fn apply_terminator_effect<'mir>(
+    fn apply_primary_terminator_effect<'mir>(
         &mut self,
         state: &mut Self::Domain,
         terminator: &'mir Terminator<'tcx>,
@@ -921,7 +929,7 @@ fn is_split<'tcx>(ty: Ty<'tcx>, context: DefId, tcx: TyCtxt<'tcx>) -> bool {
         TyKind::Array(..) | TyKind::Slice(..) => true,
         TyKind::Ref(..) => false,
         TyKind::RawPtr(..) => true,
-        TyKind::Closure(_, args) | TyKind::Generator(_, args, _) => {
+        TyKind::Closure(_, args) | TyKind::Coroutine(_, args) => {
             is_split(args.as_closure().tupled_upvars_ty(), context, tcx)
         }
         TyKind::FnDef(..)

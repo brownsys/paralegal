@@ -1,3 +1,5 @@
+#![feature(rustc_private)]
+
 use anyhow::Result;
 use helpers::Test;
 use paralegal_policy::{assert_error, Context, EdgeSelection};

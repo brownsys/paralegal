@@ -15,13 +15,10 @@ use flowistry_pdg_construction::{
 };
 use paralegal_spdg::{Node, SPDGStats};
 
-use rustc_hir::{
-    def,
-    def_id::{DefId, LocalDefId},
-};
+use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_middle::{
     mir,
-    ty::{self, TyCtxt},
+    ty::{self, TyCtxt, TypingEnv},
 };
 
 use anyhow::Result;
@@ -179,7 +176,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 let crate::Either::Right(
                     term @ mir::Terminator {
                         kind: mir::TerminatorKind::Call { func, .. },
-                        ..
+                        source_info,
                     },
                 ) = body.stmt_at(loc)
                 else {
@@ -187,7 +184,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 };
                 debug!("Assigning markers to {:?}", term.kind);
                 let res = self.call_string_resolver.resolve(weight.at);
-                let param_env = self.tcx().param_env(res.def_id());
+                let param_env = TypingEnv::post_analysis(self.tcx(), res.def_id());
                 let func =
                     try_monomorphize(res, self.tcx(), param_env, func, term.source_info.span)
                         .unwrap();
@@ -202,10 +199,10 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 let f = if let Some(inst) = try_resolve_function(
                     self.tcx(),
                     inst,
-                    self.tcx().param_env(leaf_loc.function),
+                    TypingEnv::post_analysis(self.tcx(), leaf_loc.function),
                     args,
                 ) {
-                    match handle_shims(inst, self.tcx(), param_env) {
+                    match handle_shims(inst, self.tcx(), param_env, weight.span) {
                         ShimResult::IsHandledShim { instance, .. } => instance,
                         ShimResult::IsNotShim => inst,
                         ShimResult::IsNonHandleableShim => {
@@ -307,7 +304,16 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         // Thread through each caller to recover generic arguments
         let body = self.body_cache().get(last.function);
         let raw_ty = place.ty(body.body(), tcx);
-        Some(try_monomorphize(resolution, tcx, ty::ParamEnv::reveal_all(), &raw_ty, span).unwrap())
+        Some(
+            try_monomorphize(
+                resolution,
+                tcx,
+                TypingEnv::fully_monomorphized(),
+                &raw_ty,
+                span,
+            )
+            .unwrap(),
+        )
     }
 
     /// Fetch annotations item identified by this `id`.
@@ -349,6 +355,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         else {
             return;
         };
+        trace!("Node {:?} has place type {:?}", weight.place, place_ty);
         // Restore after fixing https://github.com/brownsys/paralegal/issues/138
         //let deep = !weight.is_split;
         let deep = true;
@@ -361,14 +368,16 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
         self.known_def_ids.extend(node_types.iter().copied());
         let tcx = self.tcx();
         if !node_types.is_empty() {
-            self.types
-                .entry(i)
-                .or_default()
-                .extend(node_types.iter().filter(|t| match tcx.def_kind(*t) {
-                    def::DefKind::Generator => false,
-                    kind => !kind.is_fn_like(),
-                }))
+            self.types.entry(i).or_default().extend(
+                node_types
+                    .iter()
+                    .filter(|t| !tcx.is_coroutine(**t) && !tcx.def_kind(*t).is_fn_like()),
+            )
         }
+        trace!(
+            "For node {:?} found marked node types {node_types:?}",
+            weight.place
+        );
     }
 
     /// Create an initial flowistry graph for the function identified by
@@ -558,7 +567,7 @@ fn assert_edge_location_invariant<'tcx>(
             return;
         }
     }
-    let mut msg = tcx.sess.struct_span_fatal(
+    let mut msg = tcx.dcx().struct_span_fatal(
         (body, at.leaf().location).span(tcx),
         format!(
             "This operation is performed in a different location: {}",
@@ -622,14 +631,17 @@ mod call_string_resolver {
         manufacture_substs_for, try_monomorphize, try_resolve_function,
     };
     use paralegal_spdg::Endpoint;
-    use rustc_middle::{mir::TerminatorKind, ty::Instance};
+    use rustc_middle::{
+        mir::TerminatorKind,
+        ty::{Instance, TypingEnv},
+    };
     use rustc_utils::cache::Cache;
 
     use crate::{Either, Pctx};
 
     use super::{func_of_term, map_either, match_async_trait_assign, AsFnAndArgs};
 
-    /// Cached resolution of [`CallString`]s to [`FnResolution`]s.
+    /// Cached resolution of [`CallString`]s to [`Instance`]s.
     ///
     /// Only valid for a single controller. Each controller should initialize a
     /// new resolver.
@@ -658,7 +670,7 @@ mod call_string_resolver {
             try_resolve_function(
                 tcx,
                 def_id,
-                tcx.param_env(def_id),
+                TypingEnv::post_analysis(tcx, def_id).with_post_analysis_normalized(tcx),
                 manufacture_substs_for(tcx, def_id).unwrap(),
             )
             .unwrap()
@@ -683,14 +695,15 @@ mod call_string_resolver {
         /// is not either a function call or a statement where an async closure
         /// is created and assigned.
         fn resolve_internal(&self, cs: CallString) -> Instance<'tcx> {
-            *self.cache.get(cs, |_| {
+            *self.cache.get(&cs, |_| {
                 let this = cs.leaf();
                 let prior = self.resolve(cs);
 
                 let tcx = self.ctx.tcx();
 
                 let base_stmt = super::expect_stmt_at(self.ctx.body_cache(), this);
-                let param_env = tcx.param_env_reveal_all_normalized(prior.def_id());
+                let param_env = TypingEnv::post_analysis(tcx, prior.def_id())
+                    .with_post_analysis_normalized(tcx);
                 let normalized = map_either(
                     base_stmt,
                     |stmt| {
@@ -705,7 +718,13 @@ mod call_string_resolver {
                 let res = match normalized {
                     Either::Right(term) => {
                         let (def_id, args) = func_of_term(tcx, &term).unwrap();
-                        let instance = Instance::expect_resolve(tcx, param_env, def_id, args);
+                        let instance = Instance::expect_resolve(
+                            tcx,
+                            param_env,
+                            def_id,
+                            args,
+                            term.source_info.span,
+                        );
                         if let Some(model) = self.ctx.marker_ctx().has_stub(def_id) {
                             let TerminatorKind::Call { args, .. } = &term.kind else {
                                 unreachable!()

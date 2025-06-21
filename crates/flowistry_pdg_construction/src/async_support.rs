@@ -11,9 +11,9 @@ use rustc_middle::{
     },
     ty::{GenericArgsRef, Instance, TyCtxt},
 };
-use rustc_span::Span;
+use rustc_span::{source_map::Spanned, Span};
 
-use crate::utils::{is_async, TyAsFnResult};
+use crate::utils::{is_async, ArgSlice, TyAsFnResult};
 
 use super::{local_analysis::LocalAnalysis, utils};
 
@@ -98,7 +98,7 @@ pub fn match_async_trait_assign<'tcx>(
     match &statement.kind {
         StatementKind::Assign(box (
             _,
-            Rvalue::Aggregate(box AggregateKind::Generator(def_id, generic_args, _), _args),
+            Rvalue::Aggregate(box AggregateKind::Coroutine(def_id, generic_args), _args),
         )) => Some((*def_id, *generic_args)),
         _ => None,
     }
@@ -112,7 +112,7 @@ pub fn is_async_trait_fn(tcx: TyCtxt, def_id: DefId, body: &Body<'_>) -> bool {
 fn has_async_trait_signature(tcx: TyCtxt, def_id: DefId) -> bool {
     if let Some(assoc_item) = tcx.opt_associated_item(def_id) {
         let sig = tcx.fn_sig(def_id).skip_binder();
-        assoc_item.container == ty::AssocItemContainer::ImplContainer
+        assoc_item.container == ty::AssocItemContainer::Impl
             && assoc_item.trait_item_def_id.is_some()
             && match_pin_box_dyn_ty(tcx.lang_items(), sig.output().skip_binder())
     } else {
@@ -132,10 +132,10 @@ fn match_pin_box_dyn_ty(lang_items: &rustc_hir::LanguageItems, t: ty::Ty) -> boo
     let Some(t_a) = arg.as_type() else {
         return false;
     };
-    if !t_a.is_box() {
+    let Some(box_t) = t_a.boxed_ty() else {
         return false;
     };
-    let ty::TyKind::Dynamic(pred, _, ty::DynKind::Dyn) = t_a.boxed_ty().kind() else {
+    let ty::TyKind::Dynamic(pred, _, ty::DynKind::Dyn) = box_t.kind() else {
         return false;
     };
     pred.iter().any(|p| {
@@ -157,7 +157,7 @@ fn get_async_generator<'tcx>(body: &Body<'tcx>) -> (DefId, GenericArgsRef<'tcx>,
         .expect_left("Async fn should have a statement");
     let StatementKind::Assign(box (
         _,
-        Rvalue::Aggregate(box AggregateKind::Generator(def_id, generic_args, _), _args),
+        Rvalue::Aggregate(box AggregateKind::Coroutine(def_id, generic_args), _args),
     )) = &stmt.kind
     else {
         panic!("Async fn should assign to a generator")
@@ -183,8 +183,8 @@ pub fn determine_async<'tcx>(
             AsyncType::Trait,
         )
     };
-    let param_env = tcx.param_env_reveal_all_normalized(def_id);
-    let generator_fn = utils::try_resolve_function(tcx, generator_def_id, param_env, args)?;
+    let typing_env = body.typing_env(tcx).with_post_analysis_normalized(tcx);
+    let generator_fn = utils::try_resolve_function(tcx, generator_def_id, typing_env, args)?;
     Some((generator_fn, loc, asyncness))
 }
 
@@ -194,7 +194,7 @@ pub fn is_async_fn_or_block(tcx: TyCtxt, instance: Instance) -> bool {
     // impl for an `async fn` or async block is the same as the `DefId` of the
     // generator itself. That means after resolution (e.g. on the `Instance`) we
     // only need to call `tcx.generator_is_async`.
-    tcx.generator_is_async(instance.def_id())
+    tcx.coroutine_is_async(instance.def_id())
 }
 
 impl<'tcx, 'mir, K> LocalAnalysis<'tcx, 'mir, K> {
@@ -203,7 +203,7 @@ impl<'tcx, 'mir, K> LocalAnalysis<'tcx, 'mir, K> {
     pub fn find_async_args<'a>(
         &'a self,
         resolved_fn: Instance<'tcx>,
-        args: &'a [Operand<'tcx>],
+        args: &'a [Spanned<Operand<'tcx>>],
         span: Span,
     ) -> Result<AsyncFnPollEnv<'tcx>, String> {
         let precise = self.find_async_args_precise(args);
@@ -216,12 +216,12 @@ impl<'tcx, 'mir, K> LocalAnalysis<'tcx, 'mir, K> {
                     utils::try_resolve_function(
                         self.tcx(),
                         parent,
-                        self.tcx().param_env_reveal_all_normalized(self.def_id),
+                        self.param_env,
                         resolved_fn.args,
                     )
                     .unwrap()
                 }),
-                generator_data: args[0].place().unwrap(),
+                generator_data: args[0].node.place().unwrap(),
                 precise: false,
             })
         }
@@ -229,7 +229,7 @@ impl<'tcx, 'mir, K> LocalAnalysis<'tcx, 'mir, K> {
 
     fn find_async_args_precise<'a>(
         &'a self,
-        args: &'a [Operand<'tcx>],
+        args: ArgSlice<'a, 'tcx>,
     ) -> Result<AsyncFnPollEnv<'tcx>, String> {
         macro_rules! let_assert {
             ($p:pat = $e:expr, $($arg:tt)*) => {
@@ -266,13 +266,16 @@ impl<'tcx, 'mir, K> LocalAnalysis<'tcx, 'mir, K> {
                     ..
                 },
                 ..
-            }) = &self.mono_body.stmt_at(get_def_for_op(&args[0])?),
+            }) = &self.mono_body.stmt_at(get_def_for_op(&args[0].node)?),
             "Pinned assignment is not a call"
         );
         debug_assert!(new_pin_args.len() == 1);
 
         let future_aliases = self
-            .aliases(self.tcx().mk_place_deref(new_pin_args[0].place().unwrap()))
+            .aliases(
+                self.tcx()
+                    .mk_place_deref(new_pin_args[0].node.place().unwrap()),
+            )
             .collect::<Vec<_>>();
         debug_assert!(future_aliases.len() == 1);
         let future = *future_aliases.first().unwrap();
@@ -297,7 +300,7 @@ impl<'tcx, 'mir, K> LocalAnalysis<'tcx, 'mir, K> {
         );
 
         let target = &into_future_args[0];
-        let creation_loc = get_def_for_op(target)?;
+        let creation_loc = get_def_for_op(&target.node)?;
         let stmt = &self.mono_body.stmt_at(creation_loc);
         let (op, generics, generator_data) = match stmt {
             Either::Right(Terminator {
@@ -313,9 +316,9 @@ impl<'tcx, 'mir, K> LocalAnalysis<'tcx, 'mir, K> {
             Either::Left(Statement { kind, .. }) => match kind {
                 StatementKind::Assign(box (
                     lhs,
-                    Rvalue::Aggregate(box AggregateKind::Generator(def_id, generic_args, _), _args),
+                    Rvalue::Aggregate(box AggregateKind::Coroutine(def_id, generic_args), _args),
                 )) => {
-                    assert!(self.tcx().generator_is_async(*def_id));
+                    assert!(self.tcx().coroutine_is_async(*def_id));
                     (None, *generic_args, *lhs)
                 }
                 StatementKind::Assign(box (_, Rvalue::Use(target))) => {
@@ -342,7 +345,9 @@ impl<'tcx, 'mir, K> LocalAnalysis<'tcx, 'mir, K> {
                 utils::try_resolve_function(
                     self.tcx(),
                     def_id,
-                    self.tcx().param_env_reveal_all_normalized(self.def_id),
+                    self.mono_body
+                        .typing_env(self.tcx())
+                        .with_post_analysis_normalized(self.tcx()),
                     generics,
                 )
                 .ok_or_else(|| {

@@ -9,6 +9,10 @@
 //! allow us to change the name and default value of the argument without having
 //! to migrate the code using that argument.
 
+// Unfortunately we have to do this, because num-traits::FromPrimitive generates
+// code that triggers this lint
+#![allow(non_local_definitions)]
+
 use anyhow::Error;
 use clap::ValueEnum;
 use flowistry_pdg_construction::body_cache::std_crates;
@@ -617,7 +621,7 @@ impl AnalysisCtrl {
                         .collect();
                     for (k, v) in included_crate_names {
                         if !v {
-                            tcx.sess.warn(format!("The crate `{k}` was configured for inclusion but is not part of the dependencies."));
+                            tcx.dcx().warn(format!("The crate `{k}` was configured for inclusion but is not part of the dependencies."));
                         }
                     }
                     set

@@ -1,10 +1,10 @@
 use anyhow::Result;
 use paralegal_policy::{
-    assert_error, paralegal_spdg::traverse::EdgeSelection, Context, Marker, NodeExt,
+    assert_error, paralegal_spdg::traverse::EdgeSelection, Marker, NodeExt, RootContext,
 };
 use std::sync::Arc;
 
-fn dummy_policy(_ctx: Arc<Context>) -> Result<()> {
+fn dummy_policy(_ctx: Arc<RootContext>) -> Result<()> {
     println!("Graph loaded.");
     Ok(())
 }
@@ -20,7 +20,7 @@ fn main() -> Result<()> {
 }
 
 #[allow(dead_code)]
-fn deletion_policy(ctx: Arc<Context>) -> Result<()> {
+fn deletion_policy(ctx: Arc<RootContext>) -> Result<()> {
     let user_data_types = ctx.marked_type(Marker::new_intern("user_data"));
 
     let found = ctx.all_controllers().any(|(deleter_id, _ignored)| {

@@ -104,21 +104,22 @@ fn find_primitive_impls(tcx: TyCtxt<'_>, name: Symbol) -> impl Iterator<Item = D
 pub fn expect_resolve_string_to_def_id(tcx: TyCtxt, path: &str, relaxed: bool) -> Option<DefId> {
     let report_err = if relaxed {
         |tcx: TyCtxt<'_>, err: String| {
-            tcx.sess.warn(err);
+            tcx.dcx().warn(err);
         }
     } else {
         |tcx: TyCtxt<'_>, err| {
-            tcx.sess.err(err);
+            tcx.dcx().err(err);
         }
     };
     let mut hasher = StableHasher::new();
     path.hash(&mut hasher);
     let mut parser = new_parser_from_source_str(
-        &tcx.sess.parse_sess,
+        &tcx.sess.psess,
         rustc_span::FileName::Anon(hasher.finish()),
         path.to_string(),
-    );
-    let qpath = parser.parse_expr().map_err(|mut e| e.emit()).ok()?;
+    )
+    .unwrap();
+    let qpath = parser.parse_expr().map_err(|e| e.emit()).ok()?;
     if parser.token.kind != TokenKind::Eof {
         report_err(tcx, format!("Tokens left over after parsing path {path}"));
         return None;
@@ -176,15 +177,16 @@ fn local_item_children_by_name(
     local_id: LocalDefId,
     name: Symbol,
 ) -> Option<Result<Res>> {
+    use crate::rustc_hir::intravisit::Map;
     let hir = tcx.hir();
 
     let root_mod;
-    let item_kind = match hir.find_by_def_id(local_id) {
-        Some(Node::Crate(r#mod)) => {
+    let item_kind = match hir.hir_node_by_def_id(local_id) {
+        Node::Crate(r#mod) => {
             root_mod = ItemKind::Mod(r#mod);
             &root_mod
         }
-        Some(Node::Item(item)) => &item.kind,
+        Node::Item(item) => &item.kind,
         _ => return None,
     };
 
@@ -258,7 +260,7 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
 pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) -> Result<Res> {
     let no_generics_supported = |segment: &PathSegment| {
         if segment.args.is_some() {
-            tcx.sess.err(format!(
+            tcx.dcx().err(format!(
                 "Generics are not supported in this position: {segment:?}"
             ));
         }

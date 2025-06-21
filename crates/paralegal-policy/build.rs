@@ -32,6 +32,5 @@ fn main() {
     }
 
     let autocfg = autocfg::AutoCfg::new().unwrap();
-
     autocfg.emit_rustc_version(1, 75);
 }

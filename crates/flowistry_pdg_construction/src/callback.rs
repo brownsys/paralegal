@@ -1,14 +1,14 @@
 //! Callbacks to influence graph construction and their supporting types.
 
-use flowistry_pdg::{rustc_portable::Location};
+use flowistry_pdg::rustc_portable::Location;
 
 use rustc_middle::{
-    mir::{self, Operand},
-    ty::{Instance, ParamEnv},
+    mir,
+    ty::{Instance, TypingEnv},
 };
 use rustc_span::Span;
 
-use crate::calling_convention::CallingConvention;
+use crate::{calling_convention::CallingConvention, utils::ArgSlice};
 
 pub trait CallChangeCallback<'tcx, K> {
     fn on_inline(&self, info: CallInfo<'tcx, '_, K>) -> CallChanges<'tcx, K>;
@@ -16,7 +16,7 @@ pub trait CallChangeCallback<'tcx, K> {
     fn on_inline_miss(
         &self,
         _resolution: Instance<'tcx>,
-        _param_env: ParamEnv<'tcx>,
+        _param_env: TypingEnv<'tcx>,
         _loc: Location,
         _under_analysis: Instance<'tcx>,
         _reason: InlineMissReason,
@@ -89,10 +89,10 @@ pub struct CallInfo<'tcx, 'mir, K> {
 
     pub span: Span,
 
-    pub arguments: &'mir [Operand<'tcx>],
+    pub arguments: ArgSlice<'mir, 'tcx>,
 
     pub caller_body: &'mir mir::Body<'tcx>,
-    pub param_env: ParamEnv<'tcx>,
+    pub param_env: TypingEnv<'tcx>,
 }
 
 /// User-provided changes to the default PDG construction behavior for function calls.

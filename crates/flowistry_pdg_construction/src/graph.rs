@@ -292,7 +292,7 @@ impl<'tcx> DepGraph<'tcx> {
     }
 }
 
-impl<'tcx> DepGraph<'tcx> {
+impl DepGraph<'_> {
     /// Generates a graphviz visualization of the PDG and saves it to `path`.
     pub fn generate_graphviz(&self, path: impl AsRef<Path>) -> anyhow::Result<()> {
         let graph_dot = format!(
@@ -304,7 +304,7 @@ impl<'tcx> DepGraph<'tcx> {
                 &|_, (_, _)| "fontname=\"Courier New\",shape=box".to_string(),
             )
         );
-        rustc_utils::mir::body::run_dot(path.as_ref(), graph_dot.into_bytes())
+        rustc_utils::mir::body::run_dot(path.as_ref(), &graph_dot.into_bytes())
     }
 }
 

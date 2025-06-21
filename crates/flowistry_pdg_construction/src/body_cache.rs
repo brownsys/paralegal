@@ -24,13 +24,10 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 
-
+use rustc_type_ir::RegionVid;
 use rustc_utils::cache::Cache;
 
-use crate::{
-    encoder::{decode_from_file, encode_to_file},
-    utils::Captures,
-};
+use crate::encoder::{decode_from_file, encode_to_file};
 
 /// A mir [`Body`] and all the additional borrow checking facts that our
 /// points-to analysis needs.
@@ -81,9 +78,11 @@ impl<'tcx> CachedBody<'tcx> {
             body: body_with_facts.body,
             input_facts: FlowistryFacts {
                 subset_base: body_with_facts
-                    .region_inference_context
-                    .outlives_constraints()
-                    .map(|constraint| (constraint.sup, constraint.sub))
+                    .input_facts
+                    .expect("polonius input must exist")
+                    .subset_base
+                    .iter()
+                    .map(|&(v1, v2, _)| (v1.into(), v2.into()))
                     .collect(),
             },
         })
@@ -95,16 +94,7 @@ impl<'tcx> FlowistryInput<'tcx, 'tcx> for &'tcx CachedBody<'tcx> {
         &self.body
     }
 
-    fn input_facts_subset_base(
-        self,
-    ) -> Box<
-        dyn Iterator<
-                Item = (
-                    <RustcFacts as FactTypes>::Origin,
-                    <RustcFacts as FactTypes>::Origin,
-                ),
-            > + 'tcx,
-    > {
+    fn input_facts_subset_base(self) -> Box<dyn Iterator<Item = (RegionVid, RegionVid)> + 'tcx> {
         Box::new(self.input_facts.subset_base.iter().copied())
     }
 }
@@ -113,10 +103,7 @@ impl<'tcx> FlowistryInput<'tcx, 'tcx> for &'tcx CachedBody<'tcx> {
 /// needs.
 #[derive(Debug, Encodable, Decodable)]
 pub struct FlowistryFacts {
-    pub subset_base: Vec<(
-        <RustcFacts as FactTypes>::Origin,
-        <RustcFacts as FactTypes>::Origin,
-    )>,
+    pub subset_base: Vec<(RegionVid, RegionVid)>,
 }
 
 pub type LocationIndex = <RustcFacts as FactTypes>::Point;
@@ -135,7 +122,7 @@ pub struct BodyCache<'tcx> {
     std_crates: Vec<CrateNum>,
 }
 
-pub fn std_crates<'tcx>(tcx: TyCtxt<'tcx>) -> impl Iterator<Item = CrateNum> + Captures<'tcx> {
+pub fn std_crates<'tcx>(tcx: TyCtxt<'tcx>) -> impl Iterator<Item = CrateNum> + use<'tcx> {
     tcx.crates(()).iter().copied().filter(move |&c| {
         c != LOCAL_CRATE
             && tcx
@@ -168,7 +155,7 @@ impl<'tcx> BodyCache<'tcx> {
     /// Serve the body from the cache or read it from the disk.
     pub fn try_get(&self, key: DefId) -> Option<&'tcx CachedBody<'tcx>> {
         let body = if let Some(local) = key.as_local() {
-            self.local_cache.get(local.local_def_index, |_| {
+            self.local_cache.get(&local.local_def_index, |_| {
                 let start = Instant::now();
                 let res = CachedBody::retrieve(self.tcx, local);
                 *self.timer.borrow_mut() += start.elapsed();
@@ -181,7 +168,7 @@ impl<'tcx> BodyCache<'tcx> {
         } else {
             let res = self
                 .cache
-                .get(key.krate, |_| {
+                .get(&key.krate, |_| {
                     let result = load_body_and_facts(self.tcx, key.krate);
                     log::debug!(
                         "Loaded {} bodies from {}",

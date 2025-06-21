@@ -5,17 +5,17 @@ use rustc_abi::VariantIdx;
 use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
 use rustc_middle::{
-    mir::{visit::Visitor, AggregateKind, Location, Operand, Place, Rvalue},
+    mir::{visit::Visitor, AggregateKind, Location, Place, Rvalue},
     ty::TyKind,
 };
 use rustc_span::Span;
 
-use crate::local_analysis::LocalAnalysis;
+use crate::{local_analysis::LocalAnalysis, utils::ArgSlice};
 
 pub(crate) type ApproximationHandler<'tcx, 'a, K> = fn(
     &LocalAnalysis<'tcx, 'a, K>,
     &mut dyn Visitor<'tcx>,
-    &[Operand<'tcx>],
+    ArgSlice<'a, 'tcx>,
     Place<'tcx>,
     Location,
 );
@@ -48,7 +48,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
     fn approximate_into_future(
         &self,
         vis: &mut dyn Visitor<'tcx>,
-        args: &[Operand<'tcx>],
+        args: ArgSlice<'_, 'tcx>,
         destination: Place<'tcx>,
         location: Location,
     ) {
@@ -56,13 +56,13 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
         let [op] = args else {
             unreachable!();
         };
-        vis.visit_assign(&destination, &Rvalue::Use(op.clone()), location);
+        vis.visit_assign(&destination, &Rvalue::Use(op.node.clone()), location);
     }
 
     fn approximate_new_unchecked(
         &self,
         vis: &mut dyn Visitor<'tcx>,
-        args: &[Operand<'tcx>],
+        args: ArgSlice<'_, 'tcx>,
         destination: Place<'tcx>,
         location: Location,
     ) {
@@ -71,7 +71,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
             unreachable!();
         };
         let mut operands = IndexVec::new();
-        operands.push(op.clone());
+        operands.push(op.node.clone());
         let TyKind::Adt(adt_id, generics) = destination.ty(&self.mono_body, self.tcx()).ty.kind()
         else {
             unreachable!()

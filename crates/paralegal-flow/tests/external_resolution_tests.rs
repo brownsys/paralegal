@@ -1,3 +1,5 @@
+#![feature(rustc_private)]
+
 use paralegal_flow::test_utils::InlineTestBuilder;
 
 #[test]

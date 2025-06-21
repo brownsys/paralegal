@@ -1,3 +1,5 @@
+#![feature(rustc_private)]
+
 mod helpers;
 
 use std::{collections::hash_map::RandomState, sync::Arc};

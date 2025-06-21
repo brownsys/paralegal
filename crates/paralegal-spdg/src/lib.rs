@@ -15,14 +15,14 @@ pub(crate) mod rustc {
     pub extern crate rustc_index as index;
     pub extern crate rustc_middle as middle;
     pub extern crate rustc_span as span;
-    pub use hir::def_id;
-    pub use middle::mir;
 }
 
 #[cfg(feature = "rustc")]
 extern crate rustc_macros;
 #[cfg(feature = "rustc")]
 extern crate rustc_serialize;
+#[cfg(feature = "rustc")]
+extern crate rustc_span;
 
 extern crate strum;
 
@@ -299,9 +299,7 @@ impl Span {
 }
 
 /// Metadata on a function call.
-#[derive(
-    Debug, Clone, Copy, Serialize, Deserialize, Eq, Ord, PartialOrd, PartialEq, Allocative,
-)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq, Allocative)]
 pub struct FunctionCallInfo {
     /// Has this call been inlined
     pub is_inlined: bool,
@@ -312,19 +310,7 @@ pub struct FunctionCallInfo {
 }
 
 /// The type of instructions we may encounter
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Serialize,
-    Deserialize,
-    Eq,
-    Ord,
-    PartialOrd,
-    PartialEq,
-    strum::EnumIs,
-    Allocative,
-)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq, strum::EnumIs, Allocative)]
 pub enum InstructionKind {
     /// Some type of statement
     Statement,
@@ -472,14 +458,22 @@ mod ser_defid_seq {
     struct DefIdWrap(#[serde(with = "rustc_proxies::DefId")] crate::DefId);
 
     pub fn serialize<S: Serializer>(v: &[crate::DefId], serializer: S) -> Result<S::Ok, S::Error> {
-        unsafe { <[DefIdWrap]>::serialize(std::mem::transmute(v), serializer) }
+        unsafe {
+            <[DefIdWrap]>::serialize(
+                std::mem::transmute::<&[rustc_span::def_id::DefId], &[DefIdWrap]>(v),
+                serializer,
+            )
+        }
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Box<[crate::DefId]>, D::Error> {
         unsafe {
-            Ok(std::mem::transmute(Box::<[DefIdWrap]>::deserialize(
+            Ok(std::mem::transmute::<
+                std::boxed::Box<[DefIdWrap]>,
+                std::boxed::Box<[rustc_span::def_id::DefId]>,
+            >(Box::<[DefIdWrap]>::deserialize(
                 deserializer,
             )?))
         }
@@ -1148,7 +1142,7 @@ impl<'a> DisplayNode<'a> {
     }
 }
 
-impl<'a> Display for DisplayNode<'a> {
+impl Display for DisplayNode<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let weight = self.graph.graph.node_weight(self.node).unwrap();
         if self.detailed {

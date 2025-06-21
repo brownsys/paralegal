@@ -3,8 +3,6 @@
 //!
 //! Essentially this discovers all local `paralegal_flow::*` annotations.
 
-
-
 use crate::{
     ana::{InlineJudge, SPDGGenerator},
     stats::Stats,
@@ -13,8 +11,6 @@ use crate::{
     Pctx,
 };
 
-
-
 use rustc_hir::{
     def_id::LocalDefId,
     intravisit::{self, FnKind},
@@ -22,8 +18,6 @@ use rustc_hir::{
 };
 use rustc_middle::{hir::nested_filter::OnlyBodies, ty::TyCtxt};
 use rustc_span::{symbol::Ident, Span, Symbol};
-
-
 
 use self::resolve::expect_resolve_string_to_def_id;
 
@@ -74,7 +68,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             .filter_map(|path| {
                 let def_id = expect_resolve_string_to_def_id(tcx, path, opts.relaxed())?;
                 if !def_id.is_local() {
-                    tcx.sess.span_err(tcx.def_span(def_id), format!("found an external function {def_id:?} as analysis target. Analysis targets are required to be local."));
+                    tcx.dcx().span_err(tcx.def_span(def_id), format!("found an external function {def_id:?} as analysis target. Analysis targets are required to be local."));
                     return None;
                 }
                 Some(FnToAnalyze {

@@ -1,18 +1,20 @@
 use std::{fmt::Display, rc::Rc};
 
-use flowistry_pdg_construction::{CallInfo};
+use flowistry_pdg_construction::CallInfo;
 use paralegal_spdg::{utils::write_sep, Identifier};
-use rustc_hir::def_id::{CrateNum, DefId};
+use rustc_data_structures::fx::FxHashSet;
+use rustc_hir::def_id::{CrateNum, DefId, LOCAL_CRATE};
 use rustc_middle::ty::{
-    AssocKind, BoundVariableKind, Clause, ClauseKind, ImplPolarity, Instance, ParamEnv,
-    ProjectionPredicate, TraitPredicate,
+    AssocKind, BoundVariableKind, Clause, ClauseKind, Instance, ProjectionPredicate,
+    TraitPredicate, TypingEnv,
 };
-use rustc_span::Span;
-use rustc_type_ir::TyKind;
+use rustc_span::{Span, Symbol};
+use rustc_type_ir::{PredicatePolarity, TyKind};
 
 use crate::{
     ana::Print,
-    args::{InliningDepth, Stub}, MarkerCtx, Pctx,
+    args::{InliningDepth, Stub},
+    MarkerCtx, Pctx,
 };
 
 pub type K = u32;
@@ -42,9 +44,8 @@ pub enum InlineJudgement {
 impl Display for InlineJudgement {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_ref())?;
-        match self {
-            Self::AbstractViaType(reason) => write!(f, "({reason})")?,
-            _ => (),
+        if let Self::AbstractViaType(reason) = self {
+            write!(f, "({reason})")?;
         }
         Ok(())
     }
@@ -149,7 +150,7 @@ impl<'tcx> InlineJudge<'tcx> {
 
     pub fn ensure_is_safe_to_approximate(
         &self,
-        param_env: ParamEnv<'tcx>,
+        typing_env: TypingEnv<'tcx>,
         resolved: Instance<'tcx>,
         call_span: Span,
         emit_err: bool,
@@ -158,7 +159,7 @@ impl<'tcx> InlineJudge<'tcx> {
         SafetyChecker {
             ctx: self.ctx.clone(),
             emit_err,
-            param_env,
+            typing_env,
             resolved,
             call_span,
             reason,
@@ -179,7 +180,7 @@ struct SafetyChecker<'tcx> {
     ctx: Pctx<'tcx>,
     /// Emit errors if `true`, otherwise emit warnings
     emit_err: bool,
-    param_env: ParamEnv<'tcx>,
+    typing_env: TypingEnv<'tcx>,
     /// Instance under scrutiny
     resolved: Instance<'tcx>,
     call_span: Span,
@@ -190,7 +191,7 @@ struct SafetyChecker<'tcx> {
 impl<'tcx> SafetyChecker<'tcx> {
     /// Emit an error or a warning with some preformatted messaging.
     fn err(&self, s: &str, span: Span) {
-        let sess = self.ctx.tcx().sess;
+        let sess = self.ctx.tcx().dcx();
         let msg = format!(
             "the call to {:?} is not safe to abstract as demanded by '{}', because of: {s}",
             self.resolved, self.reason
@@ -220,8 +221,8 @@ impl<'tcx> SafetyChecker<'tcx> {
     }
 
     fn check_projection_predicate(&self, predicate: &ProjectionPredicate<'tcx>, span: Span) {
-        if let Some(t) = predicate.term.ty() {
-            let t = self.ctx.tcx().normalize_erasing_regions(self.param_env, t);
+        if let Some(t) = predicate.term.as_type() {
+            let t = self.ctx.tcx().normalize_erasing_regions(self.typing_env, t);
             let markers = self.ctx.marker_ctx().deep_type_markers(t);
             if !markers.is_empty() {
                 let markers = markers.iter().map(|t| t.1).collect::<Box<_>>();
@@ -237,7 +238,7 @@ impl<'tcx> SafetyChecker<'tcx> {
     fn check_trait_predicate(&self, predicate: &TraitPredicate<'tcx>, span: Span) {
         let tcx = self.ctx.tcx();
         let TraitPredicate {
-            polarity: ImplPolarity::Positive,
+            polarity: PredicatePolarity::Positive,
             trait_ref,
         } = predicate
         else {
@@ -256,9 +257,9 @@ impl<'tcx> SafetyChecker<'tcx> {
         if tcx.is_fn_trait(trait_ref.def_id) {
             let instance = match self_ty.kind() {
                 TyKind::Closure(id, args) | TyKind::FnDef(id, args) => {
-                    Instance::resolve(tcx, ParamEnv::reveal_all(), *id, args)
+                    Instance::expect_resolve(tcx, TypingEnv::fully_monomorphized(), *id, args, span)
                 }
-                TyKind::FnPtr(_) => {
+                TyKind::FnPtr(..) => {
                     self.err(&format!("unresolvable function pointer {self_ty:?}"), span);
                     return;
                 }
@@ -271,9 +272,7 @@ impl<'tcx> SafetyChecker<'tcx> {
                     );
                     return;
                 }
-            }
-            .unwrap()
-            .unwrap();
+            };
             let markers = self.ctx.marker_ctx().get_reachable_markers(instance);
             if !markers.is_empty() {
                 self.err_markers(
@@ -326,6 +325,7 @@ impl<'tcx> SafetyChecker<'tcx> {
             | ClauseKind::WellFormed(_)
             | ClauseKind::ConstArgHasType(..)
             | ClauseKind::ConstEvaluatable(_)
+            | ClauseKind::HostEffect(_)
             | ClauseKind::RegionOutlives(_) => {
                 // These predicates do not allow for "code injection" since they do not concern things that can be marked.
             }

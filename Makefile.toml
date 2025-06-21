@@ -5,7 +5,7 @@
 # - `fix-all` tries to fix all the formatting and code style issues. This is
 #   most likely the command you want to run.
 # - `check-all` runs all the formatting and code-style checks we also run in CI
-#   This performs all teh same operations as `fix-ll` but complains instead of
+#   This performs all the same operations as `fix-ll` but complains instead of
 #   solving them.
 # - `pdg-tests` which runs our current complete test suite
 #
@@ -20,7 +20,7 @@ default_to_workspace = false
 
 [tasks.install]
 command = "cargo"
-args = ["install", "--locked", "--path", "crates/paralegal-flow"]
+args = ["install", "--locked", "-f", "--path", "crates/paralegal-flow"]
 
 [tasks.ci-tests]
 description = "The suite of tests we run in CI"
@@ -35,7 +35,7 @@ description = """\
 Attempt to perform any formatting and code structure related fixes.
 
 Note: This uses the clippy-fix command under the hood. This can introduce
-breaking changes and so this tscript only passes `--allow-staged` to the
+breaking changes and so this script only passes `--allow-staged` to the
 fix command. What this means for you is that you need to stage (or commit)
 your changes in git for the fix command to work. This is a precaution that
 allows you to inspect, test and potentially reject clippy's changes before
@@ -132,7 +132,7 @@ description = """\
 This is bit ugly, because we want to reuse this tasks
 
 - In different directories (controlled by the `FORMAT_WD` env variable)
-- With different base comamnds (`cargo clippy` vs `cargo fmt`)
+- With different base commands (`cargo clippy` vs `cargo fmt`)
 - With different goals (check vs fix)
 
 The last two are both done via the `FORMAT_ARGS` command.
@@ -175,6 +175,16 @@ run_task = "format-base"
 [tasks.format-tests]
 private = true
 condition = { env_set = ["INCLUDE_TESTS"] }
+env = { COMMAND = "cargo", COMMAND_ARGS = "${FORMAT_ARGS}" }
+run_task = "run-for-tests"
+
+[tasks.clean-tests]
+env = { COMMAND = "cargo", COMMAND_ARGS = "clean" }
+run_task = "run-for-tests"
+
+[tasks.run-for-tests]
+private = true
+description = "A basic helper that lets you run a COMMAND with COMMAND_ARGS for each crate we use for tests"
 script_runner = "@duckscript"
 script = '''
 wd = pwd
@@ -184,12 +194,12 @@ for dir in ${test_dirs}
     cargo_toml_path = concat ${dir} /Cargo.toml
     if is_path_exists ${cargo_toml_path}
         cd ${dir}
-        exec --fail-on-error cargo %{FORMAT_ARGS}
+        exec --fail-on-error %{COMMAND} %{COMMAND_ARGS}
         cd ${wd}
     end
 end
 cd crates/paralegal-policy/tests/test-crate
-exec cargo %{FORMAT_ARGS}
+exec --fail-on-error %{COMMAND} %{COMMAND_ARGS}
 '''
 
 [tasks.populate-doc-dir]

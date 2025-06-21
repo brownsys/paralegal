@@ -12,3 +12,6 @@ proc-macro = true
 quote = "1"
 proc-macro2 = "1"
 cfg-if = "1"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(paralegal)'] }

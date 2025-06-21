@@ -7,16 +7,16 @@ use petgraph::graph::{DiGraph, NodeIndex};
 
 use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 
-use df::{AnalysisDomain, Results, ResultsVisitor};
-use rustc_error_messages::DiagnosticMessage;
+use df::ResultsVisitor;
+use rustc_errors::DiagMessage;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{visit::Visitor, AggregateKind, Location, Place, Rvalue, Terminator, TerminatorKind},
-    ty::{Instance, TyCtxt},
+    ty::{Instance, TyCtxt, TypingEnv},
 };
-use rustc_mir_dataflow::{self as df};
+use rustc_mir_dataflow::{self as df, Results};
 
 use crate::{
     async_support::*,
@@ -161,11 +161,11 @@ impl<'tcx, K> MemoPdgConstructor<'tcx, K> {
         self.call_change_callback.clone()
     }
 
-    pub(crate) fn maybe_span_err(&self, span: rustc_span::Span, msg: impl Into<DiagnosticMessage>) {
+    pub(crate) fn maybe_span_err(&self, span: rustc_span::Span, msg: impl Into<DiagMessage>) {
         if self.relaxed {
-            self.tcx.sess.span_warn(span, msg.into());
+            self.tcx.dcx().span_warn(span, msg.into());
         } else {
-            self.tcx.sess.span_err(span, msg.into());
+            self.tcx.dcx().span_err(span, msg.into());
         }
     }
 }
@@ -180,7 +180,7 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> MemoPdgConstructor<'tcx, K> {
         let resolution = try_resolve_function(
             self.tcx,
             function.to_def_id(),
-            self.tcx.param_env_reveal_all_normalized(function),
+            TypingEnv::post_analysis(self.tcx, function.to_def_id()),
             generics,
         )
         .unwrap();
@@ -269,14 +269,12 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> MemoPdgConstructor<'tcx, K> {
 type LocalAnalysisResults<'tcx, 'mir, K> = Results<'tcx, &'mir LocalAnalysis<'tcx, 'mir, K>>;
 
 impl<'mir, 'tcx, K: Hash + Eq + Clone>
-    ResultsVisitor<'mir, 'tcx, LocalAnalysisResults<'tcx, 'mir, K>> for PartialGraph<'tcx, K>
+    ResultsVisitor<'mir, 'tcx, &'mir LocalAnalysis<'tcx, 'mir, K>> for PartialGraph<'tcx, K>
 {
-    type FlowState = <&'mir LocalAnalysis<'tcx, 'mir, K> as AnalysisDomain<'tcx>>::Domain;
-
-    fn visit_statement_before_primary_effect(
+    fn visit_after_early_statement_effect(
         &mut self,
-        results: &LocalAnalysisResults<'tcx, 'mir, K>,
-        state: &Self::FlowState,
+        results: &mut LocalAnalysisResults<'tcx, 'mir, K>,
+        state: &InstructionState<'tcx>,
         statement: &'mir rustc_middle::mir::Statement<'tcx>,
         location: Location,
     ) {
@@ -301,10 +299,10 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
     /// with the reachable places yet. So this ordering means we can reuse the
     /// same logic but just have to run it twice for every non-inlined function
     /// call site.
-    fn visit_terminator_before_primary_effect(
+    fn visit_after_early_terminator_effect(
         &mut self,
-        results: &LocalAnalysisResults<'tcx, 'mir, K>,
-        state: &Self::FlowState,
+        results: &mut LocalAnalysisResults<'tcx, 'mir, K>,
+        state: &InstructionState<'tcx>,
         terminator: &'mir rustc_middle::mir::Terminator<'tcx>,
         location: Location,
     ) {
@@ -345,10 +343,10 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
         arg_vis.visit_terminator(terminator, location);
     }
 
-    fn visit_terminator_after_primary_effect(
+    fn visit_after_primary_terminator_effect(
         &mut self,
-        results: &LocalAnalysisResults<'tcx, 'mir, K>,
-        state: &Self::FlowState,
+        results: &mut LocalAnalysisResults<'tcx, 'mir, K>,
+        state: &InstructionState<'tcx>,
         terminator: &'mir rustc_middle::mir::Terminator<'tcx>,
         location: Location,
     ) {
@@ -390,7 +388,11 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         &'a mut self,
         results: &'a LocalAnalysisResults<'tcx, 'mir, K>,
         state: &'a InstructionState<'tcx>,
-    ) -> ModularMutationVisitor<'a, 'tcx, impl FnMut(Location, Mutation<'tcx>) + 'a> {
+    ) -> ModularMutationVisitor<
+        'a,
+        'tcx,
+        impl FnMut(Location, Mutation<'tcx>) + use<'a, 'tcx, 'mir, K>,
+    > {
         ModularMutationVisitor::new(&results.analysis.place_info, move |location, mutation| {
             self.register_mutation(
                 results,
@@ -409,7 +411,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
     fn handle_as_inline<'a>(
         &mut self,
         results: &LocalAnalysisResults<'tcx, 'a, K>,
-        state: &'a InstructionState<'tcx>,
+        state: &InstructionState<'tcx>,
         terminator: &Terminator<'tcx>,
         location: Location,
     ) -> bool {
@@ -450,7 +452,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                 // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
                 let rvalue = Rvalue::Aggregate(
                     Box::new(AggregateKind::Tuple),
-                    IndexVec::from_iter(args.iter().cloned()),
+                    IndexVec::from_iter(args.iter().map(|op| op.node.clone())),
                 );
                 self.modular_mutation_visitor(results, state).visit_assign(
                     destination,
@@ -891,9 +893,11 @@ impl<'tcx, K: Clone + Hash + Eq> PartialGraph<'tcx, K> {
             memo,
             Instance::expect_resolve(
                 memo.tcx,
-                memo.tcx.param_env_reveal_all_normalized(self.def_id),
+                TypingEnv::post_analysis(memo.tcx, self.def_id)
+                    .with_post_analysis_normalized(memo.tcx),
                 self.def_id,
                 self.generics,
+                memo.tcx.def_span(self.def_id),
             ),
             self.k.clone(),
         );
@@ -917,9 +921,11 @@ impl<'tcx, K: Clone + Hash + Eq> PartialGraph<'tcx, K> {
             memo,
             Instance::expect_resolve(
                 memo.tcx,
-                memo.tcx.param_env_reveal_all_normalized(self.def_id),
+                TypingEnv::post_analysis(memo.tcx, self.def_id)
+                    .with_post_analysis_normalized(memo.tcx),
                 self.def_id,
                 self.generics,
+                memo.tcx.def_span(self.def_id),
             ),
             self.k.clone(),
         );

@@ -37,7 +37,7 @@
 //! 3. [`.with_context()`](GraphLocation::with_context) reads and parses the
 //!    graph file, then invokes the provided closure with a [`Context`]. After
 //!    the closure returns it automatically invokes
-//!    [`Context::emit_diagnostics`].
+//!    [`RootContext::emit_diagnostics`].
 //!
 //! For information about how to specify policies see the [`Context`] struct.
 //!

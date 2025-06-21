@@ -12,32 +12,29 @@
 //! replying on `CrateMetadataRef`, which we can construct but not use (relevant
 //! functions are hidden).
 //!
-//! The encoding of [`SpanData`] (and thus [`Span`]) is quite heavyweight. We
-//! store the full filename for each span and resolve them with a linear scan
-//! over the `SourceMap`. If we notice this being too slow we can always use a
-//! similar shorthand technique that is used for types.
-//!
 //! Note that we encode `AllocId`s simply as themselves. This is possibly
 //! incorrect but we're not really relying on this information at the moment so
 //! we are not investing in it.
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
-use std::rc::Rc;
+use std::sync::Arc;
 use std::{num::NonZeroU64, path::PathBuf};
 
+use rustc_ast::AttrId;
 use rustc_const_eval::interpret::AllocId;
-use rustc_hash::FxHashMap;
-use rustc_hir::def_id::{CrateNum, DefIndex};
+use rustc_data_structures::fx::FxHashMap;
+use rustc_hir::def_id::{CrateNum, DefId, DefIndex};
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_serialize::{
     opaque::{FileEncoder, MemDecoder},
     Decodable, Decoder, Encodable, Encoder,
 };
 use rustc_span::{
-    BytePos, FileName, RealFileName, SourceFile, Span, SpanData, SyntaxContext, DUMMY_SP,
+    BytePos, ExpnId, FileName, RealFileName, SourceFile, Span, SpanData, SpanDecoder, SpanEncoder,
+    Symbol, SyntaxContext, DUMMY_SP,
 };
-use rustc_type_ir::{TyDecoder, TyEncoder};
+use rustc_type_ir::{PredicateKind, TyDecoder, TyEncoder};
 
 macro_rules! encoder_methods {
     ($($name:ident($ty:ty);)*) => {
@@ -68,7 +65,7 @@ impl<'tcx> ParalegalEncoder<'tcx> {
         }
     }
 
-    pub fn finish(self) {
+    pub fn finish(mut self) {
         self.file_encoder.finish().unwrap();
     }
 }
@@ -87,7 +84,7 @@ pub fn encode_to_file<'tcx, V: Encodable<ParalegalEncoder<'tcx>>>(
 /// Whatever can't survive the crossing we need to live without.
 const CLEAR_CROSS_CRATE: bool = true;
 
-impl<'tcx> Encoder for ParalegalEncoder<'tcx> {
+impl Encoder for ParalegalEncoder<'_> {
     encoder_methods! {
         emit_usize(usize);
         emit_u128(u128);
@@ -120,9 +117,7 @@ impl<'tcx> TyEncoder for ParalegalEncoder<'tcx> {
         &mut self.type_shorthands
     }
 
-    fn predicate_shorthands(
-        &mut self,
-    ) -> &mut FxHashMap<<Self::I as rustc_type_ir::Interner>::PredicateKind, usize> {
+    fn predicate_shorthands(&mut self) -> &mut FxHashMap<PredicateKind<Self::I>, usize> {
         &mut self.predicate_shorthands
     }
 
@@ -131,18 +126,12 @@ impl<'tcx> TyEncoder for ParalegalEncoder<'tcx> {
     }
 }
 
-impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for CrateNum {
-    fn encode(&self, s: &mut ParalegalEncoder<'tcx>) {
-        s.tcx.stable_crate_id(*self).encode(s)
-    }
-}
-
 /// Something that implements `TyDecoder`.
 pub struct ParalegalDecoder<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
     mem_decoder: MemDecoder<'a>,
     shorthand_map: FxHashMap<usize, Ty<'tcx>>,
-    file_shorthands: FxHashMap<usize, Option<Rc<SourceFile>>>,
+    file_shorthands: FxHashMap<usize, Option<Arc<SourceFile>>>,
 }
 
 impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
@@ -150,7 +139,7 @@ impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
     pub fn new(tcx: TyCtxt<'tcx>, buf: &'a [u8]) -> Self {
         Self {
             tcx,
-            mem_decoder: MemDecoder::new(buf, 0),
+            mem_decoder: MemDecoder::new(buf, 0).unwrap(),
             shorthand_map: Default::default(),
             file_shorthands: Default::default(),
         }
@@ -169,7 +158,7 @@ pub fn decode_from_file<'tcx, V: for<'a> Decodable<ParalegalDecoder<'tcx, 'a>>>(
     Ok(V::decode(&mut decoder))
 }
 
-impl<'tcx, 'a> TyDecoder for ParalegalDecoder<'tcx, 'a> {
+impl<'tcx> TyDecoder for ParalegalDecoder<'tcx, '_> {
     const CLEAR_CROSS_CRATE: bool = CLEAR_CROSS_CRATE;
 
     type I = TyCtxt<'tcx>;
@@ -202,7 +191,9 @@ impl<'tcx, 'a> TyDecoder for ParalegalDecoder<'tcx, 'a> {
     where
         F: FnOnce(&mut Self) -> R,
     {
-        let new_opaque = MemDecoder::new(self.mem_decoder.data(), pos);
+        debug_assert!(pos < self.mem_decoder.len());
+
+        let new_opaque = self.mem_decoder.split_at(pos);
         let old_opaque = std::mem::replace(&mut self.mem_decoder, new_opaque);
         let r = f(self);
         self.mem_decoder = old_opaque;
@@ -218,7 +209,7 @@ macro_rules! decoder_methods {
     }
 }
 
-impl<'tcx, 'a> Decoder for ParalegalDecoder<'tcx, 'a> {
+impl Decoder for ParalegalDecoder<'_, '_> {
     decoder_methods! {
         read_usize(usize);
         read_u128(u128);
@@ -243,33 +234,71 @@ impl<'tcx, 'a> Decoder for ParalegalDecoder<'tcx, 'a> {
     }
 }
 
-impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for CrateNum {
-    fn decode(d: &mut ParalegalDecoder<'tcx, 'a>) -> Self {
-        d.tcx.stable_crate_id_to_crate_num(Decodable::decode(d))
+impl SpanDecoder for ParalegalDecoder<'_, '_> {
+    fn decode_crate_num(&mut self) -> CrateNum {
+        self.tcx
+            .stable_crate_id_to_crate_num(Decodable::decode(self))
+    }
+    fn decode_def_index(&mut self) -> DefIndex {
+        DefIndex::from_u32(u32::decode(self))
+    }
+    fn decode_span(&mut self) -> Span {
+        SpanData::decode(self).span()
+    }
+
+    fn decode_syntax_context(&mut self) -> SyntaxContext {
+        SyntaxContext::root()
+    }
+
+    fn decode_def_id(&mut self) -> DefId {
+        DefId {
+            krate: self.decode_crate_num(),
+            index: self.decode_def_index(),
+        }
+    }
+
+    fn decode_expn_id(&mut self) -> ExpnId {
+        unimplemented!()
+    }
+
+    fn decode_symbol(&mut self) -> Symbol {
+        Symbol::intern(&String::decode(self))
+    }
+
+    fn decode_attr_id(&mut self) -> AttrId {
+        unimplemented!()
     }
 }
 
-impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for DefIndex {
-    fn encode(&self, s: &mut ParalegalEncoder<'tcx>) {
-        self.as_u32().encode(s)
+impl SpanEncoder for ParalegalEncoder<'_> {
+    fn encode_def_index(&mut self, def_index: DefIndex) {
+        def_index.as_u32().encode(self)
     }
-}
+    fn encode_span(&mut self, span: Span) {
+        span.data().encode(self)
+    }
 
-impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for DefIndex {
-    fn decode(d: &mut ParalegalDecoder<'tcx, 'a>) -> Self {
-        Self::from_u32(u32::decode(d))
+    /// For now this does nothing, simply dropping the context. We don't use it
+    /// anyway in our errors.
+    fn encode_syntax_context(&mut self, _syntax_context: SyntaxContext) {}
+
+    fn encode_crate_num(&mut self, crate_num: CrateNum) {
+        self.tcx.stable_crate_id(crate_num).encode(self)
+    }
+    fn encode_def_id(&mut self, def_id: DefId) {
+        self.encode_crate_num(def_id.krate);
+        self.encode_def_index(def_id.index);
+    }
+    fn encode_expn_id(&mut self, _expn_id: ExpnId) {
+        unimplemented!()
+    }
+    fn encode_symbol(&mut self, symbol: Symbol) {
+        symbol.as_str().encode(self)
     }
 }
 
 const TAG_PARTIAL_SPAN: u8 = 0;
 const TAG_VALID_SPAN_FULL: u8 = 1;
-
-/// We need to overwrite this, because we need it to dispatch to `SpanData`.
-impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for Span {
-    fn encode(&self, s: &mut ParalegalEncoder<'tcx>) {
-        self.data().encode(s)
-    }
-}
 
 /// Some of this code is lifted from `EncodeContext`.
 ///
@@ -316,7 +345,7 @@ impl<'tcx> ParalegalEncoder<'tcx> {
 }
 
 impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
-    fn decode_file_name(&mut self, crate_num: CrateNum) -> Option<Rc<SourceFile>> {
+    fn decode_file_name(&mut self, crate_num: CrateNum) -> Option<Arc<SourceFile>> {
         let tag = u8::decode(self);
         let pos = if tag == TAG_ENCODE_REMOTE {
             let index = usize::decode(self);
@@ -342,7 +371,7 @@ impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
         file
     }
 
-    fn decode_filename_local(&mut self, crate_num: CrateNum) -> Option<Rc<SourceFile>> {
+    fn decode_filename_local(&mut self, crate_num: CrateNum) -> Option<Arc<SourceFile>> {
         let file_name = FileName::decode(self);
         let source_map = self.tcx.sess.source_map();
         let matching_source_files = source_map
@@ -378,19 +407,6 @@ impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
 
 const TAG_ENCODE_REMOTE: u8 = 0;
 const TAG_ENCODE_LOCAL: u8 = 1;
-
-/// For now this does nothing, simply dropping the context. We don't use it
-/// anyway in our errors.
-impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for SyntaxContext {
-    fn encode(&self, _: &mut ParalegalEncoder<'tcx>) {}
-}
-
-/// Same as for the [`Encodable`] impl, we need to dispatch to [`SpanData`].
-impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for Span {
-    fn decode(d: &mut ParalegalDecoder<'tcx, 'a>) -> Self {
-        SpanData::decode(d).span()
-    }
-}
 
 /// Which path in a [`RealFileName`] do we care about?
 fn path_in_real_path(r: &RealFileName) -> &PathBuf {
@@ -434,12 +450,5 @@ impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for SpanData {
             ctxt,
             parent: None,
         }
-    }
-}
-
-/// Always returns [`SyntaxContext::root()`] at the moment.
-impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for SyntaxContext {
-    fn decode(_: &mut ParalegalDecoder<'tcx, 'a>) -> Self {
-        SyntaxContext::root()
     }
 }

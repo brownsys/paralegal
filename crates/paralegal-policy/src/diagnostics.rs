@@ -9,7 +9,7 @@
 //! This manifests for instance in [`Diagnostics::error`]. This function records
 //! a severe error that should fail the policy but it does not exit the program.
 //! Instead the message is recorded and emitted later, for instance by
-//! [`Context::emit_diagnostics`].
+//! [`RootContext::emit_diagnostics`].
 //!
 //! ## Emitting Messages
 //!
@@ -25,19 +25,19 @@
 //! condition, message)`. `ctx` here is anything that implements
 //! [`Diagnostics`].
 //!
-//! [`Diagnostics`] is implemented directly by [`Context`] so you can use
+//! [`Diagnostics`] is implemented directly by [`RootContext`] so you can use
 //! `ctx.error()` or `ctx.warning()`. You can also call it on scoped contexts
 //! (see below).
 //!
 //! ## Scoping messages
 //!
 //! You may however add additional contextual information about which policy or
-//! combinator is currently executing. [`Context::named_policy`] returns a
+//! combinator is currently executing. [`RootContext::named_policy`] returns a
 //! wrapper that can be used the same way that you use [`Context`], but when
 //! [`error`][Diagnostics::error] or [`warning`][Diagnostics::warning] is called
 //! it also appends the name of the policy to you specified.
 //!
-//! Similarly you can use [`Context::named_combinator`] or
+//! Similarly you can use [`RootContext::named_combinator`] or
 //! [`PolicyContext::named_combinator`] to add context about a named combinator.
 //!
 //! ## Intended Workflow
@@ -84,7 +84,7 @@
 //! named `ctx`, to avoid using the outer context by accident. The methods off
 //! outer contexts are always available on the inner ones.
 //!
-//! Note that some methods, like [`Context::always_happens_before`] add a named
+//! Note that some methods, like [`RootContext::always_happens_before`] add a named
 //! combinator context by themselves when you use their
 //! [`report`][crate::algo::ahb::AlwaysHappensBefore::report] functions.
 
@@ -308,12 +308,7 @@ impl DiagnosticPart {
                     } else {
                         line_length_while(&line_content, char::is_whitespace)
                     };
-                    let highlight_len = if end < start {
-                        // TODO figure out how this happens
-                        0
-                    } else {
-                        end - start
-                    };
+                    let highlight_len = end.saturating_sub(start);
                     write!(s, "{tab} {} {:start$}", "|".blue(), "")?;
                     for _ in 0..highlight_len {
                         write!(s, "{}", "^".color(coloring))?;
@@ -385,7 +380,7 @@ impl<'a, A: ?Sized> DiagnosticBuilder<'a, A> {
     }
 }
 
-impl<'a, A: HasDiagnosticsBase + ?Sized> DiagnosticBuilder<'a, A> {
+impl<A: HasDiagnosticsBase + ?Sized> DiagnosticBuilder<'_, A> {
     /// Queue the diagnostic for display to the user.
     pub fn emit(self) {
         self.base.record(self.diagnostic)
@@ -1048,7 +1043,7 @@ pub(crate) struct DiagnosticsRecorder(std::sync::Mutex<IndexMap<Diagnostic, ()>>
 
 struct DisplayDiagnostic<'a>(&'a Diagnostic);
 
-impl<'a> std::fmt::Display for DisplayDiagnostic<'a> {
+impl std::fmt::Display for DisplayDiagnostic<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.write(f)
     }

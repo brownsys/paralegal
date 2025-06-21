@@ -321,9 +321,13 @@ impl RootContext {
     #[deprecated = "Use NodeQueries::flows_to instead"]
     /// Returns whether a node flows to a node through the configured edge type.
     ///
-    /// Nodes do not flow to themselves. CallArgument nodes do flow to their respective CallSites.
+    /// Nodes do not flow to themselves. CallArgument nodes do flow to their
+    /// respective CallSites.
     ///
-    /// If you use flows_to with [`EdgeSelection::Control`], you might want to consider using [`Context::has_ctrl_influence`], which additionally considers intermediate nodes which the src node has data flow to and has ctrl influence on the sink.
+    /// If you use flows_to with [`EdgeSelection::Control`], you might want to
+    /// consider using [`RootContext::has_ctrl_influence`], which additionally
+    /// considers intermediate nodes which the src node has data flow to and has
+    /// ctrl influence on the sink.
     pub fn flows_to(
         &self,
         src: impl IntoIterGlobalNodes,
@@ -352,8 +356,8 @@ impl RootContext {
     /// `some n where self.flows_to(influencer, n, EdgeSelection::Data) && self.flows_to(n, target, EdgeSelection::Control)`.
     pub fn has_ctrl_influence(
         &self,
-        influencer: impl IntoIterGlobalNodes + Sized + Copy,
-        target: impl IntoIterGlobalNodes + Sized + Copy,
+        influencer: impl IntoIterGlobalNodes,
+        target: impl IntoIterGlobalNodes,
     ) -> bool {
         influencer.has_ctrl_influence(target, self)
     }
@@ -363,7 +367,7 @@ impl RootContext {
     /// Does not return the input node. A CallSite sink will return all of the associated CallArgument nodes.
     pub fn influencers(
         &self,
-        sink: impl IntoIterGlobalNodes + Sized,
+        sink: impl IntoIterGlobalNodes,
         edge_type: EdgeSelection,
     ) -> impl Iterator<Item = GlobalNode> + '_ {
         sink.influencers(self, edge_type).into_iter()
@@ -374,7 +378,7 @@ impl RootContext {
     /// Does not return the input node. A CallArgument src will return the associated CallSite.
     pub fn influencees(
         &self,
-        src: impl IntoIterGlobalNodes + Sized,
+        src: impl IntoIterGlobalNodes,
         edge_type: EdgeSelection,
     ) -> impl Iterator<Item = GlobalNode> + '_ {
         src.influencees(self, edge_type).into_iter()
@@ -555,11 +559,12 @@ impl RootContext {
         node.predecessors(self)
     }
 
+    /// Returns all nodes n steps removed from this one
     #[cfg(test)]
     pub fn nth_successors(
         &self,
         n: usize,
-        src: impl IntoIterGlobalNodes + Sized,
+        src: impl IntoIterGlobalNodes,
     ) -> paralegal_spdg::NodeCluster {
         let mut start: Vec<_> = src.iter_nodes().collect();
         let ctrl = &self.desc.controllers[&src.controller_id()].graph;
@@ -696,9 +701,13 @@ where
 
     /// Returns whether a node flows to a node through the configured edge type.
     ///
-    /// Nodes do not flow to themselves. CallArgument nodes do flow to their respective CallSites.
+    /// Nodes do not flow to themselves. CallArgument nodes do flow to their
+    /// respective CallSites.
     ///
-    /// If you use flows_to with [`EdgeSelection::Control`], you might want to consider using [`Context::has_ctrl_influence`], which additionally considers intermediate nodes which the src node has data flow to and has ctrl influence on the sink.
+    /// If you use flows_to with [`EdgeSelection::Control`], you might want to
+    /// consider using [`RootContext::has_ctrl_influence`], which additionally
+    /// considers intermediate nodes which the src node has data flow to and has
+    /// ctrl influence on the sink.
     fn flows_to(
         self,
         sink: impl IntoIterGlobalNodes,
@@ -1023,7 +1032,7 @@ impl NodeExt for GlobalNode {
         ctx.desc().controllers[&self.controller_id()]
             .type_assigns
             .get(&self.local_node())
-            .map_or(false, |tys| tys.0.contains(&t))
+            .is_some_and(|tys| tys.0.contains(&t))
     }
     fn associated_call_site(self, ctx: &RootContext) -> CallString {
         ctx.desc.controllers[&self.controller_id()]
@@ -1162,6 +1171,7 @@ impl<T: NodeExt + Copy> NodeExt for &'_ T {
         (*self).predecessors(ctx)
     }
 
+    #[allow(deprecated)]
     fn shortest_path(
         self,
         to: GlobalNode,
@@ -1184,7 +1194,7 @@ pub struct DisplayDef<'a> {
     pub ctx: &'a RootContext,
 }
 
-impl<'a> std::fmt::Display for DisplayDef<'a> {
+impl std::fmt::Display for DisplayDef<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use std::fmt::Write;
         let info = &self.ctx.desc().def_info[&self.def_id];
@@ -1219,7 +1229,7 @@ fn test_context() {
             .desc
             .def_info
             .get(id)
-            .map_or(false, |info| info.name.as_str().starts_with("Foo"))));
+            .is_some_and(|info| info.name.as_str().starts_with("Foo"))));
 
     let controller = ctx
         .controller_by_name(Identifier::new_intern("controller"))

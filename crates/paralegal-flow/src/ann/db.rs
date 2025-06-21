@@ -28,14 +28,13 @@ use flowistry_pdg_construction::{
 };
 use paralegal_spdg::Identifier;
 
-use rustc_errors::{DiagnosticMessage};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
+use rustc_errors::DiagMessage;
 use rustc_hir::def_id::{DefId, LOCAL_CRATE};
 use rustc_hir::{def::DefKind, def_id::CrateNum};
 use rustc_middle::{
-    dep_graph::DepContext,
     mir::{self, Local},
-    ty::{self, GenericArgsRef, Instance, Ty, TyCtxt},
+    ty::{self, GenericArgsRef, Instance, Ty, TyCtxt, TypingEnv},
 };
 use rustc_serialize::Decodable;
 
@@ -120,8 +119,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// For async handling. If this id corresponds to an async closure we try to
     /// resolve its parent item which the markers would actually be placed on.
     fn defid_rewrite(&self, def_id: DefId) -> DefId {
-        let def_kind = self.tcx().def_kind(def_id);
-        if matches!(def_kind, DefKind::Generator) {
+        if self.tcx().is_coroutine(def_id) {
             if let Some(parent) = self.tcx().opt_parent(def_id) {
                 if matches!(self.tcx().def_kind(parent), DefKind::AssocFn | DefKind::Fn)
                     && self.tcx().asyncness(parent).is_async()
@@ -211,7 +209,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         }
         self.db()
             .reachable_markers
-            .get_maybe_recursive(res, |_| self.compute_reachable_markers(res))
+            .get_maybe_recursive(&res, |_| self.compute_reachable_markers(res))
             .map_or(&[], Box::as_ref)
     }
 
@@ -267,7 +265,9 @@ impl<'tcx> MarkerCtx<'tcx> {
                 .collect::<Box<_>>();
         }
         let body = self.0.body_cache.get(res.def_id());
-        let param_env = self.tcx().param_env_reveal_all_normalized(res.def_id());
+        let param_env = 
+                    TypingEnv::post_analysis(self.tcx(), res.def_id())
+                        .with_post_analysis_normalized(self.tcx());
         let mono_body = match res {
             MaybeMonomorphized::Monomorphized(res) => Cow::Owned(
                 try_monomorphize(
@@ -324,19 +324,19 @@ impl<'tcx> MarkerCtx<'tcx> {
             .collect()
     }
 
-    fn span_err(&self, span: Span, msg: impl Into<DiagnosticMessage>) {
+    fn span_err(&self, span: Span, msg: impl Into<DiagMessage>) {
         if self.0.config.relaxed() {
-            self.tcx().sess.span_warn(span, msg.into());
+            self.tcx().dcx().span_warn(span, msg.into());
         } else {
-            self.tcx().sess.span_err(span, msg.into());
+            self.tcx().dcx().span_err(span, msg.into());
         }
     }
 
-    fn err(&self, msg: impl Into<DiagnosticMessage>) {
+    fn err(&self, msg: impl Into<DiagMessage>) {
         if self.0.config.relaxed() {
-            self.tcx().sess.warn(msg.into());
+            self.tcx().dcx().warn(msg.into());
         } else {
-            self.tcx().sess.err(msg.into());
+            self.tcx().dcx().err(msg.into());
         }
     }
 
@@ -346,7 +346,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         parent: MaybeMonomorphized<'tcx>,
         local_decls: &mir::LocalDecls,
         terminator: &mir::Terminator<'tcx>,
-        param_env: ty::ParamEnv<'tcx>,
+        param_env: ty::TypingEnv<'tcx>,
         expect_resolve: bool,
     ) -> impl Iterator<Item = Identifier> + '_ {
         let mut v = vec![];
@@ -365,7 +365,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                     );
                 return v.into_iter();
             };
-            let new_instance = match handle_shims(instance, self.tcx(), param_env) {
+            let new_instance = match handle_shims(instance, self.tcx(), param_env, terminator.source_info.span) {
                 ShimResult::IsHandledShim { instance, .. } => instance,
                 ShimResult::IsNonHandleableShim => {
                     self.span_err(
@@ -412,9 +412,11 @@ impl<'tcx> MarkerCtx<'tcx> {
         // we are provided the id of the function that creates the
         // future. As such we can't just monomorphize and traverse,
         // we have to find the generator first.
-        if let ty::TyKind::Alias(ty::AliasKind::Opaque, alias) =
-                local_decls[mir::RETURN_PLACE].ty.kind()
-            && let ty::TyKind::Generator(closure_fn, substs, _) = self.tcx().type_of(alias.def_id).skip_binder().kind() {
+        if let ty::TyKind::Alias(ty::AliasTyKind::Opaque, alias) =
+            local_decls[mir::RETURN_PLACE].ty.kind()
+            && let ty::TyKind::Coroutine(closure_fn, substs) =
+                self.tcx().type_of(alias.def_id).skip_binder().kind()
+        {
             trace!("    fits opaque type");
             let async_closure_fn =
                 try_resolve_function(self.tcx(), *closure_fn, param_env, substs).unwrap();
@@ -470,9 +472,10 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn deep_type_markers<'a>(&'a self, key: ty::Ty<'tcx>) -> &'a TypeMarkers {
         self.0
             .type_markers
-            .get_maybe_recursive(key, |key| {
+            .get_maybe_recursive(&key, |key| {
                 use ty::*;
                 let mut markers = self.shallow_type_markers(key).collect::<FxHashSet<_>>();
+                let dcx = self.tcx().dcx();
                 match key.kind() {
                     Bool
                     | Char
@@ -484,9 +487,9 @@ impl<'tcx> MarkerCtx<'tcx> {
                     | FnDef { .. }
                     | FnPtr { .. }
                     | Closure { .. }
-                    | Generator { .. }
-                    | GeneratorWitness { .. }
-                    | GeneratorWitnessMIR { .. }
+                    | Coroutine(..)
+                    | CoroutineWitness(..)
+                    | CoroutineClosure(..)
                     | Never
                     | Bound { .. }
                     | Error(_) => (),
@@ -495,23 +498,23 @@ impl<'tcx> MarkerCtx<'tcx> {
                         markers.extend(tys.iter().flat_map(|ty| self.deep_type_markers(ty)))
                     }
                     Alias(_, _) => {
-                        trace!("Alias type {key:?} remains. Was not normalized.");
+                        dcx.warn(format!("Alias type {key:?} remains. Was not normalized."));
                         return Box::new([]);
+                    }
+                    Pat(ty, _) => {
+                        return self.deep_type_markers(*ty).into();
                     }
                     // We can't track indices so we simply overtaint to the entire array
                     Array(inner, _) | Slice(inner) => {
                         markers.extend(self.deep_type_markers(*inner))
                     }
-                    RawPtr(ty::TypeAndMut { ty, .. }) | Ref(_, ty, _) => {
-                        markers.extend(self.deep_type_markers(*ty))
+                    RawPtr(ty, _) | Ref(_, ty, _) => markers.extend(self.deep_type_markers(*ty)),
+                    Param(_) | Dynamic { .. } => {
+                        dcx.warn(format!("Cannot determine markers for type {key:?}"))
                     }
-                    Param(_) | Dynamic { .. } => self.err(
-                        format!("Cannot determine markers for type {key:?}")
-                    ),
-                    Placeholder(_) | Infer(_) => self
-                        .tcx()
-                        .sess
-                        .fatal(format!("Did not expect this type here {key:?}")),
+                    Placeholder(_) | Infer(_) => {
+                        dcx.fatal(format!("Did not expect this type here {key:?}"))
+                    }
                 }
                 markers.into_iter().collect()
             })
@@ -522,18 +525,26 @@ impl<'tcx> MarkerCtx<'tcx> {
         &'a self,
         adt: &'a ty::AdtDef<'tcx>,
         generics: &'tcx ty::List<ty::GenericArg<'tcx>>,
-    ) -> impl Iterator<Item = &'a TypeMarkerElem> {
-        let tcx = self.tcx();
-        adt.variants()
-            .iter_enumerated()
-            .flat_map(move |(_, vdef)| {
-                vdef.fields.iter_enumerated().flat_map(move |(_, fdef)| {
-                    let f_ty = fdef.ty(tcx, generics);
-                    self.deep_type_markers(f_ty)
-                })
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
+    ) -> impl Iterator<Item = &'a TypeMarkerElem> + use<'tcx, 'a> {
+        if adt.is_phantom_data() {
+            Either::Left(
+                generics
+                    .iter()
+                    .filter_map(|g| g.as_type())
+                    .flat_map(|t| self.deep_type_markers(t)),
+            )
+        } else {
+            let tcx = self.tcx();
+            Either::Right(
+                adt.variants().iter_enumerated().flat_map(move |(_, vdef)| {
+                    vdef.fields.iter_enumerated().flat_map(move |(_, fdef)| {
+                        let f_ty = fdef.ty(tcx, generics);
+                        self.deep_type_markers(f_ty)
+                    })
+                }), //.collect::<Vec<_>>(), //.into_iter(),
+            )
+        }
+        .into_iter()
     }
 
     pub fn type_has_surface_markers(&self, ty: ty::Ty) -> Option<DefId> {
@@ -569,7 +580,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             // XXX I'm not entirely sure this is how we should do
             // this. For now I'm calling this "okay" because it's
             // basically the old behavior
-            if output.is_closure() || output.is_generator() {
+            if output.is_closure() || output.is_coroutine() {
                 return None;
             }
             Some(
@@ -776,7 +787,7 @@ fn load_annotations(
     tcx: TyCtxt,
     included_crates: impl IntoIterator<Item = CrateNum>,
 ) -> FxHashMap<DefId, Vec<Annotation>> {
-    let sysroot = &tcx.sess().sysroot;
+    let sysroot = &tcx.sess.sysroot;
     included_crates
         .into_iter()
         .flat_map(|krate| {
@@ -841,10 +852,10 @@ impl ExternalAnnotationEntry {
             None
         };
         if let Some(complaint) = merror {
-            tcx.sess.err(format!("External marker annotation should specify either a 'marker' or a 'markers' field, found {complaint} for {}", tcx.def_path_str(element)));
+            tcx.dcx().err(format!("External marker annotation should specify either a 'marker' or a 'markers' field, found {complaint} for {}", tcx.def_path_str(element)));
         }
         if !self.refinement.on_self() && !self.refinements.is_empty() {
-            tcx.sess.err(format!("External marker annotation should specify either a single refinement or the 'refinements' field, found both for {}", tcx.def_path_str(element)));
+            tcx.dcx().err(format!("External marker annotation should specify either a single refinement or the 'refinements' field, found both for {}", tcx.def_path_str(element)));
         }
     }
 }
