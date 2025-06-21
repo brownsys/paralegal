@@ -119,19 +119,21 @@ impl Allocative for CallString {
     }
 }
 
-const TRACK_INTERN_AS_UNIQUE: OnceCell<bool> = OnceCell::new();
-
-pub fn allocative_visit_intern_t<T: Allocative + ?Sized>(
-    intern: Intern<T>,
-    visitor: &mut allocative::Visitor<'_>,
-) {
-    let track_as_unique = *TRACK_INTERN_AS_UNIQUE.get_or_init(|| {
+thread_local! {
+    static TRACK_INTERN_AS_UNIQUE: bool = {
         if let Ok(val) = std::env::var("ALLOCATIVE_TRACK_INTERN_AS_UNIQUE") {
             val == "true" || val == "1"
         } else {
             false
         }
-    });
+    }
+}
+
+pub fn allocative_visit_intern_t<T: Allocative + ?Sized>(
+    intern: Intern<T>,
+    visitor: &mut allocative::Visitor<'_>,
+) {
+    let track_as_unique = TRACK_INTERN_AS_UNIQUE.with(|v| *v);
     let ptr_size = std::mem::size_of::<*const T>();
     if !track_as_unique {
         let mut visitor = visitor.enter_self_sized::<Intern<T>>();
