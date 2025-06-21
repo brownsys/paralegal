@@ -2,18 +2,10 @@
 
 extern crate rustc_plugin;
 
+#[derive(Default)]
 struct VersionArgs {
     verbose: bool,
     version: bool,
-}
-
-impl Default for VersionArgs {
-    fn default() -> Self {
-        Self {
-            verbose: false,
-            version: false,
-        }
-    }
 }
 
 impl VersionArgs {
@@ -63,10 +55,8 @@ impl VersionArgs {
 const REAL_SHORT_VERSION: &str = env!("RUSTC_SHORT_VERSION");
 const REAL_LONG_VERSION: &str = env!("RUSTC_LONG_VERSION");
 
-#[cfg(not(feature = "real-rustc-version"))]
 const SHORT_VERSION: &str = "rustc 1.73.0 (cc66ad468 2023-10-03)
 ";
-#[cfg(not(feature = "real-rustc-version"))]
 const LONG_VERSION: &str = "rustc 1.73.0 (cc66ad468 2023-10-03)
 binary: rustc
 commit-hash: cc66ad468955717ab92600c770da8c1601a4ff33
@@ -83,7 +73,7 @@ fn unescape_version(s: &str) -> String {
 }
 
 fn main() {
-    let use_real_version = matches!(std::env::var("PARALEGAL_USE_REAL_RUSTC_VERSION"), Ok(v) if v == "1" || v.to_ascii_lowercase() == "true");
+    let use_real_version = matches!(std::env::var("PARALEGAL_USE_REAL_RUSTC_VERSION"), Ok(v) if v == "1" || v.eq_ignore_ascii_case("true"));
     let args = std::env::args();
     let version_args = VersionArgs::parse_args(args);
     let long_version = if use_real_version {

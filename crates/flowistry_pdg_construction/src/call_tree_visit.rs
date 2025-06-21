@@ -93,7 +93,7 @@ pub trait Visitor<'tcx, K: Hash + Eq + Clone> {
     }
 }
 
-impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
+impl<'tcx, K: Clone + Hash + Eq> VisitDriver<'tcx, '_, K> {
     pub fn visit_partial_graph<V: Visitor<'tcx, K> + ?Sized>(
         &mut self,
         vis: &mut V,
@@ -106,7 +106,7 @@ impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
             vis.visit_edge(self, src, dst, kind);
         }
         for (loc, inst, k, ctrl_inputs) in &graph.inlined_calls {
-            vis.visit_inlined_call(self, *loc, *inst, k, &ctrl_inputs);
+            vis.visit_inlined_call(self, *loc, *inst, k, ctrl_inputs);
         }
     }
 

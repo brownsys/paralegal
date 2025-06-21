@@ -601,7 +601,7 @@ impl RootContext {
                         self.desc
                             .def_info
                             .iter()
-                            .filter(|(did, _)| self.desc.analyzed_spans.contains_key(&did))
+                            .filter(|(did, _)| self.desc.analyzed_spans.contains_key(did))
                             .map(|(_, i)| (&i.src_info, matches!(i.kind, DefKind::Type)))
                     })
                     .into_iter()
@@ -838,11 +838,7 @@ where
     /// Returns whether there is direct control flow influence from influencer to sink, or there is some node which is data-flow influenced by `influencer` and has direct control flow influence on `target`. Or as expressed in code:
     ///
     /// `some n where self.flows_to(influencer, n, EdgeSelection::Data) && self.flows_to(n, target, EdgeSelection::Control)`.
-    fn has_ctrl_influence(
-        self,
-        target: impl IntoIterGlobalNodes + Sized + Copy,
-        ctx: &RootContext,
-    ) -> bool {
+    fn has_ctrl_influence(self, target: impl IntoIterGlobalNodes, ctx: &RootContext) -> bool {
         self.flows_to(target, ctx, EdgeSelection::Control)
             || NodeCluster::try_from_iter(self.influencees(ctx, EdgeSelection::Data))
                 .unwrap()
@@ -854,7 +850,7 @@ where
     /// `some n where self.flows_to(influencer, n, EdgeSelection::Data) && self.flows_to(n, target, EdgeSelection::Control)`.
     fn find_ctrl_influence(
         self,
-        target: impl IntoIterGlobalNodes + Sized + Copy,
+        target: impl IntoIterGlobalNodes,
         ctx: &RootContext,
     ) -> Option<(GlobalNode, GlobalNode)> {
         self.find_flow(target, ctx, EdgeSelection::Control)
@@ -869,7 +865,7 @@ where
     /// `target` are reached from `self`. Returns the nodes that weren't reached.
     fn has_ctrl_influence_all(
         self,
-        target: impl IntoIterGlobalNodes + Sized + Copy,
+        target: impl IntoIterGlobalNodes,
         ctx: &RootContext,
     ) -> Option<NodeCluster> {
         let cf_id = self.controller_id();
@@ -944,7 +940,7 @@ where
 
         Some(NodeCluster::new(
             cf_id,
-            targets.into_ones().map(|i| NodeIndex::new(i)),
+            targets.into_ones().map(NodeIndex::new),
         ))
     }
 

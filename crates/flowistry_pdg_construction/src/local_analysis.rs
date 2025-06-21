@@ -15,8 +15,8 @@ use rustc_middle::{
         Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
     ty::{
-        AdtKind, EarlyBinder, GenericArgKind, GenericArgsRef, Instance, ParamEnv, Ty, TyCtxt,
-        TyKind, TypingEnv,
+        AdtKind, EarlyBinder, GenericArgKind, GenericArgsRef, Instance, Ty, TyCtxt, TyKind,
+        TypingEnv,
     },
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};

@@ -197,7 +197,7 @@ pub fn is_async_fn_or_block(tcx: TyCtxt, instance: Instance) -> bool {
     tcx.coroutine_is_async(instance.def_id())
 }
 
-impl<'tcx, 'mir, K> LocalAnalysis<'tcx, 'mir, K> {
+impl<'tcx, K> LocalAnalysis<'tcx, '_, K> {
     /// Given the arguments to a `Future::poll` call, walk back through the
     /// body to find the original future being polled, and get the arguments to the future.
     pub fn find_async_args<'a>(
@@ -208,7 +208,7 @@ impl<'tcx, 'mir, K> LocalAnalysis<'tcx, 'mir, K> {
     ) -> Result<AsyncFnPollEnv<'tcx>, String> {
         let precise = self.find_async_args_precise(args);
         if precise.is_ok() || span.desugaring_kind() == Some(rustc_span::DesugaringKind::Await) {
-            return precise;
+            precise
         } else {
             let parent = self.tcx().parent(resolved_fn.def_id());
             Ok(AsyncFnPollEnv {

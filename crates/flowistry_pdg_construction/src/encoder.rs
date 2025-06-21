@@ -330,7 +330,7 @@ impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for SpanData {
     }
 }
 
-impl<'tcx> ParalegalEncoder<'tcx> {
+impl ParalegalEncoder<'_> {
     fn encode_file_name(&mut self, n: &FileName) {
         if let Some(&idx) = self.filepath_shorthands.get(n) {
             TAG_ENCODE_REMOTE.encode(self);
@@ -344,7 +344,7 @@ impl<'tcx> ParalegalEncoder<'tcx> {
     }
 }
 
-impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
+impl ParalegalDecoder<'_, '_> {
     fn decode_file_name(&mut self, crate_num: CrateNum) -> Option<Arc<SourceFile>> {
         let tag = u8::decode(self);
         let pos = if tag == TAG_ENCODE_REMOTE {
@@ -394,7 +394,7 @@ impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
                 }
                 _ => {
                     log::error!("Could not load file {}", file_name.prefer_local());
-                    return None;
+                    None
                 }
             },
             other => {

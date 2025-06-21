@@ -22,8 +22,6 @@ use rustc_utils::PlaceExt;
 
 pub use flowistry_pdg::{SourceUse, TargetUse};
 
-
-
 /// Usually a location in a MIR body but can also cross "one hop" into a called function.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct OneHopLocation {
@@ -360,12 +358,11 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
     pub(crate) fn parentable_srcs<'a>(&'a self) -> FxHashSet<(DepNode<'tcx, bool>, Option<u8>)> {
         self.edges
             .iter()
-            .filter_map(|(n, _, _)| {
-                n.at.location.is_start().then(|| {
-                    n.map_at(|_| {
-                        assert!(n.at.in_child.is_none());
-                        true
-                    })
+            .filter(|&(n, _, _)| n.at.location.is_start())
+            .map(|(n, _, _)| {
+                n.map_at(|_| {
+                    assert!(n.at.in_child.is_none());
+                    true
                 })
             })
             .filter_map(move |a| {
@@ -381,11 +378,10 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
     pub(crate) fn parentable_dsts<'a>(&'a self) -> FxHashSet<(DepNode<'tcx, bool>, Option<u8>)> {
         self.edges
             .iter()
-            .filter_map(|(_, n, _)| {
-                n.at.location.is_end().then(|| {
-                    assert!(n.at.in_child.is_none());
-                    n.map_at(|_| false)
-                })
+            .filter(|&(_, n, _)| n.at.location.is_end())
+            .map(|(_, n, _)| {
+                assert!(n.at.in_child.is_none());
+                n.map_at(|_| false)
             })
             .filter_map(move |a| {
                 let arg = as_arg(&a, self.arg_count)?;

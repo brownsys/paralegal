@@ -176,7 +176,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                 let crate::Either::Right(
                     term @ mir::Terminator {
                         kind: mir::TerminatorKind::Call { func, .. },
-                        source_info,
+                        ..
                     },
                 ) = body.stmt_at(loc)
                 else {

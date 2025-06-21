@@ -265,9 +265,8 @@ impl<'tcx> MarkerCtx<'tcx> {
                 .collect::<Box<_>>();
         }
         let body = self.0.body_cache.get(res.def_id());
-        let param_env = 
-                    TypingEnv::post_analysis(self.tcx(), res.def_id())
-                        .with_post_analysis_normalized(self.tcx());
+        let param_env = TypingEnv::post_analysis(self.tcx(), res.def_id())
+            .with_post_analysis_normalized(self.tcx());
         let mono_body = match res {
             MaybeMonomorphized::Monomorphized(res) => Cow::Owned(
                 try_monomorphize(
@@ -365,7 +364,12 @@ impl<'tcx> MarkerCtx<'tcx> {
                     );
                 return v.into_iter();
             };
-            let new_instance = match handle_shims(instance, self.tcx(), param_env, terminator.source_info.span) {
+            let new_instance = match handle_shims(
+                instance,
+                self.tcx(),
+                param_env,
+                terminator.source_info.span,
+            ) {
                 ShimResult::IsHandledShim { instance, .. } => instance,
                 ShimResult::IsNonHandleableShim => {
                     self.span_err(
@@ -420,9 +424,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             trace!("    fits opaque type");
             let async_closure_fn =
                 try_resolve_function(self.tcx(), *closure_fn, param_env, substs).unwrap();
-            v.extend(
-            self.get_reachable_and_self_markers(async_closure_fn
-            ));
+            v.extend(self.get_reachable_and_self_markers(async_closure_fn));
             self.borrow_function_marker_stat(res).is_async = Some(async_closure_fn);
         };
         if !v.is_empty() {
@@ -723,7 +725,7 @@ fn marker_stats_as_json<'tcx: 'a, 'a>(
                     }
                 })
             };
-            let instance_to_json = |instance: Instance<'tcx>| 
+            let instance_to_json = |instance: Instance<'tcx>|
                 json!({
                     "ident": tcx.def_path_str(instance.def_id()),
                     "args": instance.args.iter().map(|a| a.to_string()).collect::<Vec<_>>()

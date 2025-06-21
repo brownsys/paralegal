@@ -22,18 +22,6 @@ macro_rules! marker {
     }};
 }
 
-trait NodeExt: Sized {
-    fn is_argument(self, ctx: &RootContext, num: u8) -> bool;
-}
-impl NodeExt for GlobalNode {
-    fn is_argument(self, ctx: &RootContext, num: u8) -> bool {
-        ctx.desc().controllers[&self.controller_id()]
-            .graph
-            .edges_directed(self.local_node(), Outgoing)
-            .any(|e| matches!(e.weight().source_use, SourceUse::Argument(n) if n == num))
-    }
-}
-
 const ATOMIC_CODE_SHARED: &str = stringify!(
     #![allow(warnings, unused)]
 

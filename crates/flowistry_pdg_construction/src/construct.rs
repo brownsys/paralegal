@@ -233,7 +233,7 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> MemoPdgConstructor<'tcx, K> {
             .as_ref()
             .borrow()
             .get(&instance)
-            .map_or(false, |v| v.0)
+            .is_some_and(|v| v.0)
     }
 
     /// Construct a final PDG for this function. Same as
@@ -833,7 +833,7 @@ impl GraphSizeEstimator {
             HumanInt(self.nodes),
             HumanInt(self.edges),
             HumanInt(self.functions),
-            HumanInt(self.max_call_string.len() as usize),
+            HumanInt(self.max_call_string.len()),
         )
     }
 

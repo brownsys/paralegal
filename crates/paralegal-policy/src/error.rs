@@ -59,10 +59,10 @@ impl Display for CNLSpan {
 }
 
 impl Cause {
-    fn report<'a, B: HasDiagnosticsBase>(
+    fn report<B: HasDiagnosticsBase>(
         &self,
         result: bool,
-        msg: &mut DiagnosticBuilder<'a, B>,
+        msg: &mut DiagnosticBuilder<'_, B>,
         ctx: &impl Context,
     ) {
         match &self.ty {
@@ -162,10 +162,7 @@ impl Cause {
                         QuantifierItem::Empty => "No Matching Element".to_owned(),
                         QuantifierItem::Other(o) => format!("{o}"),
                         QuantifierItem::Endpoint(e) => {
-                            format!(
-                                "{}",
-                                DisplayPath::from(&ctx.root().desc().def_info[&e].path)
-                            )
+                            format!("{}", DisplayPath::from(&ctx.root().desc().def_info[e].path))
                         }
                         QuantifierItem::Node(_) => unreachable!(),
                     };
@@ -466,7 +463,7 @@ impl CauseBuilder {
 
         let clause_from_cluster = |cluster: Option<NodeCluster>| {
             (
-                !cluster.is_some(),
+                cluster.is_none(),
                 cluster.map_or_else(
                     || mk_clause(sample_left, sample_right),
                     |cluster| mk_clause(sample_left, cluster.iter_global_nodes().next().unwrap()),

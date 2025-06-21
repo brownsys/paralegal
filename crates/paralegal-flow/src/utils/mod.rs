@@ -388,7 +388,7 @@ impl<'tcx> AsFnAndArgs<'tcx> for mir::Terminator<'tcx> {
         };
         let ty = ty_of_const(func.constant().ok_or(AsFnAndArgsErr::NotAConstant)?);
         let Some((def_id, gargs)) = type_as_fn(tcx, ty).to_option() else {
-            return Err(AsFnAndArgsErr::NotFunctionType(ty.kind().clone()));
+            return Err(AsFnAndArgsErr::NotFunctionType(*ty.kind()));
         };
         test_generics_normalization(tcx, gargs)
             .map_err(|e| AsFnAndArgsErr::NormalizationError(format!("{e:?}")))?;

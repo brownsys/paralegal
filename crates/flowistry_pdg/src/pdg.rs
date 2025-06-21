@@ -121,9 +121,9 @@ impl Allocative for CallString {
 
 const TRACK_INTERN_AS_UNIQUE: OnceCell<bool> = OnceCell::new();
 
-pub fn allocative_visit_intern_t<'a, 'b, T: Allocative + ?Sized>(
+pub fn allocative_visit_intern_t<T: Allocative + ?Sized>(
     intern: Intern<T>,
-    visitor: &'b mut allocative::Visitor<'a>,
+    visitor: &mut allocative::Visitor<'_>,
 ) {
     let track_as_unique = *TRACK_INTERN_AS_UNIQUE.get_or_init(|| {
         if let Ok(val) = std::env::var("ALLOCATIVE_TRACK_INTERN_AS_UNIQUE") {
@@ -198,10 +198,7 @@ impl CallString {
             .split_last()
             .expect("Invariant broken, call strings must have at least length 1");
 
-        (
-            *last,
-            (!rest.is_empty()).then(|| CallString::new(rest.into())),
-        )
+        (*last, (!rest.is_empty()).then(|| CallString::new(rest)))
     }
 
     /// Create an initial call string for the single location `loc`.
@@ -323,9 +320,9 @@ pub enum TargetUse {
 ///
 /// Uses [`SimpleSizedAllocativeWrapper`] under the hood, see its documentation
 /// for more information.
-pub fn allocative_visit_map_coerce_key<'a, 'b, K, V: Allocative>(
+pub fn allocative_visit_map_coerce_key<'a, K, V: Allocative>(
     map: &'a HashMap<K, V>,
-    visitor: &'b mut allocative::Visitor<'a>,
+    visitor: &mut allocative::Visitor<'a>,
 ) {
     let coerced: &HashMap<SimpleSizedAllocativeWrapper<K>, V> = unsafe { std::mem::transmute(map) };
     coerced.visit(visitor);
@@ -333,7 +330,7 @@ pub fn allocative_visit_map_coerce_key<'a, 'b, K, V: Allocative>(
 
 /// A function fit to be handed to `#[allocative(visit = "...")]`, if the type
 /// does not have any attached heap data.
-pub fn allocative_visit_simple_sized<'a, 'b, T>(_: &T, visitor: &'a mut allocative::Visitor<'b>) {
+pub fn allocative_visit_simple_sized<T>(_: &T, visitor: &mut allocative::Visitor<'_>) {
     visitor.visit_simple_sized::<T>();
 }
 

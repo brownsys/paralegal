@@ -225,15 +225,7 @@ impl rustc_driver::Callbacks for DumpOnlyCallbacks {
         _compiler: &rustc_interface::interface::Compiler,
         tcx: TyCtxt<'_>,
     ) -> rustc_driver::Compilation {
-        let (tycheck_time, dump_time) = dump_mir_and_borrowck_facts(tcx);
-        let dump_marker_start = Instant::now();
-        dump_markers(tcx);
-        self.time.dump_time = dump_marker_start.elapsed() + dump_time;
-        self.time.tycheck_time = tycheck_time;
-        assert!(self
-            .output_location
-            .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
-            .is_none());
+        dump_mir_and_update_stats(tcx, &mut self.time);
         rustc_driver::Compilation::Continue
     }
 }
@@ -335,7 +327,7 @@ impl Callbacks {
         Ok((desc, stats))
     }
 
-    fn run_the_analyzer<'tcx>(&mut self, tcx: TyCtxt<'tcx>) -> rustc_driver::Compilation {
+    fn run_the_analyzer(&mut self, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
         let abort = (|| {
             assert!(self
                 .output_location
@@ -360,11 +352,8 @@ impl Callbacks {
         if abort {
             rustc_driver::Compilation::Stop
         } else {
-            let dump_stats = &mut self.dump_stats;
             self.stats.measure(TimedStat::MirEmission, || {
-                let (tycheck_time, dump_time) = dump_mir_and_borrowck_facts(tcx);
-                dump_stats.tycheck_time += tycheck_time;
-                dump_stats.dump_time += dump_time;
+                dump_mir_and_update_stats(tcx, &mut self.dump_stats);
             });
             rustc_driver::Compilation::Continue
         }

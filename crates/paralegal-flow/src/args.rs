@@ -590,7 +590,7 @@ impl AnalysisCtrl {
         }
     }
 
-    fn crate_inclusion_set<'a, 'tcx>(&'a self, tcx: TyCtxt<'tcx>) -> &'a FxHashSet<CrateNum> {
+    fn crate_inclusion_set<'a>(&'a self, tcx: TyCtxt<'_>) -> &'a FxHashSet<CrateNum> {
         self.included_crate_cache
             .get_or_init(|| {
                 if self.include.is_empty() {
@@ -598,7 +598,7 @@ impl AnalysisCtrl {
                     tcx.crates(())
                         .iter()
                         .copied()
-                        .filter(move |c| !std_crates.contains(&c))
+                        .filter(move |c| !std_crates.contains(c))
                         .chain([LOCAL_CRATE])
                         .collect()
                 } else {
@@ -613,7 +613,7 @@ impl AnalysisCtrl {
                     let set = tcx.crates(())
                         .iter()
                         .copied()
-                        .filter(|cnum| included_crate_names.get_mut(&tcx.crate_name(*cnum)).map_or(false, |v| {
+                        .filter(|cnum| included_crate_names.get_mut(&tcx.crate_name(*cnum)).is_some_and(|v| {
                             *v = true;
                             true
                         }))
@@ -629,10 +629,7 @@ impl AnalysisCtrl {
             })
     }
 
-    pub fn included_crates<'tcx, 'a>(
-        &'a self,
-        tcx: TyCtxt<'tcx>,
-    ) -> impl Iterator<Item = CrateNum> + 'a {
+    pub fn included_crates<'a>(&'a self, tcx: TyCtxt<'_>) -> impl Iterator<Item = CrateNum> + 'a {
         self.crate_inclusion_set(tcx).iter().copied()
     }
 

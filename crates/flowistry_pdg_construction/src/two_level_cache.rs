@@ -37,11 +37,11 @@ impl<K1: Eq + Hash + Clone, K2: Eq + Hash + Clone, Out> TwoLevelCache<K1, K2, Ou
     /// the value is not in cache.
     ///
     /// Returns `None` if this is a recursive invocation of `get` for key `key`.
-    pub fn get_maybe_recursive<'a>(
-        &'a self,
+    pub fn get_maybe_recursive(
+        &self,
         key: (K1, K2),
         compute: impl FnOnce((K1, K2)) -> Out,
-    ) -> Option<&'a Out> {
+    ) -> Option<&Out> {
         match self.try_retrieve(key, |in_| Some(compute(in_))) {
             Retrieval::Recursive => None,
             Retrieval::Success(v) => Some(v),
@@ -108,7 +108,7 @@ impl<K1: Eq + Hash + Clone, K2: Eq + Hash + Clone, Out> TwoLevelCache<K1, K2, Ou
         self.0
             .borrow()
             .get(k1)
-            .map_or(false, |v| v.1.contains_key(k2))
+            .is_some_and(|v| v.1.contains_key(k2))
     }
 
     #[allow(dead_code)]

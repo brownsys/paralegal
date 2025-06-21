@@ -128,7 +128,7 @@ pub fn type_as_fn<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> TyAsFnResult<'tcx> {
         | TyKind::Coroutine(def_id, generic_args)
         | TyKind::Closure(def_id, generic_args) => TyAsFnResult::Resolved {
             def_id: *def_id,
-            generic_args: *generic_args,
+            generic_args,
         },
         TyKind::FnPtr(..) => TyAsFnResult::FnPtr,
         ty => {

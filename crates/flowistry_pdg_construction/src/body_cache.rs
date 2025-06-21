@@ -63,7 +63,7 @@ impl<'tcx> CachedBody<'tcx> {
         Self::try_retrieve(tcx, local_def_id).expect("Reading stolen body")
     }
     fn try_retrieve(tcx: TyCtxt<'tcx>, local_def_id: LocalDefId) -> Option<Self> {
-        if is_stolen(&tcx.mir_promoted(local_def_id).0) {
+        if is_stolen(tcx.mir_promoted(local_def_id).0) {
             return None;
         }
         let mut body_with_facts = rustc_borrowck::consumers::get_body_with_borrowck_facts(
@@ -122,7 +122,7 @@ pub struct BodyCache<'tcx> {
     std_crates: Vec<CrateNum>,
 }
 
-pub fn std_crates<'tcx>(tcx: TyCtxt<'tcx>) -> impl Iterator<Item = CrateNum> + use<'tcx> {
+pub fn std_crates(tcx: TyCtxt<'_>) -> impl Iterator<Item = CrateNum> + use<'_> {
     tcx.crates(()).iter().copied().filter(move |&c| {
         c != LOCAL_CRATE
             && tcx
@@ -297,7 +297,7 @@ pub fn local_or_remote_paths(krate: CrateNum, tcx: TyCtxt, ext: &str) -> Vec<Pat
 }
 
 /// Try to load a [`CachedBody`] for this id.
-fn load_body_and_facts<'tcx>(tcx: TyCtxt<'tcx>, krate: CrateNum) -> BodyMap<'tcx> {
+fn load_body_and_facts(tcx: TyCtxt<'_>, krate: CrateNum) -> BodyMap<'_> {
     let paths = local_or_remote_paths(krate, tcx, INTERMEDIATE_ARTIFACT_EXT);
     for target_path in &paths {
         if !target_path.exists() {

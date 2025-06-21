@@ -440,10 +440,7 @@ pub struct TypeDescription {
     pub markers: Vec<Identifier>,
 }
 
-fn allocative_visit_box_slice_simple_t<'a, 'b, T>(
-    item: &Box<[T]>,
-    visitor: &'a mut allocative::Visitor<'b>,
-) {
+fn allocative_visit_box_slice_simple_t<T>(item: &Box<[T]>, visitor: &mut allocative::Visitor<'_>) {
     let coerced: &Box<[SimpleSizedAllocativeWrapper<T>]> = unsafe { std::mem::transmute(item) };
     coerced.visit(visitor);
 }
@@ -974,15 +971,13 @@ pub struct SPDG {
 }
 
 fn allocative_visit_petgraph_graph<
-    'a,
-    'b,
     N: Allocative,
     E: Allocative,
     Ty: petgraph::EdgeType,
     Ix: petgraph::csr::IndexType,
 >(
     graph: &petgraph::Graph<N, E, Ty, Ix>,
-    visitor: &'a mut allocative::Visitor<'b>,
+    visitor: &mut allocative::Visitor<'_>,
 ) {
     #[repr(transparent)]
     struct EdgeProxy<E, Ix>(petgraph::graph::Edge<E, Ix>);

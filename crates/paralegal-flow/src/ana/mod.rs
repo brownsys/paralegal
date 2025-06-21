@@ -20,7 +20,7 @@ use anyhow::Result;
 use either::Either;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    body_cache::{local_or_remote_paths, BodyCache},
+    body_cache::local_or_remote_paths,
     calling_convention::CallingConvention,
     utils::{is_async, type_as_fn, ArgSlice},
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
