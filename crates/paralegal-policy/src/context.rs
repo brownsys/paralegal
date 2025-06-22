@@ -141,6 +141,7 @@ impl RootContext {
         &self.stats
     }
 
+    #[doc(hidden)]
     pub fn stat_snapshot(&self) -> Stats {
         Stats {
             analysis: self.stats.pdg_construction,
@@ -785,7 +786,7 @@ where
     ///
     /// Nodes do not flow to themselves. CallArgument nodes do flow to their respective CallSites.
     ///
-    /// If you use flows_to with [`EdgeSelection::Control`], you might want to consider using [`Context::has_ctrl_influence`], which additionally considers intermediate nodes which the src node has data flow to and has ctrl influence on the sink.
+    /// If you use flows_to with [`EdgeSelection::Control`], you might want to consider using [`RootContext::has_ctrl_influence`], which additionally considers intermediate nodes which the src node has data flow to and has ctrl influence on the sink.
     fn find_flow(
         self,
         sink: impl IntoIterGlobalNodes,

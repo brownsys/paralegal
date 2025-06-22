@@ -478,8 +478,8 @@ fn type_info_sanity_check(controllers: &ControllerMap, types: &TypeInfoMap) {
         })
 }
 
-#[allow(deprecated)]
 fn def_kind_for_item(id: DefId, tcx: TyCtxt) -> DefKind {
+    #[allow(deprecated)]
     match tcx.def_kind(id) {
         _ if tcx.is_coroutine(id) => DefKind::Generator,
         def::DefKind::Closure => DefKind::Closure,

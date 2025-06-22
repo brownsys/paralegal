@@ -40,6 +40,7 @@ impl<'tcx, K: Default> CallChangeCallback<'tcx, K> for DefaultCallback {
 }
 
 pub struct CallChangeCallbackFn<'tcx, K> {
+    #[allow(clippy::type_complexity)]
     f: Box<dyn Fn(CallInfo<'tcx, '_, K>) -> CallChanges<'tcx, K> + 'tcx>,
 }
 

@@ -161,9 +161,7 @@ impl<'tcx> BodyCache<'tcx> {
                 *self.timer.borrow_mut() += start.elapsed();
                 res
             })
-        } else if self.std_crates.contains(&key.krate) {
-            return None;
-        } else if self.tcx.is_foreign_item(key) {
+        } else if self.std_crates.contains(&key.krate) || self.tcx.is_foreign_item(key) {
             return None;
         } else {
             let res = self
@@ -190,7 +188,7 @@ impl<'tcx> BodyCache<'tcx> {
         // (because it needs global variables like MIR_BODIES).
         //
         // So until we fix flowistry's lifetimes this is good enough.
-        Some(unsafe { std::mem::transmute(body) })
+        Some(unsafe { std::mem::transmute::<&CachedBody<'tcx>, &'tcx CachedBody<'tcx>>(body) })
     }
 }
 

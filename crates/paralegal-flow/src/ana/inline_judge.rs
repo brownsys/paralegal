@@ -143,6 +143,7 @@ impl<'tcx> InlineJudge<'tcx> {
         judgement
     }
 
+    #[allow(unused)]
     fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
         self.ctx.marker_ctx()
     }

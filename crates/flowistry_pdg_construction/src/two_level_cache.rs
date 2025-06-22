@@ -125,7 +125,7 @@ pub enum Retrieval<T> {
 }
 
 impl<T> Retrieval<T> {
-    pub fn as_success(self) -> Option<T> {
+    pub fn into_success(self) -> Option<T> {
         match self {
             Retrieval::Success(v) => Some(v),
             _ => None,

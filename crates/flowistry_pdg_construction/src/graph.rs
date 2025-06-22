@@ -319,13 +319,10 @@ pub struct PartialGraph<'tcx, K> {
     arg_count: usize,
     local_decls: IndexVec<Local, LocalDecl<'tcx>>,
     pub(crate) k: K,
-    pub(crate) inlined_calls: Vec<(
-        Location,
-        Instance<'tcx>,
-        K,
-        Vec<(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)>,
-    )>,
+    pub(crate) inlined_calls: Vec<(Location, Instance<'tcx>, K, Vec<GraphConnectionPoint<'tcx>>)>,
 }
+
+type GraphConnectionPoint<'tcx> = (DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>);
 
 impl<'tcx, K> HasLocalDecls<'tcx> for PartialGraph<'tcx, K> {
     fn local_decls(&self) -> &LocalDecls<'tcx> {
@@ -354,7 +351,6 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
     }
 
     /// Returns the set of source places that the parent can access (write to)
-
     pub(crate) fn parentable_srcs<'a>(&'a self) -> FxHashSet<(DepNode<'tcx, bool>, Option<u8>)> {
         self.edges
             .iter()
@@ -374,7 +370,6 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
 
     /// Returns the set of destination places that the parent can access (read
     /// from)
-
     pub(crate) fn parentable_dsts<'a>(&'a self) -> FxHashSet<(DepNode<'tcx, bool>, Option<u8>)> {
         self.edges
             .iter()

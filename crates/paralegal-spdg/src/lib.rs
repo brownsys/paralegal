@@ -7,6 +7,8 @@
 
 #![cfg_attr(feature = "rustc", feature(rustc_private))]
 #![warn(missing_docs)]
+// Remove this if we can get rid of the `Ctor` constructor kind
+#![allow(deprecated)]
 
 #[cfg(feature = "rustc")]
 pub(crate) mod rustc {
@@ -416,7 +418,7 @@ pub struct AnalyzerStats {
     /// The number of functions we produced a PDG for
     pub pdg_functions: u32,
     /// The lines of code corresponding to the functions from
-    /// [`Self::dedup_functions`].
+    /// [`Self::pdg_functions`].
     pub pdg_locs: u32,
     /// The number of functions we produced PDGs for or we inspected to check
     /// for markers.
@@ -440,8 +442,10 @@ pub struct TypeDescription {
     pub markers: Vec<Identifier>,
 }
 
+#[allow(clippy::borrowed_box)]
 fn allocative_visit_box_slice_simple_t<T>(item: &Box<[T]>, visitor: &mut allocative::Visitor<'_>) {
-    let coerced: &Box<[SimpleSizedAllocativeWrapper<T>]> = unsafe { std::mem::transmute(item) };
+    let coerced: &Box<[SimpleSizedAllocativeWrapper<T>]> =
+        unsafe { std::mem::transmute::<&Box<[T]>, &Box<[SimpleSizedAllocativeWrapper<T>]>>(item) };
     coerced.visit(visitor);
 }
 
@@ -667,6 +671,9 @@ pub trait IntoIterGlobalNodes: Sized + Copy {
         NodeCluster::new(self.controller_id(), self.iter_nodes())
     }
 
+    /// Get a node from this cluster. No guarantees are made as to which is
+    /// returned, however a custer is guaranteed to contain at least one node,
+    /// so this method will never panic.
     fn one(&self) -> GlobalNode {
         self.iter_global_nodes()
             .next()
@@ -1011,9 +1018,16 @@ fn allocative_visit_petgraph_graph<
 
     let (ncap, ecap) = graph.capacity();
     let mut visitor = visitor.enter_self_sized::<petgraph::Graph<N, E, Ty, Ix>>();
-    let edges_as_proxy: &[EdgeProxy<E, Ix>] = unsafe { std::mem::transmute(graph.raw_edges()) };
-    let nodes_as_proxy =
-        unsafe { std::mem::transmute::<_, &[NodeProxy<N, Ix>]>(graph.raw_nodes()) };
+    let edges_as_proxy: &[EdgeProxy<E, Ix>] = unsafe {
+        std::mem::transmute::<&[petgraph::graph::Edge<E, Ix>], &[EdgeProxy<E, Ix>]>(
+            graph.raw_edges(),
+        )
+    };
+    let nodes_as_proxy = unsafe {
+        std::mem::transmute::<&[petgraph::graph::Node<N, Ix>], &[NodeProxy<N, Ix>]>(
+            graph.raw_nodes(),
+        )
+    };
     visitor.visit_field_with(
         ident_key!(nodes),
         std::mem::size_of::<Vec<petgraph::graph::Node<N, Ix>>>(),

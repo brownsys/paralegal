@@ -391,6 +391,7 @@ enum CrateHandling {
 }
 
 struct CrateInfo {
+    #[allow(dead_code)]
     name: Option<String>,
     handling: CrateHandling,
     #[allow(dead_code)]
@@ -398,6 +399,7 @@ struct CrateInfo {
 }
 
 impl CrateInfo {
+    #[allow(dead_code)]
     pub fn name_or_default(&self) -> &str {
         self.name.as_deref().unwrap_or("unnamed")
     }

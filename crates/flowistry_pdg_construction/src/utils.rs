@@ -457,10 +457,10 @@ pub fn handle_shims<'tcx>(
     }
 }
 
-/// #################################################################################################
-/// This is a copy of the code in rustc_borrowck::consumers::places_conflict, reproduced here to make
-/// slight alterations that do not throw an error for nested references
-/// #################################################################################################
+// #################################################################################################
+// This is a copy of the code in rustc_borrowck::consumers::places_conflict, reproduced here to make
+// slight alterations that do not throw an error for nested references
+// #################################################################################################
 
 /// Helper function for checking if places conflict with a mutable borrow and deep access depth.
 /// This is used to check for places conflicting outside of the borrow checking code (such as in

@@ -331,6 +331,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         }
     }
 
+    #[allow(unused)]
     fn err(&self, msg: impl Into<DiagMessage>) {
         if self.0.config.relaxed() {
             self.tcx().dcx().warn(msg.into());
