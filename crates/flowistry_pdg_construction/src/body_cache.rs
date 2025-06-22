@@ -69,7 +69,7 @@ impl<'tcx> CachedBody<'tcx> {
         let mut body_with_facts = rustc_borrowck::consumers::get_body_with_borrowck_facts(
             tcx,
             local_def_id,
-            ConsumerOptions::RegionInferenceContext,
+            ConsumerOptions::PoloniusInputFacts,
         );
 
         clean_undecodable_data_from_body(&mut body_with_facts.body);
