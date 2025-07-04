@@ -226,6 +226,7 @@ impl rustc_driver::Callbacks for DumpOnlyCallbacks {
         tcx: TyCtxt<'_>,
     ) -> rustc_driver::Compilation {
         dump_mir_and_update_stats(tcx, &mut self.time);
+        self.output_location = Some(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT));
         rustc_driver::Compilation::Continue
     }
 }
