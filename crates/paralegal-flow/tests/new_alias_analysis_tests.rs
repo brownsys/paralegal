@@ -9,7 +9,7 @@ const CRATE_DIR: &str = "tests/new-alias-analysis-tests";
 lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool = run_paralegal_flow_with_flow_graph_dump_and(
         CRATE_DIR,
-        ["--local-crate-only", "--no-adaptive-approximation"]
+        ["--include=crate", "--no-adaptive-approximation"]
     );
 }
 

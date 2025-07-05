@@ -22,6 +22,7 @@ fn reject_closure() {
             std::thread::spawn(|| attach());
         }
     ))
+    .with_extra_args(["--strict".to_string()])
     .expect_fail_compile()
 }
 
@@ -36,6 +37,7 @@ fn allow_closure_simple() {
             std::thread::spawn(|| no_attach());
         }
     ))
+    .with_extra_args(["--strict".to_string()])
     .check_ctrl(|_| ())
 }
 
@@ -62,6 +64,7 @@ fn reject_trait() {
 
 
     ))
+    .with_extra_args(["--strict".to_string()])
     .expect_fail_compile()
 }
 
@@ -87,6 +90,7 @@ fn allow_trait() {
 
 
     ))
+    .with_extra_args(["--strict".to_string()])
     .check_ctrl(|_| ())
 }
 
@@ -108,5 +112,6 @@ fn reject_type() {
             [M].into_iter().chain(Iter);
         }
     ))
+    .with_extra_args(["--strict".to_string()])
     .expect_fail_compile()
 }
