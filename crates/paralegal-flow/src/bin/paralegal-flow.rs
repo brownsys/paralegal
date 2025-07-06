@@ -52,18 +52,14 @@ impl VersionArgs {
     }
 }
 
-const REAL_SHORT_VERSION: &str = env!("RUSTC_SHORT_VERSION");
 const REAL_LONG_VERSION: &str = env!("RUSTC_LONG_VERSION");
-
-const SHORT_VERSION: &str = "rustc 1.73.0 (cc66ad468 2023-10-03)
-";
-const LONG_VERSION: &str = "rustc 1.73.0 (cc66ad468 2023-10-03)
+const LONG_VERSION: &str = "rustc 1.84.1 (e71f9a9a9 2025-01-27)
 binary: rustc
-commit-hash: cc66ad468955717ab92600c770da8c1601a4ff33
-commit-date: 2023-10-03
+commit-hash: e71f9a9a98b0faf423844bf0ba7438f29dc27d58
+commit-date: 2025-01-27
 host: no-host-defined
-release: 1.73.0
-LLVM version: 17.0.2
+release: 1.84.1
+LLVM version: 19.1.5
 ";
 
 const HOST: &str = env!("HOST");
@@ -81,19 +77,16 @@ fn main() {
     } else {
         LONG_VERSION
     };
-    let short_version = if use_real_version {
-        REAL_SHORT_VERSION
-    } else {
-        SHORT_VERSION
-    };
+    let unescaped = unescape_version(long_version);
     if version_args.version {
         if version_args.verbose {
-            print!(
-                "{}",
-                unescape_version(&long_version.replace("no-host-defined", HOST))
-            );
+            print!("{}", unescaped.replace("no-host-defined", HOST));
         } else {
-            print!("{}", unescape_version(short_version));
+            let short_version = &unescaped
+                .lines()
+                .next()
+                .expect("Expected at least one line in version string");
+            println!("{}", unescape_version(short_version));
         }
         std::process::exit(0);
     }
