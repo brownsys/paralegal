@@ -740,7 +740,7 @@ where
     /// An optimized version of the following pattern that performs only one
     /// graph traversal instead of `sink.len()` traversals:
     ///
-    /// ```rust
+    /// ```ignore
     /// for n in sink {
     ///     if !self.flows_to(n, ctx, edge_type) {
     ///         return /* violation */;
