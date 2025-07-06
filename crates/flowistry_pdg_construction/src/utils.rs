@@ -473,7 +473,7 @@ pub fn assert_resolved<'tcx>(rvalue: &impl TypeVisitable<TyCtxt<'tcx>>, msg: imp
     struct V<M>(M);
 
     impl<'tcx, M: Fn() -> String> TypeVisitor<TyCtxt<'tcx>> for V<M> {
-        fn visit_ty(&mut self, ty: Ty<'tcx>) -> () {
+        fn visit_ty(&mut self, ty: Ty<'tcx>) {
             match ty.kind() {
                 TyKind::Alias(..) | TyKind::Param(_) => {
                     panic!("Found type variable {ty:?}: {}", (self.0)())

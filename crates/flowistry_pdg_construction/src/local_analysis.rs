@@ -28,7 +28,6 @@ use crate::{
     async_support::{self, *},
     body_cache::CachedBody,
     calling_convention::*,
-    debug_assert_resolved,
     graph::{DepEdge, DepNode, OneHopLocation, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
     utils::{
