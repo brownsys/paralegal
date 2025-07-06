@@ -15,7 +15,7 @@ use rustc_middle::{
     },
     ty::{
         self, AssocItemContainer, Binder, EarlyBinder, GenericArg, GenericArgsRef, Instance,
-        InstanceKind, Region, Ty, TyCtxt, TyKind, TypingEnv,
+        InstanceKind, Region, Ty, TyCtxt, TyKind, TypeVisitable, TypeVisitor, TypingEnv,
     },
 };
 use rustc_span::{source_map::Spanned, ErrorGuaranteed, Span};
@@ -455,6 +455,36 @@ pub fn handle_shims<'tcx>(
         }
         _ => ShimResult::IsNotShim,
     }
+}
+
+#[macro_export]
+macro_rules! debug_assert_resolved {
+    ($e:expr) => {
+        #[cfg(debug_assertions)]
+        {
+            $crate::utils::assert_resolved(&$e, || {
+                format!("Expected {:?} to have resolved type", $e)
+            });
+        }
+    };
+}
+
+pub fn assert_resolved<'tcx>(rvalue: &impl TypeVisitable<TyCtxt<'tcx>>, msg: impl Fn() -> String) {
+    struct V<M>(M);
+
+    impl<'tcx, M: Fn() -> String> TypeVisitor<TyCtxt<'tcx>> for V<M> {
+        fn visit_ty(&mut self, ty: Ty<'tcx>) -> () {
+            match ty.kind() {
+                TyKind::Alias(..) | TyKind::Param(_) => {
+                    panic!("Found type variable {ty:?}: {}", (self.0)())
+                }
+                _ => (),
+            }
+        }
+    }
+
+    let mut v = V(msg);
+    rvalue.visit_with(&mut v);
 }
 
 // #################################################################################################

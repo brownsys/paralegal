@@ -28,6 +28,7 @@ use crate::{
     async_support::{self, *},
     body_cache::CachedBody,
     calling_convention::*,
+    debug_assert_resolved,
     graph::{DepEdge, DepNode, OneHopLocation, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
     utils::{
@@ -187,35 +188,43 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
             .aliases(place_retyped)
             .iter()
             .map(move |alias| {
+                // If the type of the alias is not the same as the retyped
+                // place, then adding the remaining projections from the
+                // original place won't work so we overtaint to the entire
+                // alias.
+                let ta = alias.ty(body, self.tcx());
+                let tb = place_retyped.ty(body, self.tcx());
+                if !place_ty_eq(ta, tb) {
+                    //println!("Overtainting alias {alias:?} because type {:?} != {:?}", ta.ty, tb.ty);
+                    return *alias;
+                }
                 // The place we get back is not monomorphized, since aliases are
                 // calculated on the original body. And because rustc will crash
                 // if we have regions in the type, we erase those first.
-                let alias = self.tcx().erase_regions(*alias);
-                let alias = self
-                    .tcx()
-                    .try_instantiate_and_normalize_erasing_regions(
-                        self.generic_args(),
-                        self.param_env,
-                        EarlyBinder::bind(alias),
-                    )
-                    .unwrap_or_else(|err| {
-                        panic!(
-                            "Failed to backtype alias {alias:?} in {}: {err:?}",
-                            self.tcx().def_path_str(self.def_id)
-                        )
-                    });
-                // If the type of the alias is not the same as the retyped
-                // place, then adding the remaining projections from the
-                // original place won't work so we overtaint to the entire alias.
-                if !place_ty_eq(
-                    alias.ty(body, self.tcx()),
-                    place_retyped.ty(body, self.tcx()),
-                ) {
-                    return alias;
-                }
+                let alias = self.normalize_place(alias);
+                //let alias = self.tcx().erase_regions(*alias);
                 let mut projection = alias.projection.to_vec();
                 projection.extend(&place.projection[place_retyped.projection.len()..]);
                 Place::make(alias.local, &projection, self.tcx())
+                //println!("Alias: {p:?} for base alias {alias:?}, place: {place:?}, retyped: {place_retyped:?}");
+            })
+    }
+
+    pub fn normalize_place(&self, place: &Place<'tcx>) -> Place<'tcx> {
+        let place = self.tcx().erase_regions(*place);
+        // Normalize the place to remove regions and other things that are not
+        // needed for the PDG.
+        self.tcx()
+            .try_instantiate_and_normalize_erasing_regions(
+                self.generic_args(),
+                self.param_env,
+                EarlyBinder::bind(place),
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to normalize place {place:?} in {}: {err:?}",
+                    self.tcx().def_path_str(self.def_id)
+                )
             })
     }
 
@@ -275,10 +284,12 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                     None
                 };
 
+                // println!("Alias {alias:?} for place {input:?}");
                 // For each `conflict`` last mutated at the locations `last_mut`:
                 conflicts
                     .chain(alias_last_mut)
                     .flat_map(|(conflict, last_mut_locs)| {
+                        //println!("Conflict {conflict:?} for place {input:?}");
                         // For each last mutated location:
                         last_mut_locs.iter().map(move |last_mut_loc| {
                             // Return <CONFLICT> @ <LAST_MUT_LOC> as an input node.
@@ -318,10 +329,13 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
         location: Location,
         mutated: Place<'tcx>,
     ) {
+        let mutated = self.normalize_place(&mutated);
         self.find_outputs(mutated, location)
             .into_iter()
             .for_each(|(dst, _)| {
                 // Create a destination node for (DST @ CURRENT_LOC).
+
+                //debug_assert_resolved!(dst);
 
                 // Clear all previous mutations.
                 let dst_mutations = state.last_mutation.entry(dst).or_default();

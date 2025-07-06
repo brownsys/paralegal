@@ -394,13 +394,17 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         impl FnMut(Location, Mutation<'tcx>) + use<'a, 'tcx, 'mir, K>,
     > {
         ModularMutationVisitor::new(&results.analysis.place_info, move |location, mutation| {
+            let place = results.analysis.normalize_place(&mutation.mutated);
+            let inputs = mutation
+                .inputs
+                .into_iter()
+                .map(|(place, o)| (results.analysis.normalize_place(&place), o))
+                .collect();
             self.register_mutation(
                 results,
                 state,
-                Inputs::Unresolved {
-                    places: mutation.inputs,
-                },
-                Either::Left(mutation.mutated),
+                Inputs::Unresolved { places: inputs },
+                Either::Left(place),
                 location,
                 mutation.mutation_reason,
             )
@@ -564,6 +568,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
     ) where
         K: Hash + Eq + Clone,
     {
+        //println!("Mutation on {mutated:?}");
         trace!("Registering mutation to {mutated:?} with inputs {inputs:?} at {location:?}");
         let constructor = &results.analysis;
         let ctrl_inputs = constructor.find_control_inputs(location);
