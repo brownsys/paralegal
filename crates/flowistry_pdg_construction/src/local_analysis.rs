@@ -187,21 +187,22 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
         self.place_info
             .aliases(place_retyped)
             .iter()
-            .map(move |alias| {
+            .map(move |unnormalized_alias| {
+                // The place we get back is not monomorphized, since aliases are
+                // calculated on the original body. And because rustc will crash
+                // if we have regions in the type, we erase those first.
+                let alias = self.normalize_place(unnormalized_alias);
                 // If the type of the alias is not the same as the retyped
                 // place, then adding the remaining projections from the
                 // original place won't work so we overtaint to the entire
                 // alias.
-                let ta = alias.ty(body, self.tcx());
-                let tb = place_retyped.ty(body, self.tcx());
-                if !place_ty_eq(ta, tb) {
+                if !place_ty_eq(
+                    unnormalized_alias.ty(body, self.tcx()),
+                    place_retyped.ty(body, self.tcx()),
+                ) {
                     //println!("Overtainting alias {alias:?} because type {:?} != {:?}", ta.ty, tb.ty);
-                    return *alias;
+                    return alias;
                 }
-                // The place we get back is not monomorphized, since aliases are
-                // calculated on the original body. And because rustc will crash
-                // if we have regions in the type, we erase those first.
-                let alias = self.normalize_place(alias);
                 //let alias = self.tcx().erase_regions(*alias);
                 let mut projection = alias.projection.to_vec();
                 projection.extend(&place.projection[place_retyped.projection.len()..]);
