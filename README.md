@@ -1,18 +1,62 @@
-# Paralegal
+# Paralegal: The most practical static analysis tool for enforcing privacy policies on Rust code.
 
-A tool for enforcing privacy policies on Rust code.
+Paralegal is a static analyzer for Rust code that enforces custom privacy and security policies on programs.
+Paralegal ships with an expressive policy language that checks for problematic, semantic
+code patters by reasoning about dependencies between program values.
 
-Hello there curious GitHub surfer. I don't know how you got here but welcome.
-This is the home of Paralegal, a static, data and control flow based Rust code
-policy enforcer.
+For example, a policy checking for the deletion of stored user data may look like this:
 
-While you've certainly "come to the right place" our tool is not in a shape yet
-where the wider public can easily adopt it. However we are working hard to get
-to that point and we would be happy to let you know as soon as we're ready for
-you. You can leave a contact email in this [Google
-Form](https://forms.gle/QkijL7jSCksjirNP6) and we will send you a message once
-Paralegal goes fully public. 
+```
+Somewhere:
+1. For each "data type" marked user_data:
+  A. There is a "source" that produces "data type" where:
+    a. There is a "delete query" marked deletes:
+      i) "source" goes to "delete query"
 
-You can also leave us a note in the form on how you want to apply our tool and
-if we find your use case particularly compelling, we will give you early access
-and personal support.
+```
+
+And a policy for checking whether correct authorization checks are applied may look like this:
+
+```
+Scope:
+Everywhere
+
+Policy:
+1. For each "write" marked community_write:
+	A. There is a "delete check" marked community_delete_check where:
+		a. "delete check" affects whether "write" happens
+	and
+	B. There is a "ban check" marked community_ban_check where:
+		a. "ban check" affects whether "write" happens
+```
+
+Paralegal enforces these policies on the code base with the help of *markers*,
+user-defined, high-level concepts, such as *deletes*, *community_write* and *user_data*.
+Developers apply markers to types or function arguments using lightweight annotations.
+
+```rust
+#[paralegal::marker(user_data)]
+struct Blogpost { ... }
+
+impl Database {
+    #[paralegal::marker(deletes, argument = [1])]
+    fn delete_row(&mut self, id: u32, table: &str) { ... }
+}
+```
+
+The tool itself is a fast cargo and rustc plugin that developers can run frequently
+(in CI for example) to find potential bugs as they develop their application.
+
+![](misc/ci_plot-3.png)
+
+Once policy and markers have been applied, running the tool is as easy as
+
+```bash
+cargo paralegal-flow
+```
+
+## Installation
+
+Paralegal has been tested on Linux (Ubuntu), MacOS and WSL. It should also work on Windows though.
+
+Download the
