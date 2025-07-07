@@ -3,17 +3,13 @@
 //!
 //! Essentially this discovers all local `paralegal_flow::*` annotations.
 
-use std::rc::Rc;
-
 use crate::{
     ana::{InlineJudge, SPDGGenerator},
-    desc::*,
     stats::Stats,
     sym_vec,
     utils::*,
+    Pctx,
 };
-
-use flowistry_pdg_construction::body_cache::BodyCache;
 
 use rustc_hir::{
     def_id::LocalDefId,
@@ -22,8 +18,6 @@ use rustc_hir::{
 };
 use rustc_middle::{hir::nested_filter::OnlyBodies, ty::TyCtxt};
 use rustc_span::{symbol::Ident, Span, Symbol};
-
-use anyhow::Result;
 
 use self::resolve::expect_resolve_string_to_def_id;
 
@@ -46,9 +40,6 @@ pub struct CollectingVisitor<'tcx> {
 
     stats: Stats,
 
-    inline_judge: InlineJudge<'tcx>,
-
-    body_cache: Rc<BodyCache<'tcx>>,
     /// This will match the annotation `#[paralegal_flow::analyze]` when using
     /// [`MetaItemMatch::match_extract`](crate::utils::MetaItemMatch::match_extract)
     analyze_marker: AttrMatchT,
@@ -86,39 +77,30 @@ impl<'tcx> CollectingVisitor<'tcx> {
                 })
             })
             .collect();
-        let body_cache = Rc::new(BodyCache::new(tcx));
-        let inline_judge = InlineJudge::new(tcx, body_cache.clone(), opts);
         Self {
             tcx,
             opts,
             functions_to_analyze,
-            inline_judge,
             stats,
             analyze_marker: sym_vec!["paralegal_flow", "analyze"],
-            body_cache,
         }
     }
 
     /// After running the discovery with `visit_all_item_likes_in_crate`, create
     /// the read-only [`SPDGGenerator`] upon which the analysis will run.
     fn into_generator(self) -> SPDGGenerator<'tcx> {
-        SPDGGenerator::new(
-            self.inline_judge,
-            self.opts,
-            self.tcx,
-            self.body_cache,
-            self.stats,
-        )
+        let ctx = Pctx::new(self.tcx, self.opts);
+        let inline_judge = InlineJudge::new(ctx.clone());
+        SPDGGenerator::new(ctx, inline_judge, self.stats, self.functions_to_analyze)
     }
 
     /// Driver function. Performs the data collection via visit, then calls
     /// [`Self::analyze`] to construct the Forge friendly description of all
     /// endpoints.
-    pub fn run(mut self) -> Result<(ProgramDescription, AnalyzerStats)> {
+    pub fn run(mut self) -> SPDGGenerator<'tcx> {
         let tcx = self.tcx;
         tcx.hir().visit_all_item_likes_in_crate(&mut self);
-        let targets = std::mem::take(&mut self.functions_to_analyze);
-        self.into_generator().analyze(targets)
+        self.into_generator()
     }
 
     /// Does the function named by this id have the `paralegal_flow::analyze` annotation

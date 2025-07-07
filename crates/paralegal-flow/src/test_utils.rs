@@ -6,14 +6,13 @@ extern crate rustc_span;
 
 use hir::def_id::DefId;
 use rustc_errors::FatalError;
+use rustc_middle::ty::TyCtxt;
 
 use crate::{
     ann::dump_markers,
     desc::{Identifier, ProgramDescription},
-    discover,
-    stats::Stats,
     utils::Print,
-    HashSet, EXTRA_RUSTC_ARGS,
+    Callbacks, HashSet, EXTRA_RUSTC_ARGS,
 };
 use std::hash::{Hash, Hasher};
 use std::process::Command;
@@ -240,6 +239,13 @@ impl InlineTestBuilder {
     }
 
     pub fn run(&self, f: impl FnOnce(PreFrg) + Send) -> Result<(), FatalError> {
+        self.run_with_tcx(|_, graph| f(graph))
+    }
+
+    pub fn run_with_tcx(
+        &self,
+        f: impl for<'tcx> FnOnce(TyCtxt<'tcx>, PreFrg) + Send,
+    ) -> Result<(), FatalError> {
         use clap::Parser;
 
         #[derive(clap::Parser)]
@@ -259,14 +265,16 @@ impl InlineTestBuilder {
 
         rustc_utils::test_utils::CompileBuilder::new(&self.input)
             .with_args(EXTRA_RUSTC_ARGS.iter().copied().map(ToOwned::to_owned))
+            .with_args(["-Ztrack-diagnostics".to_string()])
             .compile(move |result| {
                 let args: &'static _ = Box::leak(Box::new(args));
                 dump_markers(result.tcx);
                 let tcx = result.tcx;
-                let memo = discover::CollectingVisitor::new(tcx, args, Stats::default());
-                let (pdg, _) = memo.run().unwrap();
+                let (pdg, _) = Callbacks::new(args)
+                    .run_in_context_without_writing_stats(tcx)
+                    .unwrap();
                 let graph = PreFrg::from_description(pdg);
-                f(graph)
+                f(tcx, graph)
             })
     }
 }
@@ -437,7 +445,8 @@ impl<'g> CtrlRef<'g> {
         other.flows_to_data(&self.return_value())
     }
 
-    pub fn marked(&self, marker: Identifier) -> NodeRefs<'_> {
+    pub fn marked(&self, marker: impl Into<Identifier>) -> NodeRefs<'_> {
+        let marker = marker.into();
         NodeRefs {
             nodes: self
                 .ctrl

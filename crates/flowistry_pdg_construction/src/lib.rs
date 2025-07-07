@@ -4,9 +4,11 @@
 extern crate either;
 extern crate polonius_engine;
 extern crate rustc_abi;
+extern crate rustc_ast;
 extern crate rustc_borrowck;
 extern crate rustc_const_eval;
 extern crate rustc_data_structures;
+extern crate rustc_error_messages;
 extern crate rustc_errors;
 extern crate rustc_hash;
 extern crate rustc_hir;
@@ -32,16 +34,18 @@ use rustc_middle::ty::TyCtxt;
 mod approximation;
 mod async_support;
 pub mod body_cache;
+pub(crate) mod call_tree_visit;
 pub mod calling_convention;
 mod construct;
 pub mod encoder;
 pub mod graph;
 mod local_analysis;
 mod mutation;
+mod two_level_cache;
 pub mod utils;
 
 /// Computes a global program dependence graph (PDG) starting from the root function specified by `def_id`.
 pub fn compute_pdg(tcx: TyCtxt<'_>, def_id: LocalDefId) -> DepGraph<'_> {
-    let constructor = MemoPdgConstructor::new(tcx);
+    let constructor = MemoPdgConstructor::<()>::new(tcx);
     constructor.construct_graph(def_id)
 }

@@ -9,7 +9,7 @@ mod helpers;
 
 #[test]
 fn higher_order_futures() -> Result<()> {
-    let mut test = Test::new(stringify!(
+    let test = Test::new(stringify!(
         use std::future;
         use std::time;
         #[paralegal::marker(source, return)]
@@ -46,8 +46,6 @@ fn higher_order_futures() -> Result<()> {
             sink(add_card_to_locker().await)
         }
     ))?;
-
-    test.with_paralegal_args(["--adaptive-depth"]);
 
     test.run(|ctx| {
         let m_source = Identifier::new_intern("source");

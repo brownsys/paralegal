@@ -27,6 +27,7 @@ dot = { git = "https://github.com/JustusAdam/dot-rust", rev = "ff2b42ceda98c639c
 serde_json = { version = "1" }
 bincode = { version = "1.1.3", optional = true }
 anyhow = { workspace = true }
+allocative = { workspace = true }
 
 [build-dependencies]
 anyhow = "1"

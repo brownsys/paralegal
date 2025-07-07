@@ -14,8 +14,8 @@ use crate::{
     ann::{Annotation, MarkerAnnotation},
     args::{Args, Stub},
     utils::{
-        func_of_term, resolve::expect_resolve_string_to_def_id, FunctionKind, InstanceExt,
-        IntoDefId, TyExt,
+        func_of_term, resolve::expect_resolve_string_to_def_id, type_for_constructor, FunctionKind,
+        InstanceExt, IntoDefId, TyExt,
     },
     Either, HashMap, HashSet,
 };
@@ -24,24 +24,31 @@ use flowistry_pdg_construction::{
     body_cache::{local_or_remote_paths, BodyCache},
     determine_async,
     encoder::ParalegalDecoder,
-    utils::{handle_shims, is_virtual, try_monomorphize, try_resolve_function},
+    utils::{handle_shims, is_virtual, try_monomorphize, try_resolve_function, ShimResult},
 };
 use paralegal_spdg::Identifier;
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_errors::DiagMessage;
-use rustc_hir::def_id::DefId;
+use rustc_hir::def_id::{DefId, LOCAL_CRATE};
 use rustc_hir::{def::DefKind, def_id::CrateNum};
 use rustc_middle::{
-    mir,
-    ty::{self, GenericArgsRef, Instance, TyCtxt, TypingEnv},
+    mir::{self, Local},
+    ty::{self, GenericArgsRef, Instance, Ty, TyCtxt, TypingEnv},
 };
 use rustc_serialize::Decodable;
 
 use rustc_span::Span;
 use rustc_utils::cache::Cache;
+use serde_json::json;
 
-use std::{borrow::Cow, fs::File, io::Read, rc::Rc};
+use std::{
+    borrow::Cow,
+    cell::{RefCell, RefMut},
+    fs::File,
+    io::Read,
+    rc::Rc,
+};
 
 use super::{MarkerMeta, MarkerRefinement, MARKER_META_EXT};
 
@@ -192,7 +199,12 @@ impl<'tcx> MarkerCtx<'tcx> {
             trace!("  Is virtual");
             return &[];
         }
-        if !self.0.included_crates.contains(&def_id.krate) {
+        if self.tcx().is_foreign_item(def_id) {
+            trace!("  Is foreign");
+            return &[];
+        }
+        if !(self.0.included_crates)(def_id.krate) {
+            trace!("  Is excluded");
             return &[];
         }
         self.db()
@@ -210,26 +222,57 @@ impl<'tcx> MarkerCtx<'tcx> {
             .combined_markers(res.def_id())
             .map(|m| m.marker)
             .peekable();
-        let non_direct = direct_markers
-            .peek()
-            .is_none()
-            .then(|| self.get_reachable_markers(res));
+        let is_self_marked = direct_markers.peek().is_some();
+        if is_self_marked {
+            let mut stat = self.borrow_function_marker_stat(res);
+            if stat.markers_on_self.is_empty() {
+                stat.markers_on_self
+                    .extend(self.combined_markers(res.def_id()).map(|m| m.marker));
+            }
+        }
+        let non_direct = (!is_self_marked).then(|| self.get_reachable_markers(res));
 
         direct_markers.chain(non_direct.into_iter().flatten().copied())
+    }
+
+    fn borrow_function_marker_stat(
+        &self,
+        key: MaybeMonomorphized<'tcx>,
+    ) -> RefMut<'_, FunctionMarkerStat<'tcx>> {
+        RefMut::map(self.0.marker_statistics.borrow_mut(), |r| {
+            r.entry(key).or_insert_with(|| FunctionMarkerStat {
+                function: key,
+                is_constructor: self.tcx().is_constructor(key.def_id()),
+                is_async: None,
+                is_stubbed: None,
+                markers_from_variables: vec![],
+                markers_on_self: vec![],
+                calls_with_reachable_markers: vec![],
+            })
+        })
     }
 
     /// If the transitive marker cache did not contain the answer, this is what
     /// computes it.
     fn compute_reachable_markers(&self, res: MaybeMonomorphized<'tcx>) -> Box<[Identifier]> {
         trace!("Computing reachable markers for {res:?}");
+
+        if self.tcx().is_constructor(res.def_id()) {
+            let parent = type_for_constructor(self.tcx(), res.def_id());
+            return self
+                .combined_markers(parent)
+                .map(|m| m.marker)
+                .collect::<Box<_>>();
+        }
         let body = self.0.body_cache.get(res.def_id());
+        let param_env = TypingEnv::post_analysis(self.tcx(), res.def_id())
+            .with_post_analysis_normalized(self.tcx());
         let mono_body = match res {
             MaybeMonomorphized::Monomorphized(res) => Cow::Owned(
                 try_monomorphize(
                     res,
                     self.tcx(),
-                    TypingEnv::post_analysis(self.tcx(), res.def_id())
-                        .with_post_analysis_normalized(self.tcx()),
+                    param_env,
                     body.body(),
                     self.tcx().def_span(res.def_id()),
                 )
@@ -238,21 +281,39 @@ impl<'tcx> MarkerCtx<'tcx> {
             MaybeMonomorphized::Plain(_) => Cow::Borrowed(body.body()),
         };
         if let Some((async_fn, _, _)) = determine_async(self.tcx(), res.def_id(), &mono_body) {
+            self.borrow_function_marker_stat(res).is_async = Some(async_fn);
             return self.get_reachable_markers(async_fn).into();
         }
         let expect_resolve = res.is_monomorphized();
-        let variable_markers = mono_body
-            .local_decls
-            .iter()
-            .flat_map(|v| self.deep_type_markers(v.ty))
-            .map(|(_, m)| *m);
+        let variable_markers = {
+            let mut stat = self.borrow_function_marker_stat(res);
+            mono_body
+                .local_decls
+                .iter_enumerated()
+                .flat_map(|(l, v)| {
+                    let markers = self.deep_type_markers(v.ty);
+                    if !markers.is_empty() {
+                        stat.markers_from_variables.push((
+                            l,
+                            v.ty,
+                            markers.iter().map(|v| v.1).collect(),
+                        ));
+                    }
+                    markers
+                })
+                .map(|m| m.1)
+                .collect::<Vec<_>>()
+        };
+
         mono_body
             .basic_blocks
             .iter()
             .flat_map(|bbdat| {
                 self.terminator_reachable_markers(
+                    res,
                     &mono_body.local_decls,
                     bbdat.terminator(),
+                    param_env,
                     expect_resolve,
                 )
             })
@@ -270,14 +331,24 @@ impl<'tcx> MarkerCtx<'tcx> {
         }
     }
 
+    #[allow(unused)]
+    fn err(&self, msg: impl Into<DiagMessage>) {
+        if self.0.config.relaxed() {
+            self.tcx().dcx().warn(msg.into());
+        } else {
+            self.tcx().dcx().err(msg.into());
+        }
+    }
+
     /// Does this terminator carry a marker?
     fn terminator_reachable_markers(
         &self,
+        parent: MaybeMonomorphized<'tcx>,
         local_decls: &mir::LocalDecls,
         terminator: &mir::Terminator<'tcx>,
+        param_env: ty::TypingEnv<'tcx>,
         expect_resolve: bool,
     ) -> impl Iterator<Item = Identifier> + '_ {
-        let param_env = TypingEnv::fully_monomorphized();
         let mut v = vec![];
         trace!(
             "  Finding reachable markers for terminator {:?}",
@@ -287,19 +358,30 @@ impl<'tcx> MarkerCtx<'tcx> {
             return v.into_iter();
         };
         let mut res = if expect_resolve {
-            let Some(instance) =
-                Instance::try_resolve(self.tcx(), param_env, def_id, gargs).unwrap()
-            else {
+            let Some(instance) = try_resolve_function(self.tcx(), def_id, param_env, gargs) else {
                 self.span_err(
                         terminator.source_info.span,
                         format!("cannot determine reachable markers, failed to resolve {def_id:?} with {gargs:?}")
                     );
                 return v.into_iter();
             };
-            MaybeMonomorphized::Monomorphized(
-                handle_shims(instance, self.tcx(), param_env, terminator.source_info.span)
-                    .map_or(instance, |(shimmed, _)| shimmed),
-            )
+            let new_instance = match handle_shims(
+                instance,
+                self.tcx(),
+                param_env,
+                terminator.source_info.span,
+            ) {
+                ShimResult::IsHandledShim { instance, .. } => instance,
+                ShimResult::IsNonHandleableShim => {
+                    self.span_err(
+                        terminator.source_info.span,
+                        format!("cannot determine reachable markers, failed to handle shim {def_id:?} with {gargs:?}")
+                    );
+                    return v.into_iter();
+                }
+                ShimResult::IsNotShim => instance,
+            };
+            MaybeMonomorphized::Monomorphized(new_instance)
         } else {
             MaybeMonomorphized::Plain(def_id)
         };
@@ -316,6 +398,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                     param_env,
                     terminator.source_info.span,
                 ) {
+                    self.borrow_function_marker_stat(res).is_stubbed = Some(new_instance);
                     v.extend(self.get_reachable_and_self_markers(new_instance));
                 }
             } else {
@@ -340,18 +423,16 @@ impl<'tcx> MarkerCtx<'tcx> {
                 self.tcx().type_of(alias.def_id).skip_binder().kind()
         {
             trace!("    fits opaque type");
-            v.extend(
-                self.get_reachable_and_self_markers(
-                    try_resolve_function(
-                        self.tcx(),
-                        *closure_fn,
-                        TypingEnv::fully_monomorphized(),
-                        substs,
-                    )
-                    .unwrap(),
-                ),
-            )
+            let async_closure_fn =
+                try_resolve_function(self.tcx(), *closure_fn, param_env, substs).unwrap();
+            v.extend(self.get_reachable_and_self_markers(async_closure_fn));
+            self.borrow_function_marker_stat(res).is_async = Some(async_closure_fn);
         };
+        if !v.is_empty() {
+            self.borrow_function_marker_stat(parent)
+                .calls_with_reachable_markers
+                .push((res, terminator.source_info.span));
+        }
         v.into_iter()
     }
 
@@ -545,6 +626,14 @@ impl<'tcx> MarkerCtx<'tcx> {
             .find_map(|def_id| self.0.stubs.get(&def_id))
             .copied()
     }
+
+    pub fn dump_marker_stats(&self, mut f: impl std::io::Write) {
+        serde_json::to_writer(
+            &mut f,
+            &marker_stats_as_json(self.tcx(), self.0.marker_statistics.borrow().values()),
+        )
+        .unwrap()
+    }
 }
 
 pub type TypeMarkerElem = (DefId, Identifier);
@@ -605,18 +694,69 @@ pub struct MarkerDatabase<'tcx> {
     config: &'static Args,
     type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,
     body_cache: Rc<BodyCache<'tcx>>,
-    included_crates: FxHashSet<CrateNum>,
+    included_crates: Rc<dyn Fn(CrateNum) -> bool>,
     stubs: FxHashMap<DefId, &'static Stub>,
+    marker_statistics: RefCell<HashMap<MaybeMonomorphized<'tcx>, FunctionMarkerStat<'tcx>>>,
+}
+
+pub struct FunctionMarkerStat<'tcx> {
+    pub function: MaybeMonomorphized<'tcx>,
+    pub is_constructor: bool,
+    pub is_async: Option<Instance<'tcx>>,
+    pub is_stubbed: Option<Instance<'tcx>>,
+    pub markers_from_variables: Vec<(Local, Ty<'tcx>, Vec<Identifier>)>,
+    pub markers_on_self: Vec<Identifier>,
+    pub calls_with_reachable_markers: Vec<(MaybeMonomorphized<'tcx>, Span)>,
+}
+
+fn marker_stats_as_json<'tcx: 'a, 'a>(
+    tcx: TyCtxt<'tcx>,
+    i: impl IntoIterator<Item = &'a FunctionMarkerStat<'tcx>>,
+) -> serde_json::Value {
+    i.into_iter()
+        .map(|stat| {
+            let mm_to_json = |mm: MaybeMonomorphized<'_>| {
+                json!({
+                    "ident": tcx.def_path_str(mm.def_id()),
+                    "args": match mm {
+                        MaybeMonomorphized::Plain(_) => serde_json::Value::Null,
+                        MaybeMonomorphized::Monomorphized(instance) => {
+                            json!(instance.args.iter().map(|a| a.to_string()).collect::<Vec<_>>())
+                        }
+                    }
+                })
+            };
+            let instance_to_json = |instance: Instance<'tcx>|
+                json!({
+                    "ident": tcx.def_path_str(instance.def_id()),
+                    "args": instance.args.iter().map(|a| a.to_string()).collect::<Vec<_>>()
+                });
+            json!({
+                "function": mm_to_json(stat.function),
+                "is_constructor": stat.is_constructor,
+                "is_async": stat.is_async.map(instance_to_json),
+                "is_stubbed": stat.is_stubbed.map(instance_to_json),
+                "markers_from_variables": stat.markers_from_variables.iter().map(|(l, ty, markers)| {
+                    json!({
+                        "local": format!("{l:?}"),
+                        "type": format!("{ty:?}"),
+                        "markers": markers
+                    })
+                }).collect::<Vec<_>>(),
+                "markers_on_self": stat.markers_on_self,
+                "calls_with_reachable_markers": stat.calls_with_reachable_markers.iter().map(|(mm, span)| {
+                    json!({
+                        "function": mm_to_json(*mm),
+                        "span": format!("{span:?}")
+                    })
+                }).collect::<Vec<_>>()
+            })
+        }).collect()
 }
 
 impl<'tcx> MarkerDatabase<'tcx> {
     /// Construct a new database, loading external markers.
-    pub fn init(
-        tcx: TyCtxt<'tcx>,
-        args: &'static Args,
-        body_cache: Rc<BodyCache<'tcx>>,
-        included_crates: FxHashSet<CrateNum>,
-    ) -> Self {
+    pub fn init(tcx: TyCtxt<'tcx>, args: &'static Args, body_cache: Rc<BodyCache<'tcx>>) -> Self {
         let stubs = args
             .build_config()
             .stubs
@@ -627,9 +767,13 @@ impl<'tcx> MarkerDatabase<'tcx> {
                 Some((res, v))
             })
             .collect();
+        let included_crates = Rc::new(args.anactrl().inclusion_predicate(tcx));
         Self {
             tcx,
-            annotations: load_annotations(tcx, included_crates.iter().copied()),
+            annotations: load_annotations(
+                tcx,
+                args.anactrl().included_crates(tcx).chain([LOCAL_CRATE]),
+            ),
             external_annotations: resolve_external_markers(args, tcx),
             reachable_markers: Default::default(),
             config: args,
@@ -637,6 +781,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
             body_cache,
             included_crates,
             stubs,
+            marker_statistics: RefCell::new(HashMap::default()),
         }
     }
 }
@@ -645,11 +790,15 @@ fn load_annotations(
     tcx: TyCtxt,
     included_crates: impl IntoIterator<Item = CrateNum>,
 ) -> FxHashMap<DefId, Vec<Annotation>> {
+    let sysroot = &tcx.sess.sysroot;
     included_crates
         .into_iter()
         .flat_map(|krate| {
             let paths = local_or_remote_paths(krate, tcx, MARKER_META_EXT);
             for path in &paths {
+                if path.starts_with(sysroot) {
+                    return Either::Left(std::iter::empty());
+                }
                 let Ok(mut file) = File::open(path) else {
                     continue;
                 };
@@ -657,9 +806,10 @@ fn load_annotations(
                 file.read_to_end(&mut buf).unwrap();
                 let mut decoder = ParalegalDecoder::new(tcx, buf.as_slice());
                 let meta = MarkerMeta::decode(&mut decoder);
-                return meta
-                    .into_iter()
-                    .map(move |(index, v)| (DefId { krate, index }, v));
+                return Either::Right(
+                    meta.into_iter()
+                        .map(move |(index, v)| (DefId { krate, index }, v)),
+                );
             }
             panic!("No marker metadata fund for crate {krate}, tried paths {paths:?}");
         })
@@ -718,7 +868,8 @@ type RawExternalMarkers = HashMap<String, Vec<ExternalAnnotationEntry>>;
 /// Given the TOML of external annotations we have parsed, resolve the paths
 /// (keys of the map) to [`DefId`]s.
 fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
-    let relaxed = opts.relaxed();
+    //let relaxed = opts.relaxed();
+    let relaxed = false;
     if let Some(annotation_file) = opts.marker_control().external_annotations() {
         let from_toml: RawExternalMarkers = toml::from_str(
             &std::fs::read_to_string(annotation_file).unwrap_or_else(|_| {

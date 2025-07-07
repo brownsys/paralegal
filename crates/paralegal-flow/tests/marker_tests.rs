@@ -7,7 +7,7 @@ use paralegal_flow::{define_flow_test_template, test_utils::*};
 use paralegal_spdg::{Identifier, InstructionKind};
 
 const TEST_CRATE_NAME: &str = "tests/marker-tests";
-const EXTRA_ARGS: &[&str] = &["--no-cross-function-analysis"];
+const EXTRA_ARGS: [&str; 1] = ["--no-interprocedural-analysis"];
 
 lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool =

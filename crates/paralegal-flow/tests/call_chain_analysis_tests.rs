@@ -3,12 +3,20 @@
 #[macro_use]
 extern crate lazy_static;
 
+extern crate rustc_span;
+
+use flowistry_pdg::GlobalLocation;
 use paralegal_flow::{define_flow_test_template, test_utils::*};
+use paralegal_spdg::utils::display_list;
+use rustc_span::Symbol;
 
 const TEST_CRATE_NAME: &str = "tests/call-chain-analysis-tests";
 
 lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool = run_paralegal_flow_with_flow_graph_dump(TEST_CRATE_NAME);
+    static ref TEST_CRATE_ANALYZED: bool = run_paralegal_flow_with_flow_graph_dump_and(
+        TEST_CRATE_NAME,
+        ["--include=crate", "--no-adaptive-approximation"]
+    );
 }
 
 macro_rules! define_test {
@@ -45,12 +53,16 @@ fn with_return() {
             receiver(callee(x));
         }
     ))
+    .with_extra_args(["--dump".to_string(), "spdg".to_string()])
     .check_ctrl(|ctrl| {
         let src_fn = ctrl.function("source");
         let src = ctrl.call_site(&src_fn);
         let dest_fn = ctrl.function("receiver");
         let dest_sink = ctrl.call_site(&dest_fn);
         let dest = dest_sink.input().nth(0).unwrap();
+
+        assert!(!src.output().is_empty());
+        assert!(!dest_sink.input().is_empty());
 
         assert!(src.output().flows_to_data(&dest));
     })
@@ -221,3 +233,140 @@ define_test!(no_overtaint_over_nested_fn_call
     assert!(!another_input.output().flows_to_data(&target.input()));
 
 });
+
+#[test]
+fn recursion_breaking_with_k_depth() {
+    let mut test = InlineTestBuilder::new(stringify!(
+        fn recurses(i: u32) {
+            if i > 0 {
+                recurses(i - 1);
+            }
+        }
+
+        #[paralegal_flow::analyze]
+        fn main() {
+            recurses(10);
+        }
+    ));
+    test.with_extra_args(["--k-depth=3".to_string()])
+        .run_with_tcx(|tcx, desc| {
+            let ctrl = desc.ctrl("main");
+            let css = ctrl.graph().desc.all_call_sites();
+            assert!(!css.is_empty(), "Vacuous");
+            let target = Symbol::intern("recurses");
+            for cs in css.into_iter() {
+                assert!(
+                    cs.len() <= 4,
+                    "Call string over length limit (length {}) {cs} ",
+                    cs.len()
+                );
+                let recursions: Box<[GlobalLocation]> = cs
+                    .iter()
+                    .filter(|loc| tcx.item_name(loc.function) == target)
+                    .collect();
+                assert!(
+                    recursions.len() <= 1,
+                    "Found recursive call strings: {}",
+                    display_list(recursions.iter())
+                );
+                assert!(
+                    cs.len() <= 2,
+                    "Call string indicates recursion (length {}) {cs}",
+                    cs.len()
+                );
+            }
+        })
+        .unwrap();
+}
+
+#[test]
+fn recursion_breaking_with_k_depth_on_main() {
+    let mut test = InlineTestBuilder::new(stringify!(
+        #[paralegal_flow::analyze]
+        fn recurses(i: u32) {
+            if i > 0 {
+                recurses(i - 1);
+            }
+        }
+    ));
+    test.with_extra_args(["--k-depth=1".to_string()])
+        .with_entrypoint("recurses".to_string())
+        .run_with_tcx(|tcx, desc| {
+            let ctrl = desc.ctrl("recurses");
+            let css = ctrl.graph().desc.all_call_sites();
+            let target = Symbol::intern("recurses");
+            assert!(!css.is_empty(), "Vacuous");
+            for cs in css.into_iter() {
+                assert!(
+                    cs.len() <= 2,
+                    "Call string over length limit (length {}) {cs} ",
+                    cs.len()
+                );
+
+                let recursions: Box<[GlobalLocation]> = cs
+                    .iter()
+                    .filter(|loc| tcx.item_name(loc.function) == target)
+                    .collect();
+                assert!(
+                    recursions.len() <= 1,
+                    "Found recursive call strings: {}",
+                    display_list(recursions.iter())
+                );
+                assert!(
+                    cs.len() <= 1,
+                    "Call string indicates recursion (length {}) {cs}",
+                    cs.len()
+                );
+            }
+        })
+        .unwrap()
+}
+
+#[test]
+fn recursion_breaking_with_k_depth_mutual() {
+    let mut test = InlineTestBuilder::new(stringify!(
+        fn recurses(i: u32) {
+            if i > 0 {
+                delegator(i);
+            }
+        }
+
+        fn delegator(i: u32) {
+            recurses(i - 1);
+        }
+
+        #[paralegal_flow::analyze]
+        fn main() {
+            recurses(10);
+        }
+    ));
+    test.with_extra_args(["--k-depth=4".to_string()])
+        .run_with_tcx(|tcx, desc| {
+            let ctrl = desc.ctrl("main");
+            let css = ctrl.graph().desc.all_call_sites();
+            assert!(!css.is_empty(), "Vacuous");
+            let target = Symbol::intern("recurses");
+            for cs in css.into_iter() {
+                assert!(
+                    cs.len() <= 5,
+                    "Call string over length limit (length {}) {cs} ",
+                    cs.len()
+                );
+                let recursions: Box<[GlobalLocation]> = cs
+                    .iter()
+                    .filter(|loc| tcx.item_name(loc.function) == target)
+                    .collect();
+                assert!(
+                    recursions.len() <= 1,
+                    "Found recursive call strings: {} in {cs}",
+                    display_list(recursions.iter())
+                );
+                assert!(
+                    cs.len() <= 3,
+                    "Call string indicates recursion (length {}) {cs}",
+                    cs.len()
+                );
+            }
+        })
+        .unwrap();
+}

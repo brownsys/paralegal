@@ -4,7 +4,7 @@ mod helpers;
 
 use helpers::{Result, Test};
 use paralegal_policy::{assert_error, loc, Context, Diagnostics, Marker, NodeQueries};
-use paralegal_spdg::Identifier;
+use paralegal_spdg::{Identifier, IntoIterGlobalNodes, NodeCluster};
 
 macro_rules! marker {
     ($id:ident) => {
@@ -234,6 +234,47 @@ fn nested_ctrl_influence() -> Result<()> {
             ctx,
             sensitive.all(|sens| { checks.iter().any(|c| c.has_ctrl_influence(sens, &ctx)) })
         );
+        Ok(())
+    })
+}
+
+#[test]
+fn nested_ctrl_influence_2() -> Result<()> {
+    Test::new(stringify!(
+        #[paralegal::marker(check, return)]
+        async fn check_safe(data: usize) -> Result<(), ()> {
+            Ok(())
+        }
+
+        #[paralegal::marker(sensitive, return)]
+        fn sensitive_action(data: usize) {}
+
+        async fn blocking(data: usize) {
+            sensitive_action(data)
+        }
+
+        #[paralegal::analyze]
+        async fn main(data: usize) -> Result<(), ()> {
+            check_safe(data).await?;
+
+            blocking(data).await;
+            Ok(())
+        }
+    ))?
+    .run(|ctx| {
+        let sensitive =
+            NodeCluster::try_from_iter(ctx.marked_nodes(Identifier::new_intern("sensitive")))
+                .unwrap();
+        let checks =
+            NodeCluster::try_from_iter(ctx.marked_nodes(Identifier::new_intern("check"))).unwrap();
+
+        if let Some(unreached) = checks.has_ctrl_influence_all(&sensitive, &ctx) {
+            let mut msg = ctx.struct_error("Some nodes were not protected");
+            for node in unreached.iter_global_nodes() {
+                msg.with_node_note(node, "This node was not protected");
+            }
+            msg.emit();
+        }
         Ok(())
     })
 }

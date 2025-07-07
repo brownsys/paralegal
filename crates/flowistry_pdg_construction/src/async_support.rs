@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use either::Either;
-use itertools::Itertools;
+
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
@@ -11,13 +11,11 @@ use rustc_middle::{
     },
     ty::{GenericArgsRef, Instance, TyCtxt},
 };
+use rustc_span::{source_map::Spanned, Span};
 
-use crate::utils::{is_async, ArgSlice};
+use crate::utils::{is_async, ArgSlice, TyAsFnResult};
 
-use super::{
-    local_analysis::{CallKind, LocalAnalysis},
-    utils,
-};
+use super::{local_analysis::LocalAnalysis, utils};
 
 /// Describe in which way a function is `async`.
 ///
@@ -35,11 +33,13 @@ pub struct AsyncFnPollEnv<'tcx> {
     /// If the generator came from an `async fn`, then this is that function. If
     /// it is from an async block, this is `None`.
     pub async_fn_parent: Option<Instance<'tcx>>,
-    /// Where was the `async fn` called, or where was the async block created.
-    pub creation_loc: Location,
     /// A place which carries the runtime value representing the generator in
     /// the caller.
     pub generator_data: Place<'tcx>,
+    /// Was this from an `await` desugaring and as a result we can guarantee
+    /// that `generator_place` refers directly to the generator? Otherwise the
+    /// generator place is (over)approximate.
+    pub precise: bool,
 }
 
 /// Stores ids that are needed to construct projections around async functions.
@@ -188,15 +188,8 @@ pub fn determine_async<'tcx>(
     Some((generator_fn, loc, asyncness))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AsyncDeterminationResult<T> {
-    Resolved(T),
-    Unresolvable(String),
-    NotAsync,
-}
-
 /// Does this instance refer to an `async fn` or `async {}`.
-fn is_async_fn_or_block(tcx: TyCtxt, instance: Instance) -> bool {
+pub fn is_async_fn_or_block(tcx: TyCtxt, instance: Instance) -> bool {
     // It turns out that the `DefId` of the [`poll`](std::future::Future::poll)
     // impl for an `async fn` or async block is the same as the `DefId` of the
     // generator itself. That means after resolution (e.g. on the `Instance`) we
@@ -204,34 +197,37 @@ fn is_async_fn_or_block(tcx: TyCtxt, instance: Instance) -> bool {
     tcx.coroutine_is_async(instance.def_id())
 }
 
-impl<'tcx> LocalAnalysis<'tcx, '_> {
-    /// Checks whether the function call, described by the unresolved `def_id`
-    /// and the resolved instance `resolved_fn` is a call to [`<T as
-    /// Future>::poll`](std::future::Future::poll) where `T` is the type of an
-    /// `async fn` or `async {}` created generator.
-    ///
-    /// Resolves the original arguments that constituted the generator.
-    pub(crate) fn try_poll_call_kind<'a>(
-        &'a self,
-        def_id: DefId,
-        resolved_fn: Instance<'tcx>,
-        original_args: ArgSlice<'a, 'tcx>,
-    ) -> AsyncDeterminationResult<CallKind<'tcx>> {
-        let lang_items = self.tcx().lang_items();
-        if lang_items.future_poll_fn() == Some(def_id)
-            && is_async_fn_or_block(self.tcx(), resolved_fn)
-        {
-            match self.find_async_args(original_args) {
-                Ok(poll) => AsyncDeterminationResult::Resolved(CallKind::AsyncPoll(poll)),
-                Err(str) => AsyncDeterminationResult::Unresolvable(str),
-            }
-        } else {
-            AsyncDeterminationResult::NotAsync
-        }
-    }
+impl<'tcx, K> LocalAnalysis<'tcx, '_, K> {
     /// Given the arguments to a `Future::poll` call, walk back through the
     /// body to find the original future being polled, and get the arguments to the future.
-    fn find_async_args<'a>(
+    pub fn find_async_args<'a>(
+        &'a self,
+        resolved_fn: Instance<'tcx>,
+        args: &'a [Spanned<Operand<'tcx>>],
+        span: Span,
+    ) -> Result<AsyncFnPollEnv<'tcx>, String> {
+        let precise = self.find_async_args_precise(args);
+        if precise.is_ok() || span.desugaring_kind() == Some(rustc_span::DesugaringKind::Await) {
+            precise
+        } else {
+            let parent = self.tcx().parent(resolved_fn.def_id());
+            Ok(AsyncFnPollEnv {
+                async_fn_parent: is_async(self.tcx(), parent).then(|| {
+                    utils::try_resolve_function(
+                        self.tcx(),
+                        parent,
+                        self.param_env,
+                        resolved_fn.args,
+                    )
+                    .unwrap()
+                }),
+                generator_data: args[0].node.place().unwrap(),
+                precise: false,
+            })
+        }
+    }
+
+    fn find_async_args_precise<'a>(
         &'a self,
         args: ArgSlice<'a, 'tcx>,
     ) -> Result<AsyncFnPollEnv<'tcx>, String> {
@@ -280,7 +276,7 @@ impl<'tcx> LocalAnalysis<'tcx, '_> {
                 self.tcx()
                     .mk_place_deref(new_pin_args[0].node.place().unwrap()),
             )
-            .collect_vec();
+            .collect::<Vec<_>>();
         debug_assert!(future_aliases.len() == 1);
         let future = *future_aliases.first().unwrap();
 
@@ -326,10 +322,13 @@ impl<'tcx> LocalAnalysis<'tcx, '_> {
                     (None, *generic_args, *lhs)
                 }
                 StatementKind::Assign(box (_, Rvalue::Use(target))) => {
-                    let generics = self
-                        .operand_to_def_id(target)
-                        .ok_or_else(|| "Nope".to_string())?
-                        .1;
+                    let generics = match self.operand_to_def_id(target) {
+                        TyAsFnResult::Resolved { generic_args, .. } => generic_args,
+                        TyAsFnResult::FnPtr => return Err("Function pointer".to_string()),
+                        TyAsFnResult::NotAFunction => {
+                            return Err("Not a function".to_string());
+                        }
+                    };
                     (None, generics, target.place().unwrap())
                 }
                 _ => {
@@ -351,14 +350,19 @@ impl<'tcx> LocalAnalysis<'tcx, '_> {
                         .with_post_analysis_normalized(self.tcx()),
                     generics,
                 )
-                .ok_or_else(|| "Instance resolution failed".to_string())
+                .ok_or_else(|| {
+                    format!(
+                        "Resolving instance {} with generics {generics:?} failed",
+                        self.tcx().def_path_debug_str(def_id)
+                    )
+                })
             })
             .transpose()?;
 
         Ok(AsyncFnPollEnv {
             async_fn_parent,
-            creation_loc,
             generator_data,
+            precise: true,
         })
     }
 }

@@ -18,7 +18,7 @@ use crate::{
 
 /// Describes how the formal parameters of a given function call relate to the
 /// actual parameters.
-#[derive(Debug)]
+#[derive(Debug, strum::AsRefStr)]
 pub enum CallingConvention<'tcx> {
     /// 1 to 1 mapping
     Direct(Box<[Spanned<Operand<'tcx>>]>),
@@ -30,8 +30,16 @@ pub enum CallingConvention<'tcx> {
         closure_arg: Spanned<Operand<'tcx>>,
         tupled_arguments: Spanned<Operand<'tcx>>,
     },
-    /// An async generator, only has one argument which is the generator state.
-    Async(Place<'tcx>),
+    /// An async generator.
+    Async {
+        /// If this is false, the generator state is an overapproximation (most
+        /// likely `Pin<& mut [closure]>`). This happens when `poll` is called
+        /// explicitly, outside of `await`. In this case we cannot guarantee to
+        /// be able to precisely resolve the generator state.
+        precise: bool,
+        /// Where the generator state is stored
+        generator: Place<'tcx>,
+    },
 }
 
 /// The result of calculating a translation from a child place (in a called
@@ -75,7 +83,10 @@ impl<'tcx> CallingConvention<'tcx> {
         args: Cow<'_, [Spanned<Operand<'tcx>>]>,
     ) -> CallingConvention<'tcx> {
         match kind {
-            CallKind::AsyncPoll(poll) => CallingConvention::Async(poll.generator_data),
+            CallKind::AsyncPoll(poll) => CallingConvention::Async {
+                generator: poll.generator_data,
+                precise: poll.precise,
+            },
             CallKind::Direct => CallingConvention::Direct(args.into()),
             CallKind::Indirect { shim: once_shim } => CallingConvention::Indirect {
                 shim: *once_shim,
@@ -179,9 +190,10 @@ impl<'a, 'tcx> PlaceTranslator<'a, 'tcx> {
                 &child.projection[..],
             ),
             // Map arguments to projections of the future, the poll's first argument
-            CallingConvention::Async(ctx) => {
+            CallingConvention::Async { generator, precise } => {
                 if child.local.as_usize() == 1 {
-                    (*ctx, &child.projection[..])
+                    let projection = if *precise { &child.projection[..] } else { &[] };
+                    (*generator, projection)
                 } else {
                     return None;
                 }
@@ -193,10 +205,10 @@ impl<'a, 'tcx> PlaceTranslator<'a, 'tcx> {
                 closure_arg,
                 tupled_arguments,
             } => {
-                // Accounting fot FnPtrShim
+                // Accounting for FnPtrShim
                 //
                 // The shim gets an extra first argument (the function pointer)
-                // but we replace it with the function iself which doesn't have
+                // but we replace it with the function itself which doesn't have
                 // that argument, so we need to adjust the indices
                 let local = if matches!(shim, Some(ShimType::FnPtr)) && child.local != RETURN_PLACE
                 {

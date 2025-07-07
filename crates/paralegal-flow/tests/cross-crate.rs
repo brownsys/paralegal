@@ -11,6 +11,7 @@ lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool = {
         paralegal_flow_command(CRATE_DIR)
             .args(["--include", "dependency"])
+            .arg("--no-adaptive-approximation")
             .status()
             .unwrap()
             .success()
@@ -96,6 +97,33 @@ define_test!(donation: graph -> {
 
 define_test!(reception: graph -> {
     let sources = graph.marked(Identifier::new_intern("mark"));
+    let targets = graph.marked(Identifier::new_intern("target"));
+    assert!(!sources.is_empty());
+    assert!(!targets.is_empty());
+
+    assert!(sources.flows_to_data(&targets));
+});
+
+define_test!(test_constructors: graph -> {
+    let sources = graph.marked(Identifier::new_intern("source"));
+    let targets = graph.marked(Identifier::new_intern("target"));
+    assert!(!sources.is_empty());
+    assert!(!targets.is_empty());
+
+    assert!(sources.flows_to_data(&targets));
+});
+
+define_test!(test_constructors_via_hof: graph -> {
+    let sources = graph.marked(Identifier::new_intern("source"));
+    let targets = graph.marked(Identifier::new_intern("target"));
+    assert!(!sources.is_empty());
+    assert!(!targets.is_empty());
+
+    assert!(sources.flows_to_data(&targets));
+});
+
+define_test!(test_single_variant_constructor_in_hof: graph -> {
+    let sources = graph.marked(Identifier::new_intern("source"));
     let targets = graph.marked(Identifier::new_intern("target"));
     assert!(!sources.is_empty());
     assert!(!targets.is_empty());

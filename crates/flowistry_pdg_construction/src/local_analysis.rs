@@ -1,11 +1,10 @@
-use std::{borrow::Cow, collections::HashSet, fmt::Display, iter, rc::Rc};
+use std::{borrow::Cow, collections::HashSet, fmt::Display, hash::Hash, iter};
 
 use flowistry::mir::{placeinfo::PlaceInfo, FlowistryInput};
-use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
+use flowistry_pdg::RichLocation;
 use itertools::Itertools;
 use log::{debug, log_enabled, trace, Level};
 
-use rustc_borrowck::consumers::{places_conflict, PlaceConflictBias};
 use rustc_errors::DiagCtxtHandle;
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
@@ -13,22 +12,28 @@ use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{
         visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, Location, Operand, Place,
-        PlaceElem, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
+        Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
     },
-    ty::{GenericArgKind, GenericArgsRef, Instance, TyCtxt, TyKind},
+    ty::{
+        AdtKind, EarlyBinder, GenericArgKind, GenericArgsRef, Instance, Ty, TyCtxt, TyKind,
+        TypingEnv,
+    },
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 use rustc_span::{source_map::Spanned, DesugaringKind, Span};
-use rustc_utils::{mir::control_dependencies::ControlDependencies, BodyExt, PlaceExt};
+use rustc_utils::{mir::control_dependencies::ControlDependencies, AdtDefExt, BodyExt, PlaceExt};
 
 use crate::{
     approximation::ApproximationHandler,
-    async_support::*,
+    async_support::{self, *},
     body_cache::CachedBody,
     calling_convention::*,
-    graph::{DepEdge, DepNode, PartialGraph, SourceUse, TargetUse},
+    graph::{DepEdge, DepNode, OneHopLocation, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
-    utils::{self, handle_shims, is_async, is_virtual, try_monomorphize, ShimType},
+    utils::{
+        self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize, ShimResult,
+        ShimType, TyAsFnResult,
+    },
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
 
@@ -49,8 +54,8 @@ impl df::JoinSemiLattice for InstructionState<'_> {
     }
 }
 
-pub(crate) struct LocalAnalysis<'tcx, 'a> {
-    pub(crate) memo: &'a MemoPdgConstructor<'tcx>,
+pub(crate) struct LocalAnalysis<'tcx, 'a, K> {
+    pub(crate) memo: &'a MemoPdgConstructor<'tcx, K>,
     pub(super) root: Instance<'tcx>,
     // TODO: We should generally be using mono_body, this one is only used in
     // retyping. Try and find out if I can use mono_body there too or
@@ -62,80 +67,26 @@ pub(crate) struct LocalAnalysis<'tcx, 'a> {
     control_dependencies: ControlDependencies<BasicBlock>,
     pub(crate) body_assignments: utils::BodyAssignments,
     start_loc: FxHashSet<RichLocation>,
+    pub(crate) param_env: TypingEnv<'tcx>,
+    k: K,
 }
 
-impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
-    /// Creates [`GraphConstructor`] for a function resolved as `fn_resolution`
-    /// in a given `calling_context`.
-    ///
-    /// Returns `None`, if we were unable to load the body.
-    pub(crate) fn new(
-        memo: &'a MemoPdgConstructor<'tcx>,
-        root: Instance<'tcx>,
-    ) -> LocalAnalysis<'tcx, 'a> {
-        let tcx = memo.tcx;
-        let def_id = root.def_id();
-        let body_with_facts = memo.body_cache.get(def_id);
-        let param_env = body_with_facts
-            .body()
-            .typing_env(tcx)
-            .with_post_analysis_normalized(tcx);
-        //let param_env = TypingEnv::post_analysis(tcx, def_id).with_post_analysis_normalized(tcx);
-        let body = try_monomorphize(
-            root,
-            tcx,
-            param_env,
-            body_with_facts.body(),
-            tcx.def_span(def_id),
-        )
-        .unwrap();
-
-        if memo.dump_mir {
-            use std::io::Write;
-            let path = tcx.def_path_str(def_id) + ".mir";
-            let mut f = std::fs::File::create(path.as_str()).unwrap();
-            write!(f, "{}", body.to_string(tcx).unwrap()).unwrap();
-            debug!("Dumped debug MIR {path}");
-        }
-
-        let place_info = PlaceInfo::build(tcx, def_id, body_with_facts);
-        let control_dependencies = body.control_dependencies();
-
-        let mut start_loc = FxHashSet::default();
-        start_loc.insert(RichLocation::Start);
-
-        let body_assignments = utils::find_body_assignments(&body);
-
-        LocalAnalysis {
-            memo,
-            root,
-            body_with_facts,
-            mono_body: body,
-            place_info,
-            control_dependencies,
-            start_loc,
-            def_id,
-            body_assignments,
-        }
+impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
+    pub(super) fn generic_args(&self) -> GenericArgsRef<'tcx> {
+        self.root.args
     }
-
-    fn make_dep_node(
-        &self,
-        place: Place<'tcx>,
-        location: impl Into<RichLocation>,
-    ) -> DepNode<'tcx> {
-        DepNode::new(
-            place,
-            self.make_call_string(location),
-            self.tcx(),
-            &self.mono_body,
-            self.place_info.children(place).iter().any(|p| *p != place),
-        )
+    fn dump_mir(&self) {
+        use std::io::Write;
+        let path = self.tcx().def_path_str(self.def_id) + ".mir";
+        let mut f = std::fs::File::create(path.as_str()).unwrap();
+        write!(f, "{}", self.mono_body.to_string(self.tcx()).unwrap()).unwrap();
     }
-
     /// Returns all pairs of `(src, edge)`` such that the given `location` is control-dependent on `edge`
     /// with input `src`.
-    pub(crate) fn find_control_inputs(&self, location: Location) -> Vec<(DepNode<'tcx>, DepEdge)> {
+    pub(crate) fn find_control_inputs(
+        &self,
+        location: Location,
+    ) -> Vec<(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)> {
         let mut blocks_seen = HashSet::<BasicBlock>::from_iter(Some(location.block));
         let mut block_queue = vec![location.block];
         let mut out = vec![];
@@ -165,7 +116,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                     let Some(ctrl_place) = discr.place() else {
                         continue;
                     };
-                    let at = self.make_call_string(ctrl_loc);
+                    let at = ctrl_loc.into();
                     let src = self.make_dep_node(ctrl_place, ctrl_loc);
                     let edge = DepEdge::control(at, SourceUse::Operand, TargetUse::Assign);
                     out.push((src, edge));
@@ -175,19 +126,44 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         out
     }
 
-    fn call_change_callback(&self) -> Option<&dyn CallChangeCallback<'tcx>> {
-        self.memo.call_change_callback.as_ref().map(Rc::as_ref)
+    fn call_change_callback(&self) -> &dyn CallChangeCallback<'tcx, K> {
+        self.memo.call_change_callback.as_ref()
     }
 
     pub(crate) fn async_info(&self) -> &AsyncInfo {
         &self.memo.async_info
     }
 
-    pub(crate) fn make_call_string(&self, location: impl Into<RichLocation>) -> CallString {
-        CallString::single(GlobalLocation {
-            function: self.def_id,
-            location: location.into(),
-        })
+    fn make_dep_node(
+        &self,
+        place: Place<'tcx>,
+        location: impl Into<RichLocation>,
+    ) -> DepNode<'tcx, OneHopLocation> {
+        let location = location.into();
+        debug!(
+            "Creating dep node for {place:?} (base ty {:?}) in {} at {:?}",
+            Place::from(place.local)
+                .ty(self.body_with_facts.body(), self.tcx())
+                .ty,
+            self.tcx().def_path_str(self.def_id),
+            location,
+        );
+        debug!(
+            "Place type is {:?}",
+            place.ty(&self.mono_body, self.tcx()).ty,
+        );
+        DepNode::new(
+            place,
+            location.into(),
+            self.tcx(),
+            &self.mono_body,
+            self.def_id,
+            is_split(
+                place.ty(&self.mono_body, self.tcx()).ty,
+                self.def_id,
+                self.tcx(),
+            ),
+        )
     }
 
     /// Returns the aliases of `place`. See [`PlaceInfo::aliases`] for details.
@@ -203,25 +179,52 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         // We can ask for the aliases in the context of the original body, receiving e.g. {_1}.
         // Then we reproject the aliases with the remaining projection, to create {_1.0}.
         //
-        // This is a massive hack bc it's inefficient and I'm not certain that it's sound.
-        let place_retyped =
-            utils::retype_place(place, self.tcx(), self.body_with_facts.body(), self.def_id);
+        // This is a massive hack bc it's inefficient and I'm not certain that
+        // it's sound.
+        let body = self.body_with_facts.body();
+        let place_retyped = utils::retype_place(place, self.tcx(), body, self.def_id);
         self.place_info
             .aliases(place_retyped)
             .iter()
-            .map(move |alias| {
+            .map(move |unnormalized_alias| {
+                // The place we get back is not monomorphized, since aliases are
+                // calculated on the original body. And because rustc will crash
+                // if we have regions in the type, we erase those first.
+                let alias = self.normalize_place(unnormalized_alias);
+                // If the type of the alias is not the same as the retyped
+                // place, then adding the remaining projections from the
+                // original place won't work so we overtaint to the entire
+                // alias.
+                if !place_ty_eq(
+                    unnormalized_alias.ty(body, self.tcx()),
+                    place_retyped.ty(body, self.tcx()),
+                ) {
+                    //println!("Overtainting alias {alias:?} because type {:?} != {:?}", ta.ty, tb.ty);
+                    return alias;
+                }
+                //let alias = self.tcx().erase_regions(*alias);
                 let mut projection = alias.projection.to_vec();
                 projection.extend(&place.projection[place_retyped.projection.len()..]);
-                let p = Place::make(alias.local, &projection, self.tcx());
-                // let t1 = place.ty(&self.body, self.tcx());
-                // let t2 = p.ty(&self.body, self.tcx());
-                // if !t1.equiv(&t2) {
-                //     let p1_str = format!("{place:?}");
-                //     let p2_str = format!("{p:?}");
-                // let l = p1_str.len().max(p2_str.len());
-                //     panic!("Retyping in {} failed to produce an equivalent type.\n  Src {p1_str:l$} : {t1:?}\n  Dst {p2_str:l$} : {t2:?}", self.tcx().def_path_str(self.def_id))
-                // }
-                p
+                Place::make(alias.local, &projection, self.tcx())
+                //println!("Alias: {p:?} for base alias {alias:?}, place: {place:?}, retyped: {place_retyped:?}");
+            })
+    }
+
+    pub fn normalize_place(&self, place: &Place<'tcx>) -> Place<'tcx> {
+        let place = self.tcx().erase_regions(*place);
+        // Normalize the place to remove regions and other things that are not
+        // needed for the PDG.
+        self.tcx()
+            .try_instantiate_and_normalize_erasing_regions(
+                self.generic_args(),
+                self.param_env,
+                EarlyBinder::bind(place),
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to normalize place {place:?} in {}: {err:?}",
+                    self.tcx().def_path_str(self.def_id)
+                )
             })
     }
 
@@ -240,7 +243,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         &self,
         state: &InstructionState<'tcx>,
         input: Place<'tcx>,
-    ) -> Vec<DepNode<'tcx>> {
+    ) -> Vec<DepNode<'tcx, OneHopLocation>> {
         trace!("Finding inputs for place {input:?}");
         // Include all sources of indirection (each reference in the chain) as relevant places.
         let provenance = input
@@ -268,29 +271,8 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                             // TODO: this is not field-sensitive!
                             place.local == alias.local
                         } else {
-                            let mut place = *place;
-                            if let Some((PlaceElem::Deref, rest)) = place.projection.split_last() {
-                                let mut new_place = place;
-                                new_place.projection = self.tcx().mk_place_elems(rest);
-                                if new_place.ty(&self.mono_body, self.tcx()).ty.is_box() {
-                                    if new_place.is_indirect() {
-                                        // TODO might be unsound: We assume that if
-                                        // there are other indirections in here,
-                                        // there is an alias that does not have
-                                        // indirections in it.
-                                        return false;
-                                    }
-                                    place = new_place;
-                                }
-                            }
                             trace!("Checking conflict status of {place:?} and {alias:?}");
-                            places_conflict(
-                                self.tcx(),
-                                &self.mono_body,
-                                place,
-                                alias,
-                                PlaceConflictBias::Overlap,
-                            )
+                            utils::places_conflict(self.tcx(), &self.mono_body, *place, alias)
                         }
                     });
 
@@ -302,10 +284,12 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                     None
                 };
 
+                // println!("Alias {alias:?} for place {input:?}");
                 // For each `conflict`` last mutated at the locations `last_mut`:
                 conflicts
                     .chain(alias_last_mut)
                     .flat_map(|(conflict, last_mut_locs)| {
+                        //println!("Conflict {conflict:?} for place {input:?}");
                         // For each last mutated location:
                         last_mut_locs.iter().map(move |last_mut_loc| {
                             // Return <CONFLICT> @ <LAST_MUT_LOC> as an input node.
@@ -320,7 +304,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         &self,
         mutated: Place<'tcx>,
         location: Location,
-    ) -> Vec<(Place<'tcx>, DepNode<'tcx>)> {
+    ) -> Vec<(Place<'tcx>, DepNode<'tcx, OneHopLocation>)> {
         // **POINTER-SENSITIVITY:**
         // If `mutated` involves indirection via dereferences, then resolve it to the direct places it could point to.
         let aliases = self.aliases(mutated).collect_vec();
@@ -345,10 +329,13 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         location: Location,
         mutated: Place<'tcx>,
     ) {
+        let mutated = self.normalize_place(&mutated);
         self.find_outputs(mutated, location)
             .into_iter()
             .for_each(|(dst, _)| {
                 // Create a destination node for (DST @ CURRENT_LOC).
+
+                //debug_assert_resolved!(dst);
 
                 // Clear all previous mutations.
                 let dst_mutations = state.last_mutation.entry(dst).or_default();
@@ -360,16 +347,64 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     }
 
     /// Resolve a function [`Operand`] to a specific [`DefId`] and generic arguments if possible.
-    pub(crate) fn operand_to_def_id(
-        &self,
-        func: &Operand<'tcx>,
-    ) -> Option<(DefId, GenericArgsRef<'tcx>)> {
+    pub(crate) fn operand_to_def_id(&self, func: &Operand<'tcx>) -> TyAsFnResult<'tcx> {
         let ty = func.ty(&self.mono_body, self.tcx());
         utils::type_as_fn(self.tcx(), ty)
     }
 
     fn fmt_fn(&self, def_id: DefId) -> String {
         self.tcx().def_path_str(def_id)
+    }
+}
+
+impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
+    /// Creates [`GraphConstructor`] for a function resolved as `fn_resolution`
+    /// in a given `calling_context`.
+    ///
+    /// Returns `None`, if this body should not be analyzed.
+    pub(crate) fn new(
+        memo: &'a MemoPdgConstructor<'tcx, K>,
+        root: Instance<'tcx>,
+        k: K,
+    ) -> Option<LocalAnalysis<'tcx, 'a, K>> {
+        let tcx = memo.tcx;
+        let def_id = root.def_id();
+        let body_with_facts = memo.body_cache.try_get(def_id)?;
+        let param_env = TypingEnv::post_analysis(tcx, def_id).with_post_analysis_normalized(tcx);
+        let body = try_monomorphize(
+            root,
+            tcx,
+            param_env,
+            body_with_facts.body(),
+            tcx.def_span(def_id),
+        )
+        .unwrap();
+
+        let place_info = PlaceInfo::build(tcx, def_id, body_with_facts);
+        let control_dependencies = body.control_dependencies();
+
+        let mut start_loc = FxHashSet::default();
+        start_loc.insert(RichLocation::Start);
+
+        let body_assignments = utils::find_body_assignments(&body);
+
+        let slf = LocalAnalysis {
+            memo,
+            root,
+            body_with_facts,
+            mono_body: body,
+            place_info,
+            control_dependencies,
+            start_loc,
+            def_id,
+            body_assignments,
+            param_env,
+            k,
+        };
+        if memo.dump_mir {
+            slf.dump_mir();
+        }
+        Some(slf)
     }
 
     pub(crate) fn determine_call_handling<'b>(
@@ -378,7 +413,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         func: Cow<'_, Operand<'tcx>>,
         args: Cow<'b, [Spanned<Operand<'tcx>>]>,
         span: Span,
-    ) -> Option<CallHandling<'tcx, 'b>> {
+    ) -> Option<CallHandling<'tcx, 'b, K>> {
         let tcx = self.tcx();
 
         trace!(
@@ -386,10 +421,20 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             self.tcx().def_path_str(self.def_id)
         );
 
-        let Some((called_def_id, generic_args)) = self.operand_to_def_id(&func) else {
-            self.dcx()
-                .span_err(span, "Operand is cannot be interpreted as function");
-            return None;
+        let (called_def_id, generic_args) = match self.operand_to_def_id(&func) {
+            TyAsFnResult::Resolved {
+                def_id,
+                generic_args,
+            } => (def_id, generic_args),
+            TyAsFnResult::FnPtr => {
+                self.memo
+                    .maybe_span_err(span, "Operand is a function pointer");
+                return None;
+            }
+            TyAsFnResult::NotAFunction => {
+                self.dcx().span_err(span, "Operand is not a function");
+                return None;
+            }
         };
         trace!(
             "Resolved call to function: {} with generic args {generic_args:?}",
@@ -441,15 +486,23 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             return None;
         };
 
-        let call_kind = if let Some((instance, shim_type)) =
-            handle_shims(resolved_fn, self.tcx(), typing_env, span)
-        {
-            resolved_fn = instance;
-            CallKind::Indirect {
-                shim: Some(shim_type),
+        let call_kind = match handle_shims(resolved_fn, self.tcx(), typing_env, span) {
+            ShimResult::IsHandledShim {
+                instance,
+                shim_type,
+            } => {
+                resolved_fn = instance;
+                CallKind::Indirect {
+                    shim: Some(shim_type),
+                }
             }
-        } else {
-            self.classify_call_kind(called_def_id, resolved_fn, &args, span)
+            ShimResult::IsNonHandleableShim => {
+                trace!("Bailing because shim cannot behandled (like function pointer)");
+                return None;
+            }
+            ShimResult::IsNotShim => {
+                self.classify_call_kind(called_def_id, resolved_fn, &args, span)
+            }
         };
         let resolved_def_id = resolved_fn.def_id();
         if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {
@@ -457,42 +510,38 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             trace!("  `{called}` monomorphized to `{resolved}`",);
         }
 
-        if let Some(handler) = self.can_approximate_async_functions(resolved_def_id) {
+        if let Some(handler) = self.can_approximate_async_functions(resolved_def_id, span) {
             return Some(CallHandling::ApproxAsyncSM(handler));
         };
 
         trace!("  Handling call! with kind {}", call_kind);
 
         // Recursively generate the PDG for the child function.
-        let cache_key = resolved_fn;
 
-        let is_cached = self.memo.is_in_cache(cache_key);
+        let info = CallInfo {
+            callee: resolved_fn,
+            call_string: location,
+            async_parent: if let CallKind::AsyncPoll(poll) = &call_kind {
+                // Special case for async. We ask for skipping not on the closure, but
+                // on the "async" function that created it. This is needed for
+                // consistency in skipping. Normally, when "poll" is inlined, mutations
+                // introduced by the creator of the future are not recorded and instead
+                // handled here, on the closure. But if the closure is skipped we need
+                // those mutations to occur. To ensure this we always ask for the
+                // "CallChanges" on the creator so that both creator and closure have
+                // the same view of whether they are inlined or "Skip"ped.
+                poll.async_fn_parent
+            } else {
+                None
+            },
+            span,
+            arguments: &args,
+            caller_body: &self.mono_body,
+            param_env: typing_env,
+            cache_key: &self.k,
+        };
 
-        let call_changes = self.call_change_callback().map(|callback| {
-            let info = CallInfo {
-                callee: resolved_fn,
-                call_string: self.make_call_string(location),
-                is_cached,
-                async_parent: if let CallKind::AsyncPoll(poll) = &call_kind {
-                    // Special case for async. We ask for skipping not on the closure, but
-                    // on the "async" function that created it. This is needed for
-                    // consistency in skipping. Normally, when "poll" is inlined, mutations
-                    // introduced by the creator of the future are not recorded and instead
-                    // handled here, on the closure. But if the closure is skipped we need
-                    // those mutations to occur. To ensure this we always ask for the
-                    // "CallChanges" on the creator so that both creator and closure have
-                    // the same view of whether they are inlined or "Skip"ped.
-                    poll.async_fn_parent
-                } else {
-                    None
-                },
-                span,
-                arguments: &args,
-                caller_body: &self.mono_body,
-                param_env: typing_env,
-            };
-            callback.on_inline(info)
-        });
+        let call_changes = self.call_change_callback().on_inline(info);
 
         // Handle async functions at the time of polling, not when the future is created.
         if is_async(tcx, resolved_def_id) {
@@ -503,58 +552,59 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             // "Some", knowing that handling "poll" later will handle the mutations.
             return (!matches!(
                 &call_changes,
-                Some(CallChanges {
+                CallChanges {
                     skip: SkipCall::Skip,
                     ..
-                })
+                }
             ))
             .then_some(CallHandling::ApproxAsyncFn);
         }
 
-        let (calling_convention, precise) = match call_changes {
-            Some(CallChanges {
-                skip: SkipCall::Skip,
-            }) => {
+        let (calling_convention, precise, new_cache_key) = match call_changes.skip {
+            SkipCall::Skip => {
                 trace!("  Bailing because user callback said to bail");
                 return None;
             }
-            Some(CallChanges {
-                skip:
-                    SkipCall::Replace {
-                        instance,
-                        calling_convention,
-                    },
-            }) => {
+            SkipCall::Replace {
+                instance,
+                calling_convention,
+                cache_key,
+            } => {
                 trace!("  Replacing call as instructed by user");
                 resolved_fn = instance;
-                (calling_convention, false)
+                (calling_convention, false, cache_key)
             }
-            _ => (CallingConvention::from_call_kind(&call_kind, args), true),
+            SkipCall::NoSkip(cache_key) => (
+                CallingConvention::from_call_kind(&call_kind, args),
+                true,
+                cache_key,
+            ),
         };
         if is_virtual(tcx, resolved_def_id) {
             trace!("  bailing because is unresolvable trait method");
-            if let Some(callback) = self.call_change_callback() {
-                callback.on_inline_miss(
-                    resolved_fn,
-                    typing_env,
-                    location,
-                    self.root,
-                    InlineMissReason::TraitMethod,
-                    span,
-                );
-            }
+            self.call_change_callback().on_inline_miss(
+                resolved_fn,
+                typing_env,
+                location,
+                self.root,
+                InlineMissReason::TraitMethod,
+                span,
+            );
             return None;
         }
-        let Some(descriptor) = self.memo.construct_for(resolved_fn) else {
-            trace!("  Bailing because of recursion.");
-            return None;
-        };
 
-        Some(CallHandling::Ready {
-            descriptor,
-            calling_convention,
-            precise,
-        })
+        let cache_key = (resolved_fn, new_cache_key);
+
+        if self.memo.is_recursion(resolved_fn) {
+            trace!("  bailing because recursion");
+            None
+        } else {
+            Some(CallHandling::Ready {
+                calling_convention,
+                descriptor: cache_key,
+                precise,
+            })
+        }
     }
 
     /// Attempt to inline a call to a function.
@@ -578,14 +628,21 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             return false;
         };
 
-        trace!("Call handling is {}", preamble.as_ref());
+        debug!("Call handling is {}", preamble.as_ref());
 
-        let (child_constructor, calling_convention, precise) = match preamble {
+        let (_descriptor, child_constructor, calling_convention, precise) = match preamble {
             CallHandling::Ready {
                 descriptor,
                 calling_convention,
                 precise,
-            } => (descriptor, calling_convention, precise),
+            } => (
+                descriptor.clone(),
+                self.memo
+                    .construct_for(descriptor)
+                    .expect("Existence check should have already happened"),
+                calling_convention,
+                precise,
+            ),
             CallHandling::ApproxAsyncFn => {
                 // Register a synthetic assignment of `future = (arg0, arg1, ...)`.
                 let rvalue = Rvalue::Aggregate(
@@ -608,7 +665,14 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             }
         };
 
-        let parentable_dsts = child_constructor.parentable_dsts(|n| n.len() == 1);
+        debug!(
+            "Inlining call at {span:?} in {} at {:?} with handling {}",
+            self.tcx().def_path_debug_str(self.def_id),
+            location,
+            calling_convention.as_ref()
+        );
+
+        let parentable_dsts = child_constructor.parentable_dsts();
         let parent_body = &self.mono_body;
 
         let place_translator = PlaceTranslator::new(
@@ -648,11 +712,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         )
     }
 
-    pub(super) fn generic_args(&self) -> GenericArgsRef<'tcx> {
-        self.root.args
-    }
-
-    pub(crate) fn construct_partial(&'a self) -> PartialGraph<'tcx> {
+    pub(crate) fn construct_partial(&'a self) -> PartialGraph<'tcx, K> {
         let mut analysis = self.iterate_to_fixpoint(self.tcx(), &self.mono_body, None);
 
         let mut final_state = PartialGraph::new(
@@ -660,6 +720,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
             self.def_id,
             self.mono_body.arg_count,
             self.mono_body.local_decls(),
+            self.k.clone(),
         );
 
         analysis.visit_reachable_with(&self.mono_body, &mut final_state);
@@ -685,7 +746,7 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
                     let src = self.make_dep_node(*place, *location);
                     let dst = self.make_dep_node(*place, RichLocation::End);
                     let edge = DepEdge::data(
-                        self.make_call_string(self.mono_body.terminator_loc(block)),
+                        self.mono_body.terminator_loc(block).into(),
                         SourceUse::Operand,
                         ret_kind,
                     );
@@ -702,6 +763,13 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
     /// The error case is if we tried to resolve this as async and failed. We
     /// know it *is* async but we couldn't determine the information needed to
     /// analyze the function, therefore we will have to approximate it.
+    ///
+    /// In case of async, checks whether the function call, described by the unresolved `def_id`
+    /// and the resolved instance `resolved_fn` is a call to [`<T as
+    /// Future>::poll`](std::future::Future::poll) where `T` is the type of an
+    /// `async fn` or `async {}` created generator.
+    ///
+    /// Resolves the original arguments that constituted the generator.
     fn classify_call_kind<'b>(
         &'b self,
         def_id: DefId,
@@ -709,13 +777,26 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         original_args: &'b [Spanned<Operand<'tcx>>],
         span: Span,
     ) -> CallKind<'tcx> {
-        match self.try_poll_call_kind(def_id, resolved_fn, original_args) {
-            AsyncDeterminationResult::Resolved(r) => r,
-            AsyncDeterminationResult::NotAsync => self
-                .try_indirect_call_kind(resolved_fn.def_id())
-                .unwrap_or(CallKind::Direct),
-            AsyncDeterminationResult::Unresolvable(reason) => self.dcx().span_fatal(span, reason),
+        let lang_items = self.tcx().lang_items();
+        // Why is calling `is_async_fn_or_block` here necessary? Because the
+        // rewriting of arguments only needs to take place if rustc
+        // automatically created that implementation of `poll` for us. If this
+        // is a manual `poll` implementation, the signature of the resolved
+        // function and the signature of `poll` will be the same.
+        //
+        // Why is this important? For example, an auto-generated async closure's
+        // return gets wrapped in `Ready` automatically, whereas a manual
+        // implementation does it explicitly.
+        if lang_items.future_poll_fn() == Some(def_id)
+            && async_support::is_async_fn_or_block(self.tcx(), resolved_fn)
+        {
+            return match self.find_async_args(resolved_fn, original_args, span) {
+                Ok(poll) => CallKind::AsyncPoll(poll),
+                Err(str) => self.tcx().dcx().span_fatal(span, str),
+            };
         }
+        self.try_indirect_call_kind(resolved_fn.def_id())
+            .unwrap_or(CallKind::Direct)
     }
 
     fn try_indirect_call_kind(&self, def_id: DefId) -> Option<CallKind<'tcx>> {
@@ -733,16 +814,16 @@ impl<'tcx, 'a> LocalAnalysis<'tcx, 'a> {
         vis.set_time(time);
         vis
     }
-}
 
-impl<'tcx> LocalAnalysis<'tcx, '_> {
     fn handle_terminator(
         &self,
         terminator: &Terminator<'tcx>,
         state: &mut InstructionState<'tcx>,
         location: Location,
         time: Time,
-    ) {
+    ) where
+        K: Clone + Eq + Hash,
+    {
         if let TerminatorKind::Call {
             func,
             args,
@@ -767,7 +848,7 @@ impl<'tcx> LocalAnalysis<'tcx, '_> {
     }
 }
 
-impl<'a, 'tcx> df::Analysis<'tcx> for &'a LocalAnalysis<'tcx, 'a> {
+impl<'a, 'tcx, K: Hash + Eq + Clone> df::Analysis<'tcx> for &'a LocalAnalysis<'tcx, 'a, K> {
     type Domain = InstructionState<'tcx>;
 
     const NAME: &'static str = "LocalPdgConstruction";
@@ -832,17 +913,50 @@ impl Display for CallKind<'_> {
 }
 
 #[derive(strum::AsRefStr)]
-pub(crate) enum CallHandling<'tcx, 'a> {
+pub(crate) enum CallHandling<'tcx, 'a, K> {
     ApproxAsyncFn,
     Ready {
         calling_convention: CallingConvention<'tcx>,
-        descriptor: &'a PartialGraph<'tcx>,
+        descriptor: (Instance<'tcx>, K),
         precise: bool,
     },
-    ApproxAsyncSM(ApproximationHandler<'tcx, 'a>),
+    ApproxAsyncSM(ApproximationHandler<'tcx, 'a, K>),
 }
 
 fn other_as_arg<'tcx>(place: Place<'tcx>, body: &Body<'tcx>) -> Option<u8> {
     (body.local_kind(place.local) == rustc_middle::mir::LocalKind::Arg)
         .then(|| place.local.as_u32() as u8 - 1)
+}
+
+/// This used to be implemented as `place_info.children(place).iter().any(|p| *p
+/// != place)`, but this is more efficient and should cause fewer spurious
+/// errors, since it only explores the type shallowly.
+fn is_split<'tcx>(ty: Ty<'tcx>, context: DefId, tcx: TyCtxt<'tcx>) -> bool {
+    match ty.kind() {
+        _ if ty.is_box() => true,
+        TyKind::Tuple(fields) => !fields.is_empty(),
+        TyKind::Adt(def, ..) => match def.adt_kind() {
+            AdtKind::Struct => def.all_visible_fields(context, tcx).next().is_some(),
+            AdtKind::Union => false,
+            AdtKind::Enum => def.all_fields().next().is_some(),
+        },
+        TyKind::Array(..) | TyKind::Slice(..) => true,
+        TyKind::Ref(..) => false,
+        TyKind::RawPtr(..) => true,
+        TyKind::Closure(_, args) | TyKind::Coroutine(_, args) => {
+            is_split(args.as_closure().tupled_upvars_ty(), context, tcx)
+        }
+        TyKind::FnDef(..)
+        | TyKind::FnPtr(..)
+        | TyKind::Foreign(..)
+        | TyKind::Dynamic(..)
+        | TyKind::Param(..)
+        | TyKind::Never => false,
+
+        _ if ty.is_primitive_ty() => false,
+        _ => {
+            log::warn!("unimplemented {ty:?} ({:?})", ty.kind());
+            false
+        }
+    }
 }

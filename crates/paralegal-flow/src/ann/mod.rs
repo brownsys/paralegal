@@ -2,6 +2,7 @@ use std::fmt::{Display, Write};
 
 use either::Either;
 use flowistry_pdg_construction::{body_cache::intermediate_out_dir, encoder::ParalegalEncoder};
+use log::debug;
 use rustc_ast::Attribute;
 
 use rustc_hir::{
@@ -295,7 +296,13 @@ pub fn dump_markers(tcx: TyCtxt) {
         symbols: Default::default(),
     };
     tcx.hir().visit_all_item_likes_in_crate(&mut vis);
-    let mut encoder = ParalegalEncoder::new(intermediate_out_dir(tcx, MARKER_META_EXT), tcx);
+    let path = intermediate_out_dir(tcx, MARKER_META_EXT);
+    let mut encoder = ParalegalEncoder::new(&path, tcx);
     vis.annotations.encode(&mut encoder);
     encoder.finish();
+    debug!(
+        "Wrote {} markers to {}",
+        vis.annotations.len(),
+        path.display()
+    );
 }

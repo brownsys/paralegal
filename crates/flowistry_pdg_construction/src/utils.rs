@@ -5,28 +5,26 @@ use either::Either;
 use itertools::Itertools;
 use log::trace;
 
+use rustc_borrowck::consumers::PlaceConflictBias;
 use rustc_hash::{FxHashMap, FxHashSet};
-use rustc_hir::{def_id::DefId, Defaultness};
+use rustc_hir::{self as hir, def_id::DefId, Defaultness};
 use rustc_middle::{
     mir::{
-        tcx::PlaceTy, Body, HasLocalDecls, Local, Location, Operand, Place, ProjectionElem,
-        Statement, StatementKind, Terminator, TerminatorKind,
+        tcx::PlaceTy, Body, HasLocalDecls, Local, Location, Operand, Place, PlaceElem, PlaceRef,
+        ProjectionElem, Statement, StatementKind, Terminator, TerminatorKind,
     },
     ty::{
-        AssocItemContainer, Binder, EarlyBinder, GenericArg, GenericArgsRef, Instance,
-        InstanceKind, Region, Ty, TyCtxt, TyKind, TypingEnv,
+        self, AssocItemContainer, Binder, EarlyBinder, GenericArg, GenericArgsRef, Instance,
+        InstanceKind, Region, Ty, TyCtxt, TyKind, TypeVisitable, TypeVisitor, TypingEnv,
     },
 };
 use rustc_span::{source_map::Spanned, ErrorGuaranteed, Span};
 use rustc_type_ir::{fold::TypeFoldable, AliasTyKind, PredicatePolarity, RegionKind};
 use rustc_utils::{BodyExt, PlaceExt};
 
-pub trait Captures<'a> {}
-impl<T: ?Sized> Captures<'_> for T {}
-
 /// An async check that does not crash if called on closures.
 pub fn is_async(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    !tcx.is_closure_like(def_id) && tcx.asyncness(def_id).is_async()
+    !tcx.is_closure_like(def_id) && !tcx.is_constructor(def_id) && tcx.asyncness(def_id).is_async()
 }
 
 pub type ArgSlice<'a, 'tcx> = &'a [Spanned<Operand<'tcx>>];
@@ -42,12 +40,16 @@ pub fn try_resolve_function<'tcx>(
     Instance::try_resolve(tcx, typing_env, def_id, args).unwrap()
 }
 
+pub fn place_ty_eq<'tcx>(a: PlaceTy<'tcx>, b: PlaceTy<'tcx>) -> bool {
+    a.ty == b.ty && a.variant_index == b.variant_index
+}
+
 /// Returns whether this method is expected to have a body we can analyze.
 ///
 /// Specifically this returns `true` if `function` refers to an associated item
 /// of a trait which has *no* default value.
 ///
-/// Note: While you are supposed to call this whit a `function` that refers to a
+/// Note: While you are supposed to call this with a `function` that refers to a
 /// function, it will not crash if it refers to a type or constant instead.
 pub fn is_virtual(tcx: TyCtxt, function: DefId) -> bool {
     tcx.opt_associated_item(function).is_some_and(|assoc_item| {
@@ -85,17 +87,53 @@ where
     })
 }
 
+pub enum TyAsFnResult<'tcx> {
+    Resolved {
+        def_id: DefId,
+        generic_args: GenericArgsRef<'tcx>,
+    },
+    FnPtr,
+    NotAFunction,
+}
+
+impl<'tcx> TyAsFnResult<'tcx> {
+    pub fn unwrap(self) -> (DefId, GenericArgsRef<'tcx>) {
+        match self {
+            TyAsFnResult::Resolved {
+                def_id,
+                generic_args,
+            } => (def_id, generic_args),
+            TyAsFnResult::FnPtr => panic!("Expected a static function, but got a function pointer"),
+            TyAsFnResult::NotAFunction => panic!("Expected a function, but got something else"),
+        }
+    }
+
+    pub fn to_option(self) -> Option<(DefId, GenericArgsRef<'tcx>)> {
+        match self {
+            TyAsFnResult::Resolved {
+                def_id,
+                generic_args,
+            } => Some((def_id, generic_args)),
+            TyAsFnResult::FnPtr | TyAsFnResult::NotAFunction => None,
+        }
+    }
+}
+
 /// Attempt to interpret this type as a statically determinable function and its
 /// generic arguments.
-pub fn type_as_fn<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<(DefId, GenericArgsRef<'tcx>)> {
+pub fn type_as_fn<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> TyAsFnResult<'tcx> {
     let ty = ty_resolve(ty, tcx);
     match ty.kind() {
         TyKind::FnDef(def_id, generic_args)
         | TyKind::Coroutine(def_id, generic_args)
-        | TyKind::Closure(def_id, generic_args) => Some((*def_id, generic_args)),
+        | TyKind::Closure(def_id, generic_args) => TyAsFnResult::Resolved {
+            def_id: *def_id,
+            generic_args,
+        },
+        TyKind::FnPtr(..) => TyAsFnResult::FnPtr,
         ty => {
             trace!("Bailing from handle_call because func is literal with type: {ty:?}");
-            None
+            TyAsFnResult::NotAFunction
         }
     }
 }
@@ -347,12 +385,21 @@ pub enum ShimType {
     FnPtr,
 }
 
+pub enum ShimResult<'tcx> {
+    IsHandledShim {
+        instance: Instance<'tcx>,
+        shim_type: ShimType,
+    },
+    IsNonHandleableShim,
+    IsNotShim,
+}
+
 pub fn handle_shims<'tcx>(
     resolved_fn: Instance<'tcx>,
     tcx: TyCtxt<'tcx>,
     typing_env: TypingEnv<'tcx>,
     span: Span,
-) -> Option<(Instance<'tcx>, ShimType)> {
+) -> ShimResult<'tcx> {
     match resolved_fn.def {
         InstanceKind::ClosureOnceShim { .. } => {
             // Rustc has inserted a call to the shim that maps `Fn` and `FnMut`
@@ -366,23 +413,484 @@ pub fn handle_shims<'tcx>(
             let Some((func_a, _rest)) = resolved_fn.args.split_first() else {
                 unreachable!()
             };
-            let Some((func_t, g)) = type_as_fn(tcx, func_a.expect_ty()) else {
-                unreachable!()
+            let (func_t, g) = match type_as_fn(tcx, func_a.expect_ty()) {
+                TyAsFnResult::Resolved {
+                    def_id,
+                    generic_args,
+                } => (def_id, generic_args),
+                TyAsFnResult::FnPtr => {
+                    return ShimResult::IsNonHandleableShim;
+                }
+                TyAsFnResult::NotAFunction => {
+                    unreachable!("Expected a function, but got something else");
+                }
             };
             let instance = Instance::expect_resolve(tcx, typing_env, func_t, g, span);
-            Some((instance, ShimType::Once))
+            ShimResult::IsHandledShim {
+                instance,
+                shim_type: ShimType::Once,
+            }
         }
         InstanceKind::FnPtrShim { .. } => {
             let Some((func_a, _rest)) = resolved_fn.args.split_first() else {
                 unreachable!()
             };
-            let Some((func_t, g)) = type_as_fn(tcx, func_a.expect_ty()) else {
-                unreachable!()
+            let (func_t, g) = match type_as_fn(tcx, func_a.expect_ty()) {
+                TyAsFnResult::Resolved {
+                    def_id,
+                    generic_args,
+                } => (def_id, generic_args),
+                TyAsFnResult::FnPtr => {
+                    return ShimResult::IsNonHandleableShim;
+                }
+                TyAsFnResult::NotAFunction => {
+                    unreachable!("Expected a function, but got something else");
+                }
             };
             let instance = Instance::expect_resolve(tcx, typing_env, func_t, g, span);
-
-            Some((instance, ShimType::FnPtr))
+            ShimResult::IsHandledShim {
+                instance,
+                shim_type: ShimType::FnPtr,
+            }
         }
-        _ => None,
+        _ => ShimResult::IsNotShim,
+    }
+}
+
+#[macro_export]
+macro_rules! debug_assert_resolved {
+    ($e:expr) => {
+        #[cfg(debug_assertions)]
+        {
+            $crate::utils::assert_resolved(&$e, || {
+                format!("Expected {:?} to have resolved type", $e)
+            });
+        }
+    };
+}
+
+pub fn assert_resolved<'tcx>(rvalue: &impl TypeVisitable<TyCtxt<'tcx>>, msg: impl Fn() -> String) {
+    struct V<M>(M);
+
+    impl<'tcx, M: Fn() -> String> TypeVisitor<TyCtxt<'tcx>> for V<M> {
+        fn visit_ty(&mut self, ty: Ty<'tcx>) {
+            match ty.kind() {
+                TyKind::Alias(..) | TyKind::Param(_) => {
+                    panic!("Found type variable {ty:?}: {}", (self.0)())
+                }
+                _ => (),
+            }
+        }
+    }
+
+    let mut v = V(msg);
+    rvalue.visit_with(&mut v);
+}
+
+// #################################################################################################
+// This is a copy of the code in rustc_borrowck::consumers::places_conflict, reproduced here to make
+// slight alterations that do not throw an error for nested references
+// #################################################################################################
+
+/// Helper function for checking if places conflict with a mutable borrow and deep access depth.
+/// This is used to check for places conflicting outside of the borrow checking code (such as in
+/// dataflow).
+pub fn places_conflict<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    body: &Body<'tcx>,
+    borrow_place: Place<'tcx>,
+    access_place: Place<'tcx>,
+) -> bool {
+    let borrow_local = borrow_place.local;
+    let access_local = access_place.local;
+    let access_place = access_place.as_ref();
+
+    if borrow_local != access_local {
+        // We have proven the borrow disjoint - further projections will remain disjoint.
+        return false;
+    }
+
+    // This Local/Local case is handled by the more general code below, but
+    // it's so common that it's a speed win to check for it first.
+    if borrow_place.projection.is_empty() && access_place.projection.is_empty() {
+        return true;
+    }
+
+    // loop invariant: borrow_c is always either equal to access_c or disjoint from it.
+    for ((borrow_place, borrow_c), &access_c) in
+        std::iter::zip(borrow_place.iter_projections(), access_place.projection)
+    {
+        // Borrow and access path both have more components.
+        //
+        // Examples:
+        //
+        // - borrow of `a.(...)`, access to `a.(...)`
+        // - borrow of `a.(...)`, access to `b.(...)`
+        //
+        // Here we only see the components we have checked so
+        // far (in our examples, just the first component). We
+        // check whether the components being borrowed vs
+        // accessed are disjoint (as in the second example,
+        // but not the first).
+        match place_projection_conflict(
+            tcx,
+            body,
+            borrow_place,
+            borrow_c,
+            access_c,
+            PlaceConflictBias::Overlap,
+        ) {
+            Overlap::Arbitrary => {
+                // We have encountered different fields of potentially
+                // the same union - the borrow now partially overlaps.
+                //
+                // There is no *easy* way of comparing the fields
+                // further on, because they might have different types
+                // (e.g., borrows of `u.a.0` and `u.b.y` where `.0` and
+                // `.y` come from different structs).
+                //
+                // We could try to do some things here - e.g., count
+                // dereferences - but that's probably not a good
+                // idea, at least for now, so just give up and
+                // report a conflict. This is unsafe code anyway so
+                // the user could always use raw pointers.
+                return true;
+            }
+            Overlap::EqualOrDisjoint => {
+                // This is the recursive case - proceed to the next element.
+            }
+            Overlap::Disjoint => {
+                // We have proven the borrow disjoint - further
+                // projections will remain disjoint.
+                return false;
+            }
+        }
+    }
+
+    if borrow_place.projection.len() > access_place.projection.len() {
+        for (base, elem) in borrow_place
+            .iter_projections()
+            .skip(access_place.projection.len())
+        {
+            // Borrow path is longer than the access path. Examples:
+            //
+            // - borrow of `a.b.c`, access to `a.b`
+            //
+            // Here, we know that the borrow can access a part of
+            // our place. This is a conflict if that is a part our
+            // access cares about.
+
+            let base_ty = base.ty(body, tcx).ty;
+
+            match (elem, &base_ty.kind()) {
+                (ProjectionElem::Deref, ty::Ref(_, _, hir::Mutability::Not)) => {
+                    // This occurs only in two cases. Either we have a reference
+                    // as an argument, which causes queries such as
+                    // conflicting("(*_1)", "_2") or if we have a raw pointer in
+                    // the mix. In the reference case the alias analysis will
+                    // already keep track of the conflict. Raw pointers by
+                    // themselves are not soundly supported. However this can
+                    // also occur via a manual "deref" (or somesuch), on which
+                    // case we rely on the lifetimes declared on those functions
+                    // to be correct and then our alias analysis will pick it up
+                    // correctly.
+                    return false;
+                }
+                (ProjectionElem::Deref, _)
+                | (ProjectionElem::Field { .. }, _)
+                | (ProjectionElem::Index { .. }, _)
+                | (ProjectionElem::ConstantIndex { .. }, _)
+                | (ProjectionElem::Subslice { .. }, _)
+                | (ProjectionElem::OpaqueCast { .. }, _)
+                | (ProjectionElem::Subtype(_), _)
+                | (ProjectionElem::Downcast { .. }, _) => {
+                    // Recursive case. This can still be disjoint on a
+                    // further iteration if this a shallow access and
+                    // there's a deref later on, e.g., a borrow
+                    // of `*x.y` while accessing `x`.
+                }
+            }
+        }
+    }
+
+    true
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum Overlap {
+    Arbitrary,
+    EqualOrDisjoint,
+    Disjoint,
+}
+
+// Given that the bases of `elem1` and `elem2` are always either equal
+// or disjoint (and have the same type!), return the overlap situation
+// between `elem1` and `elem2`.
+fn place_projection_conflict<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    body: &Body<'tcx>,
+    pi1: PlaceRef<'tcx>,
+    pi1_elem: PlaceElem<'tcx>,
+    pi2_elem: PlaceElem<'tcx>,
+    bias: PlaceConflictBias,
+) -> Overlap {
+    match (pi1_elem, pi2_elem) {
+        (ProjectionElem::Deref, ProjectionElem::Deref) => {
+            // derefs (e.g., `*x` vs. `*x`) - recur.
+            Overlap::EqualOrDisjoint
+        }
+        (ProjectionElem::OpaqueCast(_), ProjectionElem::OpaqueCast(_)) => {
+            // casts to other types may always conflict irrespective of the type being cast to.
+            Overlap::EqualOrDisjoint
+        }
+        (ProjectionElem::Field(f1, _), ProjectionElem::Field(f2, _)) => {
+            if f1 == f2 {
+                // same field (e.g., `a.y` vs. `a.y`) - recur.
+                Overlap::EqualOrDisjoint
+            } else {
+                let ty = pi1.ty(body, tcx).ty;
+                if ty.is_union() {
+                    // Different fields of a union, we are basically stuck.
+                    Overlap::Arbitrary
+                } else {
+                    // Different fields of a struct (`a.x` vs. `a.y`). Disjoint!
+                    Overlap::Disjoint
+                }
+            }
+        }
+        (ProjectionElem::Downcast(_, v1), ProjectionElem::Downcast(_, v2)) => {
+            // different variants are treated as having disjoint fields,
+            // even if they occupy the same "space", because it's
+            // impossible for 2 variants of the same enum to exist
+            // (and therefore, to be borrowed) at the same time.
+            //
+            // Note that this is different from unions - we *do* allow
+            // this code to compile:
+            //
+            // ```
+            // fn foo(x: &mut Result<i32, i32>) {
+            //     let mut v = None;
+            //     if let Ok(ref mut a) = *x {
+            //         v = Some(a);
+            //     }
+            //     // here, you would *think* that the
+            //     // *entirety* of `x` would be borrowed,
+            //     // but in fact only the `Ok` variant is,
+            //     // so the `Err` variant is *entirely free*:
+            //     if let Err(ref mut a) = *x {
+            //         v = Some(a);
+            //     }
+            //     drop(v);
+            // }
+            // ```
+            if v1 == v2 {
+                Overlap::EqualOrDisjoint
+            } else {
+                Overlap::Disjoint
+            }
+        }
+        (
+            ProjectionElem::Index(..),
+            ProjectionElem::Index(..)
+            | ProjectionElem::ConstantIndex { .. }
+            | ProjectionElem::Subslice { .. },
+        )
+        | (
+            ProjectionElem::ConstantIndex { .. } | ProjectionElem::Subslice { .. },
+            ProjectionElem::Index(..),
+        ) => {
+            // Array indexes (`a[0]` vs. `a[i]`). These can either be disjoint
+            // (if the indexes differ) or equal (if they are the same).
+            match bias {
+                PlaceConflictBias::Overlap => {
+                    // If we are biased towards overlapping, then this is the recursive
+                    // case that gives "equal *or* disjoint" its meaning.
+                    Overlap::EqualOrDisjoint
+                }
+                PlaceConflictBias::NoOverlap => {
+                    // If we are biased towards no overlapping, then this is disjoint.
+                    Overlap::Disjoint
+                }
+            }
+        }
+        (
+            ProjectionElem::ConstantIndex {
+                offset: o1,
+                min_length: _,
+                from_end: false,
+            },
+            ProjectionElem::ConstantIndex {
+                offset: o2,
+                min_length: _,
+                from_end: false,
+            },
+        )
+        | (
+            ProjectionElem::ConstantIndex {
+                offset: o1,
+                min_length: _,
+                from_end: true,
+            },
+            ProjectionElem::ConstantIndex {
+                offset: o2,
+                min_length: _,
+                from_end: true,
+            },
+        ) => {
+            if o1 == o2 {
+                Overlap::EqualOrDisjoint
+            } else {
+                Overlap::Disjoint
+            }
+        }
+        (
+            ProjectionElem::ConstantIndex {
+                offset: offset_from_begin,
+                min_length: min_length1,
+                from_end: false,
+            },
+            ProjectionElem::ConstantIndex {
+                offset: offset_from_end,
+                min_length: min_length2,
+                from_end: true,
+            },
+        )
+        | (
+            ProjectionElem::ConstantIndex {
+                offset: offset_from_end,
+                min_length: min_length1,
+                from_end: true,
+            },
+            ProjectionElem::ConstantIndex {
+                offset: offset_from_begin,
+                min_length: min_length2,
+                from_end: false,
+            },
+        ) => {
+            // both patterns matched so it must be at least the greater of the two
+            let min_length = std::cmp::max(min_length1, min_length2);
+            // `offset_from_end` can be in range `[1..min_length]`, 1 indicates the last
+            // element (like -1 in Python) and `min_length` the first.
+            // Therefore, `min_length - offset_from_end` gives the minimal possible
+            // offset from the beginning
+            if offset_from_begin >= min_length - offset_from_end {
+                Overlap::EqualOrDisjoint
+            } else {
+                Overlap::Disjoint
+            }
+        }
+        (
+            ProjectionElem::ConstantIndex {
+                offset,
+                min_length: _,
+                from_end: false,
+            },
+            ProjectionElem::Subslice {
+                from,
+                to,
+                from_end: false,
+            },
+        )
+        | (
+            ProjectionElem::Subslice {
+                from,
+                to,
+                from_end: false,
+            },
+            ProjectionElem::ConstantIndex {
+                offset,
+                min_length: _,
+                from_end: false,
+            },
+        ) => {
+            if (from..to).contains(&offset) {
+                Overlap::EqualOrDisjoint
+            } else {
+                Overlap::Disjoint
+            }
+        }
+        (
+            ProjectionElem::ConstantIndex {
+                offset,
+                min_length: _,
+                from_end: false,
+            },
+            ProjectionElem::Subslice { from, .. },
+        )
+        | (
+            ProjectionElem::Subslice { from, .. },
+            ProjectionElem::ConstantIndex {
+                offset,
+                min_length: _,
+                from_end: false,
+            },
+        ) => {
+            if offset >= from {
+                Overlap::EqualOrDisjoint
+            } else {
+                Overlap::Disjoint
+            }
+        }
+        (
+            ProjectionElem::ConstantIndex {
+                offset,
+                min_length: _,
+                from_end: true,
+            },
+            ProjectionElem::Subslice {
+                to, from_end: true, ..
+            },
+        )
+        | (
+            ProjectionElem::Subslice {
+                to, from_end: true, ..
+            },
+            ProjectionElem::ConstantIndex {
+                offset,
+                min_length: _,
+                from_end: true,
+            },
+        ) => {
+            if offset > to {
+                Overlap::EqualOrDisjoint
+            } else {
+                Overlap::Disjoint
+            }
+        }
+        (
+            ProjectionElem::Subslice {
+                from: f1,
+                to: t1,
+                from_end: false,
+            },
+            ProjectionElem::Subslice {
+                from: f2,
+                to: t2,
+                from_end: false,
+            },
+        ) => {
+            if f2 >= t1 || f1 >= t2 {
+                Overlap::Disjoint
+            } else {
+                Overlap::EqualOrDisjoint
+            }
+        }
+        (ProjectionElem::Subslice { .. }, ProjectionElem::Subslice { .. }) => {
+            Overlap::EqualOrDisjoint
+        }
+        (
+            ProjectionElem::Deref
+            | ProjectionElem::Field(..)
+            | ProjectionElem::Index(..)
+            | ProjectionElem::ConstantIndex { .. }
+            | ProjectionElem::OpaqueCast { .. }
+            | ProjectionElem::Subslice { .. }
+            | ProjectionElem::Subtype(_)
+            | ProjectionElem::Downcast(..),
+            _,
+        ) => panic!(
+            "mismatched projections in place_element_conflict: {:?} and {:?}",
+            pi1_elem, pi2_elem
+        ),
     }
 }

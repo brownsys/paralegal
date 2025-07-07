@@ -17,7 +17,7 @@ rustc_utils = { workspace = true, features = ["indexical"] }
 indexical = { workspace = true }
 itertools = "0.13.0"
 petgraph = { version = "0.6.4" }
-internment = { version = "0.8.6" }
+internment = { workspace = true }
 flowistry_pdg = { version = "0.1.0", path = "../flowistry_pdg", features = [
     "rustc",
 ] }

@@ -324,7 +324,8 @@ fn finding_utc_now() -> Result<()> {
         "clock",
     ])
     .with_dep(["sled@0.34.7"])
-    .with_dep(["thiserror@1"]);
+    .with_dep(["thiserror@1"])
+    .with_paralegal_args(["--relaxed"]);
     test.run(|ctx| {
         assert_error!(
             ctx,

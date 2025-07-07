@@ -21,6 +21,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::{num::NonZeroU64, path::PathBuf};
 
+use rustc_ast::AttrId;
 use rustc_const_eval::interpret::AllocId;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::{CrateNum, DefId, DefIndex};
@@ -30,8 +31,8 @@ use rustc_serialize::{
     Decodable, Decoder, Encodable, Encoder,
 };
 use rustc_span::{
-    AttrId, BytePos, ExpnId, FileName, RealFileName, SourceFile, Span, SpanData, SpanDecoder,
-    SpanEncoder, Symbol, SyntaxContext, DUMMY_SP,
+    BytePos, ExpnId, FileName, RealFileName, SourceFile, Span, SpanData, SpanDecoder, SpanEncoder,
+    Symbol, SyntaxContext, DUMMY_SP,
 };
 use rustc_type_ir::{PredicateKind, TyDecoder, TyEncoder};
 
@@ -130,7 +131,7 @@ pub struct ParalegalDecoder<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
     mem_decoder: MemDecoder<'a>,
     shorthand_map: FxHashMap<usize, Ty<'tcx>>,
-    file_shorthands: FxHashMap<usize, Arc<SourceFile>>,
+    file_shorthands: FxHashMap<usize, Option<Arc<SourceFile>>>,
 }
 
 impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
@@ -276,6 +277,9 @@ impl SpanEncoder for ParalegalEncoder<'_> {
     fn encode_span(&mut self, span: Span) {
         span.data().encode(self)
     }
+
+    /// For now this does nothing, simply dropping the context. We don't use it
+    /// anyway in our errors.
     fn encode_syntax_context(&mut self, _syntax_context: SyntaxContext) {}
 
     fn encode_crate_num(&mut self, crate_num: CrateNum) {
@@ -341,7 +345,7 @@ impl ParalegalEncoder<'_> {
 }
 
 impl ParalegalDecoder<'_, '_> {
-    fn decode_file_name(&mut self, crate_num: CrateNum) -> Arc<SourceFile> {
+    fn decode_file_name(&mut self, crate_num: CrateNum) -> Option<Arc<SourceFile>> {
         let tag = u8::decode(self);
         let pos = if tag == TAG_ENCODE_REMOTE {
             let index = usize::decode(self);
@@ -367,7 +371,7 @@ impl ParalegalDecoder<'_, '_> {
         file
     }
 
-    fn decode_filename_local(&mut self, crate_num: CrateNum) -> Arc<SourceFile> {
+    fn decode_filename_local(&mut self, crate_num: CrateNum) -> Option<Arc<SourceFile>> {
         let file_name = FileName::decode(self);
         let source_map = self.tcx.sess.source_map();
         let matching_source_files = source_map
@@ -383,12 +387,15 @@ impl ParalegalDecoder<'_, '_> {
             .cloned()
             .collect::<Box<[_]>>();
         match matching_source_files.as_ref() {
-            [sf] => sf.clone(),
+            [sf] => Some(sf.clone()),
             [] => match &file_name {
                 FileName::Real(RealFileName::LocalPath(local)) if source_map.file_exists(local) => {
-                    source_map.load_file(local).unwrap()
+                    Some(source_map.load_file(local).unwrap())
                 }
-                _ => panic!("Could not load file {}", file_name.prefer_local()),
+                _ => {
+                    log::error!("Could not load file {}", file_name.prefer_local());
+                    None
+                }
             },
             other => {
                 let names = other.iter().map(|f| &f.name).collect::<Vec<_>>();
@@ -421,9 +428,17 @@ impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for SpanData {
         }
         debug_assert_eq!(tag, TAG_VALID_SPAN_FULL);
         let crate_num = CrateNum::decode(d);
-        let source_file = d.decode_file_name(crate_num);
+        let m_source_file = d.decode_file_name(crate_num);
         let lo = BytePos::decode(d);
         let len = BytePos::decode(d);
+        let Some(source_file) = m_source_file else {
+            return SpanData {
+                lo: BytePos(0),
+                hi: BytePos(0),
+                ctxt,
+                parent: None,
+            };
+        };
         let hi = lo + len;
         let lo = source_file.start_pos + lo;
         let hi = source_file.start_pos + hi;

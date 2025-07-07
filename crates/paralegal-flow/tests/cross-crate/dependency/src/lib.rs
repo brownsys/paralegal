@@ -52,3 +52,10 @@ pub trait Receiver {
 pub fn exercise_receive(r: &impl Receiver) {
     r.receive(generic_source())
 }
+
+pub enum TestConstructors {
+    A(&'static str),
+    B(i32),
+}
+
+pub struct SingleVariant(pub &'static str);

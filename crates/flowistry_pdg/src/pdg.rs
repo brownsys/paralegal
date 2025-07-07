@@ -1,7 +1,8 @@
 //! The representation of the PDG.
 
-use std::fmt;
+use std::{collections::HashMap, fmt};
 
+use allocative::{ident_key, Allocative};
 use internment::Intern;
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +25,12 @@ pub enum RichLocation {
 
     /// The end of the body, after all possible return statements.
     End,
+}
+
+impl Allocative for RichLocation {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        visitor.visit_simple_sized::<Self>();
+    }
 }
 
 impl RichLocation {
@@ -73,10 +80,11 @@ impl From<Location> for RichLocation {
 }
 
 /// A [`RichLocation`] within a specific point in a codebase.
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize, Allocative)]
 pub struct GlobalLocation {
     /// The function containing the location.
     #[cfg_attr(feature = "rustc", serde(with = "rustc_proxies::DefId"))]
+    #[allocative(visit = allocative_visit_simple_sized)]
     pub function: DefId,
 
     /// The location of an instruction in the function, or the function's start.
@@ -100,15 +108,88 @@ impl fmt::Display for GlobalLocation {
 /// there should always be at least one [`GlobalLocation`] in a call-string.
 ///
 /// Note: This type is copyable due to interning.
-#[derive(PartialEq, Eq, Hash, Copy, Clone, Debug, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
 pub struct CallString(Intern<CallStringInner>);
 
-type CallStringInner = Box<[GlobalLocation]>;
+impl Allocative for CallString {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        allocative_visit_intern_t(self.0, &mut visitor);
+        visitor.exit();
+    }
+}
+
+thread_local! {
+    static TRACK_INTERN_AS_UNIQUE: bool = {
+        if let Ok(val) = std::env::var("ALLOCATIVE_TRACK_INTERN_AS_UNIQUE") {
+            val == "true" || val == "1"
+        } else {
+            false
+        }
+    }
+}
+
+pub fn allocative_visit_intern_t<T: Allocative + ?Sized>(
+    intern: Intern<T>,
+    visitor: &mut allocative::Visitor<'_>,
+) {
+    let track_as_unique = TRACK_INTERN_AS_UNIQUE.with(|v| *v);
+    let ptr_size = std::mem::size_of::<*const T>();
+    if !track_as_unique {
+        let mut visitor = visitor.enter_self_sized::<Intern<T>>();
+        {
+            let ptr: &T = intern.as_ref();
+            let as_ptr = ptr as *const T as *const ();
+
+            let inner_visitor = visitor.enter_shared(ident_key!(intern_value), ptr_size, as_ptr);
+            if let Some(mut visitor) = inner_visitor {
+                ptr.visit(&mut visitor);
+                visitor.exit();
+            }
+        }
+        visitor.exit();
+    } else {
+        let mut visitor = visitor.enter_self_sized::<Intern<T>>();
+        let inner: &T = intern.as_ref();
+        {
+            let mut visitor = visitor.enter_unique(ident_key!(pointee), ptr_size);
+            inner.visit(&mut visitor);
+            visitor.exit();
+        }
+        visitor.exit();
+    }
+}
+
+impl Serialize for CallString {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.0.as_ref().serialize(serializer)
+        // let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+        // for loc in self.0.iter() {
+        //     seq.serialize_element(loc)?;
+        // }
+        // seq.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for CallString {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let locs = <Box<[GlobalLocation]>>::deserialize(deserializer)?;
+        Ok(CallString::new(locs.as_ref()))
+    }
+}
+
+type CallStringInner = [GlobalLocation];
 
 impl CallString {
     /// Create a new call string from a list of global locations.
-    fn new(locs: CallStringInner) -> Self {
-        CallString(Intern::new(locs))
+    pub fn new(locs: &CallStringInner) -> Self {
+        CallString(Intern::from(locs))
     }
 
     /// Split the leaf (the current instruction) from the caller for the
@@ -119,15 +200,12 @@ impl CallString {
             .split_last()
             .expect("Invariant broken, call strings must have at least length 1");
 
-        (
-            *last,
-            (!rest.is_empty()).then(|| CallString::new(rest.into())),
-        )
+        (*last, (!rest.is_empty()).then(|| CallString::new(rest)))
     }
 
     /// Create an initial call string for the single location `loc`.
     pub fn single(loc: GlobalLocation) -> Self {
-        Self::new(Box::new([loc]))
+        Self::new(&[loc])
     }
 
     /// Returns the leaf of the call string (the currently-called function).
@@ -149,12 +227,18 @@ impl CallString {
 
     /// Adds a new call site to the end of the call string.
     pub fn push(self, loc: GlobalLocation) -> Self {
-        let string = self.0.iter().copied().chain(Some(loc)).collect();
-        CallString::new(string)
+        let string = self.0.iter().copied().chain(Some(loc)).collect::<Box<_>>();
+        CallString::new(&string)
     }
 
     pub fn push_front(self, loc: GlobalLocation) -> Self {
-        CallString::new([loc].into_iter().chain(self.0.iter().copied()).collect())
+        CallString::new(
+            [loc]
+                .into_iter()
+                .chain(self.0.iter().copied())
+                .collect::<Box<_>>()
+                .as_ref(),
+        )
     }
 
     pub fn is_at_root(self) -> bool {
@@ -167,7 +251,7 @@ impl CallString {
 
     pub fn stable_id(self) -> usize {
         let r: &'static CallStringInner = self.0.as_ref();
-        r as *const CallStringInner as usize
+        r.as_ptr() as usize
     }
 
     /// Returns an iterator over the locations in the call string, starting at
@@ -201,7 +285,18 @@ impl fmt::Display for CallString {
 ///
 /// If the operation is a function call this contains the argument index
 #[derive(
-    PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Debug, Serialize, Deserialize, strum::EnumIs,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    strum::EnumIs,
+    Allocative,
 )]
 pub enum SourceUse {
     Operand,
@@ -209,7 +304,9 @@ pub enum SourceUse {
 }
 
 /// Additional information about this mutation.
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize, strum::EnumIs)]
+#[derive(
+    PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize, strum::EnumIs, Allocative,
+)]
 pub enum TargetUse {
     /// A function returned, assigning to it's return destination
     Return,
@@ -217,4 +314,48 @@ pub enum TargetUse {
     Assign,
     /// A mutable argument was modified by a function call
     MutArg(u8),
+}
+
+/// A function that is fit to be handed to `#[allocative(visit = "...")]` for a
+/// map where the key does not implement [`Allocative`], but also has no
+/// attached heap data.
+///
+/// Uses [`SimpleSizedAllocativeWrapper`] under the hood, see its documentation
+/// for more information.
+pub fn allocative_visit_map_coerce_key<'a, K, V: Allocative>(
+    map: &'a HashMap<K, V>,
+    visitor: &mut allocative::Visitor<'a>,
+) {
+    let coerced: &HashMap<SimpleSizedAllocativeWrapper<K>, V> = unsafe { std::mem::transmute(map) };
+    coerced.visit(visitor);
+}
+
+/// A function fit to be handed to `#[allocative(visit = "...")]`, if the type
+/// does not have any attached heap data.
+pub fn allocative_visit_simple_sized<T>(_: &T, visitor: &mut allocative::Visitor<'_>) {
+    visitor.visit_simple_sized::<T>();
+}
+
+/// A wrapper that guarantees to be the same size as `T` and implements the
+/// [`Allocative`] trait.
+///
+/// This uses [`allocative::Visitor::visit_simple_sized`] on `T` for sizing,
+/// meaning that `T` will only be recorded with the size of the object itself,
+/// *not* with its size in the heap.
+///
+/// The idea is that you can transmute any object of type `T` or any object that
+/// *contains* `T` into one that is (or contains) `SimpleSizedAllocativeWrapper<T>`.
+///
+/// For example if you want the size of `HashMap<Unsupported, usize>` you can
+/// `std::mem::transmute` it to
+/// `HashMap<SimpleSizedAllocativeWrapper<Unsupported>, usize>` and then simply
+/// ask for the size. However if there is attached heap data, liek in
+/// `HashMap<UnsuportedString, usize>`, then the size reported will be incorrect.
+#[repr(transparent)]
+pub struct SimpleSizedAllocativeWrapper<T>(T);
+
+impl<T> Allocative for SimpleSizedAllocativeWrapper<T> {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        visitor.visit_simple_sized::<T>();
+    }
 }

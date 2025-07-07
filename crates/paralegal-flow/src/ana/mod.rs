@@ -11,7 +11,7 @@ use crate::{
     discover::FnToAnalyze,
     stats::{Stats, TimedStat},
     utils::*,
-    DumpStats, HashMap, HashSet, LogLevelConfig, MarkerCtx, INTERMEDIATE_STAT_EXT,
+    DumpStats, HashMap, HashSet, LogLevelConfig, MarkerCtx, Pctx, INTERMEDIATE_STAT_EXT,
 };
 
 use std::{fs::File, io::BufReader, rc::Rc, time::Instant};
@@ -20,12 +20,12 @@ use anyhow::Result;
 use either::Either;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    body_cache::{local_or_remote_paths, BodyCache},
+    body_cache::local_or_remote_paths,
     calling_convention::CallingConvention,
-    utils::{is_async, ArgSlice},
+    utils::{is_async, type_as_fn, ArgSlice},
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
-use inline_judge::InlineJudgement;
+use inline_judge::{InlineJudgement, K};
 use itertools::Itertools;
 use petgraph::visit::GraphBase;
 
@@ -34,7 +34,7 @@ use rustc_hir::{
     def_id::{DefId, LOCAL_CRATE},
 };
 use rustc_middle::{
-    mir::Location,
+    mir::{self, Location},
     ty::{Instance, TyCtxt, TypingEnv},
 };
 use rustc_span::{ErrorGuaranteed, FileNameDisplayPreference, Span as RustSpan, Symbol};
@@ -51,40 +51,44 @@ pub use self::inline_judge::InlineJudge;
 ///
 /// [`Self::analyze`] serves as the main entrypoint to SPDG generation.
 pub struct SPDGGenerator<'tcx> {
-    pub opts: &'static crate::Args,
-    pub tcx: TyCtxt<'tcx>,
+    ctx: Pctx<'tcx>,
     stats: Stats,
-    pdg_constructor: MemoPdgConstructor<'tcx>,
-    judge: Rc<InlineJudge<'tcx>>,
+    pdg_constructor: MemoPdgConstructor<'tcx, K>,
+    functions_to_analyze: Vec<FnToAnalyze>,
 }
 
 impl<'tcx> SPDGGenerator<'tcx> {
     pub fn new(
+        ctx: Pctx<'tcx>,
         inline_judge: InlineJudge<'tcx>,
-        opts: &'static crate::Args,
-        tcx: TyCtxt<'tcx>,
-        body_cache: Rc<BodyCache<'tcx>>,
         stats: Stats,
+        functions_to_analyze: Vec<FnToAnalyze>,
     ) -> Self {
         let judge = Rc::new(inline_judge);
-        let mut pdg_constructor = MemoPdgConstructor::new_with_cache(tcx, body_cache);
+        let mut pdg_constructor =
+            MemoPdgConstructor::new_with_cache(ctx.tcx(), ctx.body_cache().clone());
         pdg_constructor
             .with_call_change_callback(MyCallback {
-                judge: judge.clone(),
-                tcx,
+                judge,
+                tcx: ctx.tcx(),
             })
-            .with_dump_mir(opts.dbg().dump_mir());
+            .with_dump_mir(ctx.opts().dbg().dump_mir())
+            .with_relaxed(ctx.opts().relaxed())
+            .with_disable_cache(!ctx.opts().anactrl().pdg_cache());
         Self {
             pdg_constructor,
-            opts,
-            tcx,
+            ctx,
             stats,
-            judge,
+            functions_to_analyze,
         }
     }
 
     pub fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
-        self.judge.marker_ctx()
+        self.ctx.marker_ctx()
+    }
+
+    pub fn tcx(&self) -> TyCtxt<'tcx> {
+        self.ctx.tcx()
     }
 
     /// Perform the analysis for one `#[paralegal_flow::analyze]` annotated function and
@@ -97,7 +101,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
         target: &FnToAnalyze,
         known_def_ids: &mut impl Extend<DefId>,
     ) -> Result<(Endpoint, SPDG)> {
-        info!("Handling target {}", self.tcx.def_path_str(target.def_id));
+        info!(
+            "Handling target {}",
+            self.ctx.tcx().def_path_str(target.def_id)
+        );
         let local_def_id = target.def_id;
 
         let converter = GraphConverter::new_with_flowistry(self, known_def_ids, target)?;
@@ -111,11 +118,9 @@ impl<'tcx> SPDGGenerator<'tcx> {
     /// other setup necessary for the flow graph creation.
     ///
     /// Should only be called after the visit.
-    pub fn analyze(
-        &mut self,
-        targets: Vec<FnToAnalyze>,
-    ) -> Result<(ProgramDescription, AnalyzerStats)> {
-        if let LogLevelConfig::Targeted(s) = self.opts.direct_debug() {
+    pub fn analyze(&mut self) -> Result<(ProgramDescription, AnalyzerStats)> {
+        let targets = std::mem::take(&mut self.functions_to_analyze);
+        if let LogLevelConfig::Targeted(s) = self.ctx.opts().direct_debug() {
             assert!(
                 targets.iter().any(|target| target.name().as_str() == s),
                 "Debug output option specified a specific target '{s}', but no such target was found in [{}]",
@@ -133,7 +138,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             .iter()
             .map(|desc| {
                 let target_name = desc.name();
-                with_reset_level_if_target(self.opts, target_name, || {
+                with_reset_level_if_target(self.ctx.opts(), target_name, || {
                     self.handle_target(
                         //hash_verifications,
                         desc,
@@ -160,9 +165,9 @@ impl<'tcx> SPDGGenerator<'tcx> {
         mut known_def_ids: HashSet<DefId>,
         _targets: &[FnToAnalyze],
     ) -> (ProgramDescription, AnalyzerStats) {
-        let tcx = self.tcx;
+        let tcx = self.ctx.tcx();
 
-        let instruction_info = self.collect_instruction_info(&controllers);
+        let instruction_info = self.collect_instruction_info(&controllers, &mut known_def_ids);
 
         let called_functions = instruction_info
             .keys()
@@ -195,7 +200,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     }
 
     fn collect_stats_and_analyzed_spans(&self) -> (AnalyzerStats, AnalyzedSpans) {
-        let tcx = self.tcx;
+        let tcx = self.ctx.tcx();
 
         // In this we don't have to filter out async functions. They are already
         // not in it. For the top-level (target) an async function immediately
@@ -236,7 +241,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
 
         let analyzed_spans = analyzed_functions
             .into_iter()
-            .map(|f| {
+            .filter_map(|f| {
+                if tcx.is_constructor(f) {
+                    return None;
+                }
                 let body = self.pdg_constructor.body_for_def_id(f);
                 let span = body_span(tcx, body.body());
                 let pspan = src_loc_for_span(span, tcx);
@@ -258,7 +266,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                     FunctionHandling::Elided
                 };
 
-                (f, (pspan, handling))
+                Some((f, (pspan, handling)))
             })
             .collect::<AnalyzedSpans>();
 
@@ -297,13 +305,13 @@ impl<'tcx> SPDGGenerator<'tcx> {
     }
 
     fn get_prior_stats(&self) -> DumpStats {
-        self.judge
-            .included_crates()
-            .iter()
-            .copied()
+        self.ctx
+            .opts()
+            .anactrl()
+            .included_crates(self.ctx.tcx())
             .filter(|c| *c != LOCAL_CRATE)
             .map(|c| {
-                let paths = local_or_remote_paths(c, self.tcx, INTERMEDIATE_STAT_EXT);
+                let paths = local_or_remote_paths(c, self.ctx.tcx(), INTERMEDIATE_STAT_EXT);
 
                 let path = paths.iter().find(|p| p.exists()).unwrap_or_else(|| {
                     panic!("No stats path found for included crate {c:?}, searched {paths:?}")
@@ -319,7 +327,9 @@ impl<'tcx> SPDGGenerator<'tcx> {
     fn collect_instruction_info(
         &self,
         controllers: &HashMap<Endpoint, SPDG>,
+        known_def_ids: &mut impl Extend<DefId>,
     ) -> HashMap<GlobalLocation, InstructionInfo> {
+        let tcx = self.ctx.tcx();
         let all_instructions = controllers
             .values()
             .flat_map(|v| {
@@ -339,7 +349,8 @@ impl<'tcx> SPDGGenerator<'tcx> {
                     RichLocation::Start => (InstructionKind::Start, "end".to_owned()),
                     RichLocation::Location(loc) => match body.stmt_at(loc) {
                         crate::Either::Right(term) => {
-                            let kind = if let Ok((id, ..)) = term.as_fn_and_args(self.tcx) {
+                            let kind = if let Some(id) = dirty_try_resolve_func_id(tcx, term) {
+                                known_def_ids.extend([id]);
                                 InstructionKind::FunctionCall(FunctionCallInfo {
                                     id,
                                     is_inlined: id.is_local(),
@@ -360,18 +371,15 @@ impl<'tcx> SPDGGenerator<'tcx> {
                             crate::Either::Right(term) => term.source_info.span,
                             crate::Either::Left(stmt) => stmt.source_info.span,
                         };
-                        self.tcx
-                            .sess
-                            .source_map()
-                            .stmt_span(expanded_span, body.span)
+                        tcx.sess.source_map().stmt_span(expanded_span, body.span)
                     }
-                    RichLocation::Start | RichLocation::End => self.tcx.def_span(i.function),
+                    RichLocation::Start | RichLocation::End => tcx.def_span(i.function),
                 };
                 (
                     i,
                     InstructionInfo {
                         kind,
-                        span: src_loc_for_span(rust_span, self.tcx),
+                        span: src_loc_for_span(rust_span, tcx),
                         description: Identifier::new_intern(&description),
                     },
                 )
@@ -384,7 +392,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     fn collect_type_info(&self) -> TypeInfoMap {
         self.marker_ctx()
             .all_annotations()
-            .filter(|(id, _)| def_kind_for_item(*id, self.tcx).is_type())
+            .filter(|(id, _)| def_kind_for_item(*id, self.ctx.tcx()).is_type())
             .into_grouping_map()
             .fold_with(
                 |id, _| (*id, vec![], vec![]),
@@ -471,6 +479,7 @@ fn type_info_sanity_check(controllers: &ControllerMap, types: &TypeInfoMap) {
 }
 
 fn def_kind_for_item(id: DefId, tcx: TyCtxt) -> DefKind {
+    #[allow(deprecated)]
     match tcx.def_kind(id) {
         _ if tcx.is_coroutine(id) => DefKind::Generator,
         def::DefKind::Closure => DefKind::Closure,
@@ -480,6 +489,7 @@ fn def_kind_for_item(id: DefId, tcx: TyCtxt) -> DefKind {
         | def::DefKind::OpaqueTy
         | def::DefKind::TyAlias { .. }
         | def::DefKind::Enum => DefKind::Type,
+        def::DefKind::Ctor { .. } => DefKind::Ctor,
         kind => unreachable!("{} ({:?})", tcx.def_path_debug_str(id), kind),
     }
 }
@@ -526,6 +536,18 @@ fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: S
     } else {
         f()
     }
+}
+
+fn dirty_try_resolve_func_id<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    term: &mir::Terminator<'tcx>,
+) -> Option<DefId> {
+    let mir::TerminatorKind::Call { func, .. } = &term.kind else {
+        return None;
+    };
+    let c = func.constant()?;
+    let (id, _) = type_as_fn(tcx, ty_of_const(c)).to_option()?;
+    Some(id)
 }
 
 struct MyCallback<'tcx> {
@@ -645,12 +667,11 @@ impl Stub {
     }
 }
 
-impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
-    fn on_inline(&self, info: CallInfo<'tcx, '_>) -> CallChanges<'tcx> {
+impl<'tcx> CallChangeCallback<'tcx, K> for MyCallback<'tcx> {
+    fn on_inline(&self, info: CallInfo<'tcx, '_, K>) -> CallChanges<'tcx, K> {
         let changes = CallChanges::default();
 
         let judgement = self.judge.should_inline(&info);
-
         debug!("Judgement for {:?}: {judgement}", info.callee.def_id(),);
 
         let skip = match judgement {
@@ -666,12 +687,17 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
                     SkipCall::Replace {
                         instance,
                         calling_convention,
+                        cache_key: *info.cache_key,
                     }
                 } else {
                     SkipCall::Skip
                 }
             }
-            InlineJudgement::Inline => SkipCall::NoSkip,
+            InlineJudgement::Inline(advance_k) => SkipCall::NoSkip(if advance_k {
+                *info.cache_key + 1
+            } else {
+                *info.cache_key
+            }),
         };
         changes.with_skip(skip)
     }
@@ -694,6 +720,10 @@ impl<'tcx> CallChangeCallback<'tcx> for MyCallback<'tcx> {
                 InlineMissReason::TraitMethod => "virtual trait method",
             },
         );
+    }
+
+    fn root_k(&self, _info: Instance<'tcx>) -> K {
+        0
     }
 }
 

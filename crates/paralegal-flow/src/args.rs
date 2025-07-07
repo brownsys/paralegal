@@ -15,10 +15,17 @@
 
 use anyhow::Error;
 use clap::ValueEnum;
+use flowistry_pdg_construction::body_cache::std_crates;
+use rustc_data_structures::fx::FxHashSet;
+use rustc_hash::FxHashMap;
+use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
+use rustc_middle::ty::TyCtxt;
+use rustc_span::Symbol;
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use crate::utils::TinyBitSet;
 use crate::{num_derive, num_traits::FromPrimitive};
@@ -60,7 +67,11 @@ impl TryFrom<ClapArgs> for Args {
             cargo_args,
             trace,
             attach_to_debugger,
+            strict,
         } = value;
+        if relaxed {
+            eprintln!("The `--relaxed` flag is deprecated. This is now the default behavior and therefore the flag is ignored.");
+        }
         let mut dump: DumpArgs = dump.into();
         if let Some(from_env) = env_var_expect_unicode("PARALEGAL_DUMP")? {
             let from_env =
@@ -105,7 +116,7 @@ impl TryFrom<ClapArgs> for Args {
             verbosity,
             log_level_config,
             result_path,
-            relaxed,
+            relaxed: !strict,
             target,
             abort_after_analysis,
             anactrl: anactrl.try_into()?,
@@ -157,7 +168,7 @@ impl Default for Args {
             verbosity: log::LevelFilter::Info,
             log_level_config: LogLevelConfig::Disabled,
             result_path: PathBuf::from(paralegal_spdg::FLOW_GRAPH_OUT_NAME),
-            relaxed: false,
+            relaxed: true,
             target: None,
             abort_after_analysis: false,
             marker_control: Default::default(),
@@ -195,8 +206,14 @@ pub struct ClapArgs {
     #[clap(long, default_value = paralegal_spdg::FLOW_GRAPH_OUT_NAME)]
     result_path: std::path::PathBuf,
     /// Emit warnings instead of aborting the analysis on sanity checks
-    #[clap(long, env = "PARALEGAL_RELAXED")]
+    ///
+    /// This is now the default behavior and this flag is deprecated. Use
+    /// `--strict` to turn off this behavior.
+    #[clap(long, env = "PARALEGAL_RELAXED", hide = true)]
     relaxed: bool,
+    /// Emit errors instead of warnings for potential soundness risks
+    #[clap(long, env = "PARALEGAL_STRICT")]
+    strict: bool,
     /// Run paralegal only on this crate
     #[clap(long, env = "PARALEGAL_TARGET")]
     target: Option<String>,
@@ -404,7 +421,8 @@ impl Args {
         // //let lvl = log::LevelFilter::Debug;
         if simple_logger::SimpleLogger::new()
             .with_level(lvl)
-            .with_module_level("flowistry", lvl)
+            .with_module_level("flowistry", log::LevelFilter::Error)
+            .with_module_level("flowistry_pdg", lvl)
             .with_module_level("rustc_utils", log::LevelFilter::Error)
             .without_timestamps()
             .init()
@@ -451,29 +469,34 @@ impl MarkerControl {
 /// Arguments that control the flow analysis
 #[derive(clap::Args)]
 struct ClapAnalysisCtrl {
-    /// Target this function as analysis target. Command line version of
+    /// Target this function as analysis entrypoint. Command line version of
     /// `#[paralegal::analyze]`). Must be a full rust path and resolve to a
     /// function. May be specified multiple times and multiple, comma separated
     /// paths may be supplied at the same time.
     #[clap(long)]
     analyze: Vec<String>,
-    /// Disables all recursive analysis (both paralegal_flow's inlining as well as
-    /// Flowistry's recursive analysis).
+    /// Limits the PDG to a single function. This is intended for testing and
+    /// should not be used in production.
     #[clap(long, env)]
-    no_cross_function_analysis: bool,
-    /// Generate PDGs that span all called functions which can attach markers
-    #[clap(long, conflicts_with_all = ["unconstrained_depth", "no_cross_function_analysis"])]
-    adaptive_depth: bool,
-    /// Generate PDGs that span to all functions for which we have source code.
-    ///
-    /// If no depth option is specified this is the default right now but that
-    /// is not guaranteed to be the case in the future. If you want to guarantee
-    /// this is used explicitly supply the argument.
-    #[clap(long, conflicts_with_all = ["adaptive_depth", "no_cross_function_analysis"])]
-    unconstrained_depth: bool,
-    /// Crates that should be recursed into.
+    no_interprocedural_analysis: bool,
+    /// Do not decide whether to represent a function in the PDG based on the
+    /// presence of markers. This will create very large PDGs that span all
+    /// crates configured for analysis and with source code present.
+    #[clap(long, conflicts_with_all = ["no_interprocedural_analysis"])]
+    no_adaptive_approximation: bool,
+    /// Limit the set of crates to analyze. Beware that if those crates contain
+    /// marked code (other than the surface API), this poses a soundness risk.
+    /// This is intended as an optimization experts can apply for large
+    /// projects.
     #[clap(long)]
     include: Vec<String>,
+    #[clap(long)]
+    no_pdg_cache: bool,
+    /// Add an additional k inlining steps on top of what the marker guided
+    /// setup recommends. If adaptive approximation is enabled this defaults to
+    /// 0, if it is enabled it defaults to no limit.
+    #[clap(long, conflicts_with = "no_interprocedural_analysis")]
+    k_depth: Option<u32>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -487,14 +510,19 @@ pub struct AnalysisCtrl {
     /// Flowistry's recursive analysis).
     inlining_depth: InliningDepth,
     include: Vec<String>,
+    #[serde(skip)]
+    included_crate_cache: OnceLock<FxHashSet<CrateNum>>,
+    no_pdg_cache: bool,
 }
 
 impl Default for AnalysisCtrl {
     fn default() -> Self {
         Self {
             analyze: Vec::new(),
-            inlining_depth: InliningDepth::Adaptive,
+            inlining_depth: InliningDepth::Adaptive(0),
             include: Default::default(),
+            no_pdg_cache: false,
+            included_crate_cache: OnceLock::new(),
         }
     }
 }
@@ -504,24 +532,27 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
     fn try_from(value: ClapAnalysisCtrl) -> Result<Self, Self::Error> {
         let ClapAnalysisCtrl {
             analyze,
-            no_cross_function_analysis,
-            adaptive_depth,
-            unconstrained_depth: _,
             include,
+            no_pdg_cache,
+            no_interprocedural_analysis,
+            no_adaptive_approximation,
+            k_depth,
         } = value;
 
-        let inlining_depth = if adaptive_depth {
-            InliningDepth::Adaptive
-        } else if no_cross_function_analysis {
-            InliningDepth::Shallow
+        let inlining_depth = if no_interprocedural_analysis {
+            InliningDepth::K(0)
+        } else if no_adaptive_approximation {
+            k_depth.map_or(InliningDepth::Unconstrained, InliningDepth::K)
         } else {
-            InliningDepth::Unconstrained
+            InliningDepth::Adaptive(k_depth.unwrap_or(0))
         };
 
         Ok(Self {
             analyze,
             inlining_depth,
             include,
+            no_pdg_cache,
+            included_crate_cache: OnceLock::new(),
         })
     }
 }
@@ -530,10 +561,10 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
 pub enum InliningDepth {
     /// Inline to arbitrary depth
     Unconstrained,
-    /// Perform no inlining
-    Shallow,
-    /// Inline so long as markers are reachable
-    Adaptive,
+    /// Perform inlining until depth k
+    K(u32),
+    /// Inline so long as markers are reachable + k steps
+    Adaptive(u32),
 }
 
 impl AnalysisCtrl {
@@ -544,15 +575,71 @@ impl AnalysisCtrl {
 
     /// Are we recursing into (unmarked) called functions with the analysis?
     pub fn use_recursive_analysis(&self) -> bool {
-        !matches!(self.inlining_depth, InliningDepth::Shallow)
+        !matches!(self.inlining_depth, InliningDepth::K(0))
     }
 
     pub fn inlining_depth(&self) -> &InliningDepth {
         &self.inlining_depth
     }
 
-    pub fn included(&self) -> &[String] {
-        &self.include
+    pub fn included(&self, crate_name: &str) -> bool {
+        if self.include.is_empty() {
+            true
+        } else {
+            self.include.iter().any(|s| s == crate_name)
+        }
+    }
+
+    fn crate_inclusion_set<'a>(&'a self, tcx: TyCtxt<'_>) -> &'a FxHashSet<CrateNum> {
+        self.included_crate_cache
+            .get_or_init(|| {
+                if self.include.is_empty() {
+                    let std_crates = std_crates(tcx).collect::<FxHashSet<_>>();
+                    tcx.crates(())
+                        .iter()
+                        .copied()
+                        .filter(move |c| !std_crates.contains(c))
+                        .chain([LOCAL_CRATE])
+                        .collect()
+                } else {
+                    let mut included_crate_names = self
+                        .include
+                        .iter()
+                        // "--include=crate" can be used to force only the local crate
+                        // to be included.
+                        .filter(|c| c.as_str() != "crate")
+                        .map(|s| (Symbol::intern(s), false))
+                        .collect::<FxHashMap<_, bool>>();
+                    let set = tcx.crates(())
+                        .iter()
+                        .copied()
+                        .filter(|cnum| included_crate_names.get_mut(&tcx.crate_name(*cnum)).is_some_and(|v| {
+                            *v = true;
+                            true
+                        }))
+                        .chain([LOCAL_CRATE])
+                        .collect();
+                    for (k, v) in included_crate_names {
+                        if !v {
+                            tcx.dcx().warn(format!("The crate `{k}` was configured for inclusion but is not part of the dependencies."));
+                        }
+                    }
+                    set
+                }
+            })
+    }
+
+    pub fn included_crates<'a>(&'a self, tcx: TyCtxt<'_>) -> impl Iterator<Item = CrateNum> + 'a {
+        self.crate_inclusion_set(tcx).iter().copied()
+    }
+
+    pub fn inclusion_predicate(&self, tcx: TyCtxt<'_>) -> impl Fn(CrateNum) -> bool {
+        let included_crates = self.crate_inclusion_set(tcx).clone();
+        move |cnum| included_crates.contains(&cnum)
+    }
+
+    pub fn pdg_cache(&self) -> bool {
+        !self.no_pdg_cache
     }
 }
 
@@ -602,6 +689,9 @@ pub struct BuildConfig {
     /// Dependency specific configuration
     #[serde(default)]
     pub dep: crate::HashMap<String, DepConfig>,
+    /// A select list of non-workspace crates which should be recursed into
+    /// during analysis. If you want this to happen for all non-workspace crates
+    /// instead specify `default-include = true`.
     #[serde(default)]
     pub include: Vec<String>,
     #[serde(default)]

@@ -92,6 +92,7 @@
 
 use colored::*;
 use indexmap::IndexMap;
+
 use std::rc::Rc;
 use std::{io::Write, sync::Arc};
 
@@ -271,13 +272,20 @@ impl DiagnosticPart {
                 start_col,
             )?;
             writeln!(s, "{tab} {}", "|".blue())?;
-            let lines = std::io::BufReader::new(
-                std::fs::File::open(&src_loc.span.source_file.abs_file_path).unwrap(),
-            )
-            .lines()
-            .skip(start_line - 1)
-            .take(end_line - start_line + 1)
-            .enumerate();
+            let path = &src_loc.span.source_file.abs_file_path;
+            let file = match std::fs::File::open(path) {
+                Ok(file) => file,
+                Err(e) => {
+                    writeln!(s, "Error: {e:?} in file {}", path.display())?;
+                    return Ok(());
+                }
+            };
+
+            let lines = std::io::BufReader::new(file)
+                .lines()
+                .skip(start_line - 1)
+                .take(end_line - start_line + 1)
+                .enumerate();
             for (i, line) in lines {
                 let line_content: String = line.unwrap();
                 let line_num = start_line + i;

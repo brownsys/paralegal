@@ -1,12 +1,22 @@
 use crate::utils::display_list;
 use std::fmt::{Display, Formatter};
 
+use allocative::Allocative;
 #[cfg(feature = "rustc")]
 use rustc_macros::{Decodable, Encodable};
 
 /// A bit-set implemented with a [`u16`], supporting domains up to 16 elements.
 #[derive(
-    Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Copy, serde::Serialize, serde::Deserialize,
+    Clone,
+    Eq,
+    PartialEq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Copy,
+    serde::Serialize,
+    serde::Deserialize,
+    Allocative,
 )]
 #[cfg_attr(feature = "rustc", derive(Encodable, Decodable))]
 pub struct TinyBitSet(u16);

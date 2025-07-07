@@ -20,6 +20,15 @@ fn add_link_search_path_for_compiler_binaries(s: impl std::fmt::Display) {
 /// The "SYSROOT" path for the toolchain we're compiling against.
 /// ($RUSTUP_HOME/toolchains/$RUSTUP_TOOLCHAIN)
 fn rustup_toolchain_path() -> PathBuf {
+    if let Ok(sysroot) = Command::new("rustc").arg("--print").arg("sysroot").output() {
+        return PathBuf::from(
+            String::from_utf8(sysroot.stdout)
+                .unwrap()
+                .trim()
+                .to_string(),
+        );
+    }
+
     let rustup_home = env::var("RUSTUP_HOME").unwrap();
     let rustup_tc = env::var("RUSTUP_TOOLCHAIN").unwrap();
     [&rustup_home, "toolchains", &rustup_tc]
@@ -54,8 +63,34 @@ pub fn link_rustc_lib() {
     }
 }
 
+fn get_rustc_version(verbose: bool) -> String {
+    let rustc_path = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
+    let mut cmd = std::process::Command::new(rustc_path);
+    if verbose {
+        cmd.arg("--verbose");
+    }
+    let rustc_version = cmd.arg("--version").output().unwrap();
+    // This is not the best kind of escaping but works for now.
+    String::from_utf8(rustc_version.stdout)
+        .unwrap()
+        .replace('\n', "\\n")
+}
+
+fn set_version_info() {
+    println!(
+        "cargo:rustc-env=RUSTC_SHORT_VERSION={}",
+        get_rustc_version(false)
+    );
+    println!(
+        "cargo:rustc-env=RUSTC_LONG_VERSION={}",
+        get_rustc_version(true)
+    );
+    println!("cargo:rustc-env=HOST={}", std::env::var("TARGET").unwrap());
+}
+
 fn main() {
     link_rustc_lib();
+    set_version_info();
     println!(
         "cargo:rustc-env=COMMIT_HASH={}",
         Command::new("git")
@@ -73,7 +108,7 @@ fn main() {
     let toolchain_path = rustup_toolchain_path();
     println!("cargo:rustc-env=SYSROOT_PATH={}", toolchain_path.display());
 
-    let rustc_path = std::env::var("RUSTC").unwrap();
+    let rustc_path = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
     let rustc_version = std::process::Command::new(rustc_path)
         .arg("--version")
         .output()

@@ -3,8 +3,8 @@
 use std::collections::HashSet;
 
 use petgraph::visit::{
-    Bfs, Control, Data, DfsEvent, EdgeFiltered, EdgeRef, IntoEdgeReferences, IntoEdges,
-    IntoEdgesDirected, IntoNeighbors, VisitMap, Visitable, Walker, WalkerIter,
+    Bfs, Data, EdgeFiltered, EdgeRef, IntoEdgeReferences, IntoEdges, IntoEdgesDirected,
+    IntoNeighbors, VisitMap, Visitable, Walker, WalkerIter,
 };
 
 use crate::{EdgeInfo, EdgeKind, Node, SPDGImpl};
@@ -72,7 +72,7 @@ pub fn generic_flows_to(
     edge_selection: EdgeSelection,
     spdg: &SPDG,
     other: impl IntoIterator<Item = Node>,
-) -> Option<Node> {
+) -> Option<(Node, Node)> {
     let targets = other.into_iter().collect::<HashSet<_>>();
     let mut from = from.into_iter().peekable();
     if from.peek().is_none() || targets.is_empty() {
@@ -80,15 +80,25 @@ pub fn generic_flows_to(
     }
 
     let graph = edge_selection.filter_graph(&spdg.graph);
-
-    let result = petgraph::visit::depth_first_search(&graph, from, |event| match event {
-        DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(d),
-        _ => Control::Continue,
-    });
-    match result {
-        Control::Break(r) => Some(r),
-        _ => None,
+    let mut search = petgraph::visit::Dfs::from_parts(vec![], graph.visit_map());
+    for n in from {
+        search.move_to(n);
+        while let Some(end) = search.next(&graph) {
+            if targets.contains(&end) {
+                return Some((n, end));
+            }
+        }
     }
+    None
+
+    // let result = petgraph::visit::depth_first_search(&graph, from, |event| match event {
+    //     DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(d),
+    //     _ => Control::Continue,
+    // });
+    // match result {
+    //     Control::Break(r) => Some(r),
+    //     _ => None,
+    // }
 }
 
 /// The current policy for this iterator is that it does not return the start

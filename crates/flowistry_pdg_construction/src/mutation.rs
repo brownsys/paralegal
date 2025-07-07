@@ -2,7 +2,7 @@
 
 use flowistry_pdg::{rustc_portable::Place, TargetUse};
 use itertools::Itertools;
-use log::debug;
+use log::trace;
 use rustc_middle::{
     mir::{visit::Visitor, *},
     ty::{AdtKind, CoroutineArgsExt, TyKind},
@@ -367,7 +367,7 @@ where
     F: FnMut(Location, Mutation<'tcx>),
 {
     fn visit_assign(&mut self, mutated: &Place<'tcx>, rvalue: &Rvalue<'tcx>, location: Location) {
-        debug!("Checking {location:?}: {mutated:?} = {rvalue:?}");
+        trace!("Checking {location:?}: {mutated:?} = {rvalue:?}");
 
         if !self.handle_special_rvalues(mutated, rvalue, location) {
             let mut collector = PlaceCollector::default();
@@ -385,7 +385,7 @@ where
     }
 
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
-        debug!("Checking {location:?}: {:?}", terminator.kind);
+        trace!("Checking {location:?}: {:?}", terminator.kind);
 
         if let TerminatorKind::Call {
             /*func,*/ // TODO: deal with func
