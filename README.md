@@ -20,11 +20,11 @@ Everywhere
 
 Policy:
 1. For each "action" marked write:
-	A. There is a "deleted user check" marked delete_check where:
-		a. "deleted user check" affects whether "action" happens
-	and
-	B. There is a "banned user check" marked ban_check where:
-		a. "banned user check" affects whether "action" happens
+  A. There is a "deleted user check" marked delete_check where:
+    a. "deleted user check" affects whether "action" happens
+  and
+  B. There is a "banned user check" marked ban_check where:
+    a. "banned user check" affects whether "action" happens
 ```
 
 Developers connect policies to application code by defining *markers*,
