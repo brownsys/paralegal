@@ -261,9 +261,7 @@ fn main() -> Result<()> {
 
     let policy_file = std::fs::read_to_string(args.file)?;
 
-    let (s, policy) = parse(&policy_file).unwrap();
-
-    assert!(s.is_empty());
+    let policy = parse(&policy_file).unwrap();
 
     let graph_loc = if !args.no_pdg_gen {
         SPDGGenCommand::global().run(args.crate_path)?

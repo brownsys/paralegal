@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 common = { path = "../common" }
 nom = "7.1.3"
+nom-supreme = "0.8.0"

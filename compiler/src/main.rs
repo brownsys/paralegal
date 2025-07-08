@@ -1,5 +1,5 @@
-use std::fs;
 use std::path::PathBuf;
+use std::{fs, process::exit};
 
 use clap::Parser;
 use parsers::parse;
@@ -48,7 +48,7 @@ fn run(args: &Args) -> Result<()> {
 
     let res = parse(&policy);
     match res {
-        Ok((_, mut policy)) => {
+        Ok(mut policy) => {
             // Verify that variables in definitions & policy are properly scoped.
             // If this fails, then the user made a mistake writing their policy.
             check_environment(&policy);
@@ -62,20 +62,11 @@ fn run(args: &Args) -> Result<()> {
                 args.bin,
             )
         }
-        Err(e) => match e {
-            nom::Err::Incomplete(_) => {
-                panic!("Incomplete parse")
-            }
-            nom::Err::Failure(e) => {
-                panic!("Parse failure: {}", e)
-            }
-            nom::Err::Error(e) => {
-                for (loc, context) in e.errors {
-                    eprintln!("Error in context {context:?}:\n{loc}\n");
-                }
-                panic!("Parse error")
-            }
-        },
+        Err(e) => {
+            eprintln!("Error: Policy file {} did not parse", &args.path.display());
+            eprintln!("{e}");
+            exit(1);
+        }
     }
 }
 

@@ -1,22 +1,18 @@
 use common::ast::*;
 use nom::{
     branch::alt,
-    bytes::complete::tag,
     character::complete::space1,
     combinator::map,
-    error::context,
     multi::many0,
     sequence::{pair, preceded, separated_pair, terminated, tuple},
 };
+use nom_supreme::tag::complete::tag;
 
 use crate::{shared::*, Res};
 
 // this is flows_to(EdgeSelection::DataAndControl)
 fn influences_relation(s: &str) -> Res<&str, Relation> {
-    let mut combinator = context(
-        "influences relation",
-        separated_pair(variable, tuple((tag("influences"), space1)), variable),
-    );
+    let mut combinator = separated_pair(variable, tuple((tag("influences"), space1)), variable);
     let (remainder, (var1, var2)) = combinator(s)?;
 
     Ok((
@@ -30,13 +26,10 @@ fn influences_relation(s: &str) -> Res<&str, Relation> {
 }
 
 fn does_not_influence_relation(s: &str) -> Res<&str, Relation> {
-    let mut combinator = context(
-        "influences relation",
-        separated_pair(
-            variable,
-            tuple((tag("does not influence"), space1)),
-            variable,
-        ),
+    let mut combinator = separated_pair(
+        variable,
+        tuple((tag("does not influence"), space1)),
+        variable,
     );
     let (remainder, (var1, var2)) = combinator(s)?;
 
@@ -52,10 +45,7 @@ fn does_not_influence_relation(s: &str) -> Res<&str, Relation> {
 
 // this is flows_to(EdgeSelection::Data)
 fn goes_to_relation(s: &str) -> Res<&str, Relation> {
-    let mut combinator = context(
-        "goes to relation",
-        separated_pair(variable, tuple((tag("goes to"), space1)), variable),
-    );
+    let mut combinator = separated_pair(variable, tuple((tag("goes to"), space1)), variable);
     let (remainder, (var1, var2)) = combinator(s)?;
 
     Ok((
@@ -69,10 +59,7 @@ fn goes_to_relation(s: &str) -> Res<&str, Relation> {
 }
 
 fn does_not_go_to_relation(s: &str) -> Res<&str, Relation> {
-    let mut combinator = context(
-        "does not go to relation",
-        separated_pair(variable, tag("does not go to"), variable),
-    );
+    let mut combinator = separated_pair(variable, tag("does not go to"), variable);
     let (remainder, (var1, var2)) = combinator(s)?;
 
     Ok((
@@ -86,12 +73,9 @@ fn does_not_go_to_relation(s: &str) -> Res<&str, Relation> {
 }
 
 fn operation_associated_with_relation(s: &str) -> Res<&str, Relation> {
-    let mut combinator = context(
-        "operation associated with relation",
-        pair(
-            terminated(variable, tag("goes to")),
-            terminated(variable, tag("'s operation")),
-        ),
+    let mut combinator = pair(
+        terminated(variable, tag("goes to")),
+        terminated(variable, tag("'s operation")),
     );
     let (remainder, (var1, var2)) = combinator(s)?;
 
@@ -106,13 +90,10 @@ fn operation_associated_with_relation(s: &str) -> Res<&str, Relation> {
 }
 
 fn affects_whether_relation(s: &str) -> Res<&str, Relation> {
-    let mut combinator = context(
-        "affects whether relation",
-        tuple((
-            terminated(variable, tag("affects whether")),
-            terminated(variable, tag("happens")),
-        )),
-    );
+    let mut combinator = tuple((
+        terminated(variable, tag("affects whether")),
+        terminated(variable, tag("happens")),
+    ));
     let (remainder, (var1, var2)) = combinator(s)?;
 
     Ok((
@@ -126,13 +107,10 @@ fn affects_whether_relation(s: &str) -> Res<&str, Relation> {
 }
 
 fn does_not_affects_whether_relation(s: &str) -> Res<&str, Relation> {
-    let mut combinator = context(
-        "does not affects whether relation",
-        tuple((
-            terminated(variable, tag("does not affect whether")),
-            terminated(variable, tag("happens")),
-        )),
-    );
+    let mut combinator = tuple((
+        terminated(variable, tag("does not affect whether")),
+        terminated(variable, tag("happens")),
+    ));
     let (remainder, (var1, var2)) = combinator(s)?;
 
     Ok((
@@ -146,20 +124,14 @@ fn does_not_affects_whether_relation(s: &str) -> Res<&str, Relation> {
 }
 
 fn is_marked_relation(s: &str) -> Res<&str, Relation> {
-    let mut combinator = context(
-        "is marked relation",
-        separated_pair(variable, tag("is marked"), marker),
-    );
+    let mut combinator = separated_pair(variable, tag("is marked"), marker);
     let (remainder, (var, marker)) = combinator(s)?;
 
     Ok((remainder, Relation::IsMarked(var, marker)))
 }
 
 fn is_not_marked_relation(s: &str) -> Res<&str, Relation> {
-    let mut combinator = context(
-        "is marked relation",
-        separated_pair(variable, tag("is not marked"), marker),
-    );
+    let mut combinator = separated_pair(variable, tag("is not marked"), marker);
     let (remainder, (var, marker)) = combinator(s)?;
 
     Ok((
@@ -169,83 +141,68 @@ fn is_not_marked_relation(s: &str) -> Res<&str, Relation> {
 }
 
 pub fn relation(s: &str) -> Res<&str, Relation> {
-    context(
-        "relation",
-        alt((
-            operation_associated_with_relation,
-            goes_to_relation,
-            does_not_go_to_relation,
-            affects_whether_relation,
-            does_not_affects_whether_relation,
-            is_marked_relation,
-            is_not_marked_relation,
-            influences_relation,
-            does_not_influence_relation,
-        )),
-    )(s)
+    alt((
+        operation_associated_with_relation,
+        goes_to_relation,
+        does_not_go_to_relation,
+        affects_whether_relation,
+        does_not_affects_whether_relation,
+        is_marked_relation,
+        is_not_marked_relation,
+        influences_relation,
+        does_not_influence_relation,
+    ))(s)
 }
 
 pub fn l2_relations(s: &str) -> Res<&str, ASTNode> {
-    context(
-        "l2 relations",
-        map(
-            pair(
-                preceded(l2_bullet, map(relation, ASTNode::Relation)),
-                many0(tuple((
-                    operator,
-                    (preceded(l2_bullet, map(relation, ASTNode::Relation))),
-                ))),
-            ),
-            join_nodes,
+    map(
+        pair(
+            preceded(l2_bullet, map(relation, ASTNode::Relation)),
+            many0(tuple((
+                operator,
+                (preceded(l2_bullet, map(relation, ASTNode::Relation))),
+            ))),
         ),
+        join_nodes,
     )(s)
 }
 
 pub fn l3_relations(s: &str) -> Res<&str, ASTNode> {
-    context(
-        "l3 relations",
-        map(
-            pair(
-                preceded(l3_bullet, map(relation, ASTNode::Relation)),
-                many0(tuple((
-                    operator,
-                    (preceded(l3_bullet, map(relation, ASTNode::Relation))),
-                ))),
-            ),
-            join_nodes,
+    map(
+        pair(
+            preceded(l3_bullet, map(relation, ASTNode::Relation)),
+            many0(tuple((
+                operator,
+                (preceded(l3_bullet, map(relation, ASTNode::Relation))),
+            ))),
         ),
+        join_nodes,
     )(s)
 }
 
 pub fn l4_relations(s: &str) -> Res<&str, ASTNode> {
-    context(
-        "l4 relations",
-        map(
-            pair(
-                preceded(l4_bullet, map(relation, ASTNode::Relation)),
-                many0(tuple((
-                    operator,
-                    (preceded(l4_bullet, map(relation, ASTNode::Relation))),
-                ))),
-            ),
-            join_nodes,
+    map(
+        pair(
+            preceded(l4_bullet, map(relation, ASTNode::Relation)),
+            many0(tuple((
+                operator,
+                (preceded(l4_bullet, map(relation, ASTNode::Relation))),
+            ))),
         ),
+        join_nodes,
     )(s)
 }
 
 pub fn l5_relations(s: &str) -> Res<&str, ASTNode> {
-    context(
-        "l5 relations",
-        map(
-            pair(
-                preceded(l5_bullet, map(relation, ASTNode::Relation)),
-                many0(tuple((
-                    operator,
-                    (preceded(l5_bullet, map(relation, ASTNode::Relation))),
-                ))),
-            ),
-            join_nodes,
+    map(
+        pair(
+            preceded(l5_bullet, map(relation, ASTNode::Relation)),
+            many0(tuple((
+                operator,
+                (preceded(l5_bullet, map(relation, ASTNode::Relation))),
+            ))),
         ),
+        join_nodes,
     )(s)
 }
 
