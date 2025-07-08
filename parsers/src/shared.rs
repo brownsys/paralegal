@@ -28,55 +28,73 @@ pub fn or(s: &str) -> Res<&str, &str> {
 }
 
 pub fn operator(s: &str) -> Res<&str, Operator> {
-    let mut combinator = alt((and, or));
+    let mut combinator = context("'and' or 'or'", alt((and, or)));
     let (remainder, operator_str) = combinator(s)?;
     Ok((remainder, operator_str.into()))
 }
 
 pub fn l1_bullet(s: &str) -> Res<&str, &str> {
-    delimited(multispace0, digit1, tuple((tag("."), space1)))(s)
+    context(
+        "numbered bullet (1., 2., etc.)",
+        delimited(multispace0, digit1, tuple((tag("."), space1))),
+    )(s)
 }
 
 pub fn l2_bullet(s: &str) -> Res<&str, &str> {
     let uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     delimited(
         multispace0,
-        take_while1(|c| uppercase.contains(c)),
+        context(
+            "uppercase letter bullet (A., B., etc.)",
+            take_while1(|c| uppercase.contains(c)),
+        ),
         tuple((tag("."), space1)),
     )(s)
 }
 
 pub fn l3_bullet(s: &str) -> Res<&str, &str> {
     let lowercase = "abcdefghijklmnopqrstuvwxyz";
-    delimited(
-        multispace0,
-        take_while1(|c| lowercase.contains(c)),
-        tuple((tag("."), space1)),
+    context(
+        "lowercase letter bullet (a., b., etc.)",
+        delimited(
+            multispace0,
+            take_while1(|c| lowercase.contains(c)),
+            tuple((tag("."), space1)),
+        ),
     )(s)
 }
 
 pub fn l4_bullet(s: &str) -> Res<&str, &str> {
     // todo: this is lazy, write a real roman numeral parser later
     let roman = "ixv";
-    delimited(
-        multispace0,
-        take_while1(|c| roman.contains(c)),
-        // terminate with ) to avoid ambiguity with l3 bullet lowercase i
-        tuple((tag(")"), space1)),
+    context(
+        "roman numeral bullet (i), ii), etc.)",
+        delimited(
+            multispace0,
+            take_while1(|c| roman.contains(c)),
+            // terminate with ) to avoid ambiguity with l3 bullet lowercase i
+            tuple((tag(")"), space1)),
+        ),
     )(s)
 }
 
 pub fn l5_bullet(s: &str) -> Res<&str, &str> {
     let uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    delimited(
-        multispace0,
-        take_while1(|c| uppercase.contains(c)),
-        tuple((tag(")"), space1)),
+    context(
+        "uppercase letter bullet (A), B), etc.)",
+        delimited(
+            multispace0,
+            take_while1(|c| uppercase.contains(c)),
+            tuple((tag(")"), space1)),
+        ),
     )(s)
 }
 
 pub fn alphabetic_with_underscores(s: &str) -> Res<&str, String> {
-    let mut combinator = preceded(space0, recognize(many1(tuple((alpha1, opt(tag("_")))))));
+    let mut combinator = context(
+        "identifier (letters and underscores)",
+        preceded(space0, recognize(many1(tuple((alpha1, opt(tag("_"))))))),
+    );
     let (remainder, res) = combinator(s)?;
     Ok((remainder, String::from(res)))
 }
@@ -86,14 +104,17 @@ pub fn marker(s: &str) -> Res<&str, Marker> {
 }
 
 fn quote(s: &str) -> Res<&str, &str> {
-    context("quotation mark", tag("\""))(s)
+    tag("\"")(s)
 }
 
 pub fn variable(s: &str) -> Res<&str, Variable> {
-    delimited(
-        tuple((space0, quote)),
-        alphabetic_with_underscores,
-        tuple((quote, space0)),
+    context(
+        "quoted variable (\"variable_name\")",
+        delimited(
+            tuple((space0, quote)),
+            alphabetic_with_underscores,
+            tuple((quote, space0)),
+        ),
     )(s)
 }
 

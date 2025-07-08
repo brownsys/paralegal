@@ -1,8 +1,9 @@
 use common::ast::*;
 use nom::{
     branch::alt,
-    character::complete::space1,
-    combinator::map,
+    character::complete::{space0, space1},
+    combinator::{map, peek},
+    error::context,
     multi::many0,
     sequence::{pair, preceded, separated_pair, terminated, tuple},
 };
@@ -141,17 +142,21 @@ fn is_not_marked_relation(s: &str) -> Res<&str, Relation> {
 }
 
 pub fn relation(s: &str) -> Res<&str, Relation> {
-    alt((
-        operation_associated_with_relation,
-        goes_to_relation,
-        does_not_go_to_relation,
-        affects_whether_relation,
-        does_not_affects_whether_relation,
-        is_marked_relation,
-        is_not_marked_relation,
-        influences_relation,
-        does_not_influence_relation,
-    ))(s)
+    let (remainder, _) = context("a variable", tuple((space0, peek(variable))))(s)?;
+    context(
+        "a relation between two variables",
+        alt((
+            operation_associated_with_relation,
+            goes_to_relation,
+            does_not_go_to_relation,
+            affects_whether_relation,
+            does_not_affects_whether_relation,
+            is_marked_relation,
+            is_not_marked_relation,
+            influences_relation,
+            does_not_influence_relation,
+        )),
+    )(remainder)
 }
 
 pub fn l2_relations(s: &str) -> Res<&str, ASTNode> {

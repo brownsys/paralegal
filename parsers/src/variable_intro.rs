@@ -1,8 +1,9 @@
 use nom::{
     branch::alt,
     character::complete::space0,
+    combinator::peek,
     error::context,
-    sequence::{delimited, separated_pair, terminated},
+    sequence::{delimited, separated_pair, terminated, tuple},
 };
 use nom_supreme::tag::complete::tag;
 
@@ -90,6 +91,10 @@ fn nodes(s: &str) -> Res<&str, VariableIntro> {
 }
 
 pub fn variable_intro(s: &str) -> Res<&str, VariableIntro> {
+    let (remainder, _) = context(
+        "a variable introduction, e.g. \"sensitive\"",
+        tuple((space0, peek(variable))),
+    )(s)?;
     delimited(
         space0,
         alt((
@@ -102,5 +107,5 @@ pub fn variable_intro(s: &str) -> Res<&str, VariableIntro> {
             variable_def,
         )),
         space0,
-    )(s)
+    )(remainder)
 }
