@@ -55,8 +55,6 @@ Once policy and markers have been applied, running the tool is as easy as
 cargo paralegal-flow
 ```
 
-## Installation
+## Installation and Usage
 
-Paralegal has been tested on Linux (Ubuntu), MacOS and WSL. It should also work on Windows though.
-
-Download the
+To explain installation and usage we provide a [step-by-step guide](https://justus-adam.notion.site/Paralegal-Step-by-Step-40541156c25d48f8b6ad79a0e1b09b91) in our online documentation.
