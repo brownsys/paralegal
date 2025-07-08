@@ -28,19 +28,18 @@ Policy:
 ```
 
 Developers connect policies to application code by defining *markers*,
-which denote high-level concepts, such as *deletes*, *write* and *user_data*.
-Developers apply markers to types, function arguments, or function return values using lightweight annotations:
+which denote high-level concepts such as *write*, *encrypts* or *user_data*.
+Developers apply markers to types, function arguments, or function return values using lightweight annotations, e.g.:
 
 ```rust
-#[paralegal::marker(user_data)]
-struct BlogPost { ... }
+#[paralegal::marker(ban_check, return)]
+fn is_user_banned(user: &User) -> bool { ... }
 
 impl Database {
-    #[paralegal::marker(deletes, argument = [1])]
-    fn delete_row(&mut self, id: u32, table: &str) { ... }
+  #[paralegal::marker(write, argument = [0])]
+  fn insert_post(&mut self, user: &User, post: String) { ... }
 }
 ```
-
 
 Paralegal directly integrates with cargo and rustc, so running it is as easy as building your project (`cargo paralegal-flow`).
 
