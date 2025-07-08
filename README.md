@@ -1,42 +1,36 @@
-# Paralegal: The most practical static analysis tool for enforcing privacy policies on Rust code.
+# Paralegal: A Privacy and Security Bug Finder for Rust Applications.
 
-Paralegal is a static analyzer for Rust code that enforces custom privacy and security policies on programs.
-Paralegal ships with an expressive policy language that checks for problematic, semantic
-code patters by reasoning about dependencies between program values.
+Paralegal is a static analyzer for Rust code that enforces privacy and security policies on programs.
 
-For example, a policy checking for the deletion of stored user data may look like this:
+For example, developers have used Paralegal to find problems such as:
+* Failing to delete user data upon request
+* Missing authorization checks before privileged actions
+* Forgetting to encrypt sensitive data before storage
 
-```
-Somewhere:
-1. For each "data type" marked user_data:
-  A. There is a "source" that produces "data type" where:
-    a. There is a "delete query" marked deletes:
-      i) "source" goes to "delete query"
 
-```
-
-And a policy for checking whether correct authorization checks are applied may look like this:
+## Example
+Take the following policy for a social media application, which checks that the user is not banned or deleted before executing an action on their behalf (e.g., posting, commenting):
 
 ```
 Scope:
 Everywhere
 
 Policy:
-1. For each "write" marked community_write:
-	A. There is a "delete check" marked community_delete_check where:
-		a. "delete check" affects whether "write" happens
+1. For each "action" marked write:
+	A. There is a "deleted user check" marked delete_check where:
+		a. "deleted user check" affects whether "action" happens
 	and
-	B. There is a "ban check" marked community_ban_check where:
-		a. "ban check" affects whether "write" happens
+	B. There is a "banned user check" marked ban_check where:
+		a. "banned user check" affects whether "action" happens
 ```
 
-Paralegal enforces these policies on the code base with the help of *markers*,
-user-defined, high-level concepts, such as *deletes*, *community_write* and *user_data*.
-Developers apply markers to types or function arguments using lightweight annotations.
+Developers connect policies to application code by defining *markers*,
+which denote high-level concepts, such as *deletes*, *write* and *user_data*.
+Developers apply markers to types, function arguments, or function return values using lightweight annotations:
 
 ```rust
 #[paralegal::marker(user_data)]
-struct Blogpost { ... }
+struct BlogPost { ... }
 
 impl Database {
     #[paralegal::marker(deletes, argument = [1])]
@@ -44,16 +38,14 @@ impl Database {
 }
 ```
 
-The tool itself is a fast cargo and rustc plugin that developers can run frequently
+
+Paralegal directly integrates with cargo and rustc, so running it is as easy as building your project (`cargo paralegal-flow`).
+
+## Performance
+Paralegal is a fast cargo and rustc plugin that developers can run frequently
 (in CI for example) to find potential bugs as they develop their application.
 
 ![](misc/ci_plot-3.png)
-
-Once policy and markers have been applied, running the tool is as easy as
-
-```bash
-cargo paralegal-flow
-```
 
 ## Installation and Usage
 
