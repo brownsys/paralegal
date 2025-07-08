@@ -7,6 +7,9 @@ For example, developers have used Paralegal to find problems such as:
 * Missing authorization checks before privileged actions
 * Forgetting to encrypt sensitive data before storage
 
+Paralegal's user guide and documentation is available at [https://brownsys.github.io/paralegal](https://brownsys.github.io/paralegal), which includes a [step-by-step walkthrough](https://justus-adam.notion.site/Paralegal-Step-by-Step-40541156c25d48f8b6ad79a0e1b09b91) of an example application and policy.
+
+See also [our paper from OSDI 2025](https://justus.science/pdfs/paralegal.pdf).
 
 ## Example
 Take the following policy for a social media application, which checks that the user is not banned or deleted before executing an action on their behalf (e.g., posting, commenting):
