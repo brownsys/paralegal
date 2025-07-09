@@ -1,0 +1,9 @@
+{{#if sink-node-cluster}}
+  {{#if sink-all-method}}
+    {{src}}.flows_to_all(&{{sink}}, &ctx, EdgeSelection::Data).is_none()
+  {{else}}
+    {{src}}.flows_to(&{{sink}}, &ctx, EdgeSelection::Data)
+  {{/if}}
+{{else}}
+    {{src}}.flows_to({{sink}}, &ctx, EdgeSelection::Data)
+{{/if}}

@@ -1,0 +1,10 @@
+[package]
+name = "common"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+handlebars = { workspace = true }
+rust-embed = { workspace = true }
+strum = "0.27.1"
+strum_macros = "0.27.1"

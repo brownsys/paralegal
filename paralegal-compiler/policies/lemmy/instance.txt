@@ -1,0 +1,14 @@
+Scope:
+Everywhere
+
+Definitions:
+1. "unblessed_db_access" is each "db_access" marked instance where:
+    A. "db_access" is not marked instance_safe
+
+Policy:
+1. For each "unblessed_db_access":
+    A. There is a "dc" marked instance_delete_check where:
+        a. "dc" influences "unblessed_db_access"
+    and
+    B. There is a "bc" marked instance_ban_check where:
+        a. "bc" influences "unblessed_db_access"

@@ -1,0 +1,8 @@
+Scope:
+Somewhere
+
+Policy:
+1. For each "user_data" type marked user_data:
+    A. There is a "retrieval" that produces "user_data" where:
+       a. There is a "deletes" marked to_delete where:
+	       i) "retrieval" goes to "deletes"

@@ -1,0 +1,13 @@
+[package]
+name = "interp"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.94"
+clap = { workspace = true }
+common = { path = "../common" }
+paralegal-policy = { workspace = true }
+parsers = { path = "../parsers" }

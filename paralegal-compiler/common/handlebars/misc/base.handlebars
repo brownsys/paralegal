@@ -1,0 +1,49 @@
+use anyhow::Result;
+use std::sync::Arc;
+
+use paralegal_policy::{
+    assert_error, paralegal_spdg::{traverse::EdgeSelection, Identifier, NodeCluster}, Context, GlobalNode, IntoIterGlobalNodes, Marker, NodeExt, NodeQueries, RootContext
+};
+
+macro_rules! marker {
+    ($id:ident) => {
+        Marker::new_intern(stringify!($id))
+    };
+}
+
+// For always_happens_before -- lets us call "contains" agnostic of whether it's a NodeCluster
+// or collection of GlobalNodes
+trait ContainsNodeExt: Sized {
+    fn contains(&self, node: &GlobalNode) -> bool
+    where
+        Self: Sized;
+}
+
+impl ContainsNodeExt for NodeCluster {
+    fn contains(&self, node: &GlobalNode) -> bool
+    where
+        Self: Sized,
+    {
+        let nodes = self.iter_global_nodes().collect::<Vec<_>>();
+        nodes.contains(node)
+    }
+}
+
+impl ContainsNodeExt for Option<NodeCluster> {
+    fn contains(&self, node: &GlobalNode) -> bool
+    where
+        Self: Sized,
+    {
+        if self.is_none() {
+            return false;
+        }
+        self.clone().unwrap().contains(node)
+    }
+}
+
+pub fn check(ctx: Arc<RootContext>) -> Result<()> {
+        ctx.named_policy(Identifier::new_intern("check"), |ctx| {
+        {{policy}}
+        Ok(())
+        })
+        }
