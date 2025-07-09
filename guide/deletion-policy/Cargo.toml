@@ -8,5 +8,6 @@ edition = "2021"
 [dependencies]
 anyhow = "1"
 paralegal-policy = { path = "../../crates/paralegal-policy" }
+clap = { version = "4", features = ["derive"] }
 
 [workspace]
