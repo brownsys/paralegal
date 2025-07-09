@@ -1,0 +1,170 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Cargo as a library"><title>cargo - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="cargo" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../static.files/storage-59e33391.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../cargo/index.html">cargo</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#cargo-as-a-library" title="Cargo as a library">Cargo as a library</a><ul><li><a href="#overview" title="Overview">Overview</a></li><li><a href="#contribute-to-cargo-documentations" title="Contribute to Cargo documentations">Contribute to Cargo documentations</a></li></ul></li></ul><h3><a href="#reexports">Crate Items</a></h3><ul class="block"><li><a href="#reexports" title="Re-exports">Re-exports</a></li><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#macros" title="Macros">Macros</a></li><li><a href="#constants" title="Constants">Constants</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>cargo</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/cargo/lib.rs.html#1-233">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><h2 id="cargo-as-a-library"><a class="doc-anchor" href="#cargo-as-a-library">§</a>Cargo as a library</h2>
+<p>There are two places you can find API documentation of cargo-the-library,</p>
+<ul>
+<li><a href="https://docs.rs/cargo">https://docs.rs/cargo</a>: targeted at external tool developers using cargo-the-library
+<ul>
+<li>Released with every rustc release</li>
+</ul>
+</li>
+<li><a href="https://doc.rust-lang.org/nightly/nightly-rustc/cargo">https://doc.rust-lang.org/nightly/nightly-rustc/cargo</a>: targeted at cargo contributors
+<ul>
+<li>Updated on each update of the <code>cargo</code> submodule in <code>rust-lang/rust</code></li>
+</ul>
+</li>
+</ul>
+<blockquote>
+<p>This library is maintained by the Cargo team, primarily for use by Cargo
+and not intended for external use (except as a transitive dependency). This
+crate may make major changes to its APIs. See <a href="https://doc.rust-lang.org/stable/cargo/reference/external-tools.html">The Cargo Book:
+External tools</a> for more on this topic.</p>
+</blockquote>
+<h3 id="overview"><a class="doc-anchor" href="#overview">§</a>Overview</h3>
+<p>Major components of cargo include:</p>
+<ul>
+<li><a href="ops/index.html" title="mod cargo::ops"><code>ops</code></a>:
+Every major operation is implemented here. Each command is a thin wrapper around ops.
+<ul>
+<li><a href="ops/cargo_compile/index.html" title="mod cargo::ops::cargo_compile"><code>ops::cargo_compile</code></a>:
+This is the entry point for all the compilation commands. This is a
+good place to start if you want to follow how compilation starts and
+flows to completion.</li>
+</ul>
+</li>
+<li><a href="ops/resolve/index.html" title="mod cargo::ops::resolve"><code>ops::resolve</code></a>:
+Top-level API for dependency and feature resolver (e.g. <a href="ops/resolve/fn.resolve_ws.html" title="fn cargo::ops::resolve::resolve_ws"><code>ops::resolve_ws</code></a>)
+<ul>
+<li><a href="core/resolver/index.html" title="mod cargo::core::resolver"><code>core::resolver</code></a>: The core algorithm</li>
+</ul>
+</li>
+<li><a href="core/compiler/index.html" title="mod cargo::core::compiler"><code>core::compiler</code></a>:
+This is the code responsible for running <code>rustc</code> and <code>rustdoc</code>.
+<ul>
+<li><a href="core/compiler/build_context/index.html" title="mod cargo::core::compiler::build_context"><code>core::compiler::build_context</code></a>:
+The <a href="core/compiler/build_context/struct.BuildContext.html" title="struct cargo::core::compiler::build_context::BuildContext"><code>BuildContext</code></a> is the result of the “front end” of the
+build process. This contains the graph of work to perform and any settings necessary for
+<code>rustc</code>. After this is built, the next stage of building is handled in
+<a href="core/compiler/build_runner/struct.BuildRunner.html" title="struct cargo::core::compiler::build_runner::BuildRunner"><code>BuildRunner</code></a>.</li>
+<li><a href="core/compiler/build_runner/index.html" title="mod cargo::core::compiler::build_runner"><code>core::compiler::build_runner</code></a>:
+The <code>Context</code> is the mutable state used during the build process. This
+is the core of the build process, and everything is coordinated through
+this.</li>
+<li><a href="core/compiler/fingerprint/index.html" title="mod cargo::core::compiler::fingerprint"><code>core::compiler::fingerprint</code></a>:
+The <code>fingerprint</code> module contains all the code that handles detecting
+if a crate needs to be recompiled.</li>
+</ul>
+</li>
+<li><a href="sources/source/index.html" title="mod cargo::sources::source"><code>sources::source</code></a>:
+The <a href="sources/source/trait.Source.html" title="trait cargo::sources::source::Source"><code>sources::source::Source</code></a> trait is an abstraction over different sources of packages.
+Sources are uniquely identified by a <a href="core/source_id/struct.SourceId.html" title="struct cargo::core::source_id::SourceId"><code>core::SourceId</code></a>. Sources are implemented in the <a href="sources/index.html" title="mod cargo::sources"><code>sources</code></a>
+directory.</li>
+<li><a href="util/index.html" title="mod cargo::util"><code>util</code></a>:
+This directory contains generally-useful utility modules.</li>
+<li><a href="util/context/index.html" title="mod cargo::util::context"><code>util::context</code></a>:
+This directory contains the global application context.
+This includes the config parser which makes heavy use of
+<a href="https://serde.rs/">serde</a> to merge and translate config values.
+The <a href="util/context/struct.GlobalContext.html" title="struct cargo::util::context::GlobalContext"><code>util::GlobalContext</code></a> is usually accessed from the
+<a href="core/workspace/struct.Workspace.html" title="struct cargo::core::workspace::Workspace"><code>core::Workspace</code></a>
+though references to it are scattered around for more convenient access.</li>
+<li><a href="util/toml/index.html" title="mod cargo::util::toml"><code>util::toml</code></a>:
+This directory contains the code for parsing <code>Cargo.toml</code> files.
+<ul>
+<li><a href="ops/lockfile/index.html" title="mod cargo::ops::lockfile"><code>ops::lockfile</code></a>:
+This is where <code>Cargo.lock</code> files are loaded and saved.</li>
+</ul>
+</li>
+</ul>
+<p>Related crates:</p>
+<ul>
+<li><a href="https://crates.io/crates/cargo-platform"><code>cargo-platform</code></a>
+(<a href="https://doc.rust-lang.org/nightly/nightly-rustc/cargo_platform">nightly docs</a>):
+This library handles parsing <code>cfg</code> expressions.</li>
+<li><a href="https://crates.io/crates/cargo-util"><code>cargo-util</code></a>
+(<a href="https://doc.rust-lang.org/nightly/nightly-rustc/cargo_util">nightly docs</a>):
+This contains general utility code that is shared between cargo and the testsuite</li>
+<li><a href="https://crates.io/crates/cargo-util-schemas"><code>cargo-util-schemas</code></a>
+(<a href="https://doc.rust-lang.org/nightly/nightly-rustc/cargo_util_schemas">nightly docs</a>):
+This contains the serde schemas for cargo</li>
+<li><a href="https://crates.io/crates/crates-io"><code>crates-io</code></a>
+(<a href="https://doc.rust-lang.org/nightly/nightly-rustc/crates_io">nightly docs</a>):
+This contains code for accessing the crates.io API.</li>
+<li><a href="https://crates.io/crates/home"><code>home</code></a>:
+This library is shared between cargo and rustup and is used for finding their home directories.
+This is not directly depended upon with a <code>path</code> dependency; cargo uses the version from crates.io.
+It is intended to be versioned and published independently of Rust’s release system.
+Whenever a change needs to be made, bump the version in Cargo.toml and <code>cargo publish</code> it manually, and then update cargo’s <code>Cargo.toml</code> to depend on the new version.</li>
+<li><a href="https://crates.io/crates/rustfix"><code>rustfix</code></a>
+(<a href="https://doc.rust-lang.org/nightly/nightly-rustc/rustfix">nightly docs</a>):
+This defines structures that represent fix suggestions from rustc,
+as well as generates “fixed” code from suggestions.
+Operations in <code>rustfix</code> are all in memory and won’t write to disks.</li>
+<li><a href="https://github.com/rust-lang/cargo/tree/master/crates/cargo-test-support"><code>cargo-test-support</code></a>
+(<a href="https://doc.rust-lang.org/nightly/nightly-rustc/cargo_test_support/index.html">nightly docs</a>):
+This contains a variety of code to support writing tests</li>
+<li><a href="https://github.com/rust-lang/cargo/tree/master/crates/cargo-test-macro"><code>cargo-test-macro</code></a>
+(<a href="https://doc.rust-lang.org/nightly/nightly-rustc/cargo_test_macro/index.html">nightly docs</a>):
+This is the <code>#[cargo_test]</code> proc-macro used by the test suite to define tests.</li>
+<li><a href="https://github.com/rust-lang/cargo/tree/master/credential"><code>credential</code></a>
+This subdirectory contains several packages for implementing the
+<a href="https://doc.rust-lang.org/nightly/cargo/reference/registry-authentication.html">credential providers</a>.</li>
+<li><a href="https://github.com/rust-lang/cargo/tree/master/crates/mdman"><code>mdman</code></a>
+(<a href="https://doc.rust-lang.org/nightly/nightly-rustc/mdman/index.html">nightly docs</a>):
+This is a utility for generating cargo’s man pages. See <a href="https://github.com/rust-lang/cargo/tree/master/src/doc#building-the-man-pages">Building the man
+pages</a>
+for more information.</li>
+<li><a href="https://github.com/rust-lang/cargo/tree/master/crates/resolver-tests"><code>resolver-tests</code></a>
+This is a dedicated package that defines tests for the <a href="core/resolver/index.html" title="mod cargo::core::resolver">dependency
+resolver</a>.</li>
+</ul>
+<h4 id="file-overview"><a class="doc-anchor" href="#file-overview">§</a>File Overview</h4>
+<p>Files that interact with cargo include</p>
+<ul>
+<li>Package
+<ul>
+<li><code>Cargo.toml</code>: User-written project manifest, loaded with <a href="util/toml/fn.read_manifest.html" title="fn cargo::util::toml::read_manifest"><code>util::toml::read_manifest</code></a> and then
+translated to <a href="core/manifest/struct.Manifest.html" title="struct cargo::core::manifest::Manifest"><code>core::manifest::Manifest</code></a> which maybe stored in a <a href="core/package/struct.Package.html" title="struct cargo::core::package::Package"><code>core::Package</code></a>.
+<ul>
+<li>This is editable with <a href="util/toml_mut/manifest/struct.LocalManifest.html" title="struct cargo::util::toml_mut::manifest::LocalManifest"><code>util::toml_mut::manifest::LocalManifest</code></a></li>
+</ul>
+</li>
+<li><code>Cargo.lock</code>: Generally loaded with <a href="ops/resolve/fn.resolve_ws.html" title="fn cargo::ops::resolve::resolve_ws"><code>ops::resolve_ws</code></a> or a variant of it into a <a href="core/resolver/resolve/struct.Resolve.html" title="struct cargo::core::resolver::resolve::Resolve"><code>core::resolver::Resolve</code></a>
+<ul>
+<li>At the lowest level, <a href="ops/lockfile/fn.load_pkg_lockfile.html" title="fn cargo::ops::lockfile::load_pkg_lockfile"><code>ops::load_pkg_lockfile</code></a> and <a href="ops/lockfile/fn.write_pkg_lockfile.html" title="fn cargo::ops::lockfile::write_pkg_lockfile"><code>ops::write_pkg_lockfile</code></a> are used</li>
+<li>See <a href="core/resolver/encode/index.html" title="mod cargo::core::resolver::encode"><code>core::resolver::encode</code></a> for versioning of <code>Cargo.lock</code></li>
+</ul>
+</li>
+<li><code>target/</code>: Used for build artifacts and abstracted with <a href="core/compiler/layout/index.html" title="mod cargo::core::compiler::layout"><code>core::compiler::layout</code></a>. <code>Layout</code> handles locking the target directory and providing paths to parts inside. There is a separate <code>Layout</code> for each build <code>target</code>.
+<ul>
+<li><code>target/debug/.fingerprint</code>: Tracker whether nor not a crate needs to be rebuilt.  See <a href="core/compiler/fingerprint/index.html" title="mod cargo::core::compiler::fingerprint"><code>core::compiler::fingerprint</code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><code>$CARGO_HOME/</code>:
+<ul>
+<li><code>registry/</code>: Package registry cache which is managed in <a href="sources/registry/index.html" title="mod cargo::sources::registry"><code>sources::registry</code></a>.  Be careful
+as the lock <a href="util/context/struct.GlobalContext.html#method.acquire_package_cache_lock" title="method cargo::util::context::GlobalContext::acquire_package_cache_lock"><code>util::GlobalContext::acquire_package_cache_lock</code></a> must be manually acquired.
+<ul>
+<li><code>index</code>/: Fast-to-access crate metadata (no need to download / extract <code>*.crate</code> files)</li>
+<li><code>cache/*/*.crate</code>: Local cache of published crates</li>
+<li><code>src/*/*</code>: Extracted from <code>*.crate</code> by <a href="sources/registry/struct.RegistrySource.html" title="struct cargo::sources::registry::RegistrySource"><code>sources::registry::RegistrySource</code></a></li>
+</ul>
+</li>
+<li><code>git/</code>: Git source cache.  See <a href="sources/git/index.html" title="mod cargo::sources::git"><code>sources::git</code></a>.</li>
+</ul>
+</li>
+<li><code>**/.cargo/config.toml</code>: Environment dependent (env variables, files) configuration.  See
+<a href="util/context/index.html" title="mod cargo::util::context"><code>util::context</code></a></li>
+</ul>
+<h3 id="contribute-to-cargo-documentations"><a class="doc-anchor" href="#contribute-to-cargo-documentations">§</a>Contribute to Cargo documentations</h3>
+<p>The Cargo team always continues improving all external and internal documentations.
+If you spot anything could be better, don’t hesitate to discuss with the team on
+Zulip <a href="https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo"><code>t-cargo</code> stream</a>, or <a href="https://github.com/rust-lang/cargo/issues/new/choose">submit an issue</a> right on GitHub.
+There is also an issue label <a href="https://github.com/rust-lang/cargo/labels/A-documenting-cargo-itself"><code>A-documenting-cargo-itself</code></a>,
+which is generally for documenting user-facing <a href="https://doc.rust-lang.org/cargo/">The Cargo Book</a>,
+but the Cargo team is welcome any form of enhancement for the <a href="https://doc.crates.io/contrib/">Cargo Contributor Guide</a>
+and this API documentation as well.</p>
+</div></details><h2 id="reexports" class="section-header">Re-exports<a href="#reexports" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name" id="reexport.AlreadyPrintedError"><code>pub use crate::util::errors::<a class="struct" href="util/errors/struct.AlreadyPrintedError.html" title="struct cargo::util::errors::AlreadyPrintedError">AlreadyPrintedError</a>;</code></div></li><li><div class="item-name" id="reexport.InternalError"><code>pub use crate::util::errors::<a class="struct" href="util/errors/struct.InternalError.html" title="struct cargo::util::errors::InternalError">InternalError</a>;</code></div></li><li><div class="item-name" id="reexport.VerboseError"><code>pub use crate::util::errors::<a class="struct" href="util/errors/struct.VerboseError.html" title="struct cargo::util::errors::VerboseError">VerboseError</a>;</code></div></li><li><div class="item-name" id="reexport.indented_lines"><code>pub use crate::util::<a class="fn" href="util/fn.indented_lines.html" title="fn cargo::util::indented_lines">indented_lines</a>;</code></div></li><li><div class="item-name" id="reexport.CargoResult"><code>pub use crate::util::<a class="type" href="util/errors/type.CargoResult.html" title="type cargo::util::errors::CargoResult">CargoResult</a>;</code></div></li><li><div class="item-name" id="reexport.CliError"><code>pub use crate::util::<a class="struct" href="util/errors/struct.CliError.html" title="struct cargo::util::errors::CliError">CliError</a>;</code></div></li><li><div class="item-name" id="reexport.CliResult"><code>pub use crate::util::<a class="type" href="util/errors/type.CliResult.html" title="type cargo::util::errors::CliResult">CliResult</a>;</code></div></li><li><div class="item-name" id="reexport.GlobalContext"><code>pub use crate::util::<a class="struct" href="util/context/struct.GlobalContext.html" title="struct cargo::util::context::GlobalContext">GlobalContext</a>;</code></div></li></ul><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="mod" href="core/index.html" title="mod cargo::core">core</a></div></li><li><div class="item-name"><a class="mod" href="macros/index.html" title="mod cargo::macros">macros</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="mod" href="ops/index.html" title="mod cargo::ops">ops</a></div></li><li><div class="item-name"><a class="mod" href="sources/index.html" title="mod cargo::sources">sources</a></div><div class="desc docblock-short">The trait for sources of Cargo packages and its built-in implementations.</div></li><li><div class="item-name"><a class="mod" href="util/index.html" title="mod cargo::util">util</a></div></li><li><div class="item-name"><a class="mod" href="version/index.html" title="mod cargo::version">version</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Code for representing cargo’s release version number.</div></li></ul><h2 id="macros" class="section-header">Macros<a href="#macros" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="macro" href="macro.__shell_print.html" title="macro cargo::__shell_print">__<wbr>shell_<wbr>print</a></div></li><li><div class="item-name"><a class="macro" href="macro.drop_eprint.html" title="macro cargo::drop_eprint">drop_<wbr>eprint</a></div></li><li><div class="item-name"><a class="macro" href="macro.drop_eprintln.html" title="macro cargo::drop_eprintln">drop_<wbr>eprintln</a></div></li><li><div class="item-name"><a class="macro" href="macro.drop_print.html" title="macro cargo::drop_print">drop_<wbr>print</a></div></li><li><div class="item-name"><a class="macro" href="macro.drop_println.html" title="macro cargo::drop_println">drop_<wbr>println</a></div></li><li><div class="item-name"><a class="macro" href="macro.try_old_curl.html" title="macro cargo::try_old_curl">try_<wbr>old_<wbr>curl</a></div><div class="desc docblock-short">When dynamically linked against libcurl, we want to ignore some failures
+when using old versions that don’t support certain features.</div></li><li><div class="item-name"><a class="macro" href="macro.try_old_curl_http2_pipewait.html" title="macro cargo::try_old_curl_http2_pipewait">try_<wbr>old_<wbr>curl_<wbr>http2_<wbr>pipewait</a></div><div class="desc docblock-short">Enable HTTP/2 and pipewait to be used as it’ll allow true multiplexing
+which makes downloads much faster.</div></li></ul><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="constant" href="constant.CARGO_ENV.html" title="constant cargo::CARGO_ENV">CARGO_<wbr>ENV</a></div></li></ul><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn._display_error.html" title="fn cargo::_display_error">_display_<wbr>error</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.display_error.html" title="fn cargo::display_error">display_<wbr>error</a></div><div class="desc docblock-short">Displays an error, and all its causes, to stderr.</div></li><li><div class="item-name"><a class="fn" href="fn.display_warning_with_error.html" title="fn cargo::display_warning_with_error">display_<wbr>warning_<wbr>with_<wbr>error</a></div><div class="desc docblock-short">Displays a warning, with an error object providing detailed information
+and context.</div></li><li><div class="item-name"><a class="fn" href="fn.exit_with_error.html" title="fn cargo::exit_with_error">exit_<wbr>with_<wbr>error</a></div></li><li><div class="item-name"><a class="fn" href="fn.version.html" title="fn cargo::version">version</a></div><div class="desc docblock-short">Returns information about cargo’s version.</div></li></ul><script type="text/json" id="notable-traits-data">{"&[u8]":"<h3>Notable traits for <code>&amp;[<a class=\"primitive\" href=\"https://doc.rust-lang.org/nightly/std/primitive.u8.html\">u8</a>]</code></h3><pre><code><div class=\"where\">impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/std/io/trait.Read.html\" title=\"trait std::io::Read\">Read</a> for &amp;[<a class=\"primitive\" href=\"https://doc.rust-lang.org/nightly/std/primitive.u8.html\">u8</a>]</div>"}</script></section></div></main></body></html>

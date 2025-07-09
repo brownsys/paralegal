@@ -1,0 +1,40 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Replacement for `#[test]`"><title>cargo_test in cargo_test_macro - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="cargo_test_macro" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc attr"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../cargo_test_macro/index.html">cargo_<wbr>test_<wbr>macro</a><span class="version">0.4.0</span></h2></div><div class="sidebar-elems"><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="index.html">cargo_test_macro</a></span><h1>Attribute Macro <span class="attr">cargo_test</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/cargo_test_macro/lib.rs.html#59-235">Source</a> </span></div><pre class="rust item-decl"><code>#[cargo_test]</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Replacement for <code>#[test]</code></p>
+<p>The <code>#[cargo_test]</code> attribute extends <code>#[test]</code> with some setup before starting the test.
+It will create a filesystem “sandbox” under the “cargo integration test” directory for each test, such as <code>/path/to/cargo/target/tmp/cit/t123/</code>.
+The sandbox will contain a <code>home</code> directory that will be used instead of your normal home directory.</p>
+<p>The <code>#[cargo_test]</code> attribute takes several options that will affect how the test is generated.
+They are listed in parentheses separated with commas, such as:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="attr">#[cargo_test(nightly, reason = <span class="string">"-Zfoo is unstable"</span>)]</span></code></pre></div>
+<p>The options it supports are:</p>
+<ul>
+<li><code>&gt;=1.64</code> — This indicates that the test will only run with the given version of <code>rustc</code> or newer.
+This can be used when a new <code>rustc</code> feature has been stabilized that the test depends on.
+If this is specified, a <code>reason</code> is required to explain why it is being checked.</li>
+<li><code>nightly</code> — This will cause the test to be ignored if not running on the nightly toolchain.
+This is useful for tests that use unstable options in <code>rustc</code> or <code>rustdoc</code>.
+These tests are run in Cargo’s CI, but are disabled in rust-lang/rust’s CI due to the difficulty of updating both repos simultaneously.
+A <code>reason</code> field is required to explain why it is nightly-only.</li>
+<li><code>requires = "&lt;cmd&gt;"</code> — This indicates a command that is required to be installed to be run.
+For example, <code>requires = "rustfmt"</code> means the test will only run if the executable <code>rustfmt</code> is installed.
+These tests are <em>always</em> run on CI.
+This is mainly used to avoid requiring contributors from having every dependency installed.</li>
+<li><code>build_std_real</code> — This is a “real” <code>-Zbuild-std</code> test (in the <code>build_std</code> integration test).
+This only runs on nightly, and only if the environment variable <code>CARGO_RUN_BUILD_STD_TESTS</code> is set (these tests on run on Linux).</li>
+<li><code>build_std_mock</code> — This is a “mock” <code>-Zbuild-std</code> test (which uses a mock standard library).
+This only runs on nightly, and is disabled for windows-gnu.</li>
+<li><code>public_network_test</code> — This tests contacts the public internet.
+These tests are disabled unless the <code>CARGO_PUBLIC_NETWORK_TESTS</code> environment variable is set.
+Use of this should be <em>extremely rare</em>, please avoid using it if possible.
+The hosts it contacts should have a relatively high confidence that they are reliable and stable (such as github.com), especially in CI.
+The tests should be carefully considered for developer security and privacy as well.</li>
+<li><code>container_test</code> — This indicates that it is a test that uses Docker.
+These tests are disabled unless the <code>CARGO_CONTAINER_TESTS</code> environment variable is set.
+This requires that you have Docker installed.
+The SSH tests also assume that you have OpenSSH installed.
+These should work on Linux, macOS, and Windows where possible.
+Unfortunately these tests are not run in CI for macOS or Windows (no Docker on macOS, and Windows does not support Linux images).
+See <a href="https://doc.rust-lang.org/nightly/nightly-rustc/cargo_test_support/containers"><code>cargo-test-support::containers</code></a> for more on writing these tests.</li>
+<li><code>ignore_windows="reason"</code> — Indicates that the test should be ignored on windows for the given reason.</li>
+</ul>
+</div></details></section></div></main></body></html>

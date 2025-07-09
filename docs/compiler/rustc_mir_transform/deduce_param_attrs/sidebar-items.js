@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["deduced_param_attrs","type_will_always_be_passed_directly"],"struct":["DeduceReadOnly"]};

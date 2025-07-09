@@ -1,0 +1,37 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Parser recognizing a fixed pattern, called a tag. If the front of the input data matches the `tag`, case insensitively, that part of the input will be returned. Records the tag in the error in the event of a parse failure via `TagError`."><title>tag_no_case in nom_supreme::tag::complete - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="nom_supreme" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc fn"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../nom_supreme/index.html">nom_<wbr>supreme</a><span class="version">0.8.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">tag_<wbr>no_<wbr>case</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#example" title="Example">Example</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="index.html">In nom_<wbr>supreme::<wbr>tag::<wbr>complete</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../index.html">nom_supreme</a>::<wbr><a href="../index.html">tag</a>::<wbr><a href="index.html">complete</a></span><h1>Function <span class="fn">tag_no_case</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/nom_supreme/tag.rs.html#145-155">Source</a> </span></div><pre class="rust item-decl"><code>pub fn tag_no_case&lt;T, I, E&gt;(tag: T) -&gt; impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html" title="trait core::clone::Clone">Clone</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/ops/function/trait.Fn.html" title="trait core::ops::function::Fn">Fn</a>(I) -&gt; <a class="type" href="../../../nom/internal/type.IResult.html" title="type nom::internal::IResult">IResult</a>&lt;I, I, E&gt;<div class="where">where
+    T: <a class="trait" href="../../../nom/traits/trait.InputLength.html" title="trait nom::traits::InputLength">InputLength</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html" title="trait core::clone::Clone">Clone</a>,
+    I: <a class="trait" href="../../../nom/traits/trait.InputTake.html" title="trait nom::traits::InputTake">InputTake</a> + <a class="trait" href="../../../nom/traits/trait.Compare.html" title="trait nom::traits::Compare">Compare</a>&lt;T&gt;,
+    E: <a class="trait" href="../trait.TagError.html" title="trait nom_supreme::tag::TagError">TagError</a>&lt;I, T&gt;,</div></code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Parser recognizing a fixed pattern, called a tag. If the front of the
+input data matches the <code>tag</code>, case insensitively, that part of the
+input will be returned. Records the tag in the error in the event of a
+parse failure via <a href="../trait.TagError.html" title="trait nom_supreme::tag::TagError"><code>TagError</code></a>.</p>
+<h2 id="example"><a class="doc-anchor" href="#example">§</a>Example</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>cool_asserts::assert_matches;
+<span class="kw">use </span>nom_supreme::tag::complete::tag_no_case;
+<span class="kw">use </span>nom_supreme::error::{ErrorTree, BaseErrorKind, Expectation};
+
+<span class="kw">fn </span>parse_hello(s: <span class="kw-2">&amp;</span>str) -&gt; IResult&lt;<span class="kw-2">&amp;</span>str, <span class="kw-2">&amp;</span>str, ErrorTree&lt;<span class="kw-2">&amp;</span>str&gt;&gt; {
+    tag_no_case(<span class="string">"hello"</span>)(s)
+}
+
+<span class="macro">assert_matches!</span>(
+    parse_hello(<span class="string">"HELLO, WORLD!"</span>),
+    <span class="prelude-val">Ok</span>((<span class="string">", WORLD!"</span>, <span class="string">"HELLO"</span>)),
+);
+
+<span class="macro">assert_matches!</span>(
+    parse_hello(<span class="string">"something"</span>),
+    <span class="prelude-val">Err</span>(Err::Error(ErrorTree::Base {
+        location: <span class="string">"something"</span>,
+        kind: BaseErrorKind::Expected(Expectation::Tag(<span class="string">"hello"</span>)),
+    }))
+);
+
+<span class="macro">assert_matches!</span>(
+    parse_hello(<span class="string">"HEL"</span>),
+    <span class="prelude-val">Err</span>(Err::Error(ErrorTree::Base {
+        location: <span class="string">"HEL"</span>,
+        kind: BaseErrorKind::Expected(Expectation::Tag(<span class="string">"hello"</span>)),
+    }))
+);</code></pre></div>
+</div></details></section></div></main></body></html>

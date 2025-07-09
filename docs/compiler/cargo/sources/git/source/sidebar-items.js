@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Revision"],"fn":["ident","ident_shallow"],"struct":["GitSource"]};

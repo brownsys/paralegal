@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AutoderefKind"],"fn":["report_autoderef_recursion_limit_error"],"struct":["Autoderef","AutoderefSnapshot"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["RichLocation","SourceUse","TargetUse"],"fn":["allocative_visit_intern_t","allocative_visit_map_coerce_key","allocative_visit_simple_sized"],"mod":["pdg","rustc","rustc_impls","rustc_portable","rustc_proxies"],"struct":["CallString","GlobalLocation","SimpleSizedAllocativeWrapper"]};

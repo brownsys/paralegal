@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["appearances_iter"],"struct":["Appearance","AppearanceIndex","AppearancesIter","LocalUseMap","LocalUseMapBuild"],"type":["Appearances"]};

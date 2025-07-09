@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ERROR_CODES_PATH","ERROR_DOCS_PATH","ERROR_TESTS_PATH","IGNORE_DOCTEST_CHECK","IGNORE_UI_TEST_CHECK"],"fn":["check","check_error_codes_docs","check_error_codes_tests","check_error_codes_used","check_explanation_has_doctest","extract_error_codes"],"macro":["verbose_print"]};

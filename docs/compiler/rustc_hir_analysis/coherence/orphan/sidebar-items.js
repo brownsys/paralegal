@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["emit_orphan_check_error","lint_uncovered_ty_params","orphan_check","orphan_check_impl"],"struct":["TyVarReplacer","UncoveredTyParamCollector"]};

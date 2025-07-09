@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["MutationStatus","Reason"],"struct":["ModularMutationVisitor","Mutation"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["convert_abi","convert_lifetime","convert_static","from_clean_item","from_deprecation","from_fn_header","from_function","from_macro_kind","from_trait_bound_modifier"],"trait":["FromClean","IntoJson"]};

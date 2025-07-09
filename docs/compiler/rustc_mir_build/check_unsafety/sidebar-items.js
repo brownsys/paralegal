@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SafetyContext","UnsafeOpKind"],"fn":["check_unsafety"],"struct":["LayoutConstrainedPlaceVisitor","NestedUsedBlock","UnsafetyVisitor","UnusedUnsafeWarning"]};

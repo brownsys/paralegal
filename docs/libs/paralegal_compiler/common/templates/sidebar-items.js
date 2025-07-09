@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Template"],"fn":["register_templates","render_only_via_template","render_template"],"struct":["TemplateDirectory","TemplateIter"]};

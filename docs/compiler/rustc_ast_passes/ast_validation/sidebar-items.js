@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SelfSemantic","TraitOrTraitImpl"],"fn":["check_crate","deny_equality_constraints","validate_generic_param_order"],"struct":["AstValidator"]};

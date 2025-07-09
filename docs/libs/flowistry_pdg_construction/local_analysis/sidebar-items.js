@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CallHandling","CallKind"],"fn":["is_split","other_as_arg"],"struct":["InstructionState","LocalAnalysis"]};

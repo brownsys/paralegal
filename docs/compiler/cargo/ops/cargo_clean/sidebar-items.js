@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["clean","clean_specs","escape_glob_path"],"struct":["CleanContext","CleanOptions","CleaningFolderBar","CleaningPackagesBar"],"trait":["CleaningProgressBar"]};

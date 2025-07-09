@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ASTNode","Binop","ClauseIntro","DefinitionScope","OgClauseIntroType","Operator","Relation","VariableIntroType"],"struct":["Clause","Definition","TwoNodeObligation","VariableIntro"],"type":["Marker","Variable"]};

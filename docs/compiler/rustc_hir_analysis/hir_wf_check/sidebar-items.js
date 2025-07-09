@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["diagnostic_hir_wf_check","provide"]};

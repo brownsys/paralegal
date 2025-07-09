@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SimplifiedType","TreatParams"],"fn":["simplify_type"],"struct":["DeepRejectCtxt"]};

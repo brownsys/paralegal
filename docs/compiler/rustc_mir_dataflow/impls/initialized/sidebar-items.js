@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["switch_on_enum_discriminant"],"struct":["EverInitializedPlaces","MaybeInitializedPlaces","MaybeUninitializedPlaces"],"type":["EverInitializedPlacesDomain","MaybeUninitializedPlacesDomain"]};

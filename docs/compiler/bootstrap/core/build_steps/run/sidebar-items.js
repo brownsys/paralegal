@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"macro":["generate_completions"],"struct":["BuildManifest","BumpStage0","CollectLicenseMetadata","GenerateCompletions","GenerateCopyright","GenerateWindowsSys","Miri","ReplaceVersionPlaceholder","UnicodeTableGenerator"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["add_dylib_path","copy_dir_all","dylib_env_var","lib_path_env_var","logv","make_new_path","path_div"],"macro":["static_regex"],"trait":["PathBufExt"]};

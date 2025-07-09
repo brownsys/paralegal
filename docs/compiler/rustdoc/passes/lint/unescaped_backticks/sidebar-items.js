@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PrevCodeGuess"],"fn":["can_suggest_backtick","clamp_end","clamp_start","guess_end_of_code","guess_start_of_code","suggest_insertion","visit_item"],"struct":["Element"]};

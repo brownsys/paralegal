@@ -1,0 +1,1 @@
+searchState.loadedDescShard("rust_tidy", 0, "Tidy checks source code in this repository.")

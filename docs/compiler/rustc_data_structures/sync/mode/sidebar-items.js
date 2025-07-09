@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DYN_NOT_THREAD_SAFE","DYN_THREAD_SAFE","UNINITIALIZED"],"fn":["is_dyn_thread_safe","might_be_dyn_thread_safe","set_dyn_thread_safe_mode"],"static":["DYN_THREAD_SAFE_MODE"]};

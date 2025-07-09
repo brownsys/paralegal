@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["inhabited_predicate_adt","inhabited_predicate_type","provide"],"mod":["inhabited_predicate"]};

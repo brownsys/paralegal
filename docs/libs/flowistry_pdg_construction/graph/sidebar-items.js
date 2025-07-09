@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DepEdgeKind","SourceUse","TargetUse"],"fn":["as_arg"],"struct":["DepEdge","DepGraph","DepNode","OneHopLocation","PartialGraph"],"type":["GraphConnectionPoint"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["extract_sec_and_nsec","maybe_sync_file"],"struct":["DirTable","FileHandle","FileMetadata","OpenDir"],"trait":["EvalContextExt","EvalContextExtPrivate"]};

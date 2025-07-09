@@ -1,0 +1,63 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Global value numbering."><title>rustc_mir_transform::gvn - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_mir_transform" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../rustc_mir_transform/index.html">rustc_<wbr>mir_<wbr>transform</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module gvn</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#operational-semantic" title="Operational semantic">Operational semantic</a></li><li><a href="#handling-of-references" title="Handling of references">Handling of references</a></li><li><a href="#determinism-of-constant-propagation" title="Determinism of constant propagation">Determinism of constant propagation</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate rustc_<wbr>mir_<wbr>transform</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">rustc_mir_transform</a></span><h1>Module <span>gvn</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustc_mir_transform/gvn.rs.html#1-1697">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Global value numbering.</p>
+<p>MIR may contain repeated and/or redundant computations. The objective of this pass is to detect
+such redundancies and re-use the already-computed result when possible.</p>
+<p>In a first pass, we compute a symbolic representation of values that are assigned to SSA
+locals. This symbolic representation is defined by the <code>Value</code> enum. Each produced instance of
+<code>Value</code> is interned as a <code>VnIndex</code>, which allows us to cheaply compute identical values.</p>
+<p>From those assignments, we construct a mapping <code>VnIndex -&gt; Vec&lt;(Local, Location)&gt;</code> of available
+values, the locals in which they are stored, and the assignment location.</p>
+<p>In a second pass, we traverse all (non SSA) assignments <code>x = rvalue</code> and operands. For each
+one, we compute the <code>VnIndex</code> of the rvalue. If this <code>VnIndex</code> is associated to a constant, we
+replace the rvalue/operand by that constant. Otherwise, if there is an SSA local <code>y</code>
+associated to this <code>VnIndex</code>, and if its definition location strictly dominates the assignment
+to <code>x</code>, we replace the assignment by <code>x = y</code>.</p>
+<p>By opportunity, this pass simplifies some <code>Rvalue</code>s based on the accumulated knowledge.</p>
+<h2 id="operational-semantic"><a class="doc-anchor" href="#operational-semantic">§</a>Operational semantic</h2>
+<p>Operationally, this pass attempts to prove bitwise equality between locals. Given this MIR:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>_a = some value <span class="comment">// has VnIndex i
+// some MIR
+</span>_b = some other value <span class="comment">// also has VnIndex i</span></code></pre></div>
+<p>We consider it to be replacable by:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>_a = some value <span class="comment">// has VnIndex i
+// some MIR
+</span>_c = some other value <span class="comment">// also has VnIndex i
+</span>assume(_a bitwise equal to _c) <span class="comment">// follows from having the same VnIndex
+</span>_b = _a <span class="comment">// follows from the `assume`</span></code></pre></div>
+<p>Which is simplifiable to:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>_a = some value <span class="comment">// has VnIndex i
+// some MIR
+</span>_b = _a</code></pre></div>
+<h2 id="handling-of-references"><a class="doc-anchor" href="#handling-of-references">§</a>Handling of references</h2>
+<p>We handle references by assigning a different “provenance” index to each Ref/RawPtr rvalue.
+This ensure that we do not spuriously merge borrows that should not be merged. Meanwhile, we
+consider all the derefs of an immutable reference to a freeze type to give the same value:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>_a = <span class="kw-2">*</span>_b <span class="comment">// _b is &amp;Freeze
+</span>_c = <span class="kw-2">*</span>_b <span class="comment">// replaced by _c = _a</span></code></pre></div>
+<h2 id="determinism-of-constant-propagation"><a class="doc-anchor" href="#determinism-of-constant-propagation">§</a>Determinism of constant propagation</h2>
+<p>When registering a new <code>Value</code>, we attempt to opportunistically evaluate it as a constant.
+The evaluated form is inserted in <code>evaluated</code> as an <code>OpTy</code> or <code>None</code> if evaluation failed.</p>
+<p>The difficulty is non-deterministic evaluation of MIR constants. Some <code>Const</code> can have
+different runtime values each time they are evaluated. This is the case with
+<code>Const::Slice</code> which have a new pointer each time they are evaluated, and constants that
+contain a fn pointer (<code>AllocId</code> pointing to a <code>GlobalAlloc::Function</code>) pointing to a different
+symbol in each codegen unit.</p>
+<p>Meanwhile, we want to be able to read indirect constants. For instance:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">static </span>A: <span class="kw-2">&amp;</span><span class="lifetime">'static </span><span class="kw-2">&amp;</span><span class="lifetime">'static </span>u8 = &amp;&amp;<span class="number">63</span>;
+<span class="kw">fn </span>foo() -&gt; u8 {
+    <span class="kw-2">**</span>A <span class="comment">// We want to replace by 63.
+</span>}
+<span class="kw">fn </span>bar() -&gt; u8 {
+    <span class="string">b"abc"</span>[<span class="number">1</span>] <span class="comment">// We want to replace by 'b'.
+</span>}</code></pre></div>
+<p>The <code>Value::Constant</code> variant stores a possibly unevaluated constant. Evaluating that constant
+may be non-deterministic. When that happens, we assign a disambiguator to ensure that we do not
+merge the constants. See <code>duplicate_slice</code> test in <code>gvn.rs</code>.</p>
+<p>Second, when writing constants in MIR, we do not write <code>Const::Slice</code> or <code>Const</code>
+that contain <code>AllocId</code>s.</p>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.GVN.html" title="struct rustc_mir_transform::gvn::GVN">GVN</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="struct" href="struct.StorageRemover.html" title="struct rustc_mir_transform::gvn::StorageRemover">Storage<wbr>Remover</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="struct" href="struct.VnIndex.html" title="struct rustc_mir_transform::gvn::VnIndex">VnIndex</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="struct" href="struct.VnState.html" title="struct rustc_mir_transform::gvn::VnState">VnState</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="enum" href="enum.AddressKind.html" title="enum rustc_mir_transform::gvn::AddressKind">Address<wbr>Kind</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="enum" href="enum.AggregateTy.html" title="enum rustc_mir_transform::gvn::AggregateTy">Aggregate<wbr>Ty</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Computing the aggregate’s type can be quite slow, so we only keep the minimal amount of
+information to reconstruct it when needed.</div></li><li><div class="item-name"><a class="enum" href="enum.Value.html" title="enum rustc_mir_transform::gvn::Value">Value</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.op_to_prop_const.html" title="fn rustc_mir_transform::gvn::op_to_prop_const">op_<wbr>to_<wbr>prop_<wbr>const</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul></section></div></main></body></html>

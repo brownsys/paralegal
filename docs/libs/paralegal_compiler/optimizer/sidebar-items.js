@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["lift_definitions","optimize"],"type":["LiftedIntros"]};

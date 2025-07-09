@@ -1,0 +1,68 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Build an array with an expression."><title>build in brownstone - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="brownstone" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc macro"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../brownstone/index.html">brownstone</a><span class="version">3.0.0</span></h2></div><div class="sidebar-elems"><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="index.html">brownstone</a></span><h1>Macro <span class="macro">build</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/brownstone/lib.rs.html#98-126">Source</a> </span></div><pre class="rust item-decl"><code>macro_rules! build {
+    (|$prefix:ident : &amp;[$type:ty]| $item:expr $(; $len:expr)?) =&gt; { ... };
+    (|$index:ident : usize| $item:expr $(; $len:expr)?) =&gt; { ... };
+    ($item:expr $(; $len:expr)?) =&gt; { ... };
+}</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Build an array with an expression.</p>
+<p>This macro builds an array by calling an expression once for each element
+in the array:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>brownstone::build;
+
+<span class="kw">let </span>x: [String; <span class="number">3</span>] = <span class="macro">build!</span>[<span class="string">"hello"</span>.to_owned()];
+<span class="macro">assert_eq!</span>(x, [<span class="string">"hello"</span>, <span class="string">"hello"</span>, <span class="string">"hello"</span>])</code></pre></div>
+<p>You can also provide an explicit length in the macro, if the length can’t be
+inferred from context:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>brownstone::build;
+
+<span class="kw">let </span>x = <span class="macro">build!</span>[<span class="string">"hello"</span>.to_owned(); <span class="number">3</span>];
+<span class="macro">assert_eq!</span>(x, [<span class="string">"hello"</span>, <span class="string">"hello"</span>, <span class="string">"hello"</span>]);</code></pre></div>
+<p>If needed, you can use a closure syntax (with a <code>usize</code> parameter) to evaluate
+your expression with the index of the item being evaluated:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>brownstone::build;
+
+<span class="kw">let </span>x = <span class="macro">build!</span>(|index: usize| (index <span class="kw">as </span>i32) * <span class="number">2</span>; <span class="number">4</span>);
+<span class="macro">assert_eq!</span>(x, [<span class="number">0</span>, <span class="number">2</span>, <span class="number">4</span>, <span class="number">6</span>]);</code></pre></div>
+<p>You can also instead use an <code>&amp;[T]</code> parameter to to evaluate your expression with
+the full prefix of the array that has already been built:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>brownstone::build;
+
+<span class="kw">let </span>x = <span class="macro">build!</span>(|prefix: <span class="kw-2">&amp;</span>[i32]| <span class="kw">match </span>prefix {
+    [.., a, b] =&gt; a + b,
+    <span class="kw">_ </span>=&gt; <span class="number">1</span>,
+});
+
+<span class="macro">assert_eq!</span>(x, [<span class="number">1</span>, <span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">5</span>, <span class="number">8</span>, <span class="number">13</span>]);</code></pre></div>
+<p>All of these forms (even the closure-style forms) are evaluated locally, which
+means that you can use arbitrary* control flow inside the builder, such as <code>?</code>
+or <code>return</code> or <code>await</code>:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>std::{io, num};
+<span class="kw">use </span>brownstone::build;
+
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">enum </span>Error {
+    Io(io::Error),
+    Parse(num::ParseIntError),
+}
+
+<span class="kw">fn </span>read_4_ints(<span class="kw-2">mut </span>input: <span class="kw">impl </span>io::BufRead) -&gt; <span class="prelude-ty">Result</span>&lt;[i32; <span class="number">4</span>], Error&gt; {
+    <span class="kw">let </span><span class="kw-2">mut </span>line = String::new();
+
+    <span class="kw">let </span>array = <span class="macro">build!</span>({
+        line.clear();
+        input.read_line(<span class="kw-2">&amp;mut </span>line).map_err(Error::Io)<span class="question-mark">?</span>;
+        line.trim().parse().map_err(Error::Parse)<span class="question-mark">?
+    </span>});
+
+    <span class="prelude-val">Ok</span>(array)
+}
+
+<span class="kw">let </span>data = <span class="string">b"12\n4\n6\n21\n5"</span>;
+<span class="kw">let </span>data = read_4_ints(data.as_slice()).expect(<span class="string">"failed to read or parse"</span>);
+<span class="macro">assert_eq!</span>(data, [<span class="number">12</span>, <span class="number">4</span>, <span class="number">6</span>, <span class="number">21</span>]);</code></pre></div>
+<p><sub>* Currently it doesn’t support <code>break</code> or <code>continue</code>; this is a bug and
+will be fixed in a future release.</sub></p>
+</div></details></section></div></main></body></html>

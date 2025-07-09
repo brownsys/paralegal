@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["GenericsArgsErrExtend"],"fn":["assoc_kind_str","fn_trait_to_string","generics_args_err_extend","prohibit_assoc_item_constraint"]};

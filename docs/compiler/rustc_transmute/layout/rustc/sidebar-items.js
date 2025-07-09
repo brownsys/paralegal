@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Def"],"fn":["layout_of"],"struct":["Ref"]};

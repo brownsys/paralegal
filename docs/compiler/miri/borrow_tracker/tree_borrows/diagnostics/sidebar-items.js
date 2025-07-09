@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_FORMATTER"],"enum":["AccessCause","TransitionError"],"fn":["char_repeat"],"struct":["DisplayFmt","DisplayFmtAccess","DisplayFmtPadding","DisplayFmtPermission","DisplayFmtWrapper","DisplayIndent","DisplayRepr","Event","History","HistoryData","NodeDebugInfo","TbError"],"type":["S"]};

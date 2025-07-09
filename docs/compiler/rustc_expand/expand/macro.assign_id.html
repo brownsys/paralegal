@@ -1,0 +1,25 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Wraps a call to `walk_*` / `walk_flat_map_*` for an AST node that supports attributes (see the `Annotatable` enum) This method assigns a `NodeId`, and sets that `NodeId` as our current ‘lint node id’. If a macro call is found inside this AST node, we will use this AST node’s `NodeId` to emit lints associated with that macro (allowing `#[allow]` / `#[deny]` to be applied close to the macro invocation)."><title>assign_id in rustc_expand::expand - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_expand" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc macro"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button><a class="logo-container" href="../../rustc_expand/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt=""></a></nav><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../rustc_expand/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt="logo"></a><h2><a href="../../rustc_expand/index.html">rustc_<wbr>expand</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><div id="rustdoc-modnav"><h2><a href="index.html">In rustc_<wbr>expand::<wbr>expand</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">rustc_expand</a>::<wbr><a href="index.html">expand</a></span><h1>Macro <span class="macro">assign_id</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustc_expand/expand.rs.html#1065-1078">Source</a> </span></div><pre class="rust item-decl"><code>macro_rules! assign_id {
+    ($self:ident, $id:expr, $closure:expr) =&gt; { ... };
+}</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Wraps a call to <code>walk_*</code> / <code>walk_flat_map_*</code>
+for an AST node that supports attributes
+(see the <code>Annotatable</code> enum)
+This method assigns a <code>NodeId</code>, and sets that <code>NodeId</code>
+as our current ‘lint node id’. If a macro call is found
+inside this AST node, we will use this AST node’s <code>NodeId</code>
+to emit lints associated with that macro (allowing
+<code>#[allow]</code> / <code>#[deny]</code> to be applied close to
+the macro invocation).</p>
+<p>Do <em>not</em> call this for a macro AST node
+(e.g. <code>ExprKind::MacCall</code>) - we cannot emit lints
+at these AST nodes, since they are removed and
+replaced with the result of macro expansion.</p>
+<p>All other <code>NodeId</code>s are assigned by <code>visit_id</code>.</p>
+<ul>
+<li><code>self</code> is the ‘self’ parameter for the current method,</li>
+<li><code>id</code> is a mutable reference to the <code>NodeId</code> field
+of the current AST node.</li>
+<li><code>closure</code> is a closure that executes the
+<code>walk_*</code> / <code>walk_flat_map_*</code> method
+for the current AST node.</li>
+</ul>
+</div></details></section></div></main></body></html>

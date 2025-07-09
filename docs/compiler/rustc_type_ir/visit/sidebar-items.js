@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["FoundEscapingVars","FoundFlags","HasErrorVisitor","HasEscapingVarsVisitor","HasTypeFlagsVisitor"],"trait":["Flags","TypeSuperVisitable","TypeVisitable","TypeVisitableExt","TypeVisitor"]};

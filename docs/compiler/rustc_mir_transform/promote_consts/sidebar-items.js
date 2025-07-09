@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["TempState"],"fn":["collect_temps_and_candidates","promote_candidates","validate_candidates"],"struct":["Candidate","Collector","PromoteTemps","Promoter","Unpromotable","Validator"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Error","Filter"],"fn":["apply_suggestions","collect_span","collect_suggestions","get_suggestions_from_json","span_to_snippet"],"mod":["diagnostics","error","replace"],"struct":["CodeFix","LinePosition","LineRange","Replacement","Snippet","Solution","Suggestion"]};

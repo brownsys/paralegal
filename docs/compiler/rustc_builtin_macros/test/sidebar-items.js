@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ShouldPanic","TestType"],"fn":["check_bench_signature","check_test_signature","expand_bench","expand_test","expand_test_case","expand_test_or_bench","get_location_info","item_path","not_testable_error","should_ignore","should_ignore_message","should_panic","test_type"]};

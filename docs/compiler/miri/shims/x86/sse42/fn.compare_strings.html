@@ -1,0 +1,58 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="The main worker for the string comparison intrinsics, where the given strings are analyzed according to the given immediate byte."><title>compare_strings in miri::shims::x86::sse42 - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="miri" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc fn"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../../miri/index.html">miri</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">compare_<wbr>strings</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#arguments" title="Arguments">Arguments</a></li><li><a href="#returns" title="Returns">Returns</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="index.html">In miri::<wbr>shims::<wbr>x86::<wbr>sse42</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../../index.html">miri</a>::<wbr><a href="../../index.html">shims</a>::<wbr><a href="../index.html">x86</a>::<wbr><a href="index.html">sse42</a></span><h1>Function <span class="fn">compare_strings</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../../src/miri/shims/x86/sse42.rs.html#72-186">Source</a> </span></div><pre class="rust item-decl"><code>fn compare_strings&lt;'tcx&gt;(
+    ecx: &amp;mut <a class="type" href="../../../machine/type.MiriInterpCx.html" title="type miri::machine::MiriInterpCx">MiriInterpCx</a>&lt;'tcx&gt;,
+    str1: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    str2: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    len: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;(<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>)&gt;,
+    imm: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.i32.html">i32</a>&gt;</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The main worker for the string comparison intrinsics, where the given
+strings are analyzed according to the given immediate byte.</p>
+<h2 id="arguments"><a class="doc-anchor" href="#arguments">§</a>Arguments</h2>
+<ul>
+<li>
+<p><code>str1</code> - The first string argument. It is always a length 16 array of bytes
+or a length 8 array of two-byte words.</p>
+</li>
+<li>
+<p><code>str2</code> - The second string argument. It is always a length 16 array of bytes
+or a length 8 array of two-byte words.</p>
+</li>
+<li>
+<p><code>len</code> is the length values of the supplied strings. It is distinct from the operand length
+in that it describes how much of <code>str1</code> and <code>str2</code> will be used for the calculation and may
+be smaller than the array length of <code>str1</code> and <code>str2</code>. The string length is counted in bytes
+if using byte operands and in two-byte words when using two-byte word operands.
+If the value is <code>None</code>, the length of a string is determined by the first
+null value inside the string.</p>
+</li>
+<li>
+<p><code>imm</code> is the immediate byte argument supplied to the intrinsic. The byte influences
+the operation as follows:</p>
+<div class="example-wrap"><pre class="language-text"><code>0babccddef
+  || | |||- Use of bytes vs use of two-byte words inside the operation.
+  || | ||
+  || | ||- Use of signed values versus use of unsigned values.
+  || | |
+  || | |- The comparison operation performed. A total of four operations are available.
+  || |    * Equal any: Checks which characters of `str2` are inside `str1`.
+  || |    * String ranges: Check if characters in `str2` are inside the provided character ranges.
+  || |      Adjacent characters in `str1` constitute one range.
+  || |    * String comparison: Mark positions where `str1` and `str2` have the same character.
+  || |    * Substring search: Mark positions where `str1` is a substring in `str2`.
+  || |
+  || |- Result Polarity. The result bits may be subjected to a bitwise complement
+  ||    if these bits are set.
+  ||
+  ||- Output selection. This bit has two meanings depending on the instruction.
+  |   If the instruction is generating a mask, it distinguishes between a bit mask
+  |   and a byte mask. Otherwise it distinguishes between the most significand bit
+  |   and the least significand bit when generating an index.
+  |
+  |- This bit is ignored. It is expected that this bit is set to zero, but it is
+     not a requirement.</code></pre></div></li>
+</ul>
+<h2 id="returns"><a class="doc-anchor" href="#returns">§</a>Returns</h2>
+<p>A result mask. The bit at index <code>i</code> inside the mask is set if ‘str2’ starting at <code>i</code>
+fulfills the test as defined inside the immediate byte.
+The mask may be negated if negation flags inside the immediate byte are set.</p>
+<p>For more information, see the Intel Software Developer’s Manual, Vol. 2b, Chapter 4.1.</p>
+</div></details></section></div></main></body></html>

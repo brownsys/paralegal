@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PrintExtra"],"fn":["get_source","print","write_or_print"],"struct":["AstHygieneAnn","AstIdentifiedAnn","AstNoAnn","HirIdentifiedAnn","HirTypedAnn"]};
