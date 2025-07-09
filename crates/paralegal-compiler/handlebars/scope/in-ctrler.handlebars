@@ -1,0 +1,12 @@
+{{global-definitions}}
+
+let found = ctx.controller_contexts().find(|ctx| {
+    ctx.current().name.as_str() == "{{ctrler}}"
+    &&
+    {
+        {{definitions}}
+        {{body}}
+    }
+});
+
+    assert_error!(ctx, found.is_some(), format!("{{ctrler}} does not satisfy the policy"));

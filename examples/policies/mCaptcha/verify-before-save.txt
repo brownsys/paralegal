@@ -1,0 +1,11 @@
+Scope: 
+Everywhere
+
+Policy:
+1. For each "site_key" marked site_key:
+	A. For each "store" marked save_stats_to_db:
+		a. If "site_key" influences "store" then:
+	    	i) There is a "auth_check" marked verify_opt_in where:
+				A) "auth_check" affects whether "store" happens
+				and
+				B) "site_key" goes to "auth_check"

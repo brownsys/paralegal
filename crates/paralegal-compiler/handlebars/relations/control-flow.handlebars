@@ -1,0 +1,9 @@
+{{#if sink-node-cluster}}
+  {{#if sink-all-method}}
+    {{src}}.has_ctrl_influence_all(&{{sink}}, &ctx).is_none()
+  {{else}}
+    {{src}}.has_ctrl_influence(&{{sink}}, &ctx)
+  {{/if}}
+{{else}}
+    {{src}}.has_ctrl_influence({{sink}}, &ctx)
+{{/if}}
