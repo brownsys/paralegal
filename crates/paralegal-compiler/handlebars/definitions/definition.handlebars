@@ -1,0 +1,17 @@
+{{#if node-cluster}}
+{{intro}}
+{{else}}
+let mut {{var}} = {{intro}}
+{{/if}}
+{{#if filter}}
+    .filter(|n| {
+        let {{inner_var}} = *n;
+        {{{filter}}}
+    })
+{{/if}}
+{{#if node-cluster}}
+)
+{{else}}
+.collect::<Vec<_>>()
+{{/if}}
+;

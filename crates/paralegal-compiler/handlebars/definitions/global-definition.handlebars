@@ -1,0 +1,16 @@
+{{#if node-cluster}}
+{{intro}}
+{{else}}
+let mut {{var}} = {{intro}}
+{{/if}}
+{{#if filter}}
+    .filter(|{{inner_var}}| {
+        ctx.controller_contexts().any(|ctx| {
+            {{{filter}}}
+        })
+    })
+{{/if}}
+{{#if node-cluster}}
+)
+{{/if}}
+;

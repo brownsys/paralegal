@@ -1,0 +1,22 @@
+Scope:
+Everywhere
+
+Definitions:
+1. "blessed" is each "safe_with_bless" marked safe_source_with_bless where:
+	A. There is a "blesser" marked bless_safe_source where:
+		a. "blesser" influences "safe_with_bless"
+
+2. "sensitive_sink" is each "sink" marked sink where:
+	A. There is a "sensitive" marked sensitive where:
+		a. "sensitive" goes to "sink"
+
+3. "sensitive_scope" is each "scope" marked scopes where:
+	A. There is a "sensitive_sink" where:
+		a. "scope" goes to "sensitive_sink"'s operation
+
+Policy:
+1. For each "sensitive_sink":
+	A. There is a "scope" marked scopes where:
+		a. "scope" goes to "sensitive_sink"'s operation
+and
+2. Each "root" input goes to a "sensitive_scope" only via a "blessed" or "safe" marked safe_source

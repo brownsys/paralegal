@@ -1,0 +1,22 @@
+Scope:
+Somewhere
+
+Policy:
+1. For each "pageview" marked pageviews:
+	A. There is a "expiration_check" marked expiration_check where:
+		a. There is a "current_time" marked time where:
+			i) "current_time" goes to "expiration_check"
+		and
+		b. There is a "fetched_pageview_date" marked db_access where:
+			i) "pageview" goes to "fetched_pageview_date"
+			and
+			ii) "fetched_pageview_date" goes to "expiration_check"
+		and
+		c. There is a "deleter" marked deletes where:
+            i) "pageview" goes to "deleter"
+            and
+			ii) "expiration_check" affects whether "deleter" happens
+and
+2. There is a "pageview" marked pageviews where:
+	A. There is a "deleter" marked deletes where:
+		a. "pageview" goes to "deleter"
