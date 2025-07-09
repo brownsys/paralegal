@@ -8,10 +8,10 @@ fn main() {
     out_file.set_extension("rs");
     let status = Command::new("cargo")
         .args(["run", "-p", "paralegal-compiler", "--"])
-        .arg(p)
+        .arg(p.canonicalize().unwrap())
         .arg("-o")
         .arg(out_file)
-        .arg("--standalone")
+        .arg("--bin")
         .current_dir("../..")
         .status()
         .unwrap();
