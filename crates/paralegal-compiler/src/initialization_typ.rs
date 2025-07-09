@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use common::{ast::*, count_references_to_variable};
+use crate::common::{ast::*, count_references_to_variable};
 
 // How a variable is being initialized in the compiled policy
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

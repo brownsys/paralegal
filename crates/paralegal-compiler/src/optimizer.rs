@@ -1,4 +1,4 @@
-use common::{ast::*, Policy};
+use crate::common::{ast::*, Policy};
 
 /// Traverse the policy body and lift variable declarations to be definitions where possible.
 /// This lets us avoid repeated graph searches for the same variables.

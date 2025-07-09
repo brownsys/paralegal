@@ -7,11 +7,11 @@ use nom::{
 };
 use nom_supreme::tag::complete::tag;
 
-use crate::{
+use super::{
     shared::{marker, variable},
     Res,
 };
-use common::ast::*;
+use crate::common::ast::*;
 
 pub fn variable_def(s: &str) -> Res<&str, VariableIntro> {
     let (remainder, variable) = variable(s)?;

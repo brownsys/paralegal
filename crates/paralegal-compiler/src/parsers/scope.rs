@@ -5,8 +5,8 @@ use nom::{
 };
 use nom_supreme::tag::complete::tag;
 
-use crate::{shared::*, Res};
-use common::*;
+use super::{shared::*, Res};
+use crate::common::*;
 
 fn everywhere(s: &str) -> Res<&str, PolicyScope> {
     let mut combinator = preceded(multispace0, tag("Everywhere"));

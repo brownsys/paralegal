@@ -1,15 +1,15 @@
-use common::{ast::*, Policy, PolicyScope};
+use crate::common::{ast::*, Policy, PolicyScope};
 use handlebars::Handlebars;
 use std::fs;
 use std::io::Result;
 use std::process::Command;
 use std::{collections::HashMap, path::Path};
 
+use crate::common::templates::*;
+use crate::common::verify_scope::*;
 use crate::initialization_typ::{
     compute_initialization_typ, compute_lifted_def_initialization_typ, InitializationType,
 };
-use common::templates::*;
-use common::verify_scope::*;
 
 fn compile_variable_intro(
     handlebars: &mut Handlebars,

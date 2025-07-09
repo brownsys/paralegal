@@ -1,7 +1,7 @@
-use crate::{
+use super::{
     clause::l2_clauses, relations::l2_relations, shared::*, variable_intro::variable_intro, Res,
 };
-use common::ast::*;
+use crate::common::ast::*;
 use nom::{
     branch::alt,
     character::complete::{multispace0, space1},

@@ -1,12 +1,15 @@
 use std::path::PathBuf;
 use std::{fs, process::exit};
 
+use crate::parsers::parse;
 use clap::Parser;
-use parsers::parse;
 use std::io::Result;
 
+mod common;
 mod compile;
 mod initialization_typ;
+mod optimizer;
+mod parsers;
 
 use common::{verify_scope::*, Policy};
 
@@ -52,7 +55,7 @@ fn run(args: &Args) -> Result<()> {
             // Verify that variables in definitions & policy are properly scoped.
             // If this fails, then the user made a mistake writing their policy.
             check_environment(&policy);
-            optimizer::optimize(&mut policy);
+            crate::optimizer::optimize(&mut policy);
             compile::compile(
                 policy,
                 args.path

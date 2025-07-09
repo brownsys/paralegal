@@ -1,10 +1,10 @@
-use crate::{
+use super::{
     relations::*,
     shared::*,
     variable_intro::{variable_def, variable_intro, variable_marked},
     Res,
 };
-use common::ast::*;
+use crate::common::ast::*;
 use nom::{
     branch::alt,
     character::complete::space1,

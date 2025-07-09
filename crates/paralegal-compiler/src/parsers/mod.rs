@@ -1,5 +1,5 @@
+use crate::common::*;
 use clause::l1_clauses;
-use common::*;
 use definitions::parse_definitions;
 use nom::{
     bytes::complete::tag,

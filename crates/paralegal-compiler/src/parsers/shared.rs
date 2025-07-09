@@ -11,9 +11,9 @@ use nom::{
 };
 use nom_supreme::tag::complete::tag;
 
-use common::ast::*;
+use crate::common::ast::*;
 
-use crate::Res;
+use super::Res;
 
 pub fn colon(s: &str) -> Res<&str, &str> {
     delimited(space0, tag(":"), multispace0)(s)

@@ -2,7 +2,7 @@ use handlebars::{no_escape, Handlebars};
 use std::collections::HashMap;
 use strum_macros::EnumIter;
 
-use crate::{
+use super::{
     ast::{ASTNode, Binop, ClauseIntro, Operator, Relation, VariableIntro},
     PolicyScope,
 };
@@ -97,7 +97,7 @@ impl From<Template> for &str {
 // map templates to their handlebars template file names
 impl From<&VariableIntro> for Template {
     fn from(value: &VariableIntro) -> Self {
-        use crate::ast::VariableIntroType::*;
+        use super::ast::VariableIntroType::*;
         match value.intro {
             Roots => Template::Roots,
             AllNodes => Template::AllNodes,

@@ -1,4 +1,4 @@
-use common::ast::*;
+use crate::common::ast::*;
 use nom::{
     branch::alt,
     character::complete::{space0, space1},
@@ -9,7 +9,7 @@ use nom::{
 };
 use nom_supreme::tag::complete::tag;
 
-use crate::{shared::*, Res};
+use super::{shared::*, Res};
 
 // this is flows_to(EdgeSelection::DataAndControl)
 fn influences_relation(s: &str) -> Res<&str, Relation> {
