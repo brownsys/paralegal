@@ -67,7 +67,7 @@ args = ["test", "-pparalegal-policy"]
 description = "Build and run the policy from the guide."
 cwd = "guide/deletion-policy"
 command = "cargo"
-args = ["run"]
+args = ["run", "--", "../file-db-example", "--external-annotations", "external-annotations.toml"]
 dependencies = ["install"]
 
 [tasks.doc-check]
