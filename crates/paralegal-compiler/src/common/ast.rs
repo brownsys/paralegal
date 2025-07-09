@@ -112,12 +112,6 @@ pub struct Clause {
     pub body: ASTNode,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Position {
-    Source,
-    Target,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ASTNode {
     Clause(Box<Clause>),
