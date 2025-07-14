@@ -1,16 +1,23 @@
+// global-definition
+
+
 {{#if node-cluster}}
-{{intro}}
+{{{intro}}}
 {{else}}
-let mut {{var}} = {{intro}}
+let {{{var}}}_set = {{{intro}}}
 {{/if}}
 {{#if filter}}
-    .filter(|{{inner_var}}| {
+    .into_iter()
+    .filter(|{{{inner_var}}}| {
         ctx.controller_contexts().any(|ctx| {
-            {{{filter}}}
+            (|| { {{{filter}}} })().0
         })
     })
 {{/if}}
 {{#if node-cluster}}
 )
+{{else}}
+    .collect::<HashSet<_>>();
+let {{{var}}} = IterCopied(&{{{var}}}_set);
 {{/if}}
 ;

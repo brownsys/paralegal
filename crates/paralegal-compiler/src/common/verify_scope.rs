@@ -153,12 +153,12 @@ pub fn verify_relation_scope(relation: &Relation, env: &mut Environment) {
 }
 
 // Verify that the policy is structured properly, i.e., that every variable is in scope (introduced in a clause) before being referenced in a relation.
-pub fn verify_scope(node: &ASTNode, env: &mut Environment) {
+pub fn verify_scope(node: &ASTNodeType, env: &mut Environment) {
     match node {
-        ASTNode::Relation(relation) => {
+        ASTNodeType::Relation(relation) => {
             verify_relation_scope(relation, env);
         }
-        ASTNode::OnlyVia(src_intro, sink_intro, checkpoint_intro) => {
+        ASTNodeType::OnlyVia(src_intro, sink_intro, checkpoint_intro) => {
             let env_size_before = env.len();
             verify_variable_intro_scope(src_intro, env);
             for intro in &checkpoint_intro.1 {
@@ -169,11 +169,11 @@ pub fn verify_scope(node: &ASTNode, env: &mut Environment) {
             }
             remove_from_env(env, env_size_before);
         }
-        ASTNode::JoinedNodes(obligation) => {
-            verify_scope(&obligation.src, env);
-            verify_scope(&obligation.sink, env);
+        ASTNodeType::JoinedNodes(obligation) => {
+            verify_scope(&obligation.src.ty, env);
+            verify_scope(&obligation.sink.ty, env);
         }
-        ASTNode::Clause(clause) => {
+        ASTNodeType::Clause(clause) => {
             let env_size_before_clause = env.len();
             match &clause.intro {
                 ClauseIntro::ForEach(intro) | ClauseIntro::ThereIs(intro) => {
@@ -181,7 +181,7 @@ pub fn verify_scope(node: &ASTNode, env: &mut Environment) {
                 }
                 ClauseIntro::Conditional(relation) => verify_relation_scope(relation, env),
             };
-            verify_scope(&clause.body, env);
+            verify_scope(&clause.body.ty, env);
 
             // variables introduced in this clause must go out of scope once it ends
             remove_from_env(env, env_size_before_clause);
@@ -194,7 +194,7 @@ pub fn verify_definitions_scope(definitions: &Vec<Definition>, env: &mut Environ
         let env_size_before_definition = env.len();
         verify_variable_intro_scope(&definition.declaration, env);
         if let Some(filter) = &definition.filter {
-            verify_scope(filter, env);
+            verify_scope(&filter.ty, env);
         }
         // variables introduced in this definition must go out of scope once it ends
         remove_from_env(env, env_size_before_definition);

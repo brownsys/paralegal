@@ -1,17 +1,21 @@
+// only-via
+
 {
     {{#each src-intro}}
-    {{this}}
+    {{{this}}}
     {{/each}}
     {{#each sink-intros}}
-    {{this}}
+    {{{this}}}
     {{/each}}
     {{#each checkpoint-intros}}
-    {{this}}
+    {{{this}}}
     {{/each}}
 
-    ctx.always_happens_before(
-        {{#each src}}{{this}}{{/each}},
-        |checkpoint| {{#each checkpoint-names}}{{this}}.contains(&checkpoint){{#unless @last}}{{#if checkpoint-or}} || {{else}} || {{/if}}{{/unless}}{{/each}},
-        |sink| {{#each sink-names}}{{this}}.contains(&sink){{#unless @last}}{{#if sink-or}} || {{else}} && {{/if}}{{/unless}}{{/each}},
-    ).unwrap().holds()
+    CauseBuilder::new({{#each span}}"{{this}}"{{/each}}, {{#each clause_num}}"{{this}}"{{/each}})
+        .only_via(
+            {{#each src}}{{{this}}}{{/each}},
+            |checkpoint| {{#each checkpoint-names}}{{{this}}}.0.contains(&checkpoint){{#unless @last}}{{#if checkpoint-or}} || {{else}} || {{/if}}{{/unless}}{{/each}},
+            |sink| {{#each sink-names}}{{{this}}}.0.contains(&sink){{#unless @last}}{{#if sink-or}} || {{else}} && {{/if}}{{/unless}}{{/each}},
+            ctx.as_ref(),
+        )
 }

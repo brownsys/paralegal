@@ -1,22 +1,24 @@
+// for-each
+
+let cause_builder = CauseBuilder::new("{{span}}", "{{clause_num}}");
 {{#if refers-to-definition}}
     {{#if node-cluster}}
-        let Some(mut {{var}}) = {{var}}.clone() else { return true; };
+        let Some(ref {{{var}}}) = {{{var}}}.clone() else { return (true, cause_builder.with_type(CauseTy::empty_quantifier(Connective::Or))); };
     {{/if}}
 {{else}}
     {{#if node-cluster}}
         {{intro}});
-        let Some(mut {{var}}) = {{var}} else { return true; };
+        let Some(ref {{{var}}}) = {{{var}}} else { return (true, cause_builder.with_type(CauseTy::empty_quantifier(Connective::Or))); };
     {{else}}
-        let mut {{var}} = {{intro}};
+        let mut {{{var}}} = {{{intro}}};
     {{/if}}
 {{/if}}
 
 {{#if node-cluster}}
-{{body}}
+{{{body}}}
 {{else}}
-    {{var}}
-        {{#if refers-to-definition}}.clone().into_iter(){{/if}}
-        .all(|{{var}}| {
-            {{body}}
+    cause_builder
+        .all({{{var}}}.into_iter(), |{{{var}}}| {
+            {{{body}}}
         })
 {{/if}}

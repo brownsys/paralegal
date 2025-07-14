@@ -1,5 +1,7 @@
+// variable-marked
+
 {{#if node-cluster}}
-let mut {{var}} = NodeCluster::try_from_iter(ctx.nodes_marked_any_way(marker!({{marker}}))
+let {{{var}}} = NodeCluster::try_from_iter(ctx.nodes_marked_any_way(marker!({{{marker}}}))
 {{else}}
-ctx.nodes_marked_any_way(marker!({{marker}}))
+ctx.nodes_marked_any_way(marker!({{{marker}}}))
 {{/if}}

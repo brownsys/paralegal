@@ -6,3 +6,4 @@ Policy:
     A. There is a "retrieval" that produces "user_data" where:
        a. There is a "deletes" marked deletes where:
 	       i) "retrieval" goes to "deletes"
+

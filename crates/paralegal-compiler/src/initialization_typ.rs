@@ -55,8 +55,8 @@ pub fn compute_lifted_def_initialization_typ(
     body: &ASTNode,
 ) -> InitializationType {
     fn find_matching_clause(definition: &Definition, body: &ASTNode) -> Option<Clause> {
-        match body {
-            ASTNode::Clause(clause) => {
+        match &body.ty {
+            ASTNodeType::Clause(clause) => {
                 match &clause.intro {
                     ClauseIntro::ForEach(intro) | ClauseIntro::ThereIs(intro) => {
                         if intro.variable == definition.variable {
@@ -67,8 +67,10 @@ pub fn compute_lifted_def_initialization_typ(
                 }
                 find_matching_clause(definition, &clause.body)
             }
-            ASTNode::JoinedNodes(obligation) => find_matching_clause(definition, &obligation.src)
-                .or_else(|| find_matching_clause(definition, &obligation.sink)),
+            ASTNodeType::JoinedNodes(obligation) => {
+                find_matching_clause(definition, &obligation.src)
+                    .or_else(|| find_matching_clause(definition, &obligation.sink))
+            }
             _ => None,
         }
     }
@@ -101,8 +103,8 @@ fn for_each_initialization_typ(
     conditional_premise_vars: &Option<&mut HashSet<Variable>>,
     initialization_typ: &mut InitializationType,
 ) {
-    match body {
-        ASTNode::Relation(relation) => match relation {
+    match &body.ty {
+        ASTNodeType::Relation(relation) => match relation {
             Relation::Binary { left, right, typ } => {
                 if variable == left
                     || (variable == right
@@ -135,7 +137,7 @@ fn for_each_initialization_typ(
             },
             Relation::IsMarked(..) => {}
         },
-        ASTNode::Clause(clause) => match clause.intro.clone() {
+        ASTNodeType::Clause(clause) => match clause.intro.clone() {
             ClauseIntro::ForEach(..) | ClauseIntro::ThereIs(..) => {
                 for_each_initialization_typ(
                     variable,
@@ -173,7 +175,7 @@ fn for_each_initialization_typ(
                 );
             }
         },
-        ASTNode::JoinedNodes(obligation) => {
+        ASTNodeType::JoinedNodes(obligation) => {
             for_each_initialization_typ(
                 variable,
                 &obligation.src,
@@ -187,7 +189,7 @@ fn for_each_initialization_typ(
                 initialization_typ,
             );
         }
-        ASTNode::OnlyVia(..) => {
+        ASTNodeType::OnlyVia(..) => {
             // render_only_via doesn't call this function, so if we reach this point, we're evaluating a definition declaration that gets referenced in an only via.
             // Since the templates implement contains() for NodeClusters that just collect the nodes and iterate over them one at a time anyway,
             // there's no need to override here; it doesn't matter which typ we use.
@@ -204,8 +206,8 @@ fn there_is_initialization_typ(
 ) {
     // Associated call sites can't use node clusters
     fn var_in_associated_call_site_relation(variable: &Variable, body: &ASTNode) -> bool {
-        match body {
-            ASTNode::Relation(relation) => match relation {
+        match &body.ty {
+            ASTNodeType::Relation(relation) => match relation {
                 Relation::Binary { left, right, typ } => {
                     (variable == left || variable == right)
                         && matches!(typ, Binop::AssociatedCallSite)
@@ -220,9 +222,11 @@ fn there_is_initialization_typ(
                 },
                 Relation::IsMarked(..) => false,
             },
-            ASTNode::Clause(clause) => var_in_associated_call_site_relation(variable, &clause.body),
-            ASTNode::OnlyVia(..) => false,
-            ASTNode::JoinedNodes(obligation) => {
+            ASTNodeType::Clause(clause) => {
+                var_in_associated_call_site_relation(variable, &clause.body)
+            }
+            ASTNodeType::OnlyVia(..) => false,
+            ASTNodeType::JoinedNodes(obligation) => {
                 var_in_associated_call_site_relation(variable, &obligation.src)
                     || var_in_associated_call_site_relation(variable, &obligation.sink)
             }
@@ -230,7 +234,7 @@ fn there_is_initialization_typ(
     }
 
     let mut count = 0;
-    count_references_to_variable(variable, body, &mut count);
+    count_references_to_variable(variable, &body.ty, &mut count);
     if count > 1 || var_in_associated_call_site_relation(variable, body) {
         *initialization_typ = InitializationType::GlobalNodesIterator;
     }

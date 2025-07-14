@@ -3,6 +3,7 @@ use ast::*;
 pub mod ast;
 pub mod templates;
 pub mod verify_scope;
+pub mod vis;
 
 // Top-level policy / definition data
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -20,7 +21,7 @@ pub enum PolicyScope {
 }
 
 // Count the number of times `body` references `variable`.
-pub fn count_references_to_variable(variable: &Variable, body: &ASTNode, count: &mut u16) {
+pub fn count_references_to_variable(variable: &Variable, body: &ASTNodeType, count: &mut u16) {
     fn relation_count(relation: &Relation, variable: &Variable, count: &mut u16) {
         match relation {
             Relation::Binary {
@@ -45,8 +46,8 @@ pub fn count_references_to_variable(variable: &Variable, body: &ASTNode, count: 
     }
 
     match body {
-        ASTNode::Relation(relation) => relation_count(relation, variable, count),
-        ASTNode::Clause(clause) => {
+        ASTNodeType::Relation(relation) => relation_count(relation, variable, count),
+        ASTNodeType::Clause(clause) => {
             match &clause.intro {
                 ClauseIntro::ForEach(intro) | ClauseIntro::ThereIs(intro) => {
                     if intro.variable == *variable {
@@ -55,12 +56,12 @@ pub fn count_references_to_variable(variable: &Variable, body: &ASTNode, count: 
                 }
                 ClauseIntro::Conditional(relation) => relation_count(relation, variable, count),
             }
-            count_references_to_variable(variable, &clause.body, count);
+            count_references_to_variable(variable, &clause.body.ty, count);
         }
-        ASTNode::JoinedNodes(obligation) => {
-            count_references_to_variable(variable, &obligation.src, count);
-            count_references_to_variable(variable, &obligation.sink, count);
+        ASTNodeType::JoinedNodes(obligation) => {
+            count_references_to_variable(variable, &obligation.src.ty, count);
+            count_references_to_variable(variable, &obligation.sink.ty, count);
         }
-        ASTNode::OnlyVia(..) => unreachable!("Only via can't be inside another clause."),
+        ASTNodeType::OnlyVia(..) => unreachable!("Only via can't be inside another clause."),
     }
 }

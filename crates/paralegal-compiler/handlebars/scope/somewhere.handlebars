@@ -1,8 +1,9 @@
-{{global-definitions}}
+// somewhere
 
-let found = ctx.controller_contexts().find(|ctx| {
-    {{definitions}}
-    {{body}}
+{{{global-definitions}}}
+
+let found = CauseBuilder::new("Scope somewhere", "").any(ctx.controller_contexts(), |ctx| {
+    {{{definitions}}}
+    {{{body}}}
 });
-
-    assert_error!(ctx, found.is_some(), format!("No satisfying controller found"));
+error::report(found, ctx.root());

@@ -48,8 +48,8 @@ fn lift_definitions(policy: &mut Policy) {
 
     // Collect how many times each variable is introduced, mapped to its introduction
     while let Some(node) = queue.pop() {
-        match node {
-            ASTNode::Clause(clause) => {
+        match &node.ty {
+            ASTNodeType::Clause(clause) => {
                 match &clause.intro {
                     ClauseIntro::ForEach(var_intro) | ClauseIntro::ThereIs(var_intro) => {
                         match var_intro.intro {
@@ -72,11 +72,11 @@ fn lift_definitions(policy: &mut Policy) {
                 }
                 queue.push(&clause.body);
             }
-            ASTNode::JoinedNodes(obligation) => {
+            ASTNodeType::JoinedNodes(obligation) => {
                 queue.push(&obligation.src);
                 queue.push(&obligation.sink);
             }
-            ASTNode::Relation(ref relation) => {
+            ASTNodeType::Relation(ref relation) => {
                 let is_eligible = match relation {
                     Relation::Binary {
                         left: _,
@@ -100,7 +100,7 @@ fn lift_definitions(policy: &mut Policy) {
             }
             // The body of the always_happens_before() call uses contains() to check for membership,
             // which doesn't exist if we
-            ASTNode::OnlyVia(_, _, _) => {
+            ASTNodeType::OnlyVia(_, _, _) => {
                 return;
             }
         }
@@ -145,8 +145,8 @@ fn lift_definitions(policy: &mut Policy) {
     queue.push(&mut policy.body);
 
     while let Some(node) = queue.pop() {
-        match node {
-            ASTNode::Clause(clause) => {
+        match &mut node.ty {
+            ASTNodeType::Clause(clause) => {
                 let typ = (&clause.intro).into();
                 match &mut clause.intro {
                     ClauseIntro::ForEach(var_intro) | ClauseIntro::ThereIs(var_intro) => {
@@ -158,11 +158,11 @@ fn lift_definitions(policy: &mut Policy) {
                 }
                 queue.push(&mut clause.body);
             }
-            ASTNode::JoinedNodes(obligation) => {
+            ASTNodeType::JoinedNodes(obligation) => {
                 queue.push(&mut obligation.src);
                 queue.push(&mut obligation.sink);
             }
-            ASTNode::Relation(_) | ASTNode::OnlyVia(_, _, _) => {}
+            ASTNodeType::Relation(_) | ASTNodeType::OnlyVia(_, _, _) => {}
         }
     }
 }

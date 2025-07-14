@@ -1,4 +1,12 @@
+// associated-call-site
+
 {
-let {{sink}}_callsite = {{sink}}.siblings(&ctx);
-{{src}}.flows_to(&{{sink}}_callsite, &ctx, EdgeSelection::Data) || {{src}}.flows_to({{sink}}, &ctx, EdgeSelection::Data)
+let {{{sink}}}_callsite = {{{sink}}}.siblings(&ctx);
+
+CauseBuilder::new("{{span}}", "{{clause_num}}")
+.goes_to(
+{{{src}}},
+&{{{sink}}}.extended(&{{{sink}}}_callsite).unwrap(),
+ctx.as_ref()
+)
 }
