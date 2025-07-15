@@ -153,21 +153,29 @@ impl Cause {
                     msg.with_node_note(
                         *n,
                         format!(
-                            "{} {}\n{} because of item",
+                            "{} {}\n{} because of this element",
                             self.description, self.clause_ident, classification
                         ),
                     );
                 } else {
                     let item_name = match &item {
-                        QuantifierItem::Empty => "No Matching Element".to_owned(),
-                        QuantifierItem::Other(o) => format!("{o}"),
+                        QuantifierItem::Empty => if inner_cause.is_some() {
+                            "no element matched body conditions"
+                        } else {
+                            "no element matched initial filter"
+                        }
+                        .to_owned(),
+                        QuantifierItem::Other(o) => format!("of {o}"),
                         QuantifierItem::Endpoint(e) => {
-                            format!("{}", DisplayPath::from(&ctx.root().desc().def_info[e].path))
+                            format!(
+                                "of {}",
+                                DisplayPath::from(&ctx.root().desc().def_info[e].path)
+                            )
                         }
                         QuantifierItem::Node(_) => unreachable!(),
                     };
                     msg.with_note(format!(
-                        "{} {}\n{classification} because of {item_name}",
+                        "{} {}\n  {classification} because {item_name}",
                         self.description, self.clause_ident
                     ));
                 }
