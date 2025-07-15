@@ -145,7 +145,7 @@ pub fn join_variable_intros(
 // Given an initial node and a vector of (operator, node) pairs, construct an ASTNode::{Operator}
 // joining each of the nodes
 pub fn join_nodes((start, rest): (ASTNode, Vec<(Operator, ASTNode)>)) -> ASTNode {
-    let Some(reference_op) = rest.get(0).map(|(op, _)| op.clone()) else {
+    let Some(reference_op) = rest.first().map(|(op, _)| op.clone()) else {
         return start;
     };
 

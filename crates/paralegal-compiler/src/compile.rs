@@ -93,7 +93,7 @@ fn compile_relation(
                 map.insert("marker", marker.into());
             }
         }
-        render_template(handlebars, &map, relation.into())
+        render_template(handlebars, map, relation.into())
     };
 
     match relation {
@@ -103,7 +103,7 @@ fn compile_relation(
         Relation::Negation(inner) => {
             let value = compile_inner_relation(inner, true);
             map.insert("value", value);
-            render_template(handlebars, &map, relation.into())
+            render_template(handlebars, map, relation.into())
         }
     }
 }

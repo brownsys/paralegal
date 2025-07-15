@@ -75,7 +75,7 @@ fn example_policies_compile() {
             let output_path = output_path.join(&relative_dir_path);
             std::fs::create_dir_all(output_path.join("src")).unwrap();
             let mut cmd = Command::new(COMPILER_EXECUTABLE);
-            cmd.arg(&examples_dir.join(path))
+            cmd.arg(examples_dir.join(path))
                 .arg("--bin")
                 .arg("-o")
                 .arg(output_path.join("src").join("main.rs"));

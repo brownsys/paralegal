@@ -5,6 +5,7 @@ use super::ast::*;
 use crate::Policy;
 
 pub trait VisitMut<'p> {
+    #[allow(dead_code)]
     fn visit_policy_mut(&mut self, policy: &'p mut Policy) {
         super_visit_policy_mut(self, policy);
     }
@@ -148,6 +149,7 @@ pub fn super_visit_clause_intro_mut<'p, V: VisitMut<'p> + ?Sized>(
     }
 }
 
+#[allow(dead_code)]
 pub trait Visit<'p> {
     fn visit_policy(&mut self, policy: &'p Policy) {
         super_visit_policy(self, policy);
@@ -183,7 +185,7 @@ pub trait Visit<'p> {
         super_visit_clause_intro(self, intro);
     }
 
-    fn visit_clause_num(&mut self, _clause_num: &'p String) {}
+    fn visit_clause_num(&mut self, _clause_num: &'p str) {}
 }
 
 pub fn super_visit_policy<'p, V: Visit<'p> + ?Sized>(visitor: &mut V, policy: &'p Policy) {
