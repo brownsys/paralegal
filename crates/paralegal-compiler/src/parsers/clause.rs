@@ -10,7 +10,7 @@ use nom::{
     character::complete::space1,
     combinator::map,
     multi::many0,
-    sequence::{delimited, pair, preceded, tuple},
+    sequence::{delimited, pair, preceded, terminated, tuple},
     Parser,
 };
 
@@ -18,11 +18,11 @@ use nom_supreme::{error::ErrorTree, tag::complete::tag};
 
 fn gclause<'a>(
     bullet: impl Parser<&'a str, &'a str, ErrorTree<&'a str>>,
-    intro: impl Parser<&'a str, ClauseIntro, ErrorTree<&'a str>>,
+    intro: impl Parser<&'a str, (ClauseIntro, &'a str), ErrorTree<&'a str>>,
     remainder: impl Parser<&'a str, ASTNode, ErrorTree<&'a str>>,
 ) -> impl FnMut(&'a str) -> Res<&'a str, ASTNode> {
     map(
-        tuple((bullet, spanned(intro), remainder)),
+        tuple((bullet, intro, remainder)),
         |(bullet, (intro, ispan), body)| ASTNode {
             clause_num: bullet.to_owned(),
             span: ispan.to_owned(),
@@ -139,23 +139,29 @@ fn only_via(s: &str) -> Res<&str, ASTNode> {
     ))
 }
 
-fn conditional(s: &str) -> Res<&str, ClauseIntro> {
+fn conditional<'a>(s: &'a str) -> Res<&'a str, (ClauseIntro, &'a str)> {
     map(
-        delimited(tag("If"), relation, tuple((tag("then"), colon))),
-        ClauseIntro::Conditional,
+        terminated(spanned(delimited(tag("If"), relation, tag("then"))), colon),
+        |(a, span)| (ClauseIntro::Conditional(a), span),
     )(s)
 }
 
-fn for_each(s: &str) -> Res<&str, ClauseIntro> {
+fn for_each<'a>(s: &'a str) -> Res<&'a str, (ClauseIntro, &'a str)> {
     map(
-        delimited(tuple((tag("For each"), space1)), variable_intro, colon),
-        ClauseIntro::ForEach,
+        terminated(
+            spanned(preceded(tuple((tag("For each"), space1)), variable_intro)),
+            colon,
+        ),
+        |(a, span)| (ClauseIntro::ForEach(a), span),
     )(s)
 }
 
-fn there_is(s: &str) -> Res<&str, ClauseIntro> {
+fn there_is<'a>(s: &'a str) -> Res<&'a str, (ClauseIntro, &'a str)> {
     map(
-        delimited(tag("There is a"), variable_intro, tag("where:")),
-        ClauseIntro::ThereIs,
+        terminated(
+            spanned(delimited(tag("There is a"), variable_intro, tag("where"))),
+            colon,
+        ),
+        |(a, span)| (ClauseIntro::ThereIs(a), span),
     )(s)
 }
