@@ -2,15 +2,14 @@ use crate::common::*;
 use clause::l1_clauses;
 use definitions::parse_definitions;
 use nom::{
-    bytes::complete::tag,
     character::complete::multispace0,
-    combinator::opt,
     sequence::{delimited, tuple},
     IResult,
 };
 use nom_supreme::{
     error::ErrorTree,
     final_parser::{final_parser, Location},
+    tag::complete::tag,
 };
 use scope::scope;
 use shared::colon;
@@ -27,7 +26,8 @@ pub type Res<T, U> = IResult<T, U, ErrorTree<T>>;
 pub fn parse(s: &str) -> Result<Policy, ErrorTree<Location>> {
     let mut combinator = final_parser(tuple((
         scope,
-        opt(parse_definitions),
+        multispace0,
+        parse_definitions,
         delimited(
             tuple((multispace0, tag("Policy"), colon)),
             l1_clauses,
@@ -35,9 +35,9 @@ pub fn parse(s: &str) -> Result<Policy, ErrorTree<Location>> {
         ),
     )));
 
-    let (scope, option_defs, body) = combinator(s)?;
+    let (scope, _, option_defs, body) = combinator(s)?;
     let policy = Policy {
-        definitions: option_defs.unwrap_or_default(),
+        definitions: option_defs,
         scope,
         body,
     };

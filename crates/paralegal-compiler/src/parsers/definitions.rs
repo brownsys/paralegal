@@ -51,8 +51,9 @@ fn definition(s: &str) -> Res<&str, Definition> {
 }
 
 pub fn parse_definitions(s: &str) -> Res<&str, Vec<Definition>> {
-    preceded(
-        tuple((multispace0, tag("Definitions"), colon)),
-        many1(definition),
-    )(s)
+    let (s, def) = opt(tuple((tag("Definitions"), colon)))(s)?;
+    if def.is_none() {
+        return Ok((s, vec![]));
+    }
+    many1(definition)(s)
 }
