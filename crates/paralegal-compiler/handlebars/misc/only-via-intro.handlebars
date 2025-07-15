@@ -1,3 +1,6 @@
+// only-via-intro
+
 {{#if intro}}
-let mut {{var}} = {{intro}}.collect::<Vec<_>>();
+let {{{var}}}_base = {{{intro}}}.collect::<Vec<_>>();
+let {{{var}}} = IterCopied(&{{{var}}}_base);
 {{/if}}

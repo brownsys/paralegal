@@ -1,1 +1,4 @@
-{{src}}.has_marker(&ctx, marker!({{marker}}))
+// is-marked
+
+CauseBuilder::new("{{span}}", "{{clause_num}}")
+    .is_marked({{{src}}}, marker!({{{marker}}}), ctx.as_ref())

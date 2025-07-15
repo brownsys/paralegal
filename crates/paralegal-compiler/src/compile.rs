@@ -1,4 +1,8 @@
-use crate::common::{ast::*, Policy, PolicyScope};
+use crate::common::{
+    ast::*,
+    vis::{self, VisitMut},
+    Policy, PolicyScope,
+};
 use handlebars::Handlebars;
 use std::fs;
 use std::io::Result;
@@ -57,9 +61,8 @@ fn compile_relation(
     relation: &Relation,
     vars_to_initialization_typ: &HashMap<Variable, InitializationType>,
     vars_to_clause_typ: &HashMap<Variable, OgClauseIntroType>,
+    map: &mut HashMap<&str, String>,
 ) -> String {
-    let mut map: HashMap<&str, String> = HashMap::new();
-
     let mut compile_inner_relation = |relation: &Relation, inside_negation: bool| -> String {
         match relation {
             Relation::Binary { left, right, .. } => {
@@ -90,7 +93,7 @@ fn compile_relation(
                 map.insert("marker", marker.into());
             }
         }
-        render_template(handlebars, &map, relation.into())
+        render_template(handlebars, map, relation.into())
     };
 
     match relation {
@@ -100,7 +103,7 @@ fn compile_relation(
         Relation::Negation(inner) => {
             let value = compile_inner_relation(inner, true);
             map.insert("value", value);
-            render_template(handlebars, &map, relation.into())
+            render_template(handlebars, map, relation.into())
         }
     }
 }
@@ -110,10 +113,12 @@ fn compile_only_via(
     node: &ASTNode,
     vars_to_initialization_typ: &mut HashMap<Variable, InitializationType>,
 ) -> String {
-    let ASTNode::OnlyVia(src_intro, sink_intro, checkpoint_intro) = node else {
+    let ASTNodeType::OnlyVia(src_intro, sink_intro, checkpoint_intro) = &node.ty else {
         panic!("Called render_only_via on the wrong kind of node");
     };
     let mut map: HashMap<&str, Vec<String>> = HashMap::new();
+    map.insert("clause_num", vec![node.clause_num.clone()]);
+    map.insert("span", vec![node.span.clone()]);
 
     fn render_only_via_intro(
         handlebars: &mut Handlebars,
@@ -211,15 +216,18 @@ fn compile_ast_node(
     inside_definition_filter: bool,
 ) -> String {
     let mut map: HashMap<&str, String> = HashMap::new();
-    match node {
-        ASTNode::Relation(relation) => compile_relation(
+    map.insert("clause_num", node.clause_num.clone());
+    map.insert("span", node.span.clone());
+    match &node.ty {
+        ASTNodeType::Relation(relation) => compile_relation(
             handlebars,
             relation,
             vars_to_initialization_typ,
             vars_to_clause_typ,
+            &mut map,
         ),
-        ASTNode::OnlyVia(..) => compile_only_via(handlebars, node, vars_to_initialization_typ),
-        ASTNode::JoinedNodes(obligation) => {
+        ASTNodeType::OnlyVia(..) => compile_only_via(handlebars, node, vars_to_initialization_typ),
+        ASTNodeType::JoinedNodes(obligation) => {
             let src_res = compile_ast_node(
                 handlebars,
                 &obligation.src,
@@ -242,7 +250,7 @@ fn compile_ast_node(
             *counter += 1;
             render_template(handlebars, &map, node.into())
         }
-        ASTNode::Clause(clause) => {
+        ASTNodeType::Clause(clause) => {
             let (variable_to_remove, variable_intro) = match &clause.intro {
                 ClauseIntro::ForEach(intro) | ClauseIntro::ThereIs(intro) => {
                     // Only remove a variable when the clause goes out of scope if it's one we're introducing here
@@ -285,6 +293,7 @@ fn compile_ast_node(
                         relation,
                         vars_to_initialization_typ,
                         vars_to_clause_typ,
+                        &mut map,
                     ),
                 ),
             };
@@ -487,7 +496,12 @@ fn compile_definitions(
     results.join("\n")
 }
 
-pub fn compile(policy: Policy, policy_name: &str, out: &Path, create_bin: bool) -> Result<()> {
+pub fn compile(mut policy: Policy, policy_name: &str, out: &Path, create_bin: bool) -> Result<()> {
+    let mut propagator = ClauseNumPropagator {
+        current: String::new(),
+    };
+    propagator.visit_ast_node_mut(&mut policy.body);
+
     let mut handlebars = Handlebars::new();
     handlebars.set_strict_mode(true);
     register_templates(&mut handlebars);
@@ -552,4 +566,34 @@ pub fn compile(policy: Policy, policy_name: &str, out: &Path, create_bin: bool) 
     fs::write(out, &main)?;
     Command::new("rustfmt").arg(out).status()?;
     Ok(())
+}
+
+struct ClauseNumPropagator {
+    current: String,
+}
+
+impl VisitMut<'_> for ClauseNumPropagator {
+    fn visit_ast_node_mut(&mut self, node: &mut ASTNode) {
+        let old = if !node.clause_num.is_empty() {
+            let new = format!(
+                "{}{}{}",
+                self.current,
+                if self.current.is_empty() { "" } else { "." },
+                node.clause_num
+            );
+            Some(std::mem::replace(&mut self.current, new))
+        } else {
+            None
+        };
+        vis::super_visit_ast_node_mut(self, node);
+        if let Some(old) = old {
+            self.current = old;
+        }
+    }
+
+    fn visit_clause_num_mut(&mut self, clause_num: &mut String) {
+        if !clause_num.is_empty() && !self.current.is_empty() {
+            *clause_num = self.current.clone();
+        }
+    }
 }

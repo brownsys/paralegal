@@ -113,7 +113,14 @@ pub struct Clause {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum ASTNode {
+pub struct ASTNode {
+    pub clause_num: String,
+    pub span: String,
+    pub ty: ASTNodeType,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ASTNodeType {
     Clause(Box<Clause>),
     OnlyVia(
         VariableIntro,

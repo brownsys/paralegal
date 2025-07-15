@@ -1,12 +1,17 @@
-{{global-definitions}}
+// in-ctrler
 
-let found = ctx.controller_contexts().find(|ctx| {
-    ctx.current().name.as_str() == "{{ctrler}}"
-    &&
-    {
-        {{definitions}}
-        {{body}}
+{{{global-definitions}}}
+
+let found = CauseBuilder::new("In controller {{ctrler}}", "{{cause_num}}").any(
+    ctx.controller_contexts(),
+    |ctx| {
+        if ctx.current().name.as_str() != "{{ctrler}}" {
+
+            return (false, CauseBuilder::new("", "").with_type(CauseTy::empty_quantifier(Connective::Or)));
+        }
+        {{{definitions}}}
+        {{{body}}}
     }
-});
+)
 
-    assert_error!(ctx, found.is_some(), format!("{{ctrler}} does not satisfy the policy"));
+error::report(found, ctx.root());

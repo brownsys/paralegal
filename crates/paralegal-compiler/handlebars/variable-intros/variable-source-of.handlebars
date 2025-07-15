@@ -1,3 +1,7 @@
-std::iter::once({{#if typ-definition}}*{{/if}}{{type-var}})
-    .chain(ctx.otypes({{#if typ-definition}}*{{/if}}*{{type-var}}).iter())
-    .flat_map(|ty| ctx.srcs_with_type(ctx.id(), *ty))
+// variable-source-of
+
+// std::iter::once({{#if typ-definition}}*{{/if}}{{{type-var}}})
+std::iter::once(*{{{type-var}}})
+    //.chain(ctx.otypes({{#if typ-definition}}*{{/if}}*{{{type-var}}}).iter().copied())
+    .chain(ctx.otypes(*{{{type-var}}}).iter().copied())
+    .flat_map(|ty| ctx.srcs_with_type(ctx.id(), ty))

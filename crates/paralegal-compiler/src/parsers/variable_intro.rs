@@ -1,11 +1,10 @@
 use nom::{
     branch::alt,
+    bytes::complete::tag,
     character::complete::space0,
-    combinator::peek,
     error::context,
-    sequence::{delimited, separated_pair, terminated, tuple},
+    sequence::{delimited, separated_pair, terminated},
 };
-use nom_supreme::tag::complete::tag;
 
 use super::{
     shared::{marker, variable},
@@ -14,7 +13,8 @@ use super::{
 use crate::common::ast::*;
 
 pub fn variable_def(s: &str) -> Res<&str, VariableIntro> {
-    let (remainder, variable) = variable(s)?;
+    let mut combinator = context("variable (introduction)", variable);
+    let (remainder, variable) = combinator(s)?;
     Ok((
         remainder,
         VariableIntro {
@@ -25,7 +25,10 @@ pub fn variable_def(s: &str) -> Res<&str, VariableIntro> {
 }
 
 pub fn variable_marked(s: &str) -> Res<&str, VariableIntro> {
-    let mut combinator = separated_pair(variable, tag("marked"), marker);
+    let mut combinator = context(
+        "variable marked",
+        separated_pair(variable, tag("marked"), marker),
+    );
     let (remainder, (variable, marker)) = combinator(s)?;
     Ok((
         remainder,
@@ -40,7 +43,10 @@ pub fn variable_marked(s: &str) -> Res<&str, VariableIntro> {
 }
 
 fn variable_type_marked(s: &str) -> Res<&str, VariableIntro> {
-    let mut combinator = separated_pair(variable, tag("type marked"), marker);
+    let mut combinator = context(
+        "variable type marked",
+        separated_pair(variable, tag("type marked"), marker),
+    );
     let (remainder, (variable, marker)) = combinator(s)?;
     Ok((
         remainder,
@@ -55,7 +61,10 @@ fn variable_type_marked(s: &str) -> Res<&str, VariableIntro> {
 }
 
 fn variable_source_of(s: &str) -> Res<&str, VariableIntro> {
-    let mut combinator = separated_pair(variable, tag("that produces"), variable);
+    let mut combinator = context(
+        "variable source of",
+        separated_pair(variable, tag("that produces"), variable),
+    );
     let (remainder, (source_of_var, var)) = combinator(s)?;
     Ok((
         remainder,
@@ -67,7 +76,7 @@ fn variable_source_of(s: &str) -> Res<&str, VariableIntro> {
 }
 
 fn roots(s: &str) -> Res<&str, VariableIntro> {
-    let mut combinator = terminated(variable, tag("input"));
+    let mut combinator = context("roots", terminated(variable, tag("input")));
     let (remainder, var) = combinator(s)?;
     Ok((
         remainder,
@@ -79,7 +88,7 @@ fn roots(s: &str) -> Res<&str, VariableIntro> {
 }
 
 fn nodes(s: &str) -> Res<&str, VariableIntro> {
-    let mut combinator = terminated(variable, tag("item"));
+    let mut combinator = context("nodes", terminated(variable, tag("item")));
     let (remainder, var) = combinator(s)?;
     Ok((
         remainder,
@@ -91,21 +100,20 @@ fn nodes(s: &str) -> Res<&str, VariableIntro> {
 }
 
 pub fn variable_intro(s: &str) -> Res<&str, VariableIntro> {
-    let (remainder, _) = context(
-        "a variable introduction, e.g. \"sensitive\"",
-        tuple((space0, peek(variable))),
-    )(s)?;
-    delimited(
-        space0,
-        alt((
-            roots,
-            nodes,
-            variable_type_marked,
-            variable_source_of,
-            variable_marked,
-            // must try this last b/c it'll partially consume the above
-            variable_def,
-        )),
-        space0,
-    )(remainder)
+    context(
+        "variable intro",
+        delimited(
+            space0,
+            alt((
+                roots,
+                nodes,
+                variable_type_marked,
+                variable_source_of,
+                variable_marked,
+                // must try this last b/c it'll partially consume the above
+                variable_def,
+            )),
+            space0,
+        ),
+    )(s)
 }

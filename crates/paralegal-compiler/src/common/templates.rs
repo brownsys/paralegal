@@ -1,9 +1,9 @@
-use handlebars::{no_escape, Handlebars};
+use handlebars::Handlebars;
 use std::collections::HashMap;
 use strum_macros::EnumIter;
 
 use super::{
-    ast::{ASTNode, Binop, ClauseIntro, Operator, Relation, VariableIntro},
+    ast::{ASTNode, ASTNodeType, Binop, ClauseIntro, Operator, Relation, VariableIntro},
     PolicyScope,
 };
 
@@ -160,17 +160,17 @@ impl From<&ClauseIntro> for Template {
 
 impl From<&ASTNode> for Template {
     fn from(value: &ASTNode) -> Self {
-        match value {
-            ASTNode::Relation(relation) => relation.into(),
-            ASTNode::OnlyVia { .. } => Template::OnlyVia,
-            ASTNode::Clause(clause) => (&clause.intro).into(),
-            ASTNode::JoinedNodes(obligation) => (&obligation.op).into(),
+        match &value.ty {
+            ASTNodeType::Relation(relation) => relation.into(),
+            ASTNodeType::OnlyVia { .. } => Template::OnlyVia,
+            ASTNodeType::Clause(clause) => (&clause.intro).into(),
+            ASTNodeType::JoinedNodes(obligation) => (&obligation.op).into(),
         }
     }
 }
 
 pub fn register_templates(handlebars: &mut Handlebars) {
-    handlebars.register_escape_fn(no_escape);
+    handlebars.register_escape_fn(|s| s.replace('"', "\\\""));
     handlebars
         .register_embed_templates::<TemplateDirectory>()
         .unwrap();

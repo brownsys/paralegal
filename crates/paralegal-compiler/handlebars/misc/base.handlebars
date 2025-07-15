@@ -1,8 +1,11 @@
+// base 
+
 use anyhow::Result;
 use std::sync::Arc;
+use std::collections::HashSet;
 
 use paralegal_policy::{
-    assert_error, paralegal_spdg::{traverse::EdgeSelection, Identifier, NodeCluster}, Context, GlobalNode, IntoIterGlobalNodes, Marker, NodeExt, NodeQueries, RootContext
+    assert_error, paralegal_spdg::{traverse::EdgeSelection, Identifier, NodeCluster}, Context, GlobalNode, IntoIterGlobalNodes, Marker, NodeExt, NodeQueries, RootContext, error::{self, CauseBuilder, CauseTy, Connective}
 };
 
 macro_rules! marker {
@@ -41,9 +44,32 @@ impl ContainsNodeExt for Option<NodeCluster> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct IterCopied<I>(I);
+
+impl<'a, I: 'a + Copy, It: IntoIterator<Item = &'a I> + Copy> IntoIterator for IterCopied<It> {
+    type Item = I;
+    type IntoIter = std::iter::Copied<It::IntoIter>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter().copied()
+    }
+}
+
+struct IterDerefing<I>(I);
+
+impl<'a, T : 'a + Copy, I: 'a + IntoIterator<Item = &'a T>> IntoIterator for IterDerefing<I> {
+    type Item = T;
+    type IntoIter = std::iter::Map<I::IntoIter, fn(&'a T) -> T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter().map(|x| *x)
+    }
+}
+
 pub fn check(ctx: Arc<RootContext>) -> Result<()> {
         ctx.named_policy(Identifier::new_intern("check"), |ctx| {
-        {{policy}}
+        {{{policy}}}
         Ok(())
-        })
-        }
+    })
+}

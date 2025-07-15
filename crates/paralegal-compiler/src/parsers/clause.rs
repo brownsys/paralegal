@@ -7,135 +7,197 @@ use super::{
 use crate::common::ast::*;
 use nom::{
     branch::alt,
+    bytes::complete::tag,
     character::complete::space1,
     combinator::map,
+    error::{context, VerboseError},
     multi::many0,
     sequence::{delimited, pair, preceded, tuple},
+    Parser,
 };
 
-use nom_supreme::tag::complete::tag;
+fn gclause<'a>(
+    bullet: impl Parser<&'a str, &'a str, VerboseError<&'a str>>,
+    intro: impl Parser<&'a str, ClauseIntro, VerboseError<&'a str>>,
+    remainder: impl Parser<&'a str, ASTNode, VerboseError<&'a str>>,
+) -> impl FnMut(&'a str) -> Res<&'a str, ASTNode> {
+    map(
+        tuple((bullet, spanned(intro), remainder)),
+        |(bullet, (intro, ispan), body)| ASTNode {
+            clause_num: bullet.to_owned(),
+            span: ispan.to_owned(),
+            ty: ASTNodeType::Clause(Box::new(Clause { intro, body })),
+        },
+    )
+}
 
 fn l4_clause(s: &str) -> Res<&str, ASTNode> {
-    let mut combinator = tuple((
-        preceded(l4_bullet, alt((for_each, there_is, conditional))),
-        l5_relations,
-    ));
-    let (remainder, (intro, body)) = combinator(s)?;
-    Ok((remainder, ASTNode::Clause(Box::new(Clause { intro, body }))))
+    context(
+        "l4 clause",
+        gclause(
+            l4_bullet,
+            alt((for_each, there_is, conditional)),
+            l5_relations,
+        ),
+    )(s)
 }
 
 pub fn l4_clauses(s: &str) -> Res<&str, ASTNode> {
-    map(
-        pair(
-            l4_clause,
-            many0(pair(operator, alt((l4_clause, l4_relations)))),
+    context(
+        "multiple l4 clauses",
+        map(
+            pair(
+                l4_clause,
+                many0(pair(operator, alt((l4_clause, l4_relations)))),
+            ),
+            join_nodes,
         ),
-        join_nodes,
     )(s)
 }
 
 fn l3_clause(s: &str) -> Res<&str, ASTNode> {
-    let mut combinator = tuple((
-        preceded(l3_bullet, alt((for_each, there_is, conditional))),
-        alt((l4_relations, l4_clauses)),
-    ));
-    let (remainder, (intro, body)) = combinator(s)?;
-    Ok((remainder, ASTNode::Clause(Box::new(Clause { intro, body }))))
+    context(
+        "l3 clause",
+        gclause(
+            l3_bullet,
+            alt((for_each, there_is, conditional)),
+            alt((l4_relations, l4_clauses)),
+        ),
+    )(s)
 }
 
 pub fn l3_clauses(s: &str) -> Res<&str, ASTNode> {
-    map(
-        pair(
-            l3_clause,
-            many0(pair(operator, alt((l3_clause, l3_relations)))),
+    context(
+        "multiple l3 clauses",
+        map(
+            pair(
+                l3_clause,
+                many0(pair(operator, alt((l3_clause, l3_relations)))),
+            ),
+            join_nodes,
         ),
-        join_nodes,
     )(s)
 }
 
 fn l2_clause(s: &str) -> Res<&str, ASTNode> {
-    let mut combinator = tuple((
-        preceded(l2_bullet, alt((for_each, there_is, conditional))),
-        alt((l3_relations, l3_clauses)),
-    ));
-    let (remainder, (intro, body)) = combinator(s)?;
-    Ok((remainder, ASTNode::Clause(Box::new(Clause { intro, body }))))
+    context(
+        "l2 clause",
+        gclause(
+            l2_bullet,
+            alt((for_each, there_is, conditional)),
+            alt((l3_relations, l3_clauses)),
+        ),
+    )(s)
 }
 
 pub fn l2_clauses(s: &str) -> Res<&str, ASTNode> {
-    map(
-        pair(
-            l2_clause,
-            many0(pair(operator, alt((l2_clause, l2_relations)))),
+    context(
+        "multiple l2 clauses",
+        map(
+            pair(
+                l2_clause,
+                many0(pair(operator, alt((l2_clause, l2_relations)))),
+            ),
+            join_nodes,
         ),
-        join_nodes,
     )(s)
 }
 
 fn l1_clause(s: &str) -> Res<&str, ASTNode> {
-    let mut combinator = tuple((
-        preceded(l1_bullet, alt((for_each, there_is))),
-        alt((l2_relations, l2_clauses)),
-    ));
-    let (remainder, (intro, body)) = combinator(s)?;
-    Ok((remainder, ASTNode::Clause(Box::new(Clause { intro, body }))))
+    context(
+        "l1 clause",
+        gclause(
+            l1_bullet,
+            alt((for_each, there_is)),
+            alt((l2_relations, l2_clauses)),
+        ),
+    )(s)
 }
 
 pub fn l1_clauses(s: &str) -> Res<&str, ASTNode> {
-    map(
-        pair(
-            alt((l1_clause, only_via)),
-            many0(tuple((operator, alt((l1_clause, only_via))))),
+    context(
+        "multiple l1 clauses",
+        map(
+            pair(
+                alt((l1_clause, only_via)),
+                many0(tuple((operator, alt((l1_clause, only_via))))),
+            ),
+            join_nodes,
         ),
-        join_nodes,
     )(s)
 }
 
 fn only_via(s: &str) -> Res<&str, ASTNode> {
-    let mut combinator = tuple((
-        // these are only allowed to be present at the top level, hence the L1 bullet restriction
-        delimited(
-            tuple((l1_bullet, tag("Each"), space1)),
-            variable_intro,
-            tag("goes to a"),
-        ),
-        map(
-            pair(
-                alt((variable_marked, variable_def)),
-                many0(tuple((operator, alt((variable_marked, variable_def))))),
-            ),
-            join_variable_intros,
-        ),
-        preceded(
-            tag("only via a"),
-            map(
-                pair(
-                    alt((variable_marked, variable_def)),
-                    many0(tuple((operator, alt((variable_marked, variable_def))))),
+    let mut combinator = context(
+        "only via relation",
+        tuple((
+            // these are only allowed to be present at the top level, hence the
+            // L1 bullet restriction
+            l1_bullet,
+            spanned(tuple((
+                delimited(
+                    tuple((tag("Each"), space1)),
+                    variable_intro,
+                    tag("goes to a"),
                 ),
-                join_variable_intros,
-            ),
-        ),
-    ));
-    let (remainder, (src, sink, checkpoint)) = combinator(s)?;
+                map(
+                    pair(
+                        alt((variable_marked, variable_def)),
+                        many0(tuple((operator, alt((variable_marked, variable_def))))),
+                    ),
+                    join_variable_intros,
+                ),
+                preceded(
+                    tag("only via a"),
+                    map(
+                        pair(
+                            alt((variable_marked, variable_def)),
+                            many0(tuple((operator, alt((variable_marked, variable_def))))),
+                        ),
+                        join_variable_intros,
+                    ),
+                ),
+            ))),
+        )),
+    );
+    let (remainder, (bullet, ((src, sink, checkpoint), span))) = combinator(s)?;
 
-    Ok((remainder, ASTNode::OnlyVia(src, sink, checkpoint)))
+    Ok((
+        remainder,
+        ASTNode {
+            clause_num: bullet.to_owned(),
+            span: span.to_owned(),
+            ty: ASTNodeType::OnlyVia(src, sink, checkpoint),
+        },
+    ))
 }
 
 fn conditional(s: &str) -> Res<&str, ClauseIntro> {
-    let mut combinator = delimited(tag("If"), relation, tuple((tag("then"), colon)));
-    let (remainder, relation) = combinator(s)?;
-    Ok((remainder, ClauseIntro::Conditional(relation)))
+    map(
+        context(
+            "conditional",
+            delimited(tag("If"), relation, tuple((tag("then"), colon))),
+        ),
+        ClauseIntro::Conditional,
+    )(s)
 }
 
 fn for_each(s: &str) -> Res<&str, ClauseIntro> {
-    let mut combinator = delimited(tuple((tag("For each"), space1)), variable_intro, colon);
-    let (remainder, var_intro) = combinator(s)?;
-    Ok((remainder, ClauseIntro::ForEach(var_intro)))
+    map(
+        context(
+            "for each",
+            delimited(tuple((tag("For each"), space1)), variable_intro, colon),
+        ),
+        ClauseIntro::ForEach,
+    )(s)
 }
 
 fn there_is(s: &str) -> Res<&str, ClauseIntro> {
-    let mut combinator = delimited(tag("There is a"), variable_intro, tag("where:"));
-    let (remainder, var_intro) = combinator(s)?;
-    Ok((remainder, ClauseIntro::ThereIs(var_intro)))
+    map(
+        context(
+            "there is",
+            delimited(tag("There is a"), variable_intro, tag("where:")),
+        ),
+        ClauseIntro::ThereIs,
+    )(s)
 }

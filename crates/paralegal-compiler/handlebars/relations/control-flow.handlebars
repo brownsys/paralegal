@@ -1,9 +1,9 @@
-{{#if sink-node-cluster}}
-  {{#if sink-all-method}}
-    {{src}}.has_ctrl_influence_all(&{{sink}}, &ctx).is_none()
-  {{else}}
-    {{src}}.has_ctrl_influence(&{{sink}}, &ctx)
-  {{/if}}
+// control-flow
+
+CauseBuilder::new("{{span}}", "{{clause_num}}")
+{{#if sink-all-method}}
+.has_ctrl_influence_all
 {{else}}
-    {{src}}.has_ctrl_influence({{sink}}, &ctx)
+.has_ctrl_influence
 {{/if}}
+({{{src}}}, {{{sink}}}, ctx.as_ref())

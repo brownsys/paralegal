@@ -1,9 +1,9 @@
-{{#if sink-node-cluster}}
-  {{#if sink-all-method}}
-    {{src}}.flows_to_all(&{{sink}}, &ctx, EdgeSelection::Both).is_none()
-  {{else}}
-    {{src}}.flows_to(&{{sink}}, &ctx, EdgeSelection::Both)
-  {{/if}}
+// influences
+
+CauseBuilder::new("{{span}}", "{{clause_num}}")
+{{#if sink-all-method}}
+    .influences_all
 {{else}}
-    {{src}}.flows_to({{sink}}, &ctx, EdgeSelection::Both)
+    .influences
 {{/if}}
+    ({{{src}}}, {{{sink}}}, ctx.as_ref())
