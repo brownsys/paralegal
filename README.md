@@ -47,7 +47,7 @@ Paralegal directly integrates with cargo and rustc, so running it is as easy as 
 Paralegal is a fast cargo and rustc plugin that developers can run frequently
 (in CI for example) to find potential bugs as they develop their application.
 
-![](misc/ci_plot-3.png)
+![](misc/ci_plot.png)
 
 ## Installation and Usage
 
