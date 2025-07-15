@@ -2,60 +2,61 @@ use std::collections::HashSet;
 
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_while1},
+    bytes::complete::take_while1,
     character::complete::{alpha1, digit1, multispace0, multispace1, space0, space1},
     combinator::{opt, recognize},
-    error::{context, VerboseError},
+    error::context,
     multi::many1,
     sequence::{delimited, preceded, terminated, tuple},
     Parser,
 };
+use nom_supreme::{error::ErrorTree, tag::complete::tag};
 
 use crate::common::ast::*;
 
 use super::Res;
 
 pub fn colon(s: &str) -> Res<&str, &str> {
-    context("colon", delimited(space0, tag(":"), multispace0))(s)
+    delimited(space0, tag(":"), multispace0)(s)
 }
 
 pub fn and(s: &str) -> Res<&str, &str> {
-    context("and", delimited(multispace0, tag("and"), multispace1))(s)
+    delimited(multispace0, tag("and"), multispace1)(s)
 }
 
 pub fn or(s: &str) -> Res<&str, &str> {
-    context("or", delimited(multispace0, tag("or"), multispace1))(s)
+    delimited(multispace0, tag("or"), multispace1)(s)
 }
 
 pub fn operator(s: &str) -> Res<&str, Operator> {
-    let mut combinator = context("operator", alt((and, or)));
+    let mut combinator = context("'and' or 'or'", alt((and, or)));
     let (remainder, operator_str) = combinator(s)?;
     Ok((remainder, operator_str.into()))
 }
 
 pub fn l1_bullet(s: &str) -> Res<&str, &str> {
     context(
-        "l1 bullet",
+        "numbered bullet (1., 2., etc.)",
         delimited(multispace0, digit1, tuple((tag("."), space1))),
     )(s)
 }
 
 pub fn l2_bullet(s: &str) -> Res<&str, &str> {
     let uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    context(
-        "l2 bullet",
-        delimited(
-            multispace0,
+    delimited(
+        multispace0,
+        context(
+            "uppercase letter bullet (A., B., etc.)",
             take_while1(|c| uppercase.contains(c)),
-            tuple((tag("."), space1)),
         ),
+        tuple((tag("."), space1)),
     )(s)
 }
 
 pub fn l3_bullet(s: &str) -> Res<&str, &str> {
     let lowercase = "abcdefghijklmnopqrstuvwxyz";
     context(
-        "l3 bullet",
+        "lowercase letter bullet (a., b., etc.)",
         delimited(
             multispace0,
             take_while1(|c| lowercase.contains(c)),
@@ -68,7 +69,7 @@ pub fn l4_bullet(s: &str) -> Res<&str, &str> {
     // todo: this is lazy, write a real roman numeral parser later
     let roman = "ixv";
     context(
-        "l4 bullet",
+        "roman numeral bullet (i), ii), etc.)",
         delimited(
             multispace0,
             take_while1(|c| roman.contains(c)),
@@ -81,7 +82,7 @@ pub fn l4_bullet(s: &str) -> Res<&str, &str> {
 pub fn l5_bullet(s: &str) -> Res<&str, &str> {
     let uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     context(
-        "l5 bullet",
+        "uppercase letter bullet (A), B), etc.)",
         delimited(
             multispace0,
             take_while1(|c| uppercase.contains(c)),
@@ -92,7 +93,7 @@ pub fn l5_bullet(s: &str) -> Res<&str, &str> {
 
 pub fn alphabetic_with_underscores(s: &str) -> Res<&str, String> {
     let mut combinator = context(
-        "alphabetic with underscores",
+        "identifier (letters and underscores)",
         preceded(space0, recognize(many1(tuple((alpha1, opt(tag("_"))))))),
     );
     let (remainder, res) = combinator(s)?;
@@ -100,19 +101,20 @@ pub fn alphabetic_with_underscores(s: &str) -> Res<&str, String> {
 }
 
 pub fn marker(s: &str) -> Res<&str, Marker> {
-    context(
-        "marker",
-        terminated(alphabetic_with_underscores, multispace0),
-    )(s)
+    terminated(alphabetic_with_underscores, multispace0)(s)
+}
+
+fn quote(s: &str) -> Res<&str, &str> {
+    tag("\"")(s)
 }
 
 pub fn variable(s: &str) -> Res<&str, Variable> {
     context(
-        "variable",
+        "quoted variable (\"variable_name\")",
         delimited(
-            tuple((space0, tag("\""))),
+            tuple((space0, quote)),
             alphabetic_with_underscores,
-            tuple((tag("\""), space0)),
+            tuple((quote, space0)),
         ),
     )(s)
 }
@@ -167,7 +169,7 @@ pub fn join_nodes((start, rest): (ASTNode, Vec<(Operator, ASTNode)>)) -> ASTNode
 }
 
 pub fn spanned<'a, T>(
-    mut parser: impl Parser<&'a str, T, VerboseError<&'a str>>,
+    mut parser: impl Parser<&'a str, T, ErrorTree<&'a str>>,
 ) -> impl FnMut(&'a str) -> Res<&'a str, (T, &'a str)> {
     move |s| {
         let (remainder, result) = parser.parse(s)?;
