@@ -20,7 +20,8 @@ pub enum Relation {
     HasCtrlInfluenceAll,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, strum::AsRefStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum Connective {
     And,
     Or,
@@ -92,7 +93,7 @@ impl Cause {
             } => {
                 msg.with_node_note(
                     *left,
-                    format!("{} {}\nwith source", self.description, self.clause_ident),
+                    format!("{} {}\nthis source", self.description, self.clause_ident),
                 )
                 .with_node_note(
                     *right,
@@ -131,13 +132,10 @@ impl Cause {
             CauseTy::Not(inner) => {
                 inner.report(!result, msg, ctx);
             }
-            CauseTy::Connective {
-                connective: _,
-                fail,
-            } => {
+            CauseTy::Connective { connective, fail } => {
                 msg.with_note(format!(
-                    "{} {} {}",
-                    self.description,
+                    "'{}' {} {}",
+                    connective.as_ref(),
                     if result { "succeeded" } else { "failed" },
                     self.clause_ident
                 ));
@@ -187,6 +185,7 @@ impl Cause {
     }
 }
 
+#[derive(strum::AsRefStr)]
 pub enum CauseTy {
     Binop {
         left: GlobalNode,
