@@ -15,18 +15,29 @@ use crate::{
     utils::{resolve::def_path_res, TinyBitSet},
     Symbol,
 };
+use nom_supreme::{
+    error::ErrorTree,
+    final_parser::{final_parser, ExtractContext, RecreateContext},
+};
 use paralegal_spdg::Identifier;
 
-use rustc_ast::{self as ast, token, tokenstream, ExprKind};
+use rustc_ast::{
+    self as ast,
+    token::{self, Delimiter, Lit, LitKind, Token, TokenKind},
+    tokenstream, ExprKind,
+};
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use rustc_parse::parser as rustc_parser;
-use token::*;
+use rustc_span::Span;
 use tokenstream::*;
 
 pub extern crate nom;
 
-use nom::{error::Error, Parser};
+use nom::{
+    error::{ErrorKind, FromExternalError, ParseError},
+    Parser,
+};
 
 pub struct Symbols {
     /// The symbol `arguments` which we use for refinement in a `#[paralegal_flow::marker(...)]`
@@ -56,7 +67,7 @@ impl Default for Symbols {
 /// Construct if from a [`TokenStream`] with [`Self::from_stream`].
 #[derive(Clone)]
 pub struct I<'a>(RefTokenTreeCursor<'a>);
-type R<'a, T> = nom::IResult<I<'a>, T>;
+type R<'a, T> = nom::IResult<I<'a>, T, ErrorTree<I<'a>>>;
 
 impl<'a> Iterator for I<'a> {
     type Item = &'a TokenTree;
@@ -99,13 +110,46 @@ type Integer = u32;
 /// This is the basic primitive that all other parsers are built from.
 fn one(mut tree: I) -> R<&TokenTree> {
     match tree.next() {
-        None => Result::Err(nom::Err::Error(Error::new(
+        None => Result::Err(nom::Err::Error(ErrorTree::from_error_kind(
             tree,
-            nom::error::ErrorKind::IsNot,
+            nom::error::ErrorKind::Eof,
         ))),
         Some(t) => Ok((tree, t)),
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+struct StructuralError {
+    expected: Structure,
+    found: Structure,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Structure {
+    Token,
+    Delimited(Delimiter),
+}
+
+impl std::fmt::Display for Structure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Structure::Token => write!(f, "token"),
+            Structure::Delimited(delim) => write!(f, "delimited with {:?}", delim),
+        }
+    }
+}
+
+impl std::fmt::Display for StructuralError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Expected a {:?}, but got a {:?}",
+            self.expected, self.found
+        )
+    }
+}
+
+impl std::error::Error for StructuralError {}
 
 /// Parse a single token that is not a subtree and return the token.
 ///
@@ -115,7 +159,10 @@ fn one(mut tree: I) -> R<&TokenTree> {
 pub fn one_token(i: I) -> R<&Token> {
     nom::combinator::map_res(one, |t| match t {
         TokenTree::Token(t, _) => Ok(t),
-        _ => Result::Err(()),
+        TokenTree::Delimited(_, _, delim, _) => Err(StructuralError {
+            expected: Structure::Token,
+            found: Structure::Delimited(*delim),
+        }),
     })(i)
 }
 
@@ -150,67 +197,159 @@ pub fn integer(i: I) -> R<Integer> {
     })(i)
 }
 
+#[derive(Debug)]
+struct NotAnIdentifierErr;
+impl std::error::Error for NotAnIdentifierErr {}
+impl std::fmt::Display for NotAnIdentifierErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Expected identifier")
+    }
+}
+
 /// Parse an identifier. Identifiers in annotations are similar to identifiers
 /// in rust in general, e.g. strings or word character, numbers and underscores.
 pub fn identifier(i: I) -> R<Symbol> {
     nom::combinator::map_res(one_token, |t| match t.ident() {
         Some((rustc_span::symbol::Ident { name, .. }, _)) => Ok(name),
-        _ => Result::Err(()),
+        _ => Result::Err(NotAnIdentifierErr),
     })(i)
+}
+
+#[derive(Debug, Clone)]
+struct NotIdentifierErr {
+    expected: Symbol,
+    found: Symbol,
+}
+
+impl std::error::Error for NotIdentifierErr {}
+
+impl std::fmt::Display for NotIdentifierErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Expected identifier {}, got {} instead",
+            self.expected, self.found
+        )
+    }
 }
 
 /// Expect the next token to be an identifier with the value `s`
 pub fn assert_identifier<'a>(s: Symbol) -> impl FnMut(I<'a>) -> R<'a, ()> {
-    nom::combinator::map_res(
-        identifier,
-        move |i| if i == s { Ok(()) } else { Result::Err(()) },
-    )
+    nom::combinator::map_res(identifier, move |i| {
+        if i == s {
+            Ok(())
+        } else {
+            Result::Err(ErrorTree::from_external_error(
+                i,
+                ErrorKind::Verify,
+                NotIdentifierErr {
+                    expected: s,
+                    found: i,
+                },
+            ))
+        }
+    })
+}
+
+#[derive(Debug, Clone)]
+struct UnusedInputErr;
+
+impl std::error::Error for UnusedInputErr {}
+
+impl std::fmt::Display for UnusedInputErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Unused input left")
+    }
 }
 
 /// Parse a [`TokenTree::Delimited`] with the delimiter character `delim`,
 /// applying the subparser `p` to the tokens in between the delimiters and
 /// return the result of the subparser.
-pub fn delimited<'a, A, P: Parser<I<'a>, A, Error<I<'a>>> + 'a>(
+pub fn delimited<'a, A, P: Parser<I<'a>, A, ErrorTree<I<'a>>> + 'a>(
     mut p: P,
     delim: Delimiter,
 ) -> impl FnMut(I<'a>) -> R<'a, A> {
-    nom::combinator::map_res(
-        nom::combinator::map_res(
-            nom::combinator::map_res(one, move |t| match t {
-                TokenTree::Delimited(_, _, d, s) if *d == delim => Ok(s),
-                _ => Result::Err(""),
-            }),
-            move |s| p.parse(I::from_stream(s)),
-        ),
-        |(mut rest, r)| {
-            if rest.next().is_some() {
-                Result::Err("")
-            } else {
-                Ok(r)
+    move |s| {
+        let (s, tok) = one(s)?;
+        let stream = match tok {
+            TokenTree::Delimited(_, _, d, s) if *d == delim => s,
+            t => {
+                return Result::Err(nom::Err::Error(ErrorTree::from_external_error(
+                    s,
+                    ErrorKind::Fail,
+                    StructuralError {
+                        expected: Structure::Delimited(delim),
+                        found: match t {
+                            TokenTree::Token(_, _) => Structure::Token,
+                            TokenTree::Delimited(_, _, d, _) => Structure::Delimited(*d),
+                        },
+                    },
+                )));
             }
-        },
-    )
+        };
+        let (mut rest, r) = p.parse(I::from_stream(stream))?;
+
+        if rest.next().is_some() {
+            Result::Err(nom::Err::Error(ErrorTree::from_external_error(
+                rest,
+                ErrorKind::Fail,
+                UnusedInputErr,
+            )))
+        } else {
+            Ok((s, r))
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct WrongTokenKindErr {
+    expected: TokenKind,
+    found: TokenKind,
+}
+
+unsafe impl Send for WrongTokenKindErr {}
+unsafe impl Sync for WrongTokenKindErr {}
+
+impl std::error::Error for WrongTokenKindErr {}
+impl std::fmt::Display for WrongTokenKindErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // There is a theoretical possibility of race conditions with the
+        // pointers stored in this token variant so this prevents us from
+        // trying to read that data, just in case.
+        assert!(!matches!(self.found, TokenKind::Interpolated(_)));
+        write!(
+            f,
+            "Expected token kind {:?}, found {:?}",
+            self.expected, self.found
+        )
+    }
 }
 
 /// Expect the next token to have the token kind `k`.
-pub fn assert_token<'a>(k: TokenKind) -> impl FnMut(I<'a>) -> R<'a, ()> {
-    nom::combinator::map_res(
-        one_token,
-        move |t| if *t == k { Ok(()) } else { Result::Err(()) },
-    )
+pub fn assert_token<'a>(k: TokenKind) -> impl Parser<I<'a>, (), ErrorTree<I<'a>>> + 'a {
+    move |s| {
+        let (s, t) = one_token(s)?;
+        if *t == k {
+            Ok((s, ()))
+        } else {
+            Result::Err(nom::Err::Error(ErrorTree::from_external_error(
+                s,
+                ErrorKind::Fail,
+                WrongTokenKindErr {
+                    expected: k.clone(),
+                    found: t.kind.clone(),
+                },
+            )))
+        }
+    }
 }
 
-/// Parse something dictionnary-like.
-///
-/// Expects the next token to be a braces delimited subtree containing pairs of
-/// `keys` and `values` that are comme separated and where each key and value is
-/// separated with an `=`. E.g. something of the form `{ k1 = v1, k2 = v2, ...}`
 pub fn dict<
     'a,
     K: 'a,
     V: 'a,
-    P: Parser<I<'a>, K, Error<I<'a>>> + 'a,
-    G: Parser<I<'a>, V, Error<I<'a>>> + 'a,
+    P: Parser<I<'a>, K, ErrorTree<I<'a>>> + 'a,
+    G: Parser<I<'a>, V, ErrorTree<I<'a>>> + 'a,
 >(
     keys: P,
     values: G,
@@ -326,6 +465,21 @@ fn refinements_parser<'a>(symbols: &Symbols, i: I<'a>) -> R<'a, MarkerRefinement
     )(i)
 }
 
+#[derive(Debug, Clone)]
+struct DisplaySpan(Span);
+
+impl std::fmt::Display for DisplaySpan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
+
+impl RecreateContext<I<'_>> for DisplaySpan {
+    fn recreate_context(_: I<'_>, tail: I<'_>) -> Self {
+        DisplaySpan(tail.0.clone().next().map_or(Span::default(), |f| f.span()))
+    }
+}
+
 /// Parser for a [`LabelAnnotation`]
 pub(crate) fn ann_match_fn(
     symbols: &Symbols,
@@ -340,14 +494,16 @@ pub(crate) fn ann_match_fn(
                 let (i, cont) = nom::combinator::opt(assert_token(TokenKind::Comma))(i)?;
                 let (i, refinement) =
                     nom::combinator::cond(cont.is_some(), |c| refinements_parser(symbols, c))(i)?;
-                let (_, _) = nom::combinator::eof(i)?;
-                Ok(MarkerAnnotation {
-                    marker: Identifier::new(label),
-                    refinement: refinement.unwrap_or_else(MarkerRefinement::empty),
-                })
+                Ok((
+                    i,
+                    MarkerAnnotation {
+                        marker: Identifier::new(label),
+                        refinement: refinement.unwrap_or_else(MarkerRefinement::empty),
+                    },
+                ))
             };
-            p(I::from_stream(&dargs.tokens))
-                .map_err(|err: nom::Err<_>| format!("parser failed with error {err:?}"))
+            final_parser(p)(I::from_stream(&dargs.tokens))
+                .map_err(|err: ErrorTree<DisplaySpan>| err.to_string())
         }
         _ => Result::Err("Expected delimited annotation".to_owned()),
     }

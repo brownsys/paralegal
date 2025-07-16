@@ -252,7 +252,14 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
             .hir()
             .attrs(hir_id)
             .iter()
-            .flat_map(|ann| self.try_parse_annotation(ann).unwrap())
+            .filter_map(|ann| match self.try_parse_annotation(ann) {
+                Ok(ann) => Some(ann),
+                Err(e) => {
+                    self.tcx.dcx().err(e);
+                    None
+                }
+            })
+            .flatten()
             .collect();
         if !v.is_empty() {
             self.annotations.push((owner.def_id.local_def_index, v));
