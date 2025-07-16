@@ -1137,6 +1137,7 @@ dependencies = [
  "lazy_static",
  "log",
  "nom",
+ "nom-supreme",
  "num-derive",
  "num-traits",
  "ordermap",

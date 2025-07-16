@@ -20,7 +20,8 @@ pub enum Relation {
     HasCtrlInfluenceAll,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, strum::AsRefStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum Connective {
     And,
     Or,
@@ -92,7 +93,7 @@ impl Cause {
             } => {
                 msg.with_node_note(
                     *left,
-                    format!("{} {}\nwith source", self.description, self.clause_ident),
+                    format!("{} {}\nthis source", self.description, self.clause_ident),
                 )
                 .with_node_note(
                     *right,
@@ -131,13 +132,10 @@ impl Cause {
             CauseTy::Not(inner) => {
                 inner.report(!result, msg, ctx);
             }
-            CauseTy::Connective {
-                connective: _,
-                fail,
-            } => {
+            CauseTy::Connective { connective, fail } => {
                 msg.with_note(format!(
-                    "{} {} {}",
-                    self.description,
+                    "'{}' {} {}",
+                    connective.as_ref(),
                     if result { "succeeded" } else { "failed" },
                     self.clause_ident
                 ));
@@ -153,21 +151,29 @@ impl Cause {
                     msg.with_node_note(
                         *n,
                         format!(
-                            "{} {}\n{} because of item",
+                            "{} {}\n{} because of this element",
                             self.description, self.clause_ident, classification
                         ),
                     );
                 } else {
                     let item_name = match &item {
-                        QuantifierItem::Empty => "No Matching Element".to_owned(),
-                        QuantifierItem::Other(o) => format!("{o}"),
+                        QuantifierItem::Empty => if inner_cause.is_some() {
+                            "no element matched body conditions"
+                        } else {
+                            "no element matched initial filter"
+                        }
+                        .to_owned(),
+                        QuantifierItem::Other(o) => format!("of {o}"),
                         QuantifierItem::Endpoint(e) => {
-                            format!("{}", DisplayPath::from(&ctx.root().desc().def_info[e].path))
+                            format!(
+                                "of {}",
+                                DisplayPath::from(&ctx.root().desc().def_info[e].path)
+                            )
                         }
                         QuantifierItem::Node(_) => unreachable!(),
                     };
                     msg.with_note(format!(
-                        "{} {}\n{classification} because of {item_name}",
+                        "{} {}\n  {classification} because {item_name}",
                         self.description, self.clause_ident
                     ));
                 }
@@ -179,6 +185,7 @@ impl Cause {
     }
 }
 
+#[derive(strum::AsRefStr)]
 pub enum CauseTy {
     Binop {
         left: GlobalNode,

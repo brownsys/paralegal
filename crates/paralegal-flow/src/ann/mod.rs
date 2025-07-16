@@ -252,7 +252,21 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
             .hir()
             .attrs(hir_id)
             .iter()
-            .flat_map(|ann| self.try_parse_annotation(ann).unwrap())
+            .filter_map(|ann| match self.try_parse_annotation(hir_id, ann) {
+                Ok(ann) => Some(ann),
+                Err(e) => {
+                    self.tcx
+                        .dcx()
+                        .struct_span_err(
+                            ann.span,
+                            format!("Failed to parse annotation because of {e}"),
+                        )
+                        .with_span_note(self.tcx.def_span(owner.def_id), "annotated function")
+                        .emit();
+                    None
+                }
+            })
+            .flatten()
             .collect();
         if !v.is_empty() {
             self.annotations.push((owner.def_id.local_def_index, v));
@@ -263,16 +277,29 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
 impl DumpingVisitor<'_> {
     fn try_parse_annotation(
         &self,
+        hir_id: rustc_hir::HirId,
         a: &Attribute,
     ) -> Result<impl Iterator<Item = Annotation>, String> {
         let consts = &self.markers;
         let tcx = self.tcx;
         let one = |a| Either::Left(Some(a));
         let ann = if let Some(i) = a.match_get_ref(&consts.marker_marker) {
-            one(Annotation::Marker(ann_match_fn(&self.symbols, i)?))
+            one(Annotation::Marker(ann_match_fn(
+                self.tcx,
+                &self.symbols,
+                hir_id,
+                i,
+                a.span,
+            )?))
         } else if let Some(i) = a.match_get_ref(&consts.label_marker) {
             warn!("The `paralegal_flow::label` annotation is deprecated, use `paralegal_flow::marker` instead");
-            one(Annotation::Marker(ann_match_fn(&self.symbols, i)?))
+            one(Annotation::Marker(ann_match_fn(
+                self.tcx,
+                &self.symbols,
+                hir_id,
+                i,
+                a.span,
+            )?))
         } else if let Some(i) = a.match_get_ref(&consts.otype_marker) {
             Either::Right(otype_ann_match(i, tcx)?.into_iter().map(Annotation::OType))
         } else if let Some(i) = a.match_get_ref(&consts.exception_marker) {

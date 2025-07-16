@@ -57,7 +57,9 @@ fn main() -> Result<()> {
     }
     cmd.get_command()
         .args(args.flow_args.iter());
-    cmd.run(&args.dir)?.with_context(check)?;
-    println!("Policy successful");
+    let result = cmd.run(&args.dir)?.with_context(check)?;
+    if result.success {
+        println!("Policy succeeded");
+    }
     Ok(())
 }

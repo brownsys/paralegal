@@ -4,5 +4,8 @@
     ],
     "rust-analyzer.rustc.source": "discover",
     "rust-analyzer.workspace.symbol.search.scope": "workspace_and_dependencies",
-    "rust-analyzer.showUnlinkedFileNotification": false
+    "rust-analyzer.showUnlinkedFileNotification": false,
+    "[handlebars]": {
+        "editor.formatOnSave": false
+    }
 }
