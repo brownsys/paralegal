@@ -411,27 +411,22 @@ pub(crate) fn match_exception(
     ann: &rustc_ast::AttrArgs,
 ) -> Result<ExceptionAnnotation, String> {
     use rustc_ast::*;
-    match ann {
-        ast::AttrArgs::Delimited(dargs) => {
-            let p = |i| {
-                let (i, verification_hash) = nom::combinator::opt(nom::sequence::preceded(
-                    nom::sequence::tuple((
-                        assert_identifier(symbols.verification_hash_sym),
-                        assert_token(TokenKind::Eq),
-                    )),
-                    lit(token::LitKind::Str, |s| {
-                        VerificationHash::from_str_radix(s, 16)
-                            .map_err(|e: std::num::ParseIntError| e.to_string())
-                    }),
-                ))(i)?;
-                let _ = nom::combinator::eof(i)?;
-                Ok(ExceptionAnnotation { verification_hash })
-            };
-            p(I::from_stream(&dargs.tokens))
-                .map_err(|err: nom::Err<_>| format!("parser failed with error {err:?}"))
-        }
-        _ => Result::Err("Expected delimited annotation".to_owned()),
-    }
+    apply_parser_in_delimited_annotation(
+        |i| {
+            let (i, verification_hash) = nom::combinator::opt(nom::sequence::preceded(
+                nom::sequence::tuple((
+                    assert_identifier(symbols.verification_hash_sym),
+                    assert_token(TokenKind::Eq),
+                )),
+                lit(token::LitKind::Str, |s| {
+                    VerificationHash::from_str_radix(s, 16)
+                        .map_err(|e: std::num::ParseIntError| e.to_string())
+                }),
+            ))(i)?;
+            Ok((i, ExceptionAnnotation { verification_hash }))
+        },
+        ann,
+    )
 }
 
 /// A parser for annotation refinements.
@@ -480,6 +475,18 @@ impl RecreateContext<I<'_>> for DisplaySpan {
     }
 }
 
+fn apply_parser_in_delimited_annotation<'a, A, P: Parser<I<'a>, A, ErrorTree<I<'a>>> + 'a>(
+    p: P,
+    ann: &'a rustc_ast::AttrArgs,
+) -> Result<A, String> {
+    use rustc_ast::*;
+    match ann {
+        ast::AttrArgs::Delimited(dargs) => final_parser(p)(I::from_stream(&dargs.tokens))
+            .map_err(|err: ErrorTree<DisplaySpan>| err.to_string()),
+        _ => Result::Err("Expected delimited annotation".to_owned()),
+    }
+}
+
 /// Parser for a [`LabelAnnotation`]
 pub(crate) fn ann_match_fn(
     symbols: &Symbols,
@@ -487,24 +494,20 @@ pub(crate) fn ann_match_fn(
 ) -> Result<MarkerAnnotation, String> {
     use rustc_ast::*;
     use token::*;
-    match ann {
-        ast::AttrArgs::Delimited(dargs) => {
-            let p = |i| {
-                let (i, label) = identifier(i)?;
-                let (i, cont) = nom::combinator::opt(assert_token(TokenKind::Comma))(i)?;
-                let (i, refinement) =
-                    nom::combinator::cond(cont.is_some(), |c| refinements_parser(symbols, c))(i)?;
-                Ok((
-                    i,
-                    MarkerAnnotation {
-                        marker: Identifier::new(label),
-                        refinement: refinement.unwrap_or_else(MarkerRefinement::empty),
-                    },
-                ))
-            };
-            final_parser(p)(I::from_stream(&dargs.tokens))
-                .map_err(|err: ErrorTree<DisplaySpan>| err.to_string())
-        }
-        _ => Result::Err("Expected delimited annotation".to_owned()),
-    }
+    apply_parser_in_delimited_annotation(
+        |i| {
+            let (i, label) = identifier(i)?;
+            let (i, cont) = nom::combinator::opt(assert_token(TokenKind::Comma))(i)?;
+            let (i, refinement) =
+                nom::combinator::cond(cont.is_some(), |c| refinements_parser(symbols, c))(i)?;
+            Ok((
+                i,
+                MarkerAnnotation {
+                    marker: Identifier::new(label),
+                    refinement: refinement.unwrap_or_else(MarkerRefinement::empty),
+                },
+            ))
+        },
+        ann,
+    )
 }
