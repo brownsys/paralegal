@@ -15,9 +15,10 @@ use crate::{
     utils::{resolve::def_path_res, TinyBitSet},
     Symbol,
 };
+use either::Either;
 use nom_supreme::{
     error::ErrorTree,
-    final_parser::{final_parser, ExtractContext, RecreateContext},
+    final_parser::{final_parser, RecreateContext},
 };
 use paralegal_spdg::Identifier;
 
@@ -26,6 +27,7 @@ use rustc_ast::{
     token::{self, Delimiter, Lit, LitKind, Token, TokenKind},
     tokenstream, ExprKind,
 };
+use rustc_hir as hir;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use rustc_parse::parser as rustc_parser;
@@ -371,8 +373,57 @@ pub fn integer_list(i: I) -> R<Vec<Integer>> {
     )(i)
 }
 
-pub fn tiny_bitset(i: I) -> R<TinyBitSet> {
-    nom::combinator::map(integer_list, TinyBitSet::from_iter)(i)
+pub fn arguments<'tcx, 'a, 'b>(
+    tcx: TyCtxt<'tcx>,
+    body: hir::TraitFn<'a>,
+) -> impl Parser<I<'b>, TinyBitSet, ErrorTree<I<'b>>> + use<'a, 'b, 'tcx> {
+    let sig_info = match body {
+        hir::TraitFn::Provided(id) => Either::Left(tcx.hir().body(id).params),
+        hir::TraitFn::Required(idents) => Either::Right(idents),
+    };
+    delimited(
+        nom::multi::separated_list0(
+            assert_token(TokenKind::Comma),
+            nom::branch::alt((integer.map(Either::Left), identifier.map(Either::Right))),
+        ),
+        Delimiter::Bracket,
+    )
+    .map(move |options| {
+        TinyBitSet::from_iter(options.into_iter().filter_map(|option| match option {
+            Either::Left(i) => Some(i),
+            Either::Right(s) => {
+                let found = match sig_info {
+                    Either::Left(params) => params.iter().position(|arg| {
+                        let pat_is_sym = |p: &hir::Pat| {
+                            matches!(p.kind, hir::PatKind::Binding(_, _, ident, _)
+                            if ident.name == s)
+                        };
+
+                        if pat_is_sym(&arg.pat) {
+                            true
+                        } else if arg.pat.walk_short(pat_is_sym) {
+                            tcx.dcx().span_err(
+                                arg.span,
+                                format!(
+                                    "Refinement via name ('{s}') cannot refer to pattern argument"
+                                ),
+                            );
+                            true
+                        } else {
+                            false
+                        }
+                    }),
+                    Either::Right(idents) => idents.iter().position(|ident| ident.name == s),
+                };
+                if found.is_none() {
+                    tcx.dcx().err(format!(
+                        "Argument refinement ('{s}') does not refer to any argument"
+                    ));
+                }
+                found.map(|idx| idx as Integer)
+            }
+        }))
+    })
 }
 
 /// Parser for the payload of the `#[paralegal_flow::output_type(...)]` annotation.
@@ -434,7 +485,12 @@ pub(crate) fn match_exception(
 /// Is not guaranteed to consume the entire input if does not match. You may
 /// want to call [`nom::combinator::eof`] afterwards to guarantee all input has
 /// been consumed.
-fn refinements_parser<'a>(symbols: &Symbols, i: I<'a>) -> R<'a, MarkerRefinement> {
+fn refinements_parser<'a>(
+    tcx: TyCtxt<'_>,
+    symbols: &Symbols,
+    body: hir::TraitFn<'_>,
+    i: I<'a>,
+) -> R<'a, MarkerRefinement> {
     nom::combinator::map_res(
         // nom::multi::separated_list0(
         //     assert_token(TokenKind::Comma),
@@ -444,7 +500,7 @@ fn refinements_parser<'a>(symbols: &Symbols, i: I<'a>) -> R<'a, MarkerRefinement
                     assert_identifier(symbols.arg_sym),
                     assert_token(TokenKind::Eq),
                 )),
-                nom::combinator::map(tiny_bitset, MarkerRefinementKind::Argument),
+                nom::combinator::map(arguments(tcx, body), MarkerRefinementKind::Argument),
             ),
             nom::combinator::value(
                 MarkerRefinementKind::Return,
@@ -487,19 +543,64 @@ fn apply_parser_in_delimited_annotation<'a, A, P: Parser<I<'a>, A, ErrorTree<I<'
     }
 }
 
+#[derive(Debug)]
+struct RefinementOnNonFunctionErr;
+
+impl std::error::Error for RefinementOnNonFunctionErr {}
+impl std::fmt::Display for RefinementOnNonFunctionErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "This refinement can only be applied to functions or methods"
+        )
+    }
+}
+
 /// Parser for a [`LabelAnnotation`]
 pub(crate) fn ann_match_fn(
+    tcx: TyCtxt<'_>,
     symbols: &Symbols,
+    hir_id: hir::HirId,
     ann: &rustc_ast::AttrArgs,
 ) -> Result<MarkerAnnotation, String> {
     use rustc_ast::*;
     use token::*;
+    let try_get_body = || {
+        let id = hir_id.as_owner().ok_or(RefinementOnNonFunctionErr)?;
+        let node = tcx.hir_owner_node(id);
+        node.body_id()
+            .map(hir::TraitFn::Provided)
+            .or_else(|| match node {
+                hir::OwnerNode::TraitItem(
+                    hir::TraitItem {
+                        kind: hir::TraitItemKind::Fn(_, f),
+                        ..
+                    },
+                    ..,
+                ) => Some(*f),
+                _ => None,
+            })
+            .ok_or(RefinementOnNonFunctionErr)
+    };
+
     apply_parser_in_delimited_annotation(
         |i| {
             let (i, label) = identifier(i)?;
             let (i, cont) = nom::combinator::opt(assert_token(TokenKind::Comma))(i)?;
-            let (i, refinement) =
-                nom::combinator::cond(cont.is_some(), |c| refinements_parser(symbols, c))(i)?;
+            let (i, refinement) = nom::combinator::cond(cont.is_some(), |c| {
+                refinements_parser(
+                    tcx,
+                    symbols,
+                    try_get_body().map_err(|e| {
+                        nom::Err::Error(ErrorTree::from_external_error(
+                            i.clone(),
+                            ErrorKind::Fail,
+                            e,
+                        ))
+                    })?,
+                    c,
+                )
+            })(i.clone())?;
             Ok((
                 i,
                 MarkerAnnotation {

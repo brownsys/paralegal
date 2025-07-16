@@ -252,7 +252,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
             .hir()
             .attrs(hir_id)
             .iter()
-            .filter_map(|ann| match self.try_parse_annotation(ann) {
+            .filter_map(|ann| match self.try_parse_annotation(hir_id, ann) {
                 Ok(ann) => Some(ann),
                 Err(e) => {
                     self.tcx.dcx().err(e);
@@ -270,16 +270,27 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
 impl DumpingVisitor<'_> {
     fn try_parse_annotation(
         &self,
+        hir_id: rustc_hir::HirId,
         a: &Attribute,
     ) -> Result<impl Iterator<Item = Annotation>, String> {
         let consts = &self.markers;
         let tcx = self.tcx;
         let one = |a| Either::Left(Some(a));
         let ann = if let Some(i) = a.match_get_ref(&consts.marker_marker) {
-            one(Annotation::Marker(ann_match_fn(&self.symbols, i)?))
+            one(Annotation::Marker(ann_match_fn(
+                self.tcx,
+                &self.symbols,
+                hir_id,
+                i,
+            )?))
         } else if let Some(i) = a.match_get_ref(&consts.label_marker) {
             warn!("The `paralegal_flow::label` annotation is deprecated, use `paralegal_flow::marker` instead");
-            one(Annotation::Marker(ann_match_fn(&self.symbols, i)?))
+            one(Annotation::Marker(ann_match_fn(
+                self.tcx,
+                &self.symbols,
+                hir_id,
+                i,
+            )?))
         } else if let Some(i) = a.match_get_ref(&consts.otype_marker) {
             Either::Right(otype_ann_match(i, tcx)?.into_iter().map(Annotation::OType))
         } else if let Some(i) = a.match_get_ref(&consts.exception_marker) {
