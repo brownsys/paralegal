@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["EXTENSIONS","IGNORES","SPECIAL_TEST"],"fn":["check","filter"]};

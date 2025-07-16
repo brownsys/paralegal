@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["emit_msg_span","explain_free_region","label_msg_span","msg_span_from_named_region","note_and_explain_region","suggest_precise_capturing","unexpected_hidden_region_diagnostic"]};

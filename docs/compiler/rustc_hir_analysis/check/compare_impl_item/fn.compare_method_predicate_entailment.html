@@ -1,0 +1,62 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="This function is best explained by example. Consider a trait with its implementation:"><title>compare_method_predicate_entailment in rustc_hir_analysis::check::compare_impl_item - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustc_hir_analysis" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc fn"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button><a class="logo-container" href="../../../rustc_hir_analysis/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-9a9549ea.svg" alt=""></a></nav><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../../rustc_hir_analysis/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-9a9549ea.svg" alt="logo"></a><h2><a href="../../../rustc_hir_analysis/index.html">rustc_<wbr>hir_<wbr>analysis</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><div id="rustdoc-modnav"><h2><a href="index.html">In rustc_<wbr>hir_<wbr>analysis::<wbr>check::<wbr>compare_<wbr>impl_<wbr>item</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../index.html">rustc_hir_analysis</a>::<wbr><a href="../index.html">check</a>::<wbr><a href="index.html">compare_impl_item</a></span><h1>Function <span class="fn">compare_method_predicate_entailment</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/rustc_hir_analysis/check/compare_impl_item.rs.html#173">Source</a> </span></div><pre class="rust item-decl"><code>fn compare_method_predicate_entailment&lt;'tcx&gt;(
+    tcx: <a class="struct" href="../../../rustc_middle/ty/context/struct.TyCtxt.html" title="struct rustc_middle::ty::context::TyCtxt">TyCtxt</a>&lt;'tcx&gt;,
+    impl_m: <a class="struct" href="../../../rustc_middle/ty/assoc/struct.AssocItem.html" title="struct rustc_middle::ty::assoc::AssocItem">AssocItem</a>,
+    trait_m: <a class="struct" href="../../../rustc_middle/ty/assoc/struct.AssocItem.html" title="struct rustc_middle::ty::assoc::AssocItem">AssocItem</a>,
+    impl_trait_ref: <a class="type" href="../../../rustc_middle/ty/predicate/type.TraitRef.html" title="type rustc_middle::ty::predicate::TraitRef">TraitRef</a>&lt;'tcx&gt;,
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>, <a class="struct" href="../../../rustc_span/struct.ErrorGuaranteed.html" title="struct rustc_span::ErrorGuaranteed">ErrorGuaranteed</a>&gt;</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>This function is best explained by example. Consider a trait with its implementation:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">trait </span>Trait&lt;<span class="lifetime">'t</span>, T&gt; {
+    <span class="comment">// `trait_m`
+    </span><span class="kw">fn </span>method&lt;<span class="lifetime">'a</span>, M&gt;(t: <span class="kw-2">&amp;</span><span class="lifetime">'t </span>T, m: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>M) -&gt; <span class="self">Self</span>;
+}
+
+<span class="kw">struct </span>Foo;
+
+<span class="kw">impl</span>&lt;<span class="lifetime">'i</span>, <span class="lifetime">'j</span>, U&gt; Trait&lt;<span class="lifetime">'j</span>, <span class="kw-2">&amp;</span><span class="lifetime">'i </span>U&gt; <span class="kw">for </span>Foo {
+    <span class="comment">// `impl_m`
+    </span><span class="kw">fn </span>method&lt;<span class="lifetime">'b</span>, N&gt;(t: <span class="kw-2">&amp;</span><span class="lifetime">'j </span><span class="kw-2">&amp;</span><span class="lifetime">'i </span>U, m: <span class="kw-2">&amp;</span><span class="lifetime">'b </span>N) -&gt; Foo { Foo }
+}</code></pre></div>
+<p>We wish to decide if those two method types are compatible.
+For this we have to show that, assuming the bounds of the impl hold, the
+bounds of <code>trait_m</code> imply the bounds of <code>impl_m</code>.</p>
+<p>We start out with <code>trait_to_impl_args</code>, that maps the trait
+type parameters to impl type parameters. This is taken from the
+impl trait reference:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>trait_to_impl_args = {<span class="lifetime">'t </span>=&gt; <span class="lifetime">'j</span>, T =&gt; <span class="kw-2">&amp;</span><span class="lifetime">'i </span>U, <span class="self">Self </span>=&gt; Foo}</code></pre></div>
+<p>We create a mapping <code>dummy_args</code> that maps from the impl type
+parameters to fresh types and regions. For type parameters,
+this is the identity transform, but we could as well use any
+placeholder types. For regions, we convert from bound to free
+regions (Note: but only early-bound regions, i.e., those
+declared on the impl or used in type parameter bounds).</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>impl_to_placeholder_args = {<span class="lifetime">'i </span>=&gt; <span class="lifetime">'i0</span>, U =&gt; U0, N =&gt; N0 }</code></pre></div>
+<p>Now we can apply <code>placeholder_args</code> to the type of the impl method
+to yield a new function type in terms of our fresh, placeholder
+types:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>&lt;<span class="lifetime">'b</span>&gt; <span class="kw">fn</span>(t: <span class="kw-2">&amp;</span><span class="lifetime">'i0 </span>U0, m: <span class="kw-2">&amp;</span><span class="lifetime">'b </span>N0) -&gt; Foo</code></pre></div>
+<p>We now want to extract and instantiate the type of the <em>trait</em>
+method and compare it. To do so, we must create a compound
+instantiation by combining <code>trait_to_impl_args</code> and
+<code>impl_to_placeholder_args</code>, and also adding a mapping for the method
+type parameters. We extend the mapping to also include
+the method parameters.</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>trait_to_placeholder_args = { T =&gt; <span class="kw-2">&amp;</span><span class="lifetime">'i0 </span>U0, <span class="self">Self </span>=&gt; Foo, M =&gt; N0 }</code></pre></div>
+<p>Applying this to the trait method type yields:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>&lt;<span class="lifetime">'a</span>&gt; <span class="kw">fn</span>(t: <span class="kw-2">&amp;</span><span class="lifetime">'i0 </span>U0, m: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>N0) -&gt; Foo</code></pre></div>
+<p>This type is also the same but the name of the bound region (<code>'a</code>
+vs <code>'b</code>). However, the normal subtyping rules on fn types handle
+this kind of equivalency just fine.</p>
+<p>We now use these generic parameters to ensure that all declared bounds
+are satisfied by the implementation’s method.</p>
+<p>We do this by creating a parameter environment which contains a
+generic parameter corresponding to <code>impl_to_placeholder_args</code>. We then build
+<code>trait_to_placeholder_args</code> and use it to convert the predicates contained
+in the <code>trait_m</code> generics to the placeholder form.</p>
+<p>Finally we register each of these predicates as an obligation and check that
+they hold.</p>
+</div></details></section></div></main></body></html>

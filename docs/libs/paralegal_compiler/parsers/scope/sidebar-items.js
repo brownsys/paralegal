@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["everywhere","in_ctrler","scope","somewhere"]};

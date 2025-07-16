@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check_refining_return_position_impl_trait_in_trait","report_mismatched_rpitit_captures","report_mismatched_rpitit_signature","type_visibility"],"struct":["Anonymize","CollectParams","ImplTraitInTraitCollector"]};

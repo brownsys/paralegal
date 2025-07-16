@@ -1,0 +1,105 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="The Rust Linkage Model and Symbol Names"><title>rustc_symbol_mangling - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="rustc_symbol_mangling" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../static.files/storage-59e33391.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button><a class="logo-container" href="../rustc_symbol_mangling/index.html"><img class="rust-logo" src="../static.files/rust-logo-9a9549ea.svg" alt=""></a></nav><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../rustc_symbol_mangling/index.html"><img class="rust-logo" src="../static.files/rust-logo-9a9549ea.svg" alt="logo"></a><h2><a href="../rustc_symbol_mangling/index.html">rustc_<wbr>symbol_<wbr>mangling</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#the-rust-linkage-model-and-symbol-names" title="The Rust Linkage Model and Symbol Names">The Rust Linkage Model and Symbol Names</a><ul><li><a href="#a-note-on-symbol-name-stability" title="A note on symbol name stability">A note on symbol name stability</a></li></ul></li></ul><h3><a href="#modules">Crate Items</a></h3><ul class="block"><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>rustc_symbol_mangling</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/rustc_symbol_mangling/lib.rs.html#1-281">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><h2 id="the-rust-linkage-model-and-symbol-names"><a class="doc-anchor" href="#the-rust-linkage-model-and-symbol-names">§</a>The Rust Linkage Model and Symbol Names</h2>
+<p>The semantic model of Rust linkage is, broadly, that “there’s no global
+namespace” between crates. Our aim is to preserve the illusion of this
+model despite the fact that it’s not <em>quite</em> possible to implement on
+modern linkers. We initially didn’t use system linkers at all, but have
+been convinced of their utility.</p>
+<p>There are a few issues to handle:</p>
+<ul>
+<li>
+<p>Linkers operate on a flat namespace, so we have to flatten names.
+We do this using the C++ namespace-mangling technique. Foo::bar
+symbols and such.</p>
+</li>
+<li>
+<p>Symbols for distinct items with the same <em>name</em> need to get different
+linkage-names. Examples of this are monomorphizations of functions or
+items within anonymous scopes that end up having the same path.</p>
+</li>
+<li>
+<p>Symbols in different crates but with same names “within” the crate need
+to get different linkage-names.</p>
+</li>
+<li>
+<p>Symbol names should be deterministic: Two consecutive runs of the
+compiler over the same code base should produce the same symbol names for
+the same items.</p>
+</li>
+<li>
+<p>Symbol names should not depend on any global properties of the code base,
+so that small modifications to the code base do not result in all symbols
+changing. In previous versions of the compiler, symbol names incorporated
+the SVH (Stable Version Hash) of the crate. This scheme turned out to be
+infeasible when used in conjunction with incremental compilation because
+small code changes would invalidate all symbols generated previously.</p>
+</li>
+<li>
+<p>Even symbols from different versions of the same crate should be able to
+live next to each other without conflict.</p>
+</li>
+</ul>
+<p>In order to fulfill the above requirements the following scheme is used by
+the compiler:</p>
+<p>The main tool for avoiding naming conflicts is the incorporation of a 64-bit
+hash value into every exported symbol name. Anything that makes a difference
+to the symbol being named, but does not show up in the regular path needs to
+be fed into this hash:</p>
+<ul>
+<li>
+<p>Different monomorphizations of the same item have the same path but differ
+in their concrete type parameters, so these parameters are part of the
+data being digested for the symbol hash.</p>
+</li>
+<li>
+<p>Rust allows items to be defined in anonymous scopes, such as in
+<code>fn foo() { { fn bar() {} } { fn bar() {} } }</code>. Both <code>bar</code> functions have
+the path <code>foo::bar</code>, since the anonymous scopes do not contribute to the
+path of an item. The compiler already handles this case via so-called
+disambiguating <code>DefPaths</code> which use indices to distinguish items with the
+same name. The DefPaths of the functions above are thus <code>foo[0]::bar[0]</code>
+and <code>foo[0]::bar[1]</code>. In order to incorporate this disambiguation
+information into the symbol name too, these indices are fed into the
+symbol hash, so that the above two symbols would end up with different
+hash values.</p>
+</li>
+</ul>
+<p>The two measures described above suffice to avoid intra-crate conflicts. In
+order to also avoid inter-crate conflicts two more measures are taken:</p>
+<ul>
+<li>
+<p>The name of the crate containing the symbol is prepended to the symbol
+name, i.e., symbols are “crate qualified”. For example, a function <code>foo</code> in
+module <code>bar</code> in crate <code>baz</code> would get a symbol name like
+<code>baz::bar::foo::{hash}</code> instead of just <code>bar::foo::{hash}</code>. This avoids
+simple conflicts between functions from different crates.</p>
+</li>
+<li>
+<p>In order to be able to also use symbols from two versions of the same
+crate (which naturally also have the same name), a stronger measure is
+required: The compiler accepts an arbitrary “disambiguator” value via the
+<code>-C metadata</code> command-line argument. This disambiguator is then fed into
+the symbol hash of every exported item. Consequently, the symbols in two
+identical crates but with different disambiguators are not in conflict
+with each other. This facility is mainly intended to be used by build
+tools like Cargo.</p>
+</li>
+</ul>
+<h3 id="a-note-on-symbol-name-stability"><a class="doc-anchor" href="#a-note-on-symbol-name-stability">§</a>A note on symbol name stability</h3>
+<p>Previous versions of the compiler resorted to feeding NodeIds into the
+symbol hash in order to disambiguate between items with the same path. The
+current version of the name generation algorithm takes great care not to do
+that, since NodeIds are notoriously unstable: A small change to the
+code base will offset all NodeIds after the change and thus, much as using
+the SVH in the hash, invalidate an unbounded number of symbol names. This
+makes re-using previously compiled code for incremental compilation
+virtually impossible. Thus, symbol hash generation exclusively relies on
+DefPaths which are much more robust in the face of changes to the code base.</p>
+</div></details><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="mod" href="errors/index.html" title="mod rustc_symbol_mangling::errors">errors</a></div><div class="desc docblock-short">Errors emitted by symbol_mangling.</div></li><li><div class="item-name"><a class="mod" href="hashed/index.html" title="mod rustc_symbol_mangling::hashed">hashed</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="mod" href="legacy/index.html" title="mod rustc_symbol_mangling::legacy">legacy</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="mod" href="test/index.html" title="mod rustc_symbol_mangling::test">test</a></div><div class="desc docblock-short">Walks the crate looking for items/impl-items/trait-items that have
+either a <code>rustc_symbol_name</code> or <code>rustc_def_path</code> attribute and
+generates an error giving, respectively, the symbol name or
+def-path. This is used for unit testing the code that generates
+paths etc in all kinds of annoying scenarios.</div></li><li><div class="item-name"><a class="mod" href="v0/index.html" title="mod rustc_symbol_mangling::v0">v0</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.compute_symbol_name.html" title="fn rustc_symbol_mangling::compute_symbol_name">compute_<wbr>symbol_<wbr>name</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Computes the symbol name for the given instance. This function will call
+<code>compute_instantiating_crate</code> if it needs to factor the instantiating crate
+into the symbol name.</div></li><li><div class="item-name"><a class="fn" href="fn.is_generic.html" title="fn rustc_symbol_mangling::is_generic">is_<wbr>generic</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.provide.html" title="fn rustc_symbol_mangling::provide">provide</a></div></li><li><div class="item-name"><a class="fn" href="fn.symbol_name_for_instance_in_crate.html" title="fn rustc_symbol_mangling::symbol_name_for_instance_in_crate">symbol_<wbr>name_<wbr>for_<wbr>instance_<wbr>in_<wbr>crate</a></div><div class="desc docblock-short">This function computes the symbol name for the given <code>instance</code> and the
+given instantiating crate. That is, if you know that instance X is
+instantiated in crate Y, this is the symbol name this instance would have.</div></li><li><div class="item-name"><a class="fn" href="fn.symbol_name_provider.html" title="fn rustc_symbol_mangling::symbol_name_provider">symbol_<wbr>name_<wbr>provider</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.typeid_for_trait_ref.html" title="fn rustc_symbol_mangling::typeid_for_trait_ref">typeid_<wbr>for_<wbr>trait_<wbr>ref</a></div></li></ul></section></div></main></body></html>

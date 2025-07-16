@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["drop_flag_effects_for_function_entry","drop_flag_effects_for_location","for_location_inits","move_path_children_matching","on_all_children_bits","on_all_inactive_variants","on_lookup_result_bits"]};

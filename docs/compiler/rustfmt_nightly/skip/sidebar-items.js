@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SkipNameContext"],"fn":["get_skip_names","is_skip_attr"],"static":["RUSTFMT","SKIP"],"struct":["SkipContext"]};

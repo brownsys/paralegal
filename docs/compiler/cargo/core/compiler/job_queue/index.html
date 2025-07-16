@@ -1,0 +1,93 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Management of the interaction between the main `cargo` and all spawned jobs."><title>cargo::core::compiler::job_queue - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="cargo" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../../static.files/storage-59e33391.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../../cargo/index.html">cargo</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module job_<wbr>queue</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#overview" title="Overview">Overview</a></li><li><a href="#jobserver" title="Jobserver">Jobserver</a></li><li><a href="#scheduling" title="Scheduling">Scheduling</a></li><li><a href="#message-queue" title="Message queue">Message queue</a></li></ul><h3><a href="#reexports">Module Items</a></h3><ul class="block"><li><a href="#reexports" title="Re-exports">Re-exports</a></li><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In cargo::<wbr>core::<wbr>compiler</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../../index.html">cargo</a>::<wbr><a href="../../index.html">core</a>::<wbr><a href="../index.html">compiler</a></span><h1>Module <span>job_queue</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../../src/cargo/core/compiler/job_queue/mod.rs.html#1-1230">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Management of the interaction between the main <code>cargo</code> and all spawned jobs.</p>
+<h3 id="overview"><a class="doc-anchor" href="#overview">§</a>Overview</h3>
+<p>This module implements a job queue. A job here represents a unit of work,
+which is roughly a rustc invocation, a build script run, or just a no-op.
+The job queue primarily handles the following things:</p>
+<ul>
+<li>Spawns concurrent jobs. Depending on its <a href="job/enum.Freshness.html" title="enum cargo::core::compiler::job_queue::job::Freshness"><code>Freshness</code></a>, a job could be
+either executed on a spawned thread or ran on the same thread to avoid
+the threading overhead.</li>
+<li>Controls the number of concurrency. It allocates and manages <a href="https://docs.rs/jobserver/0.1/jobserver/index.html" title="mod jobserver"><code>jobserver</code></a>
+tokens to each spawned off rustc and build scripts.</li>
+<li>Manages the communication between the main <code>cargo</code> process and its
+spawned jobs. Those <a href="enum.Message.html" title="enum cargo::core::compiler::job_queue::Message"><code>Message</code></a>s are sent over a <a href="../../../util/queue/struct.Queue.html" title="struct cargo::util::queue::Queue"><code>Queue</code></a> shared
+across threads.</li>
+<li>Schedules the execution order of each <a href="job/struct.Job.html" title="struct cargo::core::compiler::job_queue::job::Job"><code>Job</code></a>. Priorities are determined
+when calling <a href="struct.JobQueue.html#method.enqueue" title="method cargo::core::compiler::job_queue::JobQueue::enqueue"><code>JobQueue::enqueue</code></a> to enqueue a job. The scheduling is
+relatively rudimentary and could likely be improved.</li>
+</ul>
+<p>A rough outline of building a queue and executing jobs is:</p>
+<ol>
+<li><a href="struct.JobQueue.html#method.new" title="associated function cargo::core::compiler::job_queue::JobQueue::new"><code>JobQueue::new</code></a> to simply create one queue.</li>
+<li><a href="struct.JobQueue.html#method.enqueue" title="method cargo::core::compiler::job_queue::JobQueue::enqueue"><code>JobQueue::enqueue</code></a> to add new jobs onto the queue.</li>
+<li>Consumes the queue and executes all jobs via <a href="struct.JobQueue.html#method.execute" title="method cargo::core::compiler::job_queue::JobQueue::execute"><code>JobQueue::execute</code></a>.</li>
+</ol>
+<p>The primary loop happens insides <a href="struct.JobQueue.html#method.execute" title="method cargo::core::compiler::job_queue::JobQueue::execute"><code>JobQueue::execute</code></a>, which is effectively
+<a href="struct.DrainState.html#method.drain_the_queue" title="method cargo::core::compiler::job_queue::DrainState::drain_the_queue"><code>DrainState::drain_the_queue</code></a>. <a href="struct.DrainState.html" title="struct cargo::core::compiler::job_queue::DrainState"><code>DrainState</code></a> is, as its name tells,
+the running state of the job queue getting drained.</p>
+<h3 id="jobserver"><a class="doc-anchor" href="#jobserver">§</a>Jobserver</h3>
+<p>As of Feb. 2023, Cargo and rustc have a relatively simple jobserver
+relationship with each other. They share a single jobserver amongst what
+is potentially hundreds of threads of work on many-cored systems.
+The jobserver could come from either the environment (e.g., from a <code>make</code>
+invocation), or from Cargo creating its own jobserver server if there is no
+jobserver to inherit from.</p>
+<p>Cargo wants to complete the build as quickly as possible, fully saturating
+all cores (as constrained by the <code>-j=N</code>) parameter. Cargo also must not spawn
+more than N threads of work: the total amount of tokens we have floating
+around must always be limited to N.</p>
+<p>It is not really possible to optimally choose which crate should build
+first or last; nor is it possible to decide whether to give an additional
+token to rustc first or rather spawn a new crate of work. The algorithm in
+Cargo prioritizes spawning as many crates (i.e., rustc processes) as
+possible. In short, the jobserver relationship among Cargo and rustc
+processes is <strong>1 <code>cargo</code> to N <code>rustc</code></strong>. Cargo knows nothing beyond rustc
+processes in terms of parallelism<sup id="fnref1"><a href="#fn1">1</a></sup>.</p>
+<p>We integrate with the <a href="https://docs.rs/jobserver">jobserver</a> crate, originating from GNU make
+<a href="https://www.gnu.org/software/make/manual/html_node/POSIX-Jobserver.html">POSIX jobserver</a>, to make sure that build scripts which use make to
+build C code can cooperate with us on the number of used tokens and
+avoid overfilling the system we’re on.</p>
+<h3 id="scheduling"><a class="doc-anchor" href="#scheduling">§</a>Scheduling</h3>
+<p>The current scheduling algorithm is not really polished. It is simply based
+on a dependency graph <a href="../../../util/dependency_queue/struct.DependencyQueue.html" title="struct cargo::util::dependency_queue::DependencyQueue"><code>DependencyQueue</code></a>. We continue adding nodes onto
+the graph until we finalize it. When the graph gets finalized, it finds the
+sum of the cost of each dependencies of each node, including transitively.
+The sum of dependency cost turns out to be the cost of each given node.</p>
+<p>At the time being, the cost is just passed as a fixed placeholder in
+<a href="struct.JobQueue.html#method.enqueue" title="method cargo::core::compiler::job_queue::JobQueue::enqueue"><code>JobQueue::enqueue</code></a>. In the future, we could explore more possibilities
+around it. For instance, we start persisting timing information for each
+build somewhere. For a subsequent build, we can look into the historical
+data and perform a PGO-like optimization to prioritize jobs, making a build
+fully pipelined.</p>
+<h3 id="message-queue"><a class="doc-anchor" href="#message-queue">§</a>Message queue</h3>
+<p>Each spawned thread running a process uses the message queue <a href="../../../util/queue/struct.Queue.html" title="struct cargo::util::queue::Queue"><code>Queue</code></a> to
+send messages back to the main thread (the one running <code>cargo</code>).
+The main thread coordinates everything, and handles printing output.</p>
+<p>It is important to be careful which messages use <a href="../../../util/queue/struct.Queue.html#method.push" title="method cargo::util::queue::Queue::push"><code>push</code></a> vs <a href="../../../util/queue/struct.Queue.html#method.push_bounded" title="method cargo::util::queue::Queue::push_bounded"><code>push_bounded</code></a>.
+<code>push</code> is for priority messages (like tokens, or “finished”) where the
+sender shouldn’t block. We want to handle those so real work can proceed
+ASAP.</p>
+<p><code>push_bounded</code> is only for messages being printed to stdout/stderr. Being
+bounded prevents a flood of messages causing a large amount of memory
+being used.</p>
+<p><code>push</code> also avoids blocking which helps avoid deadlocks. For example, when
+the diagnostic server thread is dropped, it waits for the thread to exit.
+But if the thread is blocked on a full queue, and there is a critical
+error, the drop will deadlock. This should be fixed at some point in the
+future. The jobserver thread has a similar problem, though it will time
+out after 1 second.</p>
+<p>To access the message queue, each running <code>Job</code> is given its own <a href="job_state/struct.JobState.html" title="struct cargo::core::compiler::job_queue::job_state::JobState"><code>JobState</code></a>,
+containing everything it needs to communicate with the main thread.</p>
+<p>See <a href="enum.Message.html" title="enum cargo::core::compiler::job_queue::Message"><code>Message</code></a> for all available message kinds.</p>
+<div class="footnotes"><hr><ol><li id="fn1"><p>In fact, <code>jobserver</code> that Cargo uses also manages the
+allocation of tokens to rustc beyond the implicit token each rustc owns
+(i.e., the ones used for parallel LLVM work and parallel rustc threads).
+See also <a href="https://rustc-dev-guide.rust-lang.org/parallel-rustc.html">“Rust Compiler Development Guide: Parallel Compilation”</a>
+and <a href="https://github.com/rust-lang/rust/blob/5423745db8b434fcde54888b35f518f00cce00e4/compiler/rustc_codegen_ssa/src/back/write.rs#L1204-L1217">this comment</a> in rust-lang/rust.&nbsp;<a href="#fnref1">↩</a></p></li></ol></div></div></details><h2 id="reexports" class="section-header">Re-exports<a href="#reexports" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name" id="reexport.Freshness"><code>pub use self::job::<a class="enum" href="job/enum.Freshness.html" title="enum cargo::core::compiler::job_queue::job::Freshness">Freshness</a>;</code></div></li><li><div class="item-name" id="reexport.Dirty"><code>pub use self::job::Freshness::<a class="enum" href="job/enum.Freshness.html" title="enum cargo::core::compiler::job_queue::job::Freshness">Dirty</a>;</code></div></li><li><div class="item-name" id="reexport.Fresh"><code>pub use self::job::Freshness::<a class="enum" href="job/enum.Freshness.html" title="enum cargo::core::compiler::job_queue::job::Freshness">Fresh</a>;</code></div></li><li><div class="item-name" id="reexport.Job"><code>pub use self::job::<a class="struct" href="job/struct.Job.html" title="struct cargo::core::compiler::job_queue::job::Job">Job</a>;</code></div></li><li><div class="item-name" id="reexport.Work"><code>pub use self::job::<a class="struct" href="job/struct.Work.html" title="struct cargo::core::compiler::job_queue::job::Work">Work</a>;</code></div></li><li><div class="item-name" id="reexport.JobState"><code>pub use self::job_state::<a class="struct" href="job_state/struct.JobState.html" title="struct cargo::core::compiler::job_queue::job_state::JobState">JobState</a>;</code></div></li></ul><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="mod" href="job/index.html" title="mod cargo::core::compiler::job_queue::job">job</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">See <a href="job/struct.Job.html" title="struct cargo::core::compiler::job_queue::job::Job"><code>Job</code></a> and <a href="job/struct.Work.html" title="struct cargo::core::compiler::job_queue::job::Work"><code>Work</code></a>.</div></li><li><div class="item-name"><a class="mod" href="job_state/index.html" title="mod cargo::core::compiler::job_queue::job_state">job_<wbr>state</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">See <a href="job_state/struct.JobState.html" title="struct cargo::core::compiler::job_queue::job_state::JobState"><code>JobState</code></a>.</div></li></ul><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.DiagDedupe.html" title="struct cargo::core::compiler::job_queue::DiagDedupe">Diag<wbr>Dedupe</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Handler for deduplicating diagnostics.</div></li><li><div class="item-name"><a class="struct" href="struct.DrainState.html" title="struct cargo::core::compiler::job_queue::DrainState">Drain<wbr>State</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">This structure is backed by the <code>DependencyQueue</code> type and manages the
+actual compilation step of each package. Packages enqueue units of work and
+then later on the entire graph is processed and compiled.</div></li><li><div class="item-name"><a class="struct" href="struct.ErrorToHandle.html" title="struct cargo::core::compiler::job_queue::ErrorToHandle">Error<wbr>ToHandle</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="struct" href="struct.ErrorsDuringDrain.html" title="struct cargo::core::compiler::job_queue::ErrorsDuringDrain">Errors<wbr>During<wbr>Drain</a></div></li><li><div class="item-name"><a class="struct" href="struct.JobId.html" title="struct cargo::core::compiler::job_queue::JobId">JobId</a></div></li><li><div class="item-name"><a class="struct" href="struct.JobQueue.html" title="struct cargo::core::compiler::job_queue::JobQueue">JobQueue</a></div><div class="desc docblock-short">This structure is backed by the <code>DependencyQueue</code> type and manages the
+queueing of compilation steps for each package. Packages enqueue units of
+work and then later on the entire graph is converted to <code>DrainState</code> and
+executed.</div></li><li><div class="item-name"><a class="struct" href="struct.WarningCount.html" title="struct cargo::core::compiler::job_queue::WarningCount">Warning<wbr>Count</a></div><div class="desc docblock-short">Count of warnings, used to print a summary after the job succeeds</div></li></ul><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="enum" href="enum.Artifact.html" title="enum cargo::core::compiler::job_queue::Artifact">Artifact</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Possible artifacts that can be produced by compilations, used as edge values
+in the dependency graph.</div></li><li><div class="item-name"><a class="enum" href="enum.FixableWarnings.html" title="enum cargo::core::compiler::job_queue::FixableWarnings">Fixable<wbr>Warnings</a></div><div class="desc docblock-short">Used to keep track of how many fixable warnings there are
+and if fixable warnings are allowed</div></li><li><div class="item-name"><a class="enum" href="enum.Message.html" title="enum cargo::core::compiler::job_queue::Message">Message</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul></section></div></main></body></html>

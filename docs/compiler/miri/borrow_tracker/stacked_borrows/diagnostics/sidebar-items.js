@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["InvalidationCause","Operation","RetagCause"],"fn":["err_sb_ub","error_cause","operation_summary"],"struct":["AccessOp","AllocHistory","Creation","DeallocOp","DiagnosticCx","DiagnosticCxBuilder","Invalidation","Protection","RetagInfo","RetagOp","TagHistory"]};

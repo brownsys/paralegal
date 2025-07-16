@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["is_conflicting_artifact_name","is_glob_pattern","is_keyword","is_non_ascii_name","is_windows_reserved","is_windows_reserved_path"]};

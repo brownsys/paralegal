@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Adjustment","CallKind","DerefSource"],"fn":["build_adt_ctor","build_call_shim","build_clone_shim","build_construct_coroutine_by_move_shim","build_drop_shim","build_fn_ptr_addr_shim","build_thread_local_shim","local_decls_for_sig","make_shim","new_body","provide"],"mod":["async_destructor_ctor"],"struct":["CloneShimBuilder","DropShimElaborator"]};

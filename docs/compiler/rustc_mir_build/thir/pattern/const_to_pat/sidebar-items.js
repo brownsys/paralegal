@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["extend_type_not_partial_eq","type_has_partial_eq_impl"],"struct":["ConstToPat"]};

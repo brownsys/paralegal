@@ -1,0 +1,109 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="This module manages how the incremental compilation cache is represented in the file system."><title>rustc_incremental::persist::fs - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustc_incremental" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button><a class="logo-container" href="../../../rustc_incremental/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-9a9549ea.svg" alt=""></a></nav><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../../rustc_incremental/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-9a9549ea.svg" alt="logo"></a><h2><a href="../../../rustc_incremental/index.html">rustc_<wbr>incremental</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module fs</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#garbage-collection" title="Garbage Collection">Garbage Collection</a></li><li><a href="#synchronization" title="Synchronization">Synchronization</a></li><li><a href="#preconditions" title="Preconditions">Preconditions</a></li></ul><h3><a href="#constants">Module Items</a></h3><ul class="block"><li><a href="#constants" title="Constants">Constants</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In rustc_<wbr>incremental::<wbr>persist</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../index.html">rustc_incremental</a>::<wbr><a href="../index.html">persist</a></span><h1>Module <span>fs</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/rustc_incremental/persist/fs.rs.html#1-913">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>This module manages how the incremental compilation cache is represented in
+the file system.</p>
+<p>Incremental compilation caches are managed according to a copy-on-write
+strategy: Once a complete, consistent cache version is finalized, it is
+never modified. Instead, when a subsequent compilation session is started,
+the compiler will allocate a new version of the cache that starts out as
+a copy of the previous version. Then only this new copy is modified and it
+will not be visible to other processes until it is finalized. This ensures
+that multiple compiler processes can be executed concurrently for the same
+crate without interfering with each other or blocking each other.</p>
+<p>More concretely this is implemented via the following protocol:</p>
+<ol>
+<li>For a newly started compilation session, the compiler allocates a
+new <code>session</code> directory within the incremental compilation directory.
+This session directory will have a unique name that ends with the suffix
+“-working” and that contains a creation timestamp.</li>
+<li>Next, the compiler looks for the newest finalized session directory,
+that is, a session directory from a previous compilation session that
+has been marked as valid and consistent. A session directory is
+considered finalized if the “-working” suffix in the directory name has
+been replaced by the SVH of the crate.</li>
+<li>Once the compiler has found a valid, finalized session directory, it will
+hard-link/copy its contents into the new “-working” directory. If all
+goes well, it will have its own, private copy of the source directory and
+subsequently not have to worry about synchronizing with other compiler
+processes.</li>
+<li>Now the compiler can do its normal compilation process, which involves
+reading and updating its private session directory.</li>
+<li>When compilation finishes without errors, the private session directory
+will be in a state where it can be used as input for other compilation
+sessions. That is, it will contain a dependency graph and cache artifacts
+that are consistent with the state of the source code it was compiled
+from, with no need to change them ever again. At this point, the compiler
+finalizes and “publishes” its private session directory by renaming it
+from “s-{timestamp}-{random}-working” to “s-{timestamp}-{SVH}”.</li>
+<li>At this point the “old” session directory that we copied our data from
+at the beginning of the session has become obsolete because we have just
+published a more current version. Thus the compiler will delete it.</li>
+</ol>
+<h3 id="garbage-collection"><a class="doc-anchor" href="#garbage-collection">§</a>Garbage Collection</h3>
+<p>Naively following the above protocol might lead to old session directories
+piling up if a compiler instance crashes for some reason before its able to
+remove its private session directory. In order to avoid wasting disk space,
+the compiler also does some garbage collection each time it is started in
+incremental compilation mode. Specifically, it will scan the incremental
+compilation directory for private session directories that are not in use
+any more and will delete those. It will also delete any finalized session
+directories for a given crate except for the most recent one.</p>
+<h3 id="synchronization"><a class="doc-anchor" href="#synchronization">§</a>Synchronization</h3>
+<p>There is some synchronization needed in order for the compiler to be able to
+determine whether a given private session directory is not in use any more.
+This is done by creating a lock file for each session directory and
+locking it while the directory is still being used. Since file locks have
+operating system support, we can rely on the lock being released if the
+compiler process dies for some unexpected reason. Thus, when garbage
+collecting private session directories, the collecting process can determine
+whether the directory is still in use by trying to acquire a lock on the
+file. If locking the file fails, the original process must still be alive.
+If locking the file succeeds, we know that the owning process is not alive
+any more and we can safely delete the directory.
+There is still a small time window between the original process creating the
+lock file and actually locking it. In order to minimize the chance that
+another process tries to acquire the lock in just that instance, only
+session directories that are older than a few seconds are considered for
+garbage collection.</p>
+<p>Another case that has to be considered is what happens if one process
+deletes a finalized session directory that another process is currently
+trying to copy from. This case is also handled via the lock file. Before
+a process starts copying a finalized session directory, it will acquire a
+shared lock on the directory’s lock file. Any garbage collecting process,
+on the other hand, will acquire an exclusive lock on the lock file.
+Thus, if a directory is being collected, any reader process will fail
+acquiring the shared lock and will leave the directory alone. Conversely,
+if a collecting process can’t acquire the exclusive lock because the
+directory is currently being read from, it will leave collecting that
+directory to another process at a later point in time.
+The exact same scheme is also used when reading the metadata hashes file
+from an extern crate. When a crate is compiled, the hash values of its
+metadata are stored in a file in its session directory. When the
+compilation session of another crate imports the first crate’s metadata,
+it also has to read in the accompanying metadata hashes. It thus will access
+the finalized session directory of all crates it links to and while doing
+so, it will also place a read lock on that the respective session directory
+so that it won’t be deleted while the metadata hashes are loaded.</p>
+<h3 id="preconditions"><a class="doc-anchor" href="#preconditions">§</a>Preconditions</h3>
+<p>This system relies on two features being available in the file system in
+order to work really well: file locking and hard linking.
+If hard linking is not available (like on FAT) the data in the cache
+actually has to be copied at the beginning of each session.
+If file locking does not work reliably (like on NFS), some of the
+synchronization will go haywire.
+In both cases we recommend to locate the incremental compilation directory
+on a file system that supports these things.
+It might be a good idea though to try and detect whether we are on an
+unsupported file system and emit a warning in that case. This is not yet
+implemented.</p>
+</div></details><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="constant" href="constant.DEP_GRAPH_FILENAME.html" title="constant rustc_incremental::persist::fs::DEP_GRAPH_FILENAME">DEP_<wbr>GRAPH_<wbr>FILENAME</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="constant" href="constant.INT_ENCODE_BASE.html" title="constant rustc_incremental::persist::fs::INT_ENCODE_BASE">INT_<wbr>ENCODE_<wbr>BASE</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="constant" href="constant.LOCK_FILE_EXT.html" title="constant rustc_incremental::persist::fs::LOCK_FILE_EXT">LOCK_<wbr>FILE_<wbr>EXT</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="constant" href="constant.QUERY_CACHE_FILENAME.html" title="constant rustc_incremental::persist::fs::QUERY_CACHE_FILENAME">QUERY_<wbr>CACHE_<wbr>FILENAME</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="constant" href="constant.STAGING_DEP_GRAPH_FILENAME.html" title="constant rustc_incremental::persist::fs::STAGING_DEP_GRAPH_FILENAME">STAGING_<wbr>DEP_<wbr>GRAPH_<wbr>FILENAME</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="constant" href="constant.WORK_PRODUCTS_FILENAME.html" title="constant rustc_incremental::persist::fs::WORK_PRODUCTS_FILENAME">WORK_<wbr>PRODUCTS_<wbr>FILENAME</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.all_except_most_recent.html" title="fn rustc_incremental::persist::fs::all_except_most_recent">all_<wbr>except_<wbr>most_<wbr>recent</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.copy_files.html" title="fn rustc_incremental::persist::fs::copy_files">copy_<wbr>files</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.crate_path.html" title="fn rustc_incremental::persist::fs::crate_path">crate_<wbr>path</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.create_dir.html" title="fn rustc_incremental::persist::fs::create_dir">create_<wbr>dir</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.delete_all_session_dir_contents.html" title="fn rustc_incremental::persist::fs::delete_all_session_dir_contents">delete_<wbr>all_<wbr>session_<wbr>dir_<wbr>contents</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.delete_old.html" title="fn rustc_incremental::persist::fs::delete_old">delete_<wbr>old</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.delete_session_dir_lock_file.html" title="fn rustc_incremental::persist::fs::delete_session_dir_lock_file">delete_<wbr>session_<wbr>dir_<wbr>lock_<wbr>file</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.dep_graph_path.html" title="fn rustc_incremental::persist::fs::dep_graph_path">dep_<wbr>graph_<wbr>path</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Returns the path to a session’s dependency graph.</div></li><li><div class="item-name"><a class="fn" href="fn.extract_timestamp_from_session_dir.html" title="fn rustc_incremental::persist::fs::extract_timestamp_from_session_dir">extract_<wbr>timestamp_<wbr>from_<wbr>session_<wbr>dir</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.finalize_session_directory.html" title="fn rustc_incremental::persist::fs::finalize_session_directory">finalize_<wbr>session_<wbr>directory</a></div><div class="desc docblock-short">This function finalizes and thus ‘publishes’ the session directory by
+renaming it to <code>s-{timestamp}-{svh}</code> and releasing the file lock.
+If there have been compilation errors, however, this function will just
+delete the presumably invalid session directory.</div></li><li><div class="item-name"><a class="fn" href="fn.find_source_directory.html" title="fn rustc_incremental::persist::fs::find_source_directory">find_<wbr>source_<wbr>directory</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Finds the most recent published session directory that is not in the
+ignore-list.</div></li><li><div class="item-name"><a class="fn" href="fn.find_source_directory_in_iter.html" title="fn rustc_incremental::persist::fs::find_source_directory_in_iter">find_<wbr>source_<wbr>directory_<wbr>in_<wbr>iter</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.garbage_collect_session_directories.html" title="fn rustc_incremental::persist::fs::garbage_collect_session_directories">garbage_<wbr>collect_<wbr>session_<wbr>directories</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Runs garbage collection for the current session.</div></li><li><div class="item-name"><a class="fn" href="fn.generate_session_dir_path.html" title="fn rustc_incremental::persist::fs::generate_session_dir_path">generate_<wbr>session_<wbr>dir_<wbr>path</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Generates unique directory path of the form:
+{crate_dir}/s-{timestamp}-{random-number}-working</div></li><li><div class="item-name"><a class="fn" href="fn.in_incr_comp_dir.html" title="fn rustc_incremental::persist::fs::in_incr_comp_dir">in_<wbr>incr_<wbr>comp_<wbr>dir</a></div><div class="desc docblock-short">Returns the path for a given filename within the incremental compilation directory,
+not necessarily from the current session.</div></li><li><div class="item-name"><a class="fn" href="fn.in_incr_comp_dir_sess.html" title="fn rustc_incremental::persist::fs::in_incr_comp_dir_sess">in_<wbr>incr_<wbr>comp_<wbr>dir_<wbr>sess</a></div><div class="desc docblock-short">Returns the path for a given filename within the incremental compilation directory
+in the current session.</div></li><li><div class="item-name"><a class="fn" href="fn.is_finalized.html" title="fn rustc_incremental::persist::fs::is_finalized">is_<wbr>finalized</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.is_old_enough_to_be_collected.html" title="fn rustc_incremental::persist::fs::is_old_enough_to_be_collected">is_<wbr>old_<wbr>enough_<wbr>to_<wbr>be_<wbr>collected</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.is_session_directory.html" title="fn rustc_incremental::persist::fs::is_session_directory">is_<wbr>session_<wbr>directory</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.is_session_directory_lock_file.html" title="fn rustc_incremental::persist::fs::is_session_directory_lock_file">is_<wbr>session_<wbr>directory_<wbr>lock_<wbr>file</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.lock_directory.html" title="fn rustc_incremental::persist::fs::lock_directory">lock_<wbr>directory</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Allocate the lock-file and lock it.</div></li><li><div class="item-name"><a class="fn" href="fn.lock_file_path.html" title="fn rustc_incremental::persist::fs::lock_file_path">lock_<wbr>file_<wbr>path</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Locks a given session directory.</div></li><li><div class="item-name"><a class="fn" href="fn.prepare_session_directory.html" title="fn rustc_incremental::persist::fs::prepare_session_directory">prepare_<wbr>session_<wbr>directory</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Allocates the private session directory.</div></li><li><div class="item-name"><a class="fn" href="fn.query_cache_path.html" title="fn rustc_incremental::persist::fs::query_cache_path">query_<wbr>cache_<wbr>path</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Returns the path to a session’s query cache.</div></li><li><div class="item-name"><a class="fn" href="fn.rename_path_with_retry.html" title="fn rustc_incremental::persist::fs::rename_path_with_retry">rename_<wbr>path_<wbr>with_<wbr>retry</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.safe_remove_dir_all.html" title="fn rustc_incremental::persist::fs::safe_remove_dir_all">safe_<wbr>remove_<wbr>dir_<wbr>all</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Since paths of artifacts within session directories can get quite long, we
+need to support deleting files with very long paths. The regular
+WinApi functions only support paths up to 260 characters, however. In order
+to circumvent this limitation, we canonicalize the path of the directory
+before passing it to std::fs::remove_dir_all(). This will convert the path
+into the ’\?' format, which supports much longer paths.</div></li><li><div class="item-name"><a class="fn" href="fn.safe_remove_file.html" title="fn rustc_incremental::persist::fs::safe_remove_file">safe_<wbr>remove_<wbr>file</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.staging_dep_graph_path.html" title="fn rustc_incremental::persist::fs::staging_dep_graph_path">staging_<wbr>dep_<wbr>graph_<wbr>path</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Returns the path to a session’s staging dependency graph.</div></li><li><div class="item-name"><a class="fn" href="fn.string_to_timestamp.html" title="fn rustc_incremental::persist::fs::string_to_timestamp">string_<wbr>to_<wbr>timestamp</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.timestamp_to_string.html" title="fn rustc_incremental::persist::fs::timestamp_to_string">timestamp_<wbr>to_<wbr>string</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.work_products_path.html" title="fn rustc_incremental::persist::fs::work_products_path">work_<wbr>products_<wbr>path</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul></section></div></main></body></html>

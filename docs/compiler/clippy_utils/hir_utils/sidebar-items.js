@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PathCheck"],"fn":["both","both_some_and","count_eq","eq_expr_value","eq_span_tokens","generic_path_segments","hash_expr","hash_stmt","is_bool","over","reduce_exprkind","swap_binop"],"struct":["HirEqInterExpr","SpanlessEq","SpanlessHash"],"type":["SpanlessEqCallback"]};

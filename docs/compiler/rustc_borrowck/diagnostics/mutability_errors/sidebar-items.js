@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AccessKind"],"fn":["get_mut_span_in_struct_field","is_closure_like","mut_borrow_of_mutable_ref","suggest_ampmut","suggest_ampmut_self","suggest_ref_mut"],"struct":["AmpMutSugg","BindingFinder"]};

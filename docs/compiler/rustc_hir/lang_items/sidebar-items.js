@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["GenericRequirement","LangItem"],"fn":["extract"],"macro":["language_item_table"],"static":["BINARY_OPERATORS","FN_TRAITS","OPERATORS"],"struct":["LanguageItems"]};

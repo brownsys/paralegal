@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ACCESS_ERROR"],"fn":["acquire_thread","client","default_client","initialize_checked","release_thread"],"static":["GLOBAL_CLIENT","GLOBAL_CLIENT_CHECKED"],"struct":["Acquired","Client","HelperThread"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["cross_crate_inlinable","provide"],"struct":["CostChecker"]};

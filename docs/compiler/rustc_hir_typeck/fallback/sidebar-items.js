@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DivergingFallbackBehavior","UnsafeUseReason"],"fn":["compute_unsafe_infer_vars"],"struct":["AnnotateUnitFallbackVisitor"]};

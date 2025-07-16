@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Effect"],"mod":["cursor","direction","fmt","graphviz","lattice","results","visitor"],"struct":["EffectIndex","SwitchIntTarget"],"trait":["Analysis","BitSetExt","GenKill","SwitchIntEdgeEffects"]};

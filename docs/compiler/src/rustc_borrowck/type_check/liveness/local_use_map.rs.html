@@ -1,0 +1,317 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `compiler/rustc_borrowck/src/type_check/liveness/local_use_map.rs`."><title>local_use_map.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="rustc_borrowck" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../../static.files/storage-59e33391.js"></script><script defer src="../../../../static.files/src-script-56102188.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">rustc_borrowck/type_check/liveness/</div>local_use_map.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<a href="#1" id="1">1</a>
+<a href="#2" id="2">2</a>
+<a href="#3" id="3">3</a>
+<a href="#4" id="4">4</a>
+<a href="#5" id="5">5</a>
+<a href="#6" id="6">6</a>
+<a href="#7" id="7">7</a>
+<a href="#8" id="8">8</a>
+<a href="#9" id="9">9</a>
+<a href="#10" id="10">10</a>
+<a href="#11" id="11">11</a>
+<a href="#12" id="12">12</a>
+<a href="#13" id="13">13</a>
+<a href="#14" id="14">14</a>
+<a href="#15" id="15">15</a>
+<a href="#16" id="16">16</a>
+<a href="#17" id="17">17</a>
+<a href="#18" id="18">18</a>
+<a href="#19" id="19">19</a>
+<a href="#20" id="20">20</a>
+<a href="#21" id="21">21</a>
+<a href="#22" id="22">22</a>
+<a href="#23" id="23">23</a>
+<a href="#24" id="24">24</a>
+<a href="#25" id="25">25</a>
+<a href="#26" id="26">26</a>
+<a href="#27" id="27">27</a>
+<a href="#28" id="28">28</a>
+<a href="#29" id="29">29</a>
+<a href="#30" id="30">30</a>
+<a href="#31" id="31">31</a>
+<a href="#32" id="32">32</a>
+<a href="#33" id="33">33</a>
+<a href="#34" id="34">34</a>
+<a href="#35" id="35">35</a>
+<a href="#36" id="36">36</a>
+<a href="#37" id="37">37</a>
+<a href="#38" id="38">38</a>
+<a href="#39" id="39">39</a>
+<a href="#40" id="40">40</a>
+<a href="#41" id="41">41</a>
+<a href="#42" id="42">42</a>
+<a href="#43" id="43">43</a>
+<a href="#44" id="44">44</a>
+<a href="#45" id="45">45</a>
+<a href="#46" id="46">46</a>
+<a href="#47" id="47">47</a>
+<a href="#48" id="48">48</a>
+<a href="#49" id="49">49</a>
+<a href="#50" id="50">50</a>
+<a href="#51" id="51">51</a>
+<a href="#52" id="52">52</a>
+<a href="#53" id="53">53</a>
+<a href="#54" id="54">54</a>
+<a href="#55" id="55">55</a>
+<a href="#56" id="56">56</a>
+<a href="#57" id="57">57</a>
+<a href="#58" id="58">58</a>
+<a href="#59" id="59">59</a>
+<a href="#60" id="60">60</a>
+<a href="#61" id="61">61</a>
+<a href="#62" id="62">62</a>
+<a href="#63" id="63">63</a>
+<a href="#64" id="64">64</a>
+<a href="#65" id="65">65</a>
+<a href="#66" id="66">66</a>
+<a href="#67" id="67">67</a>
+<a href="#68" id="68">68</a>
+<a href="#69" id="69">69</a>
+<a href="#70" id="70">70</a>
+<a href="#71" id="71">71</a>
+<a href="#72" id="72">72</a>
+<a href="#73" id="73">73</a>
+<a href="#74" id="74">74</a>
+<a href="#75" id="75">75</a>
+<a href="#76" id="76">76</a>
+<a href="#77" id="77">77</a>
+<a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
+<a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a></pre></div><pre class="rust"><code><span class="kw">use </span>rustc_index::IndexVec;
+<span class="kw">use </span>rustc_middle::mir::visit::{PlaceContext, Visitor};
+<span class="kw">use </span>rustc_middle::mir::{Body, Local, Location};
+<span class="kw">use </span>rustc_mir_dataflow::points::{DenseLocationMap, PointIndex};
+
+<span class="kw">use </span><span class="kw">crate</span>::def_use::{<span class="self">self</span>, DefUse};
+
+<span class="doccomment">/// A map that cross references each local with the locations where it
+/// is defined (assigned), used, or dropped. Used during liveness
+/// computation.
+///
+/// We keep track only of `Local`s we'll do the liveness analysis later,
+/// this means that our internal `IndexVec`s will only be sparsely populated.
+/// In the time-memory trade-off between keeping compact vectors with new
+/// indexes (and needing to continuously map the `Local` index to its compact
+/// counterpart) and having `IndexVec`s that we only use a fraction of, time
+/// (and code simplicity) was favored. The rationale is that we only keep
+/// a small number of `IndexVec`s throughout the entire analysis while, in
+/// contrast, we're accessing each `Local` *many* times.
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>LocalUseMap {
+    <span class="doccomment">/// Head of a linked list of **definitions** of each variable --
+    /// definition in this context means assignment, e.g., `x` is
+    /// defined in `x = y` but not `y`; that first def is the head of
+    /// a linked list that lets you enumerate all places the variable
+    /// is assigned.
+    </span>first_def_at: IndexVec&lt;Local, <span class="prelude-ty">Option</span>&lt;AppearanceIndex&gt;&gt;,
+
+    <span class="doccomment">/// Head of a linked list of **uses** of each variable -- use in
+    /// this context means that the existing value of the variable is
+    /// read or modified. e.g., `y` is used in `x = y` but not `x`.
+    /// Note that `DROP(x)` terminators are excluded from this list.
+    </span>first_use_at: IndexVec&lt;Local, <span class="prelude-ty">Option</span>&lt;AppearanceIndex&gt;&gt;,
+
+    <span class="doccomment">/// Head of a linked list of **drops** of each variable -- these
+    /// are a special category of uses corresponding to the drop that
+    /// we add for each local variable.
+    </span>first_drop_at: IndexVec&lt;Local, <span class="prelude-ty">Option</span>&lt;AppearanceIndex&gt;&gt;,
+
+    appearances: Appearances,
+}
+
+<span class="comment">// The `Appearance::next` field effectively embeds a linked list within `Appearances`.
+</span><span class="kw">type </span>Appearances = IndexVec&lt;AppearanceIndex, Appearance&gt;;
+
+<span class="kw">struct </span>Appearance {
+    point_index: PointIndex,
+    next: <span class="prelude-ty">Option</span>&lt;AppearanceIndex&gt;,
+}
+
+<span class="macro">rustc_index::newtype_index!</span> {
+    <span class="kw">pub struct </span>AppearanceIndex {}
+}
+
+<span class="kw">fn </span>appearances_iter(
+    first: <span class="prelude-ty">Option</span>&lt;AppearanceIndex&gt;,
+    appearances: <span class="kw-2">&amp;</span>Appearances,
+) -&gt; <span class="kw">impl </span>Iterator&lt;Item = AppearanceIndex&gt; + <span class="lifetime">'_ </span>{
+    AppearancesIter { appearances, current: first }
+}
+
+<span class="comment">// Iterates over `Appearances` by following `next` fields.
+</span><span class="kw">struct </span>AppearancesIter&lt;<span class="lifetime">'a</span>&gt; {
+    appearances: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Appearances,
+    current: <span class="prelude-ty">Option</span>&lt;AppearanceIndex&gt;,
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; Iterator <span class="kw">for </span>AppearancesIter&lt;<span class="lifetime">'a</span>&gt; {
+    <span class="kw">type </span>Item = AppearanceIndex;
+
+    <span class="kw">fn </span>next(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;AppearanceIndex&gt; {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(c) = <span class="self">self</span>.current {
+            <span class="self">self</span>.current = <span class="self">self</span>.appearances[c].next;
+            <span class="prelude-val">Some</span>(c)
+        } <span class="kw">else </span>{
+            <span class="prelude-val">None
+        </span>}
+    }
+}
+
+<span class="comment">//-----------------------------------------------------------------------------
+
+</span><span class="kw">impl </span>LocalUseMap {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>build(
+        live_locals: <span class="kw-2">&amp;</span>[Local],
+        elements: <span class="kw-2">&amp;</span>DenseLocationMap,
+        body: <span class="kw-2">&amp;</span>Body&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>nones = IndexVec::from_elem(<span class="prelude-val">None</span>, <span class="kw-2">&amp;</span>body.local_decls);
+        <span class="kw">let </span><span class="kw-2">mut </span>local_use_map = LocalUseMap {
+            first_def_at: nones.clone(),
+            first_use_at: nones.clone(),
+            first_drop_at: nones,
+            appearances: IndexVec::new(),
+        };
+
+        <span class="kw">if </span>live_locals.is_empty() {
+            <span class="kw">return </span>local_use_map;
+        }
+
+        <span class="kw">let </span><span class="kw-2">mut </span>locals_with_use_data: IndexVec&lt;Local, bool&gt; =
+            IndexVec::from_elem(<span class="bool-val">false</span>, <span class="kw-2">&amp;</span>body.local_decls);
+        live_locals.iter().for_each(|<span class="kw-2">&amp;</span>local| locals_with_use_data[local] = <span class="bool-val">true</span>);
+
+        LocalUseMapBuild { local_use_map: <span class="kw-2">&amp;mut </span>local_use_map, elements, locals_with_use_data }
+            .visit_body(body);
+
+        local_use_map
+    }
+
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>defs(<span class="kw-2">&amp;</span><span class="self">self</span>, local: Local) -&gt; <span class="kw">impl </span>Iterator&lt;Item = PointIndex&gt; + <span class="lifetime">'_ </span>{
+        appearances_iter(<span class="self">self</span>.first_def_at[local], <span class="kw-2">&amp;</span><span class="self">self</span>.appearances)
+            .map(<span class="kw">move </span>|aa| <span class="self">self</span>.appearances[aa].point_index)
+    }
+
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>uses(<span class="kw-2">&amp;</span><span class="self">self</span>, local: Local) -&gt; <span class="kw">impl </span>Iterator&lt;Item = PointIndex&gt; + <span class="lifetime">'_ </span>{
+        appearances_iter(<span class="self">self</span>.first_use_at[local], <span class="kw-2">&amp;</span><span class="self">self</span>.appearances)
+            .map(<span class="kw">move </span>|aa| <span class="self">self</span>.appearances[aa].point_index)
+    }
+
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>drops(<span class="kw-2">&amp;</span><span class="self">self</span>, local: Local) -&gt; <span class="kw">impl </span>Iterator&lt;Item = PointIndex&gt; + <span class="lifetime">'_ </span>{
+        appearances_iter(<span class="self">self</span>.first_drop_at[local], <span class="kw-2">&amp;</span><span class="self">self</span>.appearances)
+            .map(<span class="kw">move </span>|aa| <span class="self">self</span>.appearances[aa].point_index)
+    }
+}
+
+<span class="kw">struct </span>LocalUseMapBuild&lt;<span class="lifetime">'me</span>&gt; {
+    local_use_map: <span class="kw-2">&amp;</span><span class="lifetime">'me </span><span class="kw-2">mut </span>LocalUseMap,
+    elements: <span class="kw-2">&amp;</span><span class="lifetime">'me </span>DenseLocationMap,
+
+    <span class="comment">// Vector used in `visit_local` to signal which `Local`s do we need
+    // def/use/drop information on, constructed from `live_locals` (that
+    // contains the variables we'll do the liveness analysis for).
+    // This vector serves optimization purposes only: we could have
+    // obtained the same information from `live_locals` but we want to
+    // avoid repeatedly calling `Vec::contains()` (see `LocalUseMap` for
+    // the rationale on the time-memory trade-off we're favoring here).
+    </span>locals_with_use_data: IndexVec&lt;Local, bool&gt;,
+}
+
+<span class="kw">impl </span>Visitor&lt;<span class="lifetime">'_</span>&gt; <span class="kw">for </span>LocalUseMapBuild&lt;<span class="lifetime">'_</span>&gt; {
+    <span class="kw">fn </span>visit_local(<span class="kw-2">&amp;mut </span><span class="self">self</span>, local: Local, context: PlaceContext, location: Location) {
+        <span class="kw">if </span><span class="self">self</span>.locals_with_use_data[local]
+            &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(def_use) = def_use::categorize(context)
+        {
+            <span class="kw">let </span>first_appearance = <span class="kw">match </span>def_use {
+                DefUse::Def =&gt; <span class="kw-2">&amp;mut </span><span class="self">self</span>.local_use_map.first_def_at[local],
+                DefUse::Use =&gt; <span class="kw-2">&amp;mut </span><span class="self">self</span>.local_use_map.first_use_at[local],
+                DefUse::Drop =&gt; <span class="kw-2">&amp;mut </span><span class="self">self</span>.local_use_map.first_drop_at[local],
+            };
+            <span class="kw">let </span>point_index = <span class="self">self</span>.elements.point_from_location(location);
+            <span class="kw">let </span>appearance_index = <span class="self">self
+                </span>.local_use_map
+                .appearances
+                .push(Appearance { point_index, next: <span class="kw-2">*</span>first_appearance });
+            <span class="kw-2">*</span>first_appearance = <span class="prelude-val">Some</span>(appearance_index);
+        }
+    }
+}
+</code></pre></div></section></main></body></html>

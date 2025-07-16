@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DIAGNOSTICS_SERVER_VAR"],"enum":["Message"],"fn":["gen_please_report_this_bug_text","get_bug_report_url"],"struct":["DiagnosticPrinter","RustfixDiagnosticServer","StartedServer"]};

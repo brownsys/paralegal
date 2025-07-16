@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["default_dep_kind_debug","default_dep_node_debug"],"mod":["size_asserts"],"static":["DEP_KIND_DEBUG","DEP_NODE_DEBUG"],"struct":["DepKind","DepKindStruct","DepNode","WorkProductId"],"trait":["DepNodeParams"]};

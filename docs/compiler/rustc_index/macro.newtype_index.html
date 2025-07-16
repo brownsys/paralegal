@@ -1,0 +1,29 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Creates a struct type `S` that can be used as an index with `IndexVec` and so on."><title>newtype_index in rustc_index - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="rustc_index" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc macro"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../rustc_index/index.html">rustc_<wbr>index</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="index.html">rustc_index</a></span><h1>Macro <span class="macro">newtype_index</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/rustc_index_macros/lib.rs.html#38">Source</a> </span></div><pre class="rust item-decl"><code>newtype_index!() { <span class="comment">/* proc-macro */</span> }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Creates a struct type <code>S</code> that can be used as an index with
+<code>IndexVec</code> and so on.</p>
+<p>There are two ways of interacting with these indices:</p>
+<ul>
+<li>
+<p>The <code>From</code> impls are the preferred way. So you can do
+<code>S::from(v)</code> with a <code>usize</code> or <code>u32</code>. And you can convert back
+to an integer with <code>u32::from(s)</code>.</p>
+</li>
+<li>
+<p>Alternatively, you can use the methods <code>S::new(v)</code> and <code>s.index()</code>
+to create/return a value.</p>
+</li>
+</ul>
+<p>Internally, the index uses a u32, so the index must not exceed
+<code>u32::MAX</code>.</p>
+<p>The impls provided by default are Clone, Copy, PartialEq, Eq, and Hash.</p>
+<p>Accepted attributes for customization:</p>
+<ul>
+<li><code>#[derive(HashStable_Generic)]</code>/<code>#[derive(HashStable)]</code>: derives
+<code>HashStable</code>, as normal.</li>
+<li><code>#[encodable]</code>: derives <code>Encodable</code>/<code>Decodable</code>.</li>
+<li><code>#[orderable]</code>: derives <code>PartialOrd</code>/<code>Ord</code>, plus step-related methods.</li>
+<li><code>#[debug_format = "Foo({})"]</code>: derives <code>Debug</code> with particular output.</li>
+<li><code>#[max = 0xFFFF_FFFD]</code>: specifies the max value, which allows niche
+optimizations. The default max value is 0xFFFF_FF00.</li>
+<li><code>#[gate_rustc_only]</code>: makes parts of the generated code nightly-only.</li>
+</ul>
+</div></details></section></div></main></body></html>

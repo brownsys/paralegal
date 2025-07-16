@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PermissionPriv"],"mod":["diagnostics","transition"],"struct":["PermTransition","Permission"]};

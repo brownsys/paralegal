@@ -1,0 +1,9 @@
+(function() {
+    var implementors = Object.fromEntries([["rustc_query_impl",[["impl&lt;'tcx, C: <a class=\"trait\" href=\"rustc_query_system/query/caches/trait.QueryCache.html\" title=\"trait rustc_query_system::query::caches::QueryCache\">QueryCache</a>, const ANON: <a class=\"primitive\" href=\"https://doc.rust-lang.org/nightly/std/primitive.bool.html\">bool</a>, const DEPTH_LIMIT: <a class=\"primitive\" href=\"https://doc.rust-lang.org/nightly/std/primitive.bool.html\">bool</a>, const FEEDABLE: <a class=\"primitive\" href=\"https://doc.rust-lang.org/nightly/std/primitive.bool.html\">bool</a>&gt; <a class=\"trait\" href=\"rustc_query_system/query/config/trait.QueryConfig.html\" title=\"trait rustc_query_system::query::config::QueryConfig\">QueryConfig</a>&lt;<a class=\"struct\" href=\"rustc_query_impl/plumbing/struct.QueryCtxt.html\" title=\"struct rustc_query_impl::plumbing::QueryCtxt\">QueryCtxt</a>&lt;'tcx&gt;&gt; for <a class=\"struct\" href=\"rustc_query_impl/struct.DynamicConfig.html\" title=\"struct rustc_query_impl::DynamicConfig\">DynamicConfig</a>&lt;'tcx, C, ANON, DEPTH_LIMIT, FEEDABLE&gt;<div class=\"where\">where\n    for&lt;'a&gt; C::<a class=\"associatedtype\" href=\"rustc_query_system/query/caches/trait.QueryCache.html#associatedtype.Key\" title=\"type rustc_query_system::query::caches::QueryCache::Key\">Key</a>: <a class=\"trait\" href=\"rustc_data_structures/stable_hasher/trait.HashStable.html\" title=\"trait rustc_data_structures::stable_hasher::HashStable\">HashStable</a>&lt;<a class=\"struct\" href=\"rustc_query_system/ich/hcx/struct.StableHashingContext.html\" title=\"struct rustc_query_system::ich::hcx::StableHashingContext\">StableHashingContext</a>&lt;'a&gt;&gt;,</div>"]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":57,"fragment_lengths":[1672]}

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["TrailingBrace"],"fn":["expr_is_complete","expr_requires_semi_to_be_stmt","expr_trailing_brace","leading_labeled_expr","path_return_type","type_trailing_braced_mac_call"]};

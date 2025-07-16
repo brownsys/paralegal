@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["in_any_value_of_ty","in_operand","in_place","in_rvalue"],"struct":["HasMutInterior","NeedsDrop","NeedsNonConstDrop"],"trait":["Qualif"]};

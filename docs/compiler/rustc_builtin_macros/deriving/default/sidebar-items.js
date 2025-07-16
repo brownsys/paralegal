@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["default_call","default_enum_substructure","default_struct_substructure","expand_deriving_default","extract_default_variant","has_a_default_variant","validate_default_attribute"],"struct":["DetectNonVariantDefaultAttr"]};

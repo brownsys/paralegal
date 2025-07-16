@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["codegen","create_wrapper_function"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["infer","traits"],"struct":["TypeErrCtxt"],"trait":["InferCtxtErrorExt"]};

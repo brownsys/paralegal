@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"static":["UNQUALIFIED_LOCAL_IMPORTS"],"struct":["UnqualifiedLocalImports"]};

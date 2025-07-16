@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DiffLine"],"fn":["make_diff","write_diff","write_filtered_diff"],"struct":["Mismatch"]};

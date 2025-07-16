@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"macro":["define_debug_via_print","define_display_via_print"],"trait":["IrPrint"]};

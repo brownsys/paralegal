@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["assoc_fn_of_type","check_moves","skip_move_check_fns"],"struct":["MoveCheckVisitor"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["affects_whether_relation","does_not_affects_whether_relation","does_not_go_to_relation","does_not_influence_relation","goes_to_relation","grelations","influences_relation","is_marked_relation","is_not_marked_relation","l2_relations","l3_relations","l4_relations","l5_relations","operation_associated_with_relation","relation","relation_node"]};

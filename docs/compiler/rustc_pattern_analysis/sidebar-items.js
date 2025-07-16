@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["constructor","errors","lints","pat","pat_column","rustc","usefulness"],"static":["DEFAULT_LOCALE_RESOURCE"],"struct":["IndexVec","MatchArm","PrivateUninhabitedField"],"trait":["Captures","Idx","PatCx"]};

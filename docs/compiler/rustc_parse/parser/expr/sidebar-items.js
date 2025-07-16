@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DestructuredFloat","ForbiddenLetReason"],"fn":["could_be_unclosed_char_literal"],"struct":["CondChecker"]};

@@ -1,0 +1,53 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="The `if_let_rescope` lint detects cases where a temporary value with significant drop is generated on the right hand side of `if let` and suggests a rewrite into `match` when possible."><title>IF_LET_RESCOPE in rustc_lint::if_let_rescope - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_lint" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc static"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button><a class="logo-container" href="../../rustc_lint/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt=""></a></nav><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../rustc_lint/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt="logo"></a><h2><a href="../../rustc_lint/index.html">rustc_<wbr>lint</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">IF_<wbr>LET_<wbr>RESCOPE</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#example" title="Example">Example</a></li><li><a href="#explanation" title="Explanation">Explanation</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="index.html">In rustc_<wbr>lint::<wbr>if_<wbr>let_<wbr>rescope</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">rustc_lint</a>::<wbr><a href="index.html">if_let_rescope</a></span><h1>Static <span class="static">IF_LET_RESCOPE</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustc_lint/if_let_rescope.rs.html#19-89">Source</a> </span></div><pre class="rust item-decl"><code>pub static IF_LET_RESCOPE: &amp;<a class="struct" href="../struct.Lint.html" title="struct rustc_lint::Lint">Lint</a></code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The <code>if_let_rescope</code> lint detects cases where a temporary value with
+significant drop is generated on the right hand side of <code>if let</code>
+and suggests a rewrite into <code>match</code> when possible.</p>
+<h4 id="example"><a class="doc-anchor" href="#example">§</a>Example</h4>
+<div class="example-wrap edition"><a href="#" class="tooltip" title="This example runs with edition 2021">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="attr">#![warn(if_let_rescope)]
+#![allow(unused_variables)]
+
+</span><span class="kw">struct </span>Droppy;
+<span class="kw">impl </span>Drop <span class="kw">for </span>Droppy {
+    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="comment">// Custom destructor, including this `drop` implementation, is considered
+        // significant.
+        // Rust does not check whether this destructor emits side-effects that can
+        // lead to observable change in program semantics, when the drop order changes.
+        // Rust biases to be on the safe side, so that you can apply discretion whether
+        // this change indeed breaches any contract or specification that your code needs
+        // to honour.
+        </span><span class="macro">println!</span>(<span class="string">"dropped"</span>);
+    }
+}
+<span class="kw">impl </span>Droppy {
+    <span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;u8&gt; {
+        <span class="prelude-val">None
+    </span>}
+}
+
+<span class="kw">fn </span>main() {
+    <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = Droppy.get() {
+        <span class="comment">// do something
+    </span>} <span class="kw">else </span>{
+        <span class="comment">// do something else
+    </span>}
+}</code></pre></div>
+<p>{{produces}}</p>
+<h4 id="explanation"><a class="doc-anchor" href="#explanation">§</a>Explanation</h4>
+<p>With Edition 2024, temporaries generated while evaluating <code>if let</code>s
+will be dropped before the <code>else</code> block.
+This lint captures a possible change in runtime behaviour due to
+a change in sequence of calls to significant <code>Drop::drop</code> destructors.</p>
+<p>A significant <a href="https://doc.rust-lang.org/std/ops/trait.Drop.html"><code>Drop::drop</code></a>
+destructor here refers to an explicit, arbitrary implementation of the <code>Drop</code> trait on the type
+with exceptions including <code>Vec</code>, <code>Box</code>, <code>Rc</code>, <code>BTreeMap</code> and <code>HashMap</code>
+that are marked by the compiler otherwise so long that the generic types have
+no significant destructor recursively.
+In other words, a type has a significant drop destructor when it has a <code>Drop</code> implementation
+or its destructor invokes a significant destructor on a type.
+Since we cannot completely reason about the change by just inspecting the existence of
+a significant destructor, this lint remains only a suggestion and is set to <code>allow</code> by default.</p>
+<p>Whenever possible, a rewrite into an equivalent <code>match</code> expression that
+observe the same order of calls to such destructors is proposed by this lint.
+Authors may take their own discretion whether the rewrite suggestion shall be
+accepted, or rejected to continue the use of the <code>if let</code> expression.</p>
+</div></details></section></div></main></body></html>

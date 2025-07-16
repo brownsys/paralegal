@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check_intrinsic_type","equate_intrinsic_type","intrinsic_operation_unsafety"]};

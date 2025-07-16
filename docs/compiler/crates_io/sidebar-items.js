@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Auth","Error"],"fn":["check_token","is_false","is_success","is_url_crates_io","reason","status"],"struct":["ApiError","ApiErrorList","Crate","Crates","NewCrate","NewCrateDependency","OwnerResponse","OwnersReq","R","Registry","TotalCrates","User","Users","Warnings"],"type":["Result"]};

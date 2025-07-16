@@ -1,0 +1,59 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="The `tail_expr_drop_order` lint looks for those values generated at the tail expression location, that runs a custom `Drop` destructor. Some of them may be dropped earlier in Edition 2024 that they used to in Edition 2021 and prior. This lint detects those cases and provides you information on those values and their custom destructor implementations. Your discretion on this information is required."><title>TAIL_EXPR_DROP_ORDER in rustc_lint_defs::builtin - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_lint_defs" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc static"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../rustc_lint_defs/index.html">rustc_<wbr>lint_<wbr>defs</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">TAIL_<wbr>EXPR_<wbr>DROP_<wbr>ORDER</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#example" title="Example">Example</a></li><li><a href="#explanation" title="Explanation">Explanation</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="index.html">In rustc_<wbr>lint_<wbr>defs::<wbr>builtin</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">rustc_lint_defs</a>::<wbr><a href="index.html">builtin</a></span><h1>Static <span class="static">TAIL_EXPR_DROP_ORDER</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustc_lint_defs/builtin.rs.html#4999-5074">Source</a> </span></div><pre class="rust item-decl"><code>pub static TAIL_EXPR_DROP_ORDER: &amp;<a class="struct" href="../struct.Lint.html" title="struct rustc_lint_defs::Lint">Lint</a></code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The <code>tail_expr_drop_order</code> lint looks for those values generated at the tail expression location,
+that runs a custom <code>Drop</code> destructor.
+Some of them may be dropped earlier in Edition 2024 that they used to in Edition 2021 and prior.
+This lint detects those cases and provides you information on those values and their custom destructor implementations.
+Your discretion on this information is required.</p>
+<h4 id="example"><a class="doc-anchor" href="#example">§</a>Example</h4>
+<div class="example-wrap edition"><a href="#" class="tooltip" title="This example runs with edition 2021">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="attr">#![warn(tail_expr_drop_order)]
+</span><span class="kw">struct </span>Droppy(i32);
+<span class="kw">impl </span>Droppy {
+    <span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; i32 {
+        <span class="self">self</span>.<span class="number">0
+    </span>}
+}
+<span class="kw">impl </span>Drop <span class="kw">for </span>Droppy {
+    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="comment">// This is a custom destructor and it induces side-effects that is observable
+        // especially when the drop order at a tail expression changes.
+        </span><span class="macro">println!</span>(<span class="string">"loud drop {}"</span>, <span class="self">self</span>.<span class="number">0</span>);
+    }
+}
+<span class="kw">fn </span>edition_2021() -&gt; i32 {
+    <span class="kw">let </span>another_droppy = Droppy(<span class="number">0</span>);
+    Droppy(<span class="number">1</span>).get()
+}
+<span class="kw">fn </span>main() {
+    edition_2021();
+}</code></pre></div>
+<p>{{produces}}</p>
+<h4 id="explanation"><a class="doc-anchor" href="#explanation">§</a>Explanation</h4>
+<p>In tail expression of blocks or function bodies,
+values of type with significant <code>Drop</code> implementation has an ill-specified drop order
+before Edition 2024 so that they are dropped only after dropping local variables.
+Edition 2024 introduces a new rule with drop orders for them,
+so that they are dropped first before dropping local variables.</p>
+<p>A significant <code>Drop::drop</code> destructor here refers to an explicit, arbitrary
+implementation of the <code>Drop</code> trait on the type, with exceptions including <code>Vec</code>,
+<code>Box</code>, <code>Rc</code>, <code>BTreeMap</code> and <code>HashMap</code> that are marked by the compiler otherwise
+so long that the generic types have no significant destructor recursively.
+In other words, a type has a significant drop destructor when it has a <code>Drop</code> implementation
+or its destructor invokes a significant destructor on a type.
+Since we cannot completely reason about the change by just inspecting the existence of
+a significant destructor, this lint remains only a suggestion and is set to <code>allow</code> by default.</p>
+<p>This lint only points out the issue with <code>Droppy</code>, which will be dropped before <code>another_droppy</code>
+does in Edition 2024.
+No fix will be proposed by this lint.
+However, the most probable fix is to hoist <code>Droppy</code> into its own local variable binding.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">struct </span>Droppy(i32);
+<span class="kw">impl </span>Droppy {
+    <span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; i32 {
+        <span class="self">self</span>.<span class="number">0
+    </span>}
+}
+<span class="kw">fn </span>edition_2024() -&gt; i32 {
+    <span class="kw">let </span>value = Droppy(<span class="number">0</span>);
+    <span class="kw">let </span>another_droppy = Droppy(<span class="number">1</span>);
+    value.get()
+}</code></pre></div>
+</div></details></section></div></main></body></html>

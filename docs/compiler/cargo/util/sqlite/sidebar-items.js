@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["basic_migration","migrate"],"type":["Migration"]};

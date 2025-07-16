@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["ascribe_user_type","custom","implied_outlives_bounds","normalize","outlives","prove_predicate"],"struct":["AscribeUserType","DropckOutlives","Eq","ImpliedOutlivesBounds","Normalize","ProvePredicate","Subtype","TypeOpOutput"],"trait":["QueryTypeOp","TypeOp"]};
