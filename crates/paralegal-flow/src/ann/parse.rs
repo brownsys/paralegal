@@ -309,7 +309,19 @@ struct WrongTokenKindErr {
     found: TokenKind,
 }
 
+/// Unsafe imlp, because the [`TokenKind`] can contain an AST node
+/// (in `Interpolated`). We need this impl though so we can return the expected
+/// and found toke kind in the error.
+///
+/// We mostly hope this doesn't lead to data races. We protect against it a bit
+/// by adding an `assert` to the `Display` impl.
 unsafe impl Send for WrongTokenKindErr {}
+/// Unsafe imlp, because the [`TokenKind`] can contain an AST node
+/// (in `Interpolated`). We need this impl though so we can return the expected
+/// and found toke kind in the error.
+///
+/// We mostly hope this doesn't lead to data races. We protect against it a bit
+/// by adding an `assert` to the `Display` impl.
 unsafe impl Sync for WrongTokenKindErr {}
 
 impl std::error::Error for WrongTokenKindErr {}
@@ -373,6 +385,10 @@ pub fn integer_list(i: I) -> R<Vec<Integer>> {
     )(i)
 }
 
+/// Parse the `arguments` refinement.
+///
+/// Note that the `body` argument isn't actually always a trait function.
+/// The `Provided` variant is (in this case) also used for normal functions.
 pub fn arguments<'tcx, 'a, 'b>(
     tcx: TyCtxt<'tcx>,
     body: hir::TraitFn<'a>,
