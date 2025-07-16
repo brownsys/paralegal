@@ -139,14 +139,14 @@ fn only_via(s: &str) -> Res<&str, ASTNode> {
     ))
 }
 
-fn conditional<'a>(s: &'a str) -> Res<&'a str, (ClauseIntro, &'a str)> {
+fn conditional(s: &str) -> Res<&str, (ClauseIntro, &str)> {
     map(
         terminated(spanned(delimited(tag("If"), relation, tag("then"))), colon),
         |(a, span)| (ClauseIntro::Conditional(a), span),
     )(s)
 }
 
-fn for_each<'a>(s: &'a str) -> Res<&'a str, (ClauseIntro, &'a str)> {
+fn for_each(s: &str) -> Res<&str, (ClauseIntro, &str)> {
     map(
         terminated(
             spanned(preceded(tuple((tag("For each"), space1)), variable_intro)),
@@ -156,7 +156,7 @@ fn for_each<'a>(s: &'a str) -> Res<&'a str, (ClauseIntro, &'a str)> {
     )(s)
 }
 
-fn there_is<'a>(s: &'a str) -> Res<&'a str, (ClauseIntro, &'a str)> {
+fn there_is(s: &str) -> Res<&str, (ClauseIntro, &str)> {
     map(
         terminated(
             spanned(delimited(tag("There is a"), variable_intro, tag("where"))),

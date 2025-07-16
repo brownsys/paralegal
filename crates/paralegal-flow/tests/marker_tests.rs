@@ -93,7 +93,7 @@ fn named_refinement() {
         );
         let call_site = call_sites.first().unwrap();
         assert!(call_site.input().as_singles().any(|n| {
-            ctrl.spdg().markers.get(&n.node()).map_or(false, |markers| {
+            ctrl.spdg().markers.get(&n.node()).is_some_and(|markers| {
                 markers.contains(&Identifier::new_intern("me"))
             })
         }));

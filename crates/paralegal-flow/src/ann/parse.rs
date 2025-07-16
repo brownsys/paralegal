@@ -400,11 +400,11 @@ pub fn integer_list(i: I) -> R<Vec<Integer>> {
 ///
 /// Note that the `body` argument isn't actually always a trait function.
 /// The `Provided` variant is (in this case) also used for normal functions.
-pub fn arguments<'tcx, 'a, 'b>(
-    tcx: TyCtxt<'tcx>,
+pub fn arguments<'a, 'b>(
+    tcx: TyCtxt<'_>,
     hir_id: hir::HirId,
     attr_span: Span,
-) -> impl Parser<I<'b>, TinyBitSet, ErrorTree<I<'b>>> + use<'a, 'b, 'tcx> {
+) -> impl Parser<I<'b>, TinyBitSet, ErrorTree<I<'b>>> + use<'a, 'b, '_> {
     delimited(
         nom::multi::separated_list0(
             assert_token(TokenKind::Comma).context("expected ','"),
@@ -418,7 +418,7 @@ pub fn arguments<'tcx, 'a, 'b>(
         let body = node
             .body_id()
             .map(hir::TraitFn::Provided)
-            .or_else(|| match node {
+            .or(match node {
                 hir::OwnerNode::TraitItem(
                     hir::TraitItem {
                         kind: hir::TraitItemKind::Fn(_, f),
@@ -445,7 +445,7 @@ pub fn arguments<'tcx, 'a, 'b>(
                             if ident.name == s)
                             };
 
-                            if pat_is_sym(&arg.pat) {
+                            if pat_is_sym(arg.pat) {
                                 true
                             } else if arg.pat.walk_short(pat_is_sym) {
                                 tcx.dcx()
