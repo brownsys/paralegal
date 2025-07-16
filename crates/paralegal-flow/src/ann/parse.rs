@@ -8,6 +8,8 @@
 //! it gives us boundaries for parsers that lets us (re)combine them, but also
 //! that we get features that are annoying to implement (such as backtracking)
 //! for free.
+use std::borrow::Cow;
+
 use super::{
     ExceptionAnnotation, MarkerAnnotation, MarkerRefinement, MarkerRefinementKind, VerificationHash,
 };
@@ -19,6 +21,7 @@ use either::Either;
 use nom_supreme::{
     error::ErrorTree,
     final_parser::{final_parser, RecreateContext},
+    ParserExt,
 };
 use paralegal_spdg::Identifier;
 
@@ -136,18 +139,23 @@ impl std::fmt::Display for Structure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Structure::Token => write!(f, "token"),
-            Structure::Delimited(delim) => write!(f, "delimited with {:?}", delim),
+            Structure::Delimited(delim) => write!(
+                f,
+                "section delimited by {}",
+                match delim {
+                    Delimiter::Parenthesis => Cow::Borrowed("(...)"),
+                    Delimiter::Brace => "{...}".into(),
+                    Delimiter::Bracket => "[...]".into(),
+                    _ => format!("{delim:?}").into(),
+                }
+            ),
         }
     }
 }
 
 impl std::fmt::Display for StructuralError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Expected a {:?}, but got a {:?}",
-            self.expected, self.found
-        )
+        write!(f, "Expected a {}, but got a {}", self.expected, self.found)
     }
 }
 
@@ -186,7 +194,7 @@ pub fn lit<'a, A, F: Fn(&str) -> Result<A, String> + 'a>(
             }),
             ..
         } if *knd == k => f(symbol.as_str()),
-        _ => Result::Err("Wrong kind of token".to_string()),
+        _ => Result::Err("expected literal token".to_string()),
     })
 }
 
@@ -229,7 +237,7 @@ impl std::fmt::Display for NotIdentifierErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Expected identifier {}, got {} instead",
+            "Expected identifier `{}`, got `{}` instead",
             self.expected, self.found
         )
     }
@@ -241,14 +249,10 @@ pub fn assert_identifier<'a>(s: Symbol) -> impl FnMut(I<'a>) -> R<'a, ()> {
         if i == s {
             Ok(())
         } else {
-            Result::Err(ErrorTree::from_external_error(
-                i,
-                ErrorKind::Verify,
-                NotIdentifierErr {
-                    expected: s,
-                    found: i,
-                },
-            ))
+            Result::Err(NotIdentifierErr {
+                expected: s,
+                found: i,
+            })
         }
     })
 }
@@ -309,7 +313,7 @@ struct WrongTokenKindErr {
     found: TokenKind,
 }
 
-/// Unsafe imlp, because the [`TokenKind`] can contain an AST node
+/// Unsafe impl, because the [`TokenKind`] can contain an AST node
 /// (in `Interpolated`). We need this impl though so we can return the expected
 /// and found toke kind in the error.
 ///
@@ -370,8 +374,12 @@ pub fn dict<
 ) -> impl FnMut(I<'a>) -> R<'a, Vec<(K, V)>> {
     delimited(
         nom::multi::separated_list0(
-            assert_token(TokenKind::Comma),
-            nom::sequence::separated_pair(keys, assert_token(TokenKind::Eq), values),
+            assert_token(TokenKind::Comma).context("expected ','"),
+            nom::sequence::separated_pair(
+                keys,
+                assert_token(TokenKind::Eq).context("expected '='"),
+                values,
+            ),
         ),
         Delimiter::Brace,
     )
@@ -380,7 +388,10 @@ pub fn dict<
 /// Parse bracket-delimited, comma-separated integers, e.g. `[1,2,3]`.
 pub fn integer_list(i: I) -> R<Vec<Integer>> {
     delimited(
-        nom::multi::separated_list0(assert_token(TokenKind::Comma), integer),
+        nom::multi::separated_list0(
+            assert_token(TokenKind::Comma).context("expected ','"),
+            integer,
+        ),
         Delimiter::Bracket,
     )(i)
 }
@@ -391,54 +402,81 @@ pub fn integer_list(i: I) -> R<Vec<Integer>> {
 /// The `Provided` variant is (in this case) also used for normal functions.
 pub fn arguments<'tcx, 'a, 'b>(
     tcx: TyCtxt<'tcx>,
-    body: hir::TraitFn<'a>,
+    hir_id: hir::HirId,
+    attr_span: Span,
 ) -> impl Parser<I<'b>, TinyBitSet, ErrorTree<I<'b>>> + use<'a, 'b, 'tcx> {
-    let sig_info = match body {
-        hir::TraitFn::Provided(id) => Either::Left(tcx.hir().body(id).params),
-        hir::TraitFn::Required(idents) => Either::Right(idents),
-    };
     delimited(
         nom::multi::separated_list0(
-            assert_token(TokenKind::Comma),
+            assert_token(TokenKind::Comma).context("expected ','"),
             nom::branch::alt((integer.map(Either::Left), identifier.map(Either::Right))),
         ),
         Delimiter::Bracket,
     )
-    .map(move |options| {
-        TinyBitSet::from_iter(options.into_iter().filter_map(|option| match option {
-            Either::Left(i) => Some(i),
-            Either::Right(s) => {
-                let found = match sig_info {
-                    Either::Left(params) => params.iter().position(|arg| {
-                        let pat_is_sym = |p: &hir::Pat| {
-                            matches!(p.kind, hir::PatKind::Binding(_, _, ident, _)
-                            if ident.name == s)
-                        };
+    .map_res(move |options| {
+        let id = hir_id.as_owner().ok_or(RefinementOnNonFunctionErr)?;
+        let node = tcx.hir_owner_node(id);
+        let body = node
+            .body_id()
+            .map(hir::TraitFn::Provided)
+            .or_else(|| match node {
+                hir::OwnerNode::TraitItem(
+                    hir::TraitItem {
+                        kind: hir::TraitItemKind::Fn(_, f),
+                        ..
+                    },
+                    ..,
+                ) => Some(*f),
+                _ => None,
+            })
+            .ok_or(RefinementOnNonFunctionErr)?;
+        let sig_info = match body {
+            hir::TraitFn::Provided(id) => Either::Left(tcx.hir().body(id).params),
+            hir::TraitFn::Required(idents) => Either::Right(idents),
+        };
 
-                        if pat_is_sym(&arg.pat) {
-                            true
-                        } else if arg.pat.walk_short(pat_is_sym) {
-                            tcx.dcx().span_err(
-                                arg.span,
-                                format!(
-                                    "Refinement via name ('{s}') cannot refer to pattern argument"
-                                ),
-                            );
-                            true
-                        } else {
-                            false
-                        }
-                    }),
-                    Either::Right(idents) => idents.iter().position(|ident| ident.name == s),
-                };
-                if found.is_none() {
-                    tcx.dcx().err(format!(
-                        "Argument refinement ('{s}') does not refer to any argument"
-                    ));
+        Ok::<TinyBitSet, RefinementOnNonFunctionErr>(TinyBitSet::from_iter(
+            options.into_iter().filter_map(|option| match option {
+                Either::Left(i) => Some(i),
+                Either::Right(s) => {
+                    let found = match sig_info {
+                        Either::Left(params) => params.iter().position(|arg| {
+                            let pat_is_sym = |p: &hir::Pat| {
+                                matches!(p.kind, hir::PatKind::Binding(_, _, ident, _)
+                            if ident.name == s)
+                            };
+
+                            if pat_is_sym(&arg.pat) {
+                                true
+                            } else if arg.pat.walk_short(pat_is_sym) {
+                                tcx.dcx()
+                                    .struct_span_err(
+                                        arg.span,
+                                        format!(
+                                        "Refinement via name '{s}' cannot refer to pattern argument"
+                                    ),
+                                    )
+                                    .with_span_note(tcx.def_span(id.def_id), "annotated item")
+                                    .emit();
+                                true
+                            } else {
+                                false
+                            }
+                        }),
+                        Either::Right(idents) => idents.iter().position(|ident| ident.name == s),
+                    };
+                    if found.is_none() {
+                        tcx.dcx()
+                            .struct_span_err(
+                                attr_span,
+                                format!("Argument refinement '{s}' does not refer to any argument"),
+                            )
+                            .with_span_note(tcx.def_span(id.def_id), "annotated function")
+                            .emit();
+                    }
+                    found.map(|idx| idx as Integer)
                 }
-                found.map(|idx| idx as Integer)
-            }
-        }))
+            }),
+        ))
     })
 }
 
@@ -483,7 +521,7 @@ pub(crate) fn match_exception(
             let (i, verification_hash) = nom::combinator::opt(nom::sequence::preceded(
                 nom::sequence::tuple((
                     assert_identifier(symbols.verification_hash_sym),
-                    assert_token(TokenKind::Eq),
+                    assert_token(TokenKind::Eq).context("expected '='"),
                 )),
                 lit(token::LitKind::Str, |s| {
                     VerificationHash::from_str_radix(s, 16)
@@ -504,8 +542,9 @@ pub(crate) fn match_exception(
 fn refinements_parser<'a>(
     tcx: TyCtxt<'_>,
     symbols: &Symbols,
-    body: hir::TraitFn<'_>,
+    hir_id: hir::HirId,
     i: I<'a>,
+    attr_span: Span,
 ) -> R<'a, MarkerRefinement> {
     nom::combinator::map_res(
         // nom::multi::separated_list0(
@@ -514,9 +553,12 @@ fn refinements_parser<'a>(
             nom::sequence::preceded(
                 nom::sequence::tuple((
                     assert_identifier(symbols.arg_sym),
-                    assert_token(TokenKind::Eq),
+                    assert_token(TokenKind::Eq).context("expected '='"),
                 )),
-                nom::combinator::map(arguments(tcx, body), MarkerRefinementKind::Argument),
+                nom::combinator::map(
+                    arguments(tcx, hir_id, attr_span),
+                    MarkerRefinementKind::Argument,
+                ),
             ),
             nom::combinator::value(
                 MarkerRefinementKind::Return,
@@ -578,44 +620,17 @@ pub(crate) fn ann_match_fn(
     symbols: &Symbols,
     hir_id: hir::HirId,
     ann: &rustc_ast::AttrArgs,
+    attr_span: Span,
 ) -> Result<MarkerAnnotation, String> {
     use rustc_ast::*;
     use token::*;
-    let try_get_body = || {
-        let id = hir_id.as_owner().ok_or(RefinementOnNonFunctionErr)?;
-        let node = tcx.hir_owner_node(id);
-        node.body_id()
-            .map(hir::TraitFn::Provided)
-            .or_else(|| match node {
-                hir::OwnerNode::TraitItem(
-                    hir::TraitItem {
-                        kind: hir::TraitItemKind::Fn(_, f),
-                        ..
-                    },
-                    ..,
-                ) => Some(*f),
-                _ => None,
-            })
-            .ok_or(RefinementOnNonFunctionErr)
-    };
 
     apply_parser_in_delimited_annotation(
         |i| {
             let (i, label) = identifier(i)?;
             let (i, cont) = nom::combinator::opt(assert_token(TokenKind::Comma))(i)?;
             let (i, refinement) = nom::combinator::cond(cont.is_some(), |c| {
-                refinements_parser(
-                    tcx,
-                    symbols,
-                    try_get_body().map_err(|e| {
-                        nom::Err::Error(ErrorTree::from_external_error(
-                            i.clone(),
-                            ErrorKind::Fail,
-                            e,
-                        ))
-                    })?,
-                    c,
-                )
+                refinements_parser(tcx, symbols, hir_id, c, attr_span)
             })(i.clone())?;
             Ok((
                 i,

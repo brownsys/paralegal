@@ -66,30 +66,6 @@ fn delete(user: User) {
     // }
 }
 
-#[paralegal::marker(community, arguments = [0])]
-fn comm_write(x: u32) {}
-
-#[paralegal::marker(community_ban_check, return)]
-fn comm_ban_check() -> bool {
-    // Check if the user has permission to write
-    true
-}
-
-#[paralegal::marker(community_delete_check, return)]
-fn comm_delete_check() -> bool {
-    // Check if the user has permission to delete
-    true
-}
-
-#[paralegal::analyze]
-fn perform_action() {
-    comm_ban_check();
-    let x = 0;
-    if comm_delete_check() {
-        let w = comm_write(x);
-    }
-}
-
 fn main() {
     let mut args = std::env::args().skip(1);
 
