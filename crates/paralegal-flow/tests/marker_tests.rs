@@ -93,9 +93,10 @@ fn named_refinement() {
         );
         let call_site = call_sites.first().unwrap();
         assert!(call_site.input().as_singles().any(|n| {
-            ctrl.spdg().markers.get(&n.node()).is_some_and(|markers| {
-                markers.contains(&Identifier::new_intern("me"))
-            })
+            ctrl.spdg()
+                .markers
+                .get(&n.node())
+                .is_some_and(|markers| markers.contains(&Identifier::new_intern("me")))
         }));
         let src1 = ctrl.marked("source");
         assert!(!src1.is_empty());
