@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["INDENT"],"fn":["thir_flat","thir_tree"],"macro":["print_indented"],"struct":["ThirPrinter"]};

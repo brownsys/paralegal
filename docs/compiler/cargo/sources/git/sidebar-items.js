@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["fetch","resolve_ref"],"mod":["fetch","known_hosts","oxide","source","utils"],"struct":["GitCheckout","GitDatabase","GitRemote","GitSource"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["EmitType","InputMode","ModuleSorting","OutputFormat"],"fn":["check_deprecated_options","make_input","markdown_input","parse_extern_html_roots","parse_include_parts_dir","parse_merge","parse_remap_path_prefix"],"struct":["Options","PathToParts","RenderOptions","ShouldMerge"]};

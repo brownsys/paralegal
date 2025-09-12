@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["find_item_ty_spans","recursive_type_error","search_for_cycle_permutation"]};

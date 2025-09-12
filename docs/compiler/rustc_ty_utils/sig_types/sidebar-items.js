@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["walk_types"],"trait":["SpannedTypeVisitor"]};

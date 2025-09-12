@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CONST_TAG","REGION_TAG","TAG_MASK","TYPE_TAG"],"struct":["GenericArg","UserArgs","UserSelfTy"],"trait":["GenericArgPackExt"],"type":["GenericArgKind","GenericArgs","GenericArgsRef","TermKind"]};

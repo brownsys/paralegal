@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["IsMacroRulesItem"],"struct":["FnParseMode"],"type":["ItemInfo","ReqName"]};

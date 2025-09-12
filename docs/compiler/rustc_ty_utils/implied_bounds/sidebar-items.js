@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["assumed_wf_types","fn_sig_spans","impl_spans","provide"]};

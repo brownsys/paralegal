@@ -1,0 +1,30 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Transforms an instance for LLVM CFI and cross-language LLVM CFI support using Itanium C++ ABI mangling."><title>transform_instance in rustc_sanitizers::cfi::typeid::itanium_cxx_abi::transform - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../../../" data-static-root-path="../../../../../static.files/" data-current-crate="rustc_sanitizers" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc fn"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../../../rustc_sanitizers/index.html">rustc_<wbr>sanitizers</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><div id="rustdoc-modnav"><h2><a href="index.html">In rustc_<wbr>sanitizers::<wbr>cfi::<wbr>typeid::<wbr>itanium_<wbr>cxx_<wbr>abi::<wbr>transform</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../../../index.html">rustc_sanitizers</a>::<wbr><a href="../../../index.html">cfi</a>::<wbr><a href="../../index.html">typeid</a>::<wbr><a href="../index.html">itanium_cxx_abi</a>::<wbr><a href="index.html">transform</a></span><h1>Function <span class="fn">transform_instance</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../../../src/rustc_sanitizers/cfi/typeid/itanium_cxx_abi/transform.rs.html#297">Source</a> </span></div><pre class="rust item-decl"><code>pub(crate) fn transform_instance&lt;'tcx&gt;(
+    tcx: <a class="struct" href="../../../../../rustc_middle/ty/context/struct.TyCtxt.html" title="struct rustc_middle::ty::context::TyCtxt">TyCtxt</a>&lt;'tcx&gt;,
+    instance: <a class="struct" href="../../../../../rustc_middle/ty/instance/struct.Instance.html" title="struct rustc_middle::ty::instance::Instance">Instance</a>&lt;'tcx&gt;,
+    options: <a class="struct" href="../../struct.TypeIdOptions.html" title="struct rustc_sanitizers::cfi::typeid::TypeIdOptions">TypeIdOptions</a>,
+) -&gt; <a class="struct" href="../../../../../rustc_middle/ty/instance/struct.Instance.html" title="struct rustc_middle::ty::instance::Instance">Instance</a>&lt;'tcx&gt;</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Transforms an instance for LLVM CFI and cross-language LLVM CFI support using Itanium C++ ABI
+mangling.</p>
+<p>typeid_for_instance is called at two locations, initially when declaring/defining functions and
+methods, and later during code generation at call sites, after type erasure might have occurred.</p>
+<p>In the first call (i.e., when declaring/defining functions and methods), it encodes type ids for
+an FnAbi or Instance, and these type ids are attached to functions and methods. (These type ids
+are used later by the LowerTypeTests LLVM pass to aggregate functions in groups derived from
+these type ids.)</p>
+<p>In the second call (i.e., during code generation at call sites), it encodes a type id for an
+FnAbi or Instance, after type erasure might have occurred, and this type id is used for testing
+if a function is member of the group derived from this type id. Therefore, in the first call to
+typeid_for_fnabi (when type ids are attached to functions and methods), it can only include at
+most as much information that would be available in the second call (i.e., during code
+generation at call sites); otherwise, the type ids would not match.</p>
+<p>For this, it:</p>
+<ul>
+<li>Adjust the type ids of DropGlues (see below).</li>
+<li>Adjusts the type ids of VTableShims to the type id expected in the call sites for the
+entry in the vtable (i.e., by using the signature of the closure passed as an argument to the
+shim, or by just removing self).</li>
+<li>Performs type erasure for calls on trait objects by transforming self into a trait object of
+the trait that defines the method.</li>
+<li>Performs type erasure for closures call methods by transforming self into a trait object of
+the Fn trait that defines the method (for being attached as a secondary type id).</li>
+</ul>
+</div></details></section></div></main></body></html>

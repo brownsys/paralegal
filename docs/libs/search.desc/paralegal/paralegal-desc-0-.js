@@ -1,0 +1,1 @@
+searchState.loadedDescShard("paralegal", 0, "The paralegal annotation library.\nMark this function as entry point for analysis.\nRe-export the named item from the <code>impl_</code> mod as a …\nAttach an annotation to this item.\nDeclare an analysis-level type alias\nA no-op implementation for a proc-macro.")

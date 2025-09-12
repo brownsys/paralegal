@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ImportKind"],"fn":["import_kind_to_string","import_path_to_string","pub_use_of_private_extern_crate_hack"],"struct":["ImportData","NameResolution","UnresolvedImportError"],"type":["Import","Res"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["compile","compile_ast_node","compile_definition","compile_definitions","compile_only_via","compile_relation","compile_variable_intro"],"struct":["ClauseNumPropagator"]};

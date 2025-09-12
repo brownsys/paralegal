@@ -1,0 +1,118 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="API documentation for the Rust `SimplifyMatch` trait in crate `rustc_mir_transform`."><title>SimplifyMatch in rustc_mir_transform::match_branches - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_mir_transform" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc trait"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../rustc_mir_transform/index.html">rustc_<wbr>mir_<wbr>transform</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Simplify<wbr>Match</a></h2><h3><a href="#required-methods">Required Methods</a></h3><ul class="block"><li><a href="#tymethod.can_simplify" title="can_simplify">can_simplify</a></li><li><a href="#tymethod.new_stmts" title="new_stmts">new_stmts</a></li></ul><h3><a href="#provided-methods">Provided Methods</a></h3><ul class="block"><li><a href="#method.simplify" title="simplify">simplify</a></li></ul><h3><a href="#implementors">Implementors</a></h3></section><div id="rustdoc-modnav"><h2><a href="index.html">In rustc_<wbr>mir_<wbr>transform::<wbr>match_<wbr>branches</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">rustc_mir_transform</a>::<wbr><a href="index.html">match_branches</a></span><h1>Trait <span class="trait">SimplifyMatch</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustc_mir_transform/match_branches.rs.html#53-126">Source</a> </span></div><pre class="rust item-decl"><code>trait SimplifyMatch&lt;'tcx&gt; {
+    // Required methods
+    fn <a href="#tymethod.can_simplify" class="fn">can_simplify</a>(
+        &amp;mut self,
+        tcx: <a class="struct" href="../../rustc_middle/ty/context/struct.TyCtxt.html" title="struct rustc_middle::ty::context::TyCtxt">TyCtxt</a>&lt;'tcx&gt;,
+        targets: &amp;<a class="struct" href="../../rustc_middle/mir/syntax/struct.SwitchTargets.html" title="struct rustc_middle::mir::syntax::SwitchTargets">SwitchTargets</a>,
+        typing_env: <a class="struct" href="../../rustc_middle/ty/struct.TypingEnv.html" title="struct rustc_middle::ty::TypingEnv">TypingEnv</a>&lt;'tcx&gt;,
+        bbs: &amp;<a class="struct" href="../../rustc_index/slice/struct.IndexSlice.html" title="struct rustc_index::slice::IndexSlice">IndexSlice</a>&lt;<a class="struct" href="../../rustc_middle/mir/struct.BasicBlock.html" title="struct rustc_middle::mir::BasicBlock">BasicBlock</a>, <a class="struct" href="../../rustc_middle/mir/struct.BasicBlockData.html" title="struct rustc_middle::mir::BasicBlockData">BasicBlockData</a>&lt;'tcx&gt;&gt;,
+        discr_ty: <a class="struct" href="../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;;
+<span class="item-spacer"></span>    fn <a href="#tymethod.new_stmts" class="fn">new_stmts</a>(
+        &amp;self,
+        tcx: <a class="struct" href="../../rustc_middle/ty/context/struct.TyCtxt.html" title="struct rustc_middle::ty::context::TyCtxt">TyCtxt</a>&lt;'tcx&gt;,
+        targets: &amp;<a class="struct" href="../../rustc_middle/mir/syntax/struct.SwitchTargets.html" title="struct rustc_middle::mir::syntax::SwitchTargets">SwitchTargets</a>,
+        typing_env: <a class="struct" href="../../rustc_middle/ty/struct.TypingEnv.html" title="struct rustc_middle::ty::TypingEnv">TypingEnv</a>&lt;'tcx&gt;,
+        patch: &amp;mut <a class="struct" href="../../rustc_middle/mir/patch/struct.MirPatch.html" title="struct rustc_middle::mir::patch::MirPatch">MirPatch</a>&lt;'tcx&gt;,
+        parent_end: <a class="struct" href="../../rustc_middle/mir/struct.Location.html" title="struct rustc_middle::mir::Location">Location</a>,
+        bbs: &amp;<a class="struct" href="../../rustc_index/slice/struct.IndexSlice.html" title="struct rustc_index::slice::IndexSlice">IndexSlice</a>&lt;<a class="struct" href="../../rustc_middle/mir/struct.BasicBlock.html" title="struct rustc_middle::mir::BasicBlock">BasicBlock</a>, <a class="struct" href="../../rustc_middle/mir/struct.BasicBlockData.html" title="struct rustc_middle::mir::BasicBlockData">BasicBlockData</a>&lt;'tcx&gt;&gt;,
+        discr_local: <a class="struct" href="../../rustc_middle/mir/struct.Local.html" title="struct rustc_middle::mir::Local">Local</a>,
+        discr_ty: <a class="struct" href="../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;,
+    );
+
+    // Provided method
+    fn <a href="#method.simplify" class="fn">simplify</a>(
+        &amp;mut self,
+        tcx: <a class="struct" href="../../rustc_middle/ty/context/struct.TyCtxt.html" title="struct rustc_middle::ty::context::TyCtxt">TyCtxt</a>&lt;'tcx&gt;,
+        body: &amp;mut <a class="struct" href="../../rustc_middle/mir/struct.Body.html" title="struct rustc_middle::mir::Body">Body</a>&lt;'tcx&gt;,
+        switch_bb_idx: <a class="struct" href="../../rustc_middle/mir/struct.BasicBlock.html" title="struct rustc_middle::mir::BasicBlock">BasicBlock</a>,
+        typing_env: <a class="struct" href="../../rustc_middle/ty/struct.TypingEnv.html" title="struct rustc_middle::ty::TypingEnv">TypingEnv</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt; { ... }
+}</code></pre><h2 id="required-methods" class="section-header">Required Methods<a href="#required-methods" class="anchor">§</a></h2><div class="methods"><details class="toggle method-toggle" open><summary><section id="tymethod.can_simplify" class="method"><a class="src rightside" href="../../src/rustc_mir_transform/match_branches.rs.html#106-113">Source</a><h4 class="code-header">fn <a href="#tymethod.can_simplify" class="fn">can_simplify</a>(
+    &amp;mut self,
+    tcx: <a class="struct" href="../../rustc_middle/ty/context/struct.TyCtxt.html" title="struct rustc_middle::ty::context::TyCtxt">TyCtxt</a>&lt;'tcx&gt;,
+    targets: &amp;<a class="struct" href="../../rustc_middle/mir/syntax/struct.SwitchTargets.html" title="struct rustc_middle::mir::syntax::SwitchTargets">SwitchTargets</a>,
+    typing_env: <a class="struct" href="../../rustc_middle/ty/struct.TypingEnv.html" title="struct rustc_middle::ty::TypingEnv">TypingEnv</a>&lt;'tcx&gt;,
+    bbs: &amp;<a class="struct" href="../../rustc_index/slice/struct.IndexSlice.html" title="struct rustc_index::slice::IndexSlice">IndexSlice</a>&lt;<a class="struct" href="../../rustc_middle/mir/struct.BasicBlock.html" title="struct rustc_middle::mir::BasicBlock">BasicBlock</a>, <a class="struct" href="../../rustc_middle/mir/struct.BasicBlockData.html" title="struct rustc_middle::mir::BasicBlockData">BasicBlockData</a>&lt;'tcx&gt;&gt;,
+    discr_ty: <a class="struct" href="../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;,
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;</h4></section></summary><div class="docblock"><p>Check that the BBs to be simplified satisfies all distinct and
+that the terminator are the same.
+There are also conditions for different ways of simplification.</p>
+</div></details><section id="tymethod.new_stmts" class="method"><a class="src rightside" href="../../src/rustc_mir_transform/match_branches.rs.html#115-125">Source</a><h4 class="code-header">fn <a href="#tymethod.new_stmts" class="fn">new_stmts</a>(
+    &amp;self,
+    tcx: <a class="struct" href="../../rustc_middle/ty/context/struct.TyCtxt.html" title="struct rustc_middle::ty::context::TyCtxt">TyCtxt</a>&lt;'tcx&gt;,
+    targets: &amp;<a class="struct" href="../../rustc_middle/mir/syntax/struct.SwitchTargets.html" title="struct rustc_middle::mir::syntax::SwitchTargets">SwitchTargets</a>,
+    typing_env: <a class="struct" href="../../rustc_middle/ty/struct.TypingEnv.html" title="struct rustc_middle::ty::TypingEnv">TypingEnv</a>&lt;'tcx&gt;,
+    patch: &amp;mut <a class="struct" href="../../rustc_middle/mir/patch/struct.MirPatch.html" title="struct rustc_middle::mir::patch::MirPatch">MirPatch</a>&lt;'tcx&gt;,
+    parent_end: <a class="struct" href="../../rustc_middle/mir/struct.Location.html" title="struct rustc_middle::mir::Location">Location</a>,
+    bbs: &amp;<a class="struct" href="../../rustc_index/slice/struct.IndexSlice.html" title="struct rustc_index::slice::IndexSlice">IndexSlice</a>&lt;<a class="struct" href="../../rustc_middle/mir/struct.BasicBlock.html" title="struct rustc_middle::mir::BasicBlock">BasicBlock</a>, <a class="struct" href="../../rustc_middle/mir/struct.BasicBlockData.html" title="struct rustc_middle::mir::BasicBlockData">BasicBlockData</a>&lt;'tcx&gt;&gt;,
+    discr_local: <a class="struct" href="../../rustc_middle/mir/struct.Local.html" title="struct rustc_middle::mir::Local">Local</a>,
+    discr_ty: <a class="struct" href="../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;,
+)</h4></section></div><h2 id="provided-methods" class="section-header">Provided Methods<a href="#provided-methods" class="anchor">§</a></h2><div class="methods"><details class="toggle method-toggle" open><summary><section id="method.simplify" class="method"><a class="src rightside" href="../../src/rustc_mir_transform/match_branches.rs.html#57-101">Source</a><h4 class="code-header">fn <a href="#method.simplify" class="fn">simplify</a>(
+    &amp;mut self,
+    tcx: <a class="struct" href="../../rustc_middle/ty/context/struct.TyCtxt.html" title="struct rustc_middle::ty::context::TyCtxt">TyCtxt</a>&lt;'tcx&gt;,
+    body: &amp;mut <a class="struct" href="../../rustc_middle/mir/struct.Body.html" title="struct rustc_middle::mir::Body">Body</a>&lt;'tcx&gt;,
+    switch_bb_idx: <a class="struct" href="../../rustc_middle/mir/struct.BasicBlock.html" title="struct rustc_middle::mir::BasicBlock">BasicBlock</a>,
+    typing_env: <a class="struct" href="../../rustc_middle/ty/struct.TypingEnv.html" title="struct rustc_middle::ty::TypingEnv">TypingEnv</a>&lt;'tcx&gt;,
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;</h4></section></summary><div class="docblock"><p>Simplifies a match statement, returning true if the simplification succeeds, false
+otherwise. Generic code is written here, and we generally don’t need a custom
+implementation.</p>
+</div></details></div><h2 id="implementors" class="section-header">Implementors<a href="#implementors" class="anchor">§</a></h2><div id="implementors-list"><section id="impl-SimplifyMatch%3C'tcx%3E-for-SimplifyToExp" class="impl"><a class="src rightside" href="../../src/rustc_mir_transform/match_branches.rs.html#364-524">Source</a><a href="#impl-SimplifyMatch%3C'tcx%3E-for-SimplifyToExp" class="anchor">§</a><h3 class="code-header">impl&lt;'tcx&gt; <a class="trait" href="trait.SimplifyMatch.html" title="trait rustc_mir_transform::match_branches::SimplifyMatch">SimplifyMatch</a>&lt;'tcx&gt; for <a class="struct" href="struct.SimplifyToExp.html" title="struct rustc_mir_transform::match_branches::SimplifyToExp">SimplifyToExp</a></h3><div class="docblock"><p>If we find that the value of match is the same as the assignment,
+merge a target block statements into the source block,
+using cast to transform different integer types.</p>
+</div></section><div class="docblock"><p>For example:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>bb0: {
+    switchInt(_1) -&gt; [<span class="number">1</span>: bb2, <span class="number">2</span>: bb3, <span class="number">3</span>: bb4, otherwise: bb1];
+}
+
+bb1: {
+    unreachable;
+}
+
+bb2: {
+    _0 = <span class="kw">const </span><span class="number">1_i16</span>;
+    goto -&gt; bb5;
+}
+
+bb3: {
+    _0 = <span class="kw">const </span><span class="number">2_i16</span>;
+    goto -&gt; bb5;
+}
+
+bb4: {
+    _0 = <span class="kw">const </span><span class="number">3_i16</span>;
+    goto -&gt; bb5;
+}</code></pre></div>
+<p>into:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>bb0: {
+   _0 = _3 <span class="kw">as </span>i16 (IntToInt);
+   goto -&gt; bb5;
+}</code></pre></div>
+</div><section id="impl-SimplifyMatch%3C'tcx%3E-for-SimplifyToIf" class="impl"><a class="src rightside" href="../../src/rustc_mir_transform/match_branches.rs.html#161-269">Source</a><a href="#impl-SimplifyMatch%3C'tcx%3E-for-SimplifyToIf" class="anchor">§</a><h3 class="code-header">impl&lt;'tcx&gt; <a class="trait" href="trait.SimplifyMatch.html" title="trait rustc_mir_transform::match_branches::SimplifyMatch">SimplifyMatch</a>&lt;'tcx&gt; for <a class="struct" href="struct.SimplifyToIf.html" title="struct rustc_mir_transform::match_branches::SimplifyToIf">SimplifyToIf</a></h3><div class="docblock"><p>If a source block is found that switches between two blocks that are exactly
+the same modulo const bool assignments (e.g., one assigns true another false
+to the same place), merge a target block statements into the source block,
+using Eq / Ne comparison with switch value where const bools value differ.</p>
+</div></section><div class="docblock"><p>For example:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>bb0: {
+    switchInt(<span class="kw">move </span>_3) -&gt; [<span class="number">42_isize</span>: bb1, otherwise: bb2];
+}
+
+bb1: {
+    _2 = <span class="kw">const </span><span class="bool-val">true</span>;
+    goto -&gt; bb3;
+}
+
+bb2: {
+    _2 = <span class="kw">const </span><span class="bool-val">false</span>;
+    goto -&gt; bb3;
+}</code></pre></div>
+<p>into:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>bb0: {
+   _2 = Eq(<span class="kw">move </span>_3, <span class="kw">const </span><span class="number">42_isize</span>);
+   goto -&gt; bb3;
+}</code></pre></div>
+</div></div><script src="../../trait.impl/rustc_mir_transform/match_branches/trait.SimplifyMatch.js" async></script></section></div></main></body></html>

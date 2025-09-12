@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["find_project_manifest_exact","find_root_manifest_for_wd"]};

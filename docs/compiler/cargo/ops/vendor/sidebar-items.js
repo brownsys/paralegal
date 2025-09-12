@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["VendorSource"],"fn":["copy_and_checksum","cp_sources","prepare_for_vendor","prepare_toml_for_vendor","sync","vendor"],"struct":["VendorConfig","VendorOptions"]};

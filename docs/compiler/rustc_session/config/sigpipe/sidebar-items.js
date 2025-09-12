@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT","INHERIT","SIG_DFL","SIG_IGN"]};

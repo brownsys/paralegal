@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CSKYInlineAsmReg","CSKYInlineAsmRegClass"],"fn":["fill_reg_map","regclass_map"]};

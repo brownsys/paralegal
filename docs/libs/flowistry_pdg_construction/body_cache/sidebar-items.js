@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["INTERMEDIATE_ARTIFACT_EXT"],"fn":["clean_undecodable_data_from_body","dump_mir_and_borrowck_facts","intermediate_out_dir","is_stolen","load_body_and_facts","local_or_remote_paths","std_crates"],"struct":["BodyCache","CachedBody","DumpingVisitor","FlowistryFacts"],"type":["BodyMap","LocationIndex"]};

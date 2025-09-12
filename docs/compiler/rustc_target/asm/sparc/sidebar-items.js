@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SparcInlineAsmReg","SparcInlineAsmRegClass"],"fn":["fill_reg_map","regclass_map","reserved_g5"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["COMPILE_FLAGS_HEADER","LLVM_COMPONENTS_HEADER"],"fn":["check"],"struct":["RevisionInfo"]};

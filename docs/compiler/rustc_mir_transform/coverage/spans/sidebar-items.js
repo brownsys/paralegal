@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["compare_spans","divide_spans_into_buckets","drain_front_while","extract_refined_covspans","remove_unwanted_expansion_spans","remove_unwanted_overlapping_spans","split_visible_macro_spans"],"mod":["from_mir"],"struct":["Covspan"]};

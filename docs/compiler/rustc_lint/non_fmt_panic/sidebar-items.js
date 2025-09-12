@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check_panic","check_panic_str","find_delimiters","is_arg_inside_call","panic_call"],"static":["NON_FMT_PANICS"],"struct":["NonPanicFmt"]};

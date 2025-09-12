@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DictKey","TyQ"],"fn":["compress","encode_args","encode_const","encode_fnsig","encode_predicate","encode_predicates","encode_region","encode_ty","encode_ty_name","to_disambiguator","to_seq_id"],"type":["EncodeTyOptions"]};

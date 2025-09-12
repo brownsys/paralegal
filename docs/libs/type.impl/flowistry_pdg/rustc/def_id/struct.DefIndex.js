@@ -1,0 +1,9 @@
+(function() {
+    var type_impls = Object.fromEntries([["flowistry_pdg",[["<details class=\"toggle implementors-toggle\" open><summary><section id=\"impl-From%3CDefIndex%3E-for-DefIndex\" class=\"impl\"><a class=\"src rightside\" href=\"src/flowistry_pdg/rustc_impls.rs.html#71-75\">Source</a><a href=\"#impl-From%3CDefIndex%3E-for-DefIndex\" class=\"anchor\">§</a><h3 class=\"code-header\">impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/convert/trait.From.html\" title=\"trait core::convert::From\">From</a>&lt;<a class=\"struct\" href=\"flowistry_pdg/rustc_proxies/struct.DefIndex.html\" title=\"struct flowistry_pdg::rustc_proxies::DefIndex\">DefIndex</a>&gt; for <a class=\"struct\" href=\"flowistry_pdg/rustc/def_id/struct.DefIndex.html\" title=\"struct flowistry_pdg::rustc::def_id::DefIndex\">DefIndex</a></h3></section></summary><div class=\"impl-items\"><details class=\"toggle method-toggle\" open><summary><section id=\"method.from\" class=\"method trait-impl\"><a class=\"src rightside\" href=\"src/flowistry_pdg/rustc_impls.rs.html#72-74\">Source</a><a href=\"#method.from\" class=\"anchor\">§</a><h4 class=\"code-header\">fn <a href=\"https://doc.rust-lang.org/nightly/core/convert/trait.From.html#tymethod.from\" class=\"fn\">from</a>(proxy: <a class=\"struct\" href=\"flowistry_pdg/rustc_proxies/struct.DefIndex.html\" title=\"struct flowistry_pdg::rustc_proxies::DefIndex\">DefIndex</a>) -&gt; <a class=\"struct\" href=\"flowistry_pdg/rustc/def_id/struct.DefIndex.html\" title=\"struct flowistry_pdg::rustc::def_id::DefIndex\">DefIndex</a></h4></section></summary><div class='docblock'>Converts to this type from the input type.</div></details></div></details>","From<DefIndex>","flowistry_pdg::rustc_portable::DefIndex"]]]]);
+    if (window.register_type_impls) {
+        window.register_type_impls(type_impls);
+    } else {
+        window.pending_type_impls = type_impls;
+    }
+})()
+//{"start":55,"fragment_lengths":[1710]}

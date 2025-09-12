@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["BitVec"],"type":["ArcIndexMatrix","ArcIndexSet","IndexMatrix","IndexSet","RefIndexMatrix","RefIndexSet"]};

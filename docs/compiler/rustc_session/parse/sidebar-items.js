@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["add_feature_diagnostics","add_feature_diagnostics_for_issue","feature_err","feature_err_issue","feature_warn","feature_warn_issue"],"struct":["GatedSpans","ParseSess","SymbolGallery"]};

@@ -1,0 +1,55 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Builds MIR from expressions. As a caller into this module, you have many options, but the first thing you have to decide is whether you are evaluating this expression for its value, its location, or as a constant."><title>rustc_mir_build::build::expr - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustc_mir_build" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../rustc_mir_build/index.html">rustc_<wbr>mir_<wbr>build</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module expr</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#implementation-notes" title="Implementation notes">Implementation notes</a></li></ul><h3><a href="#modules">Module Items</a></h3><ul class="block"><li><a href="#modules" title="Modules">Modules</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In rustc_<wbr>mir_<wbr>build::<wbr>build</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../index.html">rustc_mir_build</a>::<wbr><a href="../index.html">build</a></span><h1>Module <span>expr</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/rustc_mir_build/build/expr/mod.rs.html#1-70">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Builds MIR from expressions. As a caller into this module, you
+have many options, but the first thing you have to decide is
+whether you are evaluating this expression for its <em>value</em>, its
+<em>location</em>, or as a <em>constant</em>.</p>
+<p>Typically, you want the value: e.g., if you are doing <code>expr_a + expr_b</code>, you want the values of those expressions. In that case,
+you want one of the following functions. Note that if the expr has
+a type that is not <code>Copy</code>, then using any of these functions will
+“move” the value out of its current home (if any).</p>
+<ul>
+<li><code>expr_into_dest</code> – writes the value into a specific location, which
+should be uninitialized</li>
+<li><code>as_operand</code> – evaluates the value and yields an <code>Operand</code>,
+suitable for use as an argument to an <code>Rvalue</code></li>
+<li><code>as_temp</code> – evaluates into a temporary; this is similar to <code>as_operand</code>
+except it always returns a fresh place, even for constants</li>
+<li><code>as_rvalue</code> – yields an <code>Rvalue</code>, suitable for use in an assignment;
+as of this writing, never needed outside of the <code>expr</code> module itself</li>
+</ul>
+<p>Sometimes though want the expression’s <em>location</em>. An example
+would be during a match statement, or the operand of the <code>&amp;</code>
+operator. In that case, you want <code>as_place</code>. This will create a
+temporary if necessary.</p>
+<p>Finally, if it’s a constant you seek, then call
+<code>as_constant</code>. This creates a <code>Constant&lt;H&gt;</code>, but naturally it can
+only be used on constant expressions and hence is needed only in
+very limited contexts.</p>
+<h4 id="implementation-notes"><a class="doc-anchor" href="#implementation-notes">§</a>Implementation notes</h4>
+<p>For any given kind of expression, there is generally one way that
+can be lowered most naturally. This is specified by the
+<code>Category::of</code> function in the <code>category</code> module. For example, a
+struct expression (or other expression that creates a new value)
+is typically easiest to write in terms of <code>as_rvalue</code> or <code>into</code>,
+whereas a reference to a field is easiest to write in terms of
+<code>as_place</code>. (The exception to this is scope and paren
+expressions, which have no category.)</p>
+<p>Therefore, the various functions above make use of one another in
+a descending fashion. For any given expression, you should pick
+the most suitable spot to implement it, and then just let the
+other fns cycle around. The handoff works like this:</p>
+<ul>
+<li><code>into(place)</code> -&gt; fallback is to create an rvalue with <code>as_rvalue</code> and assign it to <code>place</code></li>
+<li><code>as_rvalue</code> -&gt; fallback is to create an Operand with <code>as_operand</code> and use <code>Rvalue::use</code></li>
+<li><code>as_operand</code> -&gt; either invokes <code>as_constant</code> or <code>as_temp</code></li>
+<li><code>as_constant</code> -&gt; (no fallback)</li>
+<li><code>as_temp</code> -&gt; creates a temporary and either calls <code>as_place</code> or <code>into</code></li>
+<li><code>as_place</code> -&gt; for rvalues, falls back to <code>as_temp</code> and returns that</li>
+</ul>
+<p>As you can see, there is a cycle where <code>into</code> can (in theory) fallback to <code>as_temp</code>
+which can fallback to <code>into</code>. So if one of the <code>ExprKind</code> variants is not, in fact,
+implemented in the category where it is supposed to be, there will be a problem.</p>
+<p>Of those fallbacks, the most interesting one is <code>into</code>, because
+it discriminates based on the category of the expression. This is
+basically the point where the “by value” operations are bridged
+over to the “by reference” mode (<code>as_place</code>).</p>
+</div></details><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="mod" href="as_constant/index.html" title="mod rustc_mir_build::build::expr::as_constant">as_<wbr>constant</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">See docs in build/expr/mod.rs</div></li><li><div class="item-name"><a class="mod" href="as_operand/index.html" title="mod rustc_mir_build::build::expr::as_operand">as_<wbr>operand</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">See docs in build/expr/mod.rs</div></li><li><div class="item-name"><a class="mod" href="as_place/index.html" title="mod rustc_mir_build::build::expr::as_place">as_<wbr>place</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">See docs in build/expr/mod.rs</div></li><li><div class="item-name"><a class="mod" href="as_rvalue/index.html" title="mod rustc_mir_build::build::expr::as_rvalue">as_<wbr>rvalue</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">See docs in <code>build/expr/mod.rs</code>.</div></li><li><div class="item-name"><a class="mod" href="as_temp/index.html" title="mod rustc_mir_build::build::expr::as_temp">as_temp</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">See docs in build/expr/mod.rs</div></li><li><div class="item-name"><a class="mod" href="category/index.html" title="mod rustc_mir_build::build::expr::category">category</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="mod" href="into/index.html" title="mod rustc_mir_build::build::expr::into">into</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">See docs in build/expr/mod.rs</div></li><li><div class="item-name"><a class="mod" href="stmt/index.html" title="mod rustc_mir_build::build::expr::stmt">stmt</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul></section></div></main></body></html>

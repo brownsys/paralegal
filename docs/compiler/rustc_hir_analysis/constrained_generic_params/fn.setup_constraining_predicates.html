@@ -1,0 +1,45 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Order the predicates in `predicates` such that each parameter is constrained before it is used, if that is possible, and add the parameters so constrained to `input_parameters`. For example, imagine the following impl:"><title>setup_constraining_predicates in rustc_hir_analysis::constrained_generic_params - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_hir_analysis" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc fn"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button><a class="logo-container" href="../../rustc_hir_analysis/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt=""></a></nav><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../rustc_hir_analysis/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt="logo"></a><h2><a href="../../rustc_hir_analysis/index.html">rustc_<wbr>hir_<wbr>analysis</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><div id="rustdoc-modnav"><h2><a href="index.html">In rustc_<wbr>hir_<wbr>analysis::<wbr>constrained_<wbr>generic_<wbr>params</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">rustc_hir_analysis</a>::<wbr><a href="index.html">constrained_generic_params</a></span><h1>Function <span class="fn">setup_constraining_predicates</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustc_hir_analysis/constrained_generic_params.rs.html#160-232">Source</a> </span></div><pre class="rust item-decl"><code>pub(crate) fn setup_constraining_predicates&lt;'tcx&gt;(
+    tcx: <a class="struct" href="../../rustc_middle/ty/context/struct.TyCtxt.html" title="struct rustc_middle::ty::context::TyCtxt">TyCtxt</a>&lt;'tcx&gt;,
+    predicates: &amp;mut [(<a class="struct" href="../../rustc_middle/ty/predicate/struct.Clause.html" title="struct rustc_middle::ty::predicate::Clause">Clause</a>&lt;'tcx&gt;, <a class="struct" href="../../rustc_span/span_encoding/struct.Span.html" title="struct rustc_span::span_encoding::Span">Span</a>)],
+    impl_trait_ref: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="type" href="../../rustc_middle/ty/predicate/type.TraitRef.html" title="type rustc_middle::ty::predicate::TraitRef">TraitRef</a>&lt;'tcx&gt;&gt;,
+    input_parameters: &amp;mut <a class="type" href="https://docs.rs/rustc-hash/1.1.0/rustc_hash/type.FxHashSet.html" title="type rustc_hash::FxHashSet">FxHashSet</a>&lt;<a class="struct" href="struct.Parameter.html" title="struct rustc_hir_analysis::constrained_generic_params::Parameter">Parameter</a>&gt;,
+)</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Order the predicates in <code>predicates</code> such that each parameter is
+constrained before it is used, if that is possible, and add the
+parameters so constrained to <code>input_parameters</code>. For example,
+imagine the following impl:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">impl</span>&lt;T: Debug, U: Iterator&lt;Item = T&gt;&gt; Trait <span class="kw">for </span>U</code></pre></div>
+<p>The impl’s predicates are collected from left to right. Ignoring
+the implicit <code>Sized</code> bounds, these are</p>
+<ul>
+<li><code>T: Debug</code></li>
+<li><code>U: Iterator</code></li>
+<li><code>&lt;U as Iterator&gt;::Item = T</code> – a desugared ProjectionPredicate</li>
+</ul>
+<p>When we, for example, try to go over the trait-reference
+<code>IntoIter&lt;u32&gt; as Trait</code>, we instantiate the impl parameters with fresh
+variables and match them with the impl trait-ref, so we know that
+<code>$U = IntoIter&lt;u32&gt;</code>.</p>
+<p>However, in order to process the <code>$T: Debug</code> predicate, we must first
+know the value of <code>$T</code> - which is only given by processing the
+projection. As we occasionally want to process predicates in a single
+pass, we want the projection to come first. In fact, as projections
+can (acyclically) depend on one another - see RFC447 for details - we
+need to topologically sort them.</p>
+<p>We <em>do</em> have to be somewhat careful when projection targets contain
+projections themselves, for example in</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>    <span class="kw">impl</span>&lt;S,U,V,W&gt; Trait <span class="kw">for </span>U <span class="kw">where
+</span><span class="comment">/* 0 */   </span>S: Iterator&lt;Item = U&gt;,
+<span class="comment">/* - */   </span>U: Iterator,
+<span class="comment">/* 1 */   </span>&lt;U <span class="kw">as </span>Iterator&gt;::Item: ToOwned&lt;Owned=(W,&lt;V <span class="kw">as </span>Iterator&gt;::Item)&gt;
+<span class="comment">/* 2 */   </span>W: Iterator&lt;Item = V&gt;
+<span class="comment">/* 3 */   </span>V: Debug</code></pre></div>
+<p>we have to evaluate the projections in the order I wrote them:
+<code>V: Debug</code> requires <code>V</code> to be evaluated. The only projection that
+<em>determines</em> <code>V</code> is 2 (1 contains it, but <em>does not determine it</em>,
+as it is only contained within a projection), but that requires <code>W</code>
+which is determined by 1, which requires <code>U</code>, that is determined
+by 0. I should probably pick a less tangled example, but I can’t
+think of any.</p>
+</div></details></section></div></main></body></html>

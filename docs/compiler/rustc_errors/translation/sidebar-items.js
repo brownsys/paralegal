@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["to_fluent_args"],"struct":["FluentArgs"],"trait":["Translate"]};

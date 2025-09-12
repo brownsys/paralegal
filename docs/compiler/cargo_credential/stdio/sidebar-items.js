@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Stdio"],"fn":["stdin_stdout_to_console"],"mod":["imp"]};

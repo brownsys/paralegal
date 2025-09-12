@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["BasicBlock","BodyId","CrateNum","DefId","DefIndex","HirId","ItemLocalId","LocalDefId","Location","OwnerId"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["group_aligned_items","rewrite_aligned_items_inner","rewrite_with_alignment","struct_field_prefix_max_min_width"],"trait":["AlignedItem"]};

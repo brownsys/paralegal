@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["cs_clone","cs_clone_simple","expand_deriving_clone"]};

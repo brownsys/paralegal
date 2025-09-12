@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["as_local_assigned_to_return_place","find_local_assigned_to_return_place","local_eligible_for_nrvo"],"struct":["IsReturnPlaceRead","RenameReturnPlace","RenameToReturnPlace"]};

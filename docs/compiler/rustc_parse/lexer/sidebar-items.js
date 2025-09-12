@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["lex_token_trees","nfc_normalize"],"mod":["diagnostics","tokentrees","unescape_error_reporting","unicode_chars"],"struct":["Lexer","UnmatchedDelim"]};

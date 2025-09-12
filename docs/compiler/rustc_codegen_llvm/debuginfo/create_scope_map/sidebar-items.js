@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["compute_mir_scopes","make_mir_scope"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SelfSource"],"fn":["all_traits","print_disambiguation_help"],"struct":["TraitInfo"]};

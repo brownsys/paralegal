@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DiscardPositiveImpls"],"fn":["clean_param_env","clean_region_outlives_constraints","early_bound_region_name","synthesize_auto_trait_impl","synthesize_auto_trait_impls"]};

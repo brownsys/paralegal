@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["InternKind","InternResult"],"fn":["intern_as_new_static","intern_const_alloc_for_constprop","intern_const_alloc_recursive","intern_shallow"],"trait":["HasStaticRootDefId"],"traitalias":["CompileTimeMachine"]};

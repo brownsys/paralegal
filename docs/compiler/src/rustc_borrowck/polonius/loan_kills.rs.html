@@ -1,0 +1,299 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `compiler/rustc_borrowck/src/polonius/loan_kills.rs`."><title>loan_kills.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustc_borrowck" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../../../static.files/src-script-56102188.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">rustc_borrowck/polonius/</div>loan_kills.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<a href="#1" id="1">1</a>
+<a href="#2" id="2">2</a>
+<a href="#3" id="3">3</a>
+<a href="#4" id="4">4</a>
+<a href="#5" id="5">5</a>
+<a href="#6" id="6">6</a>
+<a href="#7" id="7">7</a>
+<a href="#8" id="8">8</a>
+<a href="#9" id="9">9</a>
+<a href="#10" id="10">10</a>
+<a href="#11" id="11">11</a>
+<a href="#12" id="12">12</a>
+<a href="#13" id="13">13</a>
+<a href="#14" id="14">14</a>
+<a href="#15" id="15">15</a>
+<a href="#16" id="16">16</a>
+<a href="#17" id="17">17</a>
+<a href="#18" id="18">18</a>
+<a href="#19" id="19">19</a>
+<a href="#20" id="20">20</a>
+<a href="#21" id="21">21</a>
+<a href="#22" id="22">22</a>
+<a href="#23" id="23">23</a>
+<a href="#24" id="24">24</a>
+<a href="#25" id="25">25</a>
+<a href="#26" id="26">26</a>
+<a href="#27" id="27">27</a>
+<a href="#28" id="28">28</a>
+<a href="#29" id="29">29</a>
+<a href="#30" id="30">30</a>
+<a href="#31" id="31">31</a>
+<a href="#32" id="32">32</a>
+<a href="#33" id="33">33</a>
+<a href="#34" id="34">34</a>
+<a href="#35" id="35">35</a>
+<a href="#36" id="36">36</a>
+<a href="#37" id="37">37</a>
+<a href="#38" id="38">38</a>
+<a href="#39" id="39">39</a>
+<a href="#40" id="40">40</a>
+<a href="#41" id="41">41</a>
+<a href="#42" id="42">42</a>
+<a href="#43" id="43">43</a>
+<a href="#44" id="44">44</a>
+<a href="#45" id="45">45</a>
+<a href="#46" id="46">46</a>
+<a href="#47" id="47">47</a>
+<a href="#48" id="48">48</a>
+<a href="#49" id="49">49</a>
+<a href="#50" id="50">50</a>
+<a href="#51" id="51">51</a>
+<a href="#52" id="52">52</a>
+<a href="#53" id="53">53</a>
+<a href="#54" id="54">54</a>
+<a href="#55" id="55">55</a>
+<a href="#56" id="56">56</a>
+<a href="#57" id="57">57</a>
+<a href="#58" id="58">58</a>
+<a href="#59" id="59">59</a>
+<a href="#60" id="60">60</a>
+<a href="#61" id="61">61</a>
+<a href="#62" id="62">62</a>
+<a href="#63" id="63">63</a>
+<a href="#64" id="64">64</a>
+<a href="#65" id="65">65</a>
+<a href="#66" id="66">66</a>
+<a href="#67" id="67">67</a>
+<a href="#68" id="68">68</a>
+<a href="#69" id="69">69</a>
+<a href="#70" id="70">70</a>
+<a href="#71" id="71">71</a>
+<a href="#72" id="72">72</a>
+<a href="#73" id="73">73</a>
+<a href="#74" id="74">74</a>
+<a href="#75" id="75">75</a>
+<a href="#76" id="76">76</a>
+<a href="#77" id="77">77</a>
+<a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
+<a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a></pre></div><pre class="rust"><code><span class="kw">use </span>rustc_middle::mir::visit::Visitor;
+<span class="kw">use </span>rustc_middle::mir::{
+    Body, Local, Location, Place, PlaceRef, ProjectionElem, Rvalue, Statement, StatementKind,
+    Terminator, TerminatorKind,
+};
+<span class="kw">use </span>rustc_middle::ty::TyCtxt;
+<span class="kw">use </span>tracing::debug;
+
+<span class="kw">use </span><span class="kw">crate</span>::borrow_set::BorrowSet;
+<span class="kw">use </span><span class="kw">crate</span>::facts::AllFacts;
+<span class="kw">use </span><span class="kw">crate</span>::location::LocationTable;
+<span class="kw">use </span><span class="kw">crate</span>::places_conflict;
+
+<span class="doccomment">/// Emit `loan_killed_at` and `cfg_edge` facts at the same time.
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>emit_loan_kills&lt;<span class="lifetime">'tcx</span>&gt;(
+    tcx: TyCtxt&lt;<span class="lifetime">'tcx</span>&gt;,
+    all_facts: <span class="kw-2">&amp;mut </span>AllFacts,
+    location_table: <span class="kw-2">&amp;</span>LocationTable,
+    body: <span class="kw-2">&amp;</span>Body&lt;<span class="lifetime">'tcx</span>&gt;,
+    borrow_set: <span class="kw-2">&amp;</span>BorrowSet&lt;<span class="lifetime">'tcx</span>&gt;,
+) {
+    <span class="kw">let </span><span class="kw-2">mut </span>visitor = LoanKillsGenerator { borrow_set, tcx, location_table, all_facts, body };
+    <span class="kw">for </span>(bb, data) <span class="kw">in </span>body.basic_blocks.iter_enumerated() {
+        visitor.visit_basic_block_data(bb, data);
+    }
+}
+
+<span class="kw">struct </span>LoanKillsGenerator&lt;<span class="lifetime">'a</span>, <span class="lifetime">'tcx</span>&gt; {
+    tcx: TyCtxt&lt;<span class="lifetime">'tcx</span>&gt;,
+    all_facts: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>AllFacts,
+    location_table: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>LocationTable,
+    borrow_set: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>BorrowSet&lt;<span class="lifetime">'tcx</span>&gt;,
+    body: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Body&lt;<span class="lifetime">'tcx</span>&gt;,
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">'a</span>, <span class="lifetime">'tcx</span>&gt; Visitor&lt;<span class="lifetime">'tcx</span>&gt; <span class="kw">for </span>LoanKillsGenerator&lt;<span class="lifetime">'a</span>, <span class="lifetime">'tcx</span>&gt; {
+    <span class="kw">fn </span>visit_statement(<span class="kw-2">&amp;mut </span><span class="self">self</span>, statement: <span class="kw-2">&amp;</span>Statement&lt;<span class="lifetime">'tcx</span>&gt;, location: Location) {
+        <span class="comment">// Also record CFG facts here.
+        </span><span class="self">self</span>.all_facts.cfg_edge.push((
+            <span class="self">self</span>.location_table.start_index(location),
+            <span class="self">self</span>.location_table.mid_index(location),
+        ));
+
+        <span class="self">self</span>.all_facts.cfg_edge.push((
+            <span class="self">self</span>.location_table.mid_index(location),
+            <span class="self">self</span>.location_table.start_index(location.successor_within_block()),
+        ));
+
+        <span class="comment">// If there are borrows on this now dead local, we need to record them as `killed`.
+        </span><span class="kw">if let </span>StatementKind::StorageDead(local) = statement.kind {
+            <span class="self">self</span>.record_killed_borrows_for_local(local, location);
+        }
+
+        <span class="self">self</span>.super_statement(statement, location);
+    }
+
+    <span class="kw">fn </span>visit_assign(<span class="kw-2">&amp;mut </span><span class="self">self</span>, place: <span class="kw-2">&amp;</span>Place&lt;<span class="lifetime">'tcx</span>&gt;, rvalue: <span class="kw-2">&amp;</span>Rvalue&lt;<span class="lifetime">'tcx</span>&gt;, location: Location) {
+        <span class="comment">// When we see `X = ...`, then kill borrows of
+        // `(*X).foo` and so forth.
+        </span><span class="self">self</span>.record_killed_borrows_for_place(<span class="kw-2">*</span>place, location);
+        <span class="self">self</span>.super_assign(place, rvalue, location);
+    }
+
+    <span class="kw">fn </span>visit_terminator(<span class="kw-2">&amp;mut </span><span class="self">self</span>, terminator: <span class="kw-2">&amp;</span>Terminator&lt;<span class="lifetime">'tcx</span>&gt;, location: Location) {
+        <span class="comment">// Also record CFG facts here.
+        </span><span class="self">self</span>.all_facts.cfg_edge.push((
+            <span class="self">self</span>.location_table.start_index(location),
+            <span class="self">self</span>.location_table.mid_index(location),
+        ));
+
+        <span class="kw">let </span>successor_blocks = terminator.successors();
+        <span class="self">self</span>.all_facts.cfg_edge.reserve(successor_blocks.size_hint().<span class="number">0</span>);
+        <span class="kw">for </span>successor_block <span class="kw">in </span>successor_blocks {
+            <span class="self">self</span>.all_facts.cfg_edge.push((
+                <span class="self">self</span>.location_table.mid_index(location),
+                <span class="self">self</span>.location_table.start_index(successor_block.start_location()),
+            ));
+        }
+
+        <span class="comment">// A `Call` terminator's return value can be a local which has borrows,
+        // so we need to record those as `killed` as well.
+        </span><span class="kw">if let </span>TerminatorKind::Call { destination, .. } = terminator.kind {
+            <span class="self">self</span>.record_killed_borrows_for_place(destination, location);
+        }
+
+        <span class="self">self</span>.super_terminator(terminator, location);
+    }
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">'tcx</span>&gt; LoanKillsGenerator&lt;<span class="lifetime">'_</span>, <span class="lifetime">'tcx</span>&gt; {
+    <span class="doccomment">/// Records the borrows on the specified place as `killed`. For example, when assigning to a
+    /// local, or on a call's return destination.
+    </span><span class="kw">fn </span>record_killed_borrows_for_place(<span class="kw-2">&amp;mut </span><span class="self">self</span>, place: Place&lt;<span class="lifetime">'tcx</span>&gt;, location: Location) {
+        <span class="comment">// Depending on the `Place` we're killing:
+        // - if it's a local, or a single deref of a local,
+        //   we kill all the borrows on the local.
+        // - if it's a deeper projection, we have to filter which
+        //   of the borrows are killed: the ones whose `borrowed_place`
+        //   conflicts with the `place`.
+        </span><span class="kw">match </span>place.as_ref() {
+            PlaceRef { local, projection: <span class="kw-2">&amp;</span>[] }
+            | PlaceRef { local, projection: <span class="kw-2">&amp;</span>[ProjectionElem::Deref] } =&gt; {
+                <span class="macro">debug!</span>(
+                    <span class="string">"Recording `killed` facts for borrows of local={:?} at location={:?}"</span>,
+                    local, location
+                );
+
+                <span class="self">self</span>.record_killed_borrows_for_local(local, location);
+            }
+
+            PlaceRef { local, projection: <span class="kw-2">&amp;</span>[.., <span class="kw">_</span>] } =&gt; {
+                <span class="comment">// Kill conflicting borrows of the innermost local.
+                </span><span class="macro">debug!</span>(
+                    <span class="string">"Recording `killed` facts for borrows of \
+                            innermost projected local={:?} at location={:?}"</span>,
+                    local, location
+                );
+
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(borrow_indices) = <span class="self">self</span>.borrow_set.local_map.get(<span class="kw-2">&amp;</span>local) {
+                    <span class="kw">for </span><span class="kw-2">&amp;</span>borrow_index <span class="kw">in </span>borrow_indices {
+                        <span class="kw">let </span>places_conflict = places_conflict::places_conflict(
+                            <span class="self">self</span>.tcx,
+                            <span class="self">self</span>.body,
+                            <span class="self">self</span>.borrow_set[borrow_index].borrowed_place,
+                            place,
+                            places_conflict::PlaceConflictBias::NoOverlap,
+                        );
+
+                        <span class="kw">if </span>places_conflict {
+                            <span class="kw">let </span>location_index = <span class="self">self</span>.location_table.mid_index(location);
+                            <span class="self">self</span>.all_facts.loan_killed_at.push((borrow_index, location_index));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    <span class="doccomment">/// Records the borrows on the specified local as `killed`.
+    </span><span class="kw">fn </span>record_killed_borrows_for_local(<span class="kw-2">&amp;mut </span><span class="self">self</span>, local: Local, location: Location) {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(borrow_indices) = <span class="self">self</span>.borrow_set.local_map.get(<span class="kw-2">&amp;</span>local) {
+            <span class="kw">let </span>location_index = <span class="self">self</span>.location_table.mid_index(location);
+            <span class="self">self</span>.all_facts.loan_killed_at.reserve(borrow_indices.len());
+            <span class="kw">for </span><span class="kw-2">&amp;</span>borrow_index <span class="kw">in </span>borrow_indices {
+                <span class="self">self</span>.all_facts.loan_killed_at.push((borrow_index, location_index));
+            }
+        }
+    }
+}
+</code></pre></div></section></main></body></html>

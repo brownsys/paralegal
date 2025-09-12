@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ROOT_NODE"],"enum":["BreakableTarget","DropKind"],"fn":["build_scope_drops"],"struct":["BreakableScope","CoroutineDrop","DropData","DropIdx","DropNode","DropNodeKey","DropTree","ExitScopes","IfThenScope","Scope","Scopes","Unwind"],"trait":["DropTreeBuilder"]};

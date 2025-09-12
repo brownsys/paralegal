@@ -1,0 +1,43 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="The `refining_impl_trait_reachable` lint detects `impl Trait` return types in method signatures that are refined by a publically reachable trait implementation, meaning the implementation adds information about the return type that is not present in the trait."><title>REFINING_IMPL_TRAIT_REACHABLE in rustc_lint::builtin - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_lint" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc static"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button><a class="logo-container" href="../../rustc_lint/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt=""></a></nav><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../rustc_lint/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt="logo"></a><h2><a href="../../rustc_lint/index.html">rustc_<wbr>lint</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">REFINING_<wbr>IMPL_<wbr>TRAIT_<wbr>REACHABLE</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#example" title="Example">Example</a></li><li><a href="#explanation" title="Explanation">Explanation</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="index.html">In rustc_<wbr>lint::<wbr>builtin</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">rustc_lint</a>::<wbr><a href="index.html">builtin</a></span><h1>Static <span class="static">REFINING_IMPL_TRAIT_REACHABLE</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustc_lint_defs/builtin.rs.html#4444-4498">Source</a> </span></div><pre class="rust item-decl"><code>pub static REFINING_IMPL_TRAIT_REACHABLE: &amp;'static <a class="struct" href="../struct.Lint.html" title="struct rustc_lint::Lint">Lint</a></code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The <code>refining_impl_trait_reachable</code> lint detects <code>impl Trait</code> return
+types in method signatures that are refined by a publically reachable
+trait implementation, meaning the implementation adds information about
+the return type that is not present in the trait.</p>
+<h4 id="example"><a class="doc-anchor" href="#example">§</a>Example</h4>
+<div class="example-wrap compile_fail"><a href="#" class="tooltip" title="This example deliberately fails to compile">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="attr">#![deny(refining_impl_trait)]
+
+</span><span class="kw">use </span>std::fmt::Display;
+
+<span class="kw">pub trait </span>AsDisplay {
+    <span class="kw">fn </span>as_display(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Display;
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">'s</span>&gt; AsDisplay <span class="kw">for </span><span class="kw-2">&amp;</span><span class="lifetime">'s </span>str {
+    <span class="kw">fn </span>as_display(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+        <span class="kw-2">*</span><span class="self">self
+    </span>}
+}
+
+<span class="kw">fn </span>main() {
+    <span class="comment">// users can observe that the return type of
+    // `&lt;&amp;str as AsDisplay&gt;::as_display()` is `&amp;str`.
+    </span><span class="kw">let </span>_x: <span class="kw-2">&amp;</span>str = <span class="string">""</span>.as_display();
+}</code></pre></div>
+<p>{{produces}}</p>
+<h4 id="explanation"><a class="doc-anchor" href="#explanation">§</a>Explanation</h4>
+<p>Callers of methods for types where the implementation is known are
+able to observe the types written in the impl signature. This may be
+intended behavior, but may also lead to implementation details being
+revealed unintentionally. In particular, it may pose a semver hazard
+for authors of libraries who do not wish to make stronger guarantees
+about the types than what is written in the trait signature.</p>
+<p><code>refining_impl_trait</code> is a lint group composed of two lints:</p>
+<ul>
+<li><code>refining_impl_trait_reachable</code>, for refinements that are publically
+reachable outside a crate, and</li>
+<li><code>refining_impl_trait_internal</code>, for refinements that are only visible
+within a crate.</li>
+</ul>
+<p>We are seeking feedback on each of these lints; see issue
+<a href="https://github.com/rust-lang/rust/issues/121718">#121718</a> for more
+information.</p>
+</div></details></section></div></main></body></html>

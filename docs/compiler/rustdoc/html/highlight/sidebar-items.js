@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Class","Highlight","Tooltip"],"fn":["can_merge","enter_span","exit_span","get_real_ident_class","render_example_with_highlighting","string","string_without_closing_tag","write_code","write_footer","write_header"],"struct":["Classifier","DecorationInfo","Decorations","HrefContext","PeekIter","TokenHandler","TokenIter"]};

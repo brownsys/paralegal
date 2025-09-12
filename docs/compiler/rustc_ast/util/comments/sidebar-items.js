@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CommentStyle"],"fn":["beautify_doc_string","may_have_doc_links"],"struct":["Comment"]};

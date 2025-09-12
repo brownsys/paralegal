@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FrameKind","LockstepIterSize"],"fn":["count_repetitions","extract_symbol_from_pnr","lockstep_iter_size","lookup_cur_matched","matched_from_ident","maybe_use_metavar_location","out_of_bounds_err","transcribe","transcribe_metavar_expr"],"struct":["Frame","Marker"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["fully_resolve"],"struct":["OpportunisticRegionResolver","OpportunisticVarResolver"]};

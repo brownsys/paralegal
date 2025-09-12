@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["camel_case_indices","camel_case_split","camel_case_start","camel_case_start_from_idx","camel_case_until","count_match_end","count_match_start","to_camel_case","to_snake_case"],"struct":["StrCount","StrIndex"]};

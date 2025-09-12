@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PatOrWild"],"struct":["DeconstructedPat","IndexedPat","PatId","WitnessPat"]};

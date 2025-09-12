@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CRATE_HIR_ID","CRATE_OWNER_ID"],"struct":["HirId","ItemLocalId","OwnerId"],"type":["HirIdMap","HirIdMapEntry","HirIdSet","ItemLocalMap","ItemLocalMapEntry","ItemLocalSet"]};

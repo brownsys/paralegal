@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["maybe_lint_redundant_semis"],"static":["REDUNDANT_SEMICOLONS"],"struct":["RedundantSemicolons"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["MaybeWorkspace","Source"],"fn":["invalid_type","overwrite_value","path_field"],"struct":["Dependency","GitSource","PathSource","RegistrySource","WorkspaceSource"]};

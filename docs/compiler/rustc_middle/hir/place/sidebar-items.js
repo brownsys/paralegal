@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PlaceBase","ProjectionKind"],"struct":["Place","PlaceWithHirId","Projection"]};

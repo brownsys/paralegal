@@ -1,0 +1,9 @@
+(function() {
+    var implementors = Object.fromEntries([["cargo",[["impl <a class=\"trait\" href=\"cargo_credential/trait.Credential.html\" title=\"trait cargo_credential::Credential\">Credential</a> for <a class=\"struct\" href=\"cargo/util/credential/adaptor/struct.BasicProcessCredential.html\" title=\"struct cargo::util::credential::adaptor::BasicProcessCredential\">BasicProcessCredential</a>"],["impl&lt;'a&gt; <a class=\"trait\" href=\"cargo_credential/trait.Credential.html\" title=\"trait cargo_credential::Credential\">Credential</a> for <a class=\"struct\" href=\"cargo/util/credential/paseto/struct.PasetoCredential.html\" title=\"struct cargo::util::credential::paseto::PasetoCredential\">PasetoCredential</a>&lt;'a&gt;"],["impl&lt;'a&gt; <a class=\"trait\" href=\"cargo_credential/trait.Credential.html\" title=\"trait cargo_credential::Credential\">Credential</a> for <a class=\"struct\" href=\"cargo/util/credential/process/struct.CredentialProcessCredential.html\" title=\"struct cargo::util::credential::process::CredentialProcessCredential\">CredentialProcessCredential</a>"],["impl&lt;'a&gt; <a class=\"trait\" href=\"cargo_credential/trait.Credential.html\" title=\"trait cargo_credential::Credential\">Credential</a> for <a class=\"struct\" href=\"cargo/util/credential/token/struct.TokenCredential.html\" title=\"struct cargo::util::credential::token::TokenCredential\">TokenCredential</a>&lt;'a&gt;"]]],["cargo_credential",[]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":57,"fragment_lengths":[1371,24]}

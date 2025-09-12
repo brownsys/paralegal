@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"static":["AMBIGUOUS_NEGATIVE_LITERALS"],"struct":["Precedence"]};

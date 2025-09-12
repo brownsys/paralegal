@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["is_stable_option_and_value"],"macro":["create_config"],"trait":["ConfigType"]};

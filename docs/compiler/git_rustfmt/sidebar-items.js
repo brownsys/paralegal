@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check_uncommitted","fmt_files","get_files","git_diff","main","make_opts","prune_files","uncommitted_files"],"struct":["Config","NullOptions"]};

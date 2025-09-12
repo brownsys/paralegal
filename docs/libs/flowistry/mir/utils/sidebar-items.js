@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["arg_mut_ptrs","arg_places"],"struct":["AsyncHack"],"type":["PlaceSet"]};

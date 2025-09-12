@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ActivateError"],"fn":["activation_error","alt_names","alt_versions","describe_path","describe_path_in_context","rejected_versions"],"struct":["ResolveError"],"type":["ActivateResult"]};

@@ -1,0 +1,1 @@
+searchState.loadedDescShard("rustfmt_config_proc_macro", 0, "This crate provides a derive macro for <code>ConfigType</code>.\nUsed to conditionally output the TokenStream for tests …\nUsed to conditionally output the TokenStream for tests …\nUsed to conditionally output the TokenStream for tests …")

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["bin_name","dynamic_lib_extension","dynamic_lib_name","msvc_import_dynamic_lib_name","rust_lib_name","static_lib_name"]};

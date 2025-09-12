@@ -1,0 +1,1 @@
+searchState.loadedDescShard("rustc_index_macros", 0, "Creates a struct type <code>S</code> that can be used as an index with …")

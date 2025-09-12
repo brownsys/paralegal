@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"attr":["file_parallel","file_serial","parallel","serial"]};

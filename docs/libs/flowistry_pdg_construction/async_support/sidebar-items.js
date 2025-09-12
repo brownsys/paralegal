@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AsyncType"],"fn":["determine_async","get_async_generator","has_async_trait_signature","is_async_fn_or_block","is_async_trait_fn","match_async_trait_assign","match_pin_box_dyn_ty","try_as_async_trait_function"],"struct":["AsyncFnPollEnv","AsyncInfo"]};

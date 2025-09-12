@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEFINITION_FIELD","NAME","VALUE_FIELD"],"enum":["Definition"],"static":["FIELDS"],"struct":["DefinitionKey","FieldVisitor","Value","ValueKey"],"type":["OptValue"]};

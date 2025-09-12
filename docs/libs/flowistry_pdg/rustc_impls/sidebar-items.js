@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["bbref_to_u32","crate_num_as_u32","def_index_as_u32","item_local_id_as_u32"]};

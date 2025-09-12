@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ProvenanceMode"],"fn":["align_addr"],"mod":["reuse_pool"],"struct":["GlobalStateInner"],"trait":["EvalContextExt","EvalContextExtPriv"],"type":["GlobalState"]};

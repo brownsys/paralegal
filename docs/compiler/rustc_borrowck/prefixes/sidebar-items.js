@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PrefixSet"],"struct":["Prefixes"],"trait":["IsPrefixOf"]};

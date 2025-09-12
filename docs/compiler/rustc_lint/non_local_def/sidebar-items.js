@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["did_has_local_parent","path_has_local_parent","path_name_to_string","path_span_without_args","peel_parent_while"],"static":["NON_LOCAL_DEFINITIONS"],"struct":["NonLocalDefinitions","PathCollector"]};

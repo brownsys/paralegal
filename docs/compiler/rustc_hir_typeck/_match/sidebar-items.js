@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["arms_contain_ref_bindings"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Cfg","Format"],"fn":["write_with_opt_paren"],"struct":["Display","InvalidCfgError"]};

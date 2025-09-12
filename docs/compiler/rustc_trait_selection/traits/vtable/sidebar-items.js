@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["VtblSegment"],"fn":["dump_vtable_entries","first_method_vtable_slot","has_own_existential_vtable_entries","maybe_iter","own_existential_vtable_entries","own_existential_vtable_entries_iter","prepare_vtable_segments","prepare_vtable_segments_inner","provide","supertrait_vtable_slot","trait_refs_are_compatible","vtable_entries"]};

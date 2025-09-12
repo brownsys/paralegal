@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_AUTO_FREQUENCY","DEFAULT_MAX_AGE_DOWNLOADED","DEFAULT_MAX_AGE_EXTRACTED"],"fn":["auto_gc","auto_gc_inner","maybe_newer_span","maybe_parse_time_span","newer_time_span_for_config","parse_frequency","parse_human_size","parse_time_span","parse_time_span_for_config"],"struct":["AutoConfig","Gc","GcOpts"]};

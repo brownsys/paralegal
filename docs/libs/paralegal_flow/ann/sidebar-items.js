@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MARKER_META_EXT"],"enum":["Annotation","MarkerRefinementKind"],"fn":["const_false","dump_markers"],"mod":["db","parse"],"struct":["DumpingVisitor","ExceptionAnnotation","MarkerAnnotation","MarkerRefinement","Markers","VisitFilter"],"type":["MarkerMeta","VerificationHash"]};

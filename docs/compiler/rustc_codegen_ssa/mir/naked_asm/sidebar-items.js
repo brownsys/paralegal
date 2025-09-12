@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AsmBinaryFormat"],"fn":["codegen_naked_asm","inline_to_global_operand","prefix_and_suffix"]};

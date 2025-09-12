@@ -1,0 +1,68 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="This is an NFA-based parser, which calls out to the main Rust parser for named non-terminals (which it commits to fully when it hits one in a grammar). There’s a set of current NFA threads and a set of next ones. Instead of NTs, we have a special case for Kleene star. The big-O, in pathological cases, is worse than traditional use of NFA or Earley parsing, but it’s an easier fit for Macro-by-Example-style rules."><title>rustc_expand::mbe::macro_parser - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustc_expand" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button><a class="logo-container" href="../../../rustc_expand/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-9a9549ea.svg" alt=""></a></nav><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../../rustc_expand/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-9a9549ea.svg" alt="logo"></a><h2><a href="../../../rustc_expand/index.html">rustc_<wbr>expand</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module macro_<wbr>parser</a></h2><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#functions" title="Functions">Functions</a></li><li><a href="#types" title="Type Aliases">Type Aliases</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In rustc_<wbr>expand::<wbr>mbe</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../index.html">rustc_expand</a>::<wbr><a href="../index.html">mbe</a></span><h1>Module <span>macro_parser</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/rustc_expand/mbe/macro_parser.rs.html#1-766">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>This is an NFA-based parser, which calls out to the main Rust parser for named non-terminals
+(which it commits to fully when it hits one in a grammar). There’s a set of current NFA threads
+and a set of next ones. Instead of NTs, we have a special case for Kleene star. The big-O, in
+pathological cases, is worse than traditional use of NFA or Earley parsing, but it’s an easier
+fit for Macro-by-Example-style rules.</p>
+<p>(In order to prevent the pathological case, we’d need to lazily construct the resulting
+<code>NamedMatch</code>es at the very end. It’d be a pain, and require more memory to keep around old
+matcher positions, but it would also save overhead)</p>
+<p>We don’t say this parser uses the Earley algorithm, because it’s unnecessarily inaccurate.
+The macro parser restricts itself to the features of finite state automata. Earley parsers
+can be described as an extension of NFAs with completion rules, prediction rules, and recursion.</p>
+<p>Quick intro to how the parser works:</p>
+<p>A “matcher position” (a.k.a. “position” or “mp”) is a dot in the middle of a matcher, usually
+written as a <code>·</code>. For example <code>· a $( a )* a b</code> is one, as is <code>a $( · a )* a b</code>.</p>
+<p>The parser walks through the input a token at a time, maintaining a list
+of threads consistent with the current position in the input string: <code>cur_mps</code>.</p>
+<p>As it processes them, it fills up <code>eof_mps</code> with threads that would be valid if
+the macro invocation is now over, <code>bb_mps</code> with threads that are waiting on
+a Rust non-terminal like <code>$e:expr</code>, and <code>next_mps</code> with threads that are waiting
+on a particular token. Most of the logic concerns moving the · through the
+repetitions indicated by Kleene stars. The rules for moving the · without
+consuming any input are called epsilon transitions. It only advances or calls
+out to the real Rust parser when no <code>cur_mps</code> threads remain.</p>
+<p>Example:</p>
+<div class="example-wrap"><pre class="language-text"><code>Start parsing a a a a b against [· a $( a )* a b].
+
+Remaining input: a a a a b
+next: [· a $( a )* a b]
+
+- - - Advance over an a. - - -
+
+Remaining input: a a a b
+cur: [a · $( a )* a b]
+Descend/Skip (first position).
+next: [a $( · a )* a b]  [a $( a )* · a b].
+
+- - - Advance over an a. - - -
+
+Remaining input: a a b
+cur: [a $( a · )* a b]  [a $( a )* a · b]
+Follow epsilon transition: Finish/Repeat (first position)
+next: [a $( a )* · a b]  [a $( · a )* a b]  [a $( a )* a · b]
+
+- - - Advance over an a. - - - (this looks exactly like the last step)
+
+Remaining input: a b
+cur: [a $( a · )* a b]  [a $( a )* a · b]
+Follow epsilon transition: Finish/Repeat (first position)
+next: [a $( a )* · a b]  [a $( · a )* a b]  [a $( a )* a · b]
+
+- - - Advance over an a. - - - (this looks exactly like the last step)
+
+Remaining input: b
+cur: [a $( a · )* a b]  [a $( a )* a · b]
+Follow epsilon transition: Finish/Repeat (first position)
+next: [a $( a )* · a b]  [a $( · a )* a b]  [a $( a )* a · b]
+
+- - - Advance over a b. - - -
+
+Remaining input: &#39;&#39;
+eof: [a $( a )* a b ·]</code></pre></div></div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.MatcherPos.html" title="struct rustc_expand::mbe::macro_parser::MatcherPos">Matcher<wbr>Pos</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">A single matcher position, representing the state of matching.</div></li><li><div class="item-name"><a class="struct" href="struct.TtParser.html" title="struct rustc_expand::mbe::macro_parser::TtParser">TtParser</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="enum" href="enum.EofMatcherPositions.html" title="enum rustc_expand::mbe::macro_parser::EofMatcherPositions">EofMatcher<wbr>Positions</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="enum" href="enum.MatcherLoc.html" title="enum rustc_expand::mbe::macro_parser::MatcherLoc">Matcher<wbr>Loc</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">A unit within a matcher that a <code>MatcherPos</code> can refer to. Similar to (and derived from)
+<code>mbe::TokenTree</code>, but designed specifically for fast and easy traversal during matching.
+Notable differences to <code>mbe::TokenTree</code>:</div></li><li><div class="item-name"><a class="enum" href="enum.NamedMatch.html" title="enum rustc_expand::mbe::macro_parser::NamedMatch">Named<wbr>Match</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short"><code>NamedMatch</code> is a pattern-match result for a single metavar. All
+<code>MatchedNonterminal</code>s in the <code>NamedMatch</code> have the same non-terminal type
+(expr, item, etc).</div></li><li><div class="item-name"><a class="enum" href="enum.ParseResult.html" title="enum rustc_expand::mbe::macro_parser::ParseResult">Parse<wbr>Result</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Represents the possible results of an attempted parse.</div></li></ul><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.compute_locs.html" title="fn rustc_expand::mbe::macro_parser::compute_locs">compute_<wbr>locs</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.count_metavar_decls.html" title="fn rustc_expand::mbe::macro_parser::count_metavar_decls">count_<wbr>metavar_<wbr>decls</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Count how many metavars declarations are in <code>matcher</code>.</div></li><li><div class="item-name"><a class="fn" href="fn.token_name_eq.html" title="fn rustc_expand::mbe::macro_parser::token_name_eq">token_<wbr>name_<wbr>eq</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Performs a token equality check, ignoring syntax context (that is, an unhygienic comparison)</div></li></ul><h2 id="types" class="section-header">Type Aliases<a href="#types" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="type" href="type.NamedMatches.html" title="type rustc_expand::mbe::macro_parser::NamedMatches">Named<wbr>Matches</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Contains a mapping of <code>MacroRulesNormalizedIdent</code>s to <code>NamedMatch</code>es.
+This represents the mapping of metavars to the token trees they bind to.</div></li><li><div class="item-name"><a class="type" href="type.NamedParseResult.html" title="type rustc_expand::mbe::macro_parser::NamedParseResult">Named<wbr>Parse<wbr>Result</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">A <code>ParseResult</code> where the <code>Success</code> variant contains a mapping of
+<code>MacroRulesNormalizedIdent</code>s to <code>NamedMatch</code>es. This represents the mapping
+of metavars to the token trees they bind to.</div></li></ul></section></div></main></body></html>

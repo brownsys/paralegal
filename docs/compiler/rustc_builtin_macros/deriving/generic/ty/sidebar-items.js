@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PathKind","Ty"],"fn":["get_explicit_self","mk_ty_param","self_ref"],"struct":["Bounds","Path"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Num","State","Substitution"],"fn":["at_next_cp_while","is_flag","iter_subs","parse_next_substitution"],"struct":["Format","Substitutions"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["extract_rendered","parse_line","parse_output","push_backtrace","push_expected_errors","rustfix_diagnostics_only"],"struct":["ArtifactNotification","Diagnostic","DiagnosticCode","DiagnosticSpan","DiagnosticSpanMacroExpansion","FutureBreakageItem","FutureIncompatReport","UnusedExternNotification"]};

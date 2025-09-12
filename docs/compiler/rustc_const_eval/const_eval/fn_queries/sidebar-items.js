@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["constness","is_promotable_const_fn","parent_impl_constness","provide"]};

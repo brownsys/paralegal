@@ -1,0 +1,111 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Debug Info Module"><title>rustc_codegen_llvm::debuginfo - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_codegen_llvm" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button><a class="logo-container" href="../../rustc_codegen_llvm/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt=""></a></nav><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../rustc_codegen_llvm/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt="logo"></a><h2><a href="../../rustc_codegen_llvm/index.html">rustc_<wbr>codegen_<wbr>llvm</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module debuginfo</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#debug-info-module" title="Debug Info Module">Debug Info Module</a><ul><li><a href="#recursive-types" title="Recursive Types">Recursive Types</a></li><li><a href="#source-locations-and-line-information" title="Source Locations and Line Information">Source Locations and Line Information</a></li></ul></li></ul><h3><a href="#modules">Module Items</a></h3><ul class="block"><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#constants" title="Constants">Constants</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate rustc_<wbr>codegen_<wbr>llvm</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">rustc_codegen_llvm</a></span><h1>Module <span>debuginfo</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustc_codegen_llvm/debuginfo/mod.rs.html#1-644">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><h2 id="debug-info-module"><a class="doc-anchor" href="#debug-info-module">§</a>Debug Info Module</h2>
+<p>This module serves the purpose of generating debug symbols. We use LLVM’s
+<a href="https://llvm.org/docs/SourceLevelDebugging.html">source level debugging</a>
+features for generating the debug information. The general principle is
+this:</p>
+<p>Given the right metadata in the LLVM IR, the LLVM code generator is able to
+create DWARF debug symbols for the given code. The
+<a href="https://llvm.org/docs/LangRef.html#metadata-type">metadata</a> is structured
+much like DWARF <em>debugging information entries</em> (DIE), representing type
+information such as datatype layout, function signatures, block layout,
+variable location and scope information, etc. It is the purpose of this
+module to generate correct metadata and insert it into the LLVM IR.</p>
+<p>As the exact format of metadata trees may change between different LLVM
+versions, we now use LLVM
+<a href="https://llvm.org/docs/doxygen/html/classllvm_1_1DIBuilder.html">DIBuilder</a>
+to create metadata where possible. This will hopefully ease the adaption of
+this module to future LLVM versions.</p>
+<p>The public API of the module is a set of functions that will insert the
+correct metadata into the LLVM IR when called with the right parameters.
+The module is thus driven from an outside client with functions like
+<code>debuginfo::create_local_var_metadata(bx: block, local: &amp;ast::local)</code>.</p>
+<p>Internally the module will try to reuse already created metadata by
+utilizing a cache. The way to get a shared metadata node when needed is
+thus to just call the corresponding function in this module:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">let </span>file_metadata = file_metadata(cx, file);</code></pre></div>
+<p>The function will take care of probing the cache for an existing node for
+that exact file path.</p>
+<p>All private state used by the module is stored within either the
+CodegenUnitDebugContext struct (owned by the CodegenCx) or the
+FunctionDebugContext (owned by the FunctionCx).</p>
+<p>This file consists of three conceptual sections:</p>
+<ol>
+<li>The public interface of the module</li>
+<li>Module-internal metadata creation functions</li>
+<li>Minor utility functions</li>
+</ol>
+<h3 id="recursive-types"><a class="doc-anchor" href="#recursive-types">§</a>Recursive Types</h3>
+<p>Some kinds of types, such as structs and enums can be recursive. That means
+that the type definition of some type X refers to some other type which in
+turn (transitively) refers to X. This introduces cycles into the type
+referral graph. A naive algorithm doing an on-demand, depth-first traversal
+of this graph when describing types, can get trapped in an endless loop
+when it reaches such a cycle.</p>
+<p>For example, the following simple type for a singly-linked list…</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">struct </span>List {
+    value: i32,
+    tail: <span class="prelude-ty">Option</span>&lt;Box&lt;List&gt;&gt;,
+}</code></pre></div>
+<p>will generate the following callstack with a naive DFS algorithm:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>describe(t = List)
+  describe(t = i32)
+  describe(t = <span class="prelude-ty">Option</span>&lt;Box&lt;List&gt;&gt;)
+    describe(t = Box&lt;List&gt;)
+      describe(t = List) <span class="comment">// at the beginning again...
+      </span>...</code></pre></div>
+<p>To break cycles like these, we use “stubs”. That is, when
+the algorithm encounters a possibly recursive type (any struct or enum), it
+immediately creates a type description node and inserts it into the cache
+<em>before</em> describing the members of the type. This type description is just
+a stub (as type members are not described and added to it yet) but it
+allows the algorithm to already refer to the type. After the stub is
+inserted into the cache, the algorithm continues as before. If it now
+encounters a recursive reference, it will hit the cache and does not try to
+describe the type anew. This behavior is encapsulated in the
+<code>type_map::build_type_with_children()</code> function.</p>
+<h3 id="source-locations-and-line-information"><a class="doc-anchor" href="#source-locations-and-line-information">§</a>Source Locations and Line Information</h3>
+<p>In addition to data type descriptions the debugging information must also
+allow to map machine code locations back to source code locations in order
+to be useful. This functionality is also handled in this module. The
+following functions allow to control source mappings:</p>
+<ul>
+<li><code>set_source_location()</code></li>
+<li><code>clear_source_location()</code></li>
+<li><code>start_emitting_source_locations()</code></li>
+</ul>
+<p><code>set_source_location()</code> allows to set the current source location. All IR
+instructions created after a call to this function will be linked to the
+given source location, until another location is specified with
+<code>set_source_location()</code> or the source location is cleared with
+<code>clear_source_location()</code>. In the later case, subsequent IR instruction
+will not be linked to any source location. As you can see, this is a
+stateful API (mimicking the one in LLVM), so be careful with source
+locations set by previous calls. It’s probably best to not rely on any
+specific state being present at a given point in code.</p>
+<p>One topic that deserves some extra attention is <em>function prologues</em>. At
+the beginning of a function’s machine code there are typically a few
+instructions for loading argument values into allocas and checking if
+there’s enough stack space for the function to execute. This <em>prologue</em> is
+not visible in the source code and LLVM puts a special PROLOGUE END marker
+into the line table at the first non-prologue instruction of the function.
+In order to find out where the prologue ends, LLVM looks for the first
+instruction in the function body that is linked to a source location. So,
+when generating prologue instructions we have to make sure that we don’t
+emit source location information until the ‘real’ function body begins. For
+this reason, source location emission is disabled by default for any new
+function being codegened and is only activated after a call to the third
+function from the list above, <code>start_emitting_source_locations()</code>. This
+function should be called right before regularly starting to codegen the
+top-level block of the given function.</p>
+<p>There is one exception to the above rule: <code>llvm.dbg.declare</code> instruction
+must be linked to the source location of the variable being declared. For
+function parameters these <code>llvm.dbg.declare</code> instructions typically occur
+in the middle of the prologue, however, they are ignored by LLVM’s prologue
+detection. The <code>create_argument_metadata()</code> and related functions take care
+of linking the <code>llvm.dbg.declare</code> instructions to the correct source
+locations even while source location emission is still disabled, so there
+is no need to do anything special with source location handling here.</p>
+</div></details><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="mod" href="create_scope_map/index.html" title="mod rustc_codegen_llvm::debuginfo::create_scope_map">create_<wbr>scope_<wbr>map</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="mod" href="gdb/index.html" title="mod rustc_codegen_llvm::debuginfo::gdb">gdb</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="mod" href="metadata/index.html" title="mod rustc_codegen_llvm::debuginfo::metadata">metadata</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="mod" href="namespace/index.html" title="mod rustc_codegen_llvm::debuginfo::namespace">namespace</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="mod" href="utils/index.html" title="mod rustc_codegen_llvm::debuginfo::utils">utils</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.CodegenUnitDebugContext.html" title="struct rustc_codegen_llvm::debuginfo::CodegenUnitDebugContext">Codegen<wbr>Unit<wbr>Debug<wbr>Context</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">A context object for maintaining all state needed by the debuginfo module.</div></li><li><div class="item-name"><a class="struct" href="struct.DebugLoc.html" title="struct rustc_codegen_llvm::debuginfo::DebugLoc">Debug<wbr>Loc</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">A source code location used to generate debug information.</div></li></ul><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="constant" href="constant.DW_TAG_arg_variable.html" title="constant rustc_codegen_llvm::debuginfo::DW_TAG_arg_variable">DW_<wbr>TAG_<wbr>arg_<wbr>variable</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="constant" href="constant.DW_TAG_auto_variable.html" title="constant rustc_codegen_llvm::debuginfo::DW_TAG_auto_variable">DW_<wbr>TAG_<wbr>auto_<wbr>variable</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.finalize.html" title="fn rustc_codegen_llvm::debuginfo::finalize">finalize</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Creates any deferred debug metadata nodes</div></li></ul></section></div></main></body></html>

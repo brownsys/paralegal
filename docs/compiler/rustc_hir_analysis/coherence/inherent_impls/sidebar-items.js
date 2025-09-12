@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["crate_incoherent_impls","crate_inherent_impls","crate_inherent_impls_validity_check","inherent_impls"],"struct":["InherentCollect"]};

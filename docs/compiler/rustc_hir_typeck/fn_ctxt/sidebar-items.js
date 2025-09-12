@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["default_fallback","never_type_behavior","parse_never_type_options_attr"],"mod":["_impl","adjust_fulfillment_errors","arg_matrix","checks","inspect_obligations","suggestions"],"struct":["FnCtxt","LoweredTy"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["encode_integer_62","mangle","mangle_typeid_for_trait_ref","push_ident","push_integer_62"],"struct":["BinderLevel","SymbolMangler"]};

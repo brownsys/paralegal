@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Answer","Condition","Reason"],"mod":["layout","maybe_transmutable","rustc"],"struct":["Assume","TransmuteTypeEnv","Types"]};

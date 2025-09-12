@@ -1,0 +1,9 @@
+(function() {
+    var implementors = Object.fromEntries([["clap",[]],["clap_builder",[]],["paralegal_compiler",[["impl <a class=\"trait\" href=\"clap_builder/derive/trait.Args.html\" title=\"trait clap_builder::derive::Args\">Args</a> for <a class=\"struct\" href=\"paralegal_compiler/struct.Args.html\" title=\"struct paralegal_compiler::Args\">Args</a>"]]],["paralegal_flow",[["impl <a class=\"trait\" href=\"clap_builder/derive/trait.Args.html\" title=\"trait clap_builder::derive::Args\">Args</a> for <a class=\"struct\" href=\"paralegal_flow/args/struct.ClapAnalysisCtrl.html\" title=\"struct paralegal_flow::args::ClapAnalysisCtrl\">ClapAnalysisCtrl</a>"],["impl <a class=\"trait\" href=\"clap_builder/derive/trait.Args.html\" title=\"trait clap_builder::derive::Args\">Args</a> for <a class=\"struct\" href=\"paralegal_flow/args/struct.ClapArgs.html\" title=\"struct paralegal_flow::args::ClapArgs\">ClapArgs</a>"],["impl <a class=\"trait\" href=\"clap_builder/derive/trait.Args.html\" title=\"trait clap_builder::derive::Args\">Args</a> for <a class=\"struct\" href=\"paralegal_flow/args/struct.MarkerControl.html\" title=\"struct paralegal_flow::args::MarkerControl\">MarkerControl</a>"],["impl <a class=\"trait\" href=\"clap_builder/derive/trait.Args.html\" title=\"trait clap_builder::derive::Args\">Args</a> for <a class=\"struct\" href=\"paralegal_flow/args/struct.ParseableDumpArgs.html\" title=\"struct paralegal_flow::args::ParseableDumpArgs\">ParseableDumpArgs</a>"],["impl <a class=\"trait\" href=\"clap_builder/derive/trait.Args.html\" title=\"trait clap_builder::derive::Args\">Args</a> for <a class=\"struct\" href=\"paralegal_flow/struct.ArgWrapper.html\" title=\"struct paralegal_flow::ArgWrapper\">ArgWrapper</a>"]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":57,"fragment_lengths":[11,20,270,1382]}

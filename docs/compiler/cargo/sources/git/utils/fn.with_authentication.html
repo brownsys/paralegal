@@ -1,0 +1,36 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Prepare the authentication callbacks for cloning a git repository."><title>with_authentication in cargo::sources::git::utils - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="cargo" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc fn"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../../cargo/index.html">cargo</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><div id="rustdoc-modnav"><h2><a href="index.html">In cargo::<wbr>sources::<wbr>git::<wbr>utils</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../../index.html">cargo</a>::<wbr><a href="../../index.html">sources</a>::<wbr><a href="../index.html">git</a>::<wbr><a href="index.html">utils</a></span><h1>Function <span class="fn">with_authentication</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../../src/cargo/sources/git/utils.rs.html#585-823">Source</a> </span></div><pre class="rust item-decl"><code>fn with_authentication&lt;T, F&gt;(
+    gctx: &amp;<a class="struct" href="../../../util/context/struct.GlobalContext.html" title="struct cargo::util::context::GlobalContext">GlobalContext</a>,
+    url: &amp;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>,
+    cfg: &amp;<a class="struct" href="https://docs.rs/git2/0.19/git2/config/struct.Config.html" title="struct git2::config::Config">Config</a>,
+    f: F,
+) -&gt; <a class="type" href="../../../util/errors/type.CargoResult.html" title="type cargo::util::errors::CargoResult">CargoResult</a>&lt;T&gt;<div class="where">where
+    F: <a class="trait" href="https://doc.rust-lang.org/nightly/core/ops/function/trait.FnMut.html" title="trait core::ops::function::FnMut">FnMut</a>(&amp;mut <a class="type" href="https://docs.rs/git2/0.19/git2/remote_callbacks/type.Credentials.html" title="type git2::remote_callbacks::Credentials">Credentials</a>&lt;'_&gt;) -&gt; <a class="type" href="../../../util/errors/type.CargoResult.html" title="type cargo::util::errors::CargoResult">CargoResult</a>&lt;T&gt;,</div></code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Prepare the authentication callbacks for cloning a git repository.</p>
+<p>The main purpose of this function is to construct the “authentication
+callback” which is used to clone a repository. This callback will attempt to
+find the right authentication on the system (without user input) and will
+guide libgit2 in doing so.</p>
+<p>The callback is provided <code>allowed</code> types of credentials, and we try to do as
+much as possible based on that:</p>
+<ul>
+<li>
+<p>Prioritize SSH keys from the local ssh agent as they’re likely the most
+reliable. The username here is prioritized from the credential
+callback, then from whatever is configured in git itself, and finally
+we fall back to the generic user of <code>git</code>.</p>
+</li>
+<li>
+<p>If a username/password is allowed, then we fallback to git2-rs’s
+implementation of the credential helper. This is what is configured
+with <code>credential.helper</code> in git, and is the interface for the macOS
+keychain, for example.</p>
+</li>
+<li>
+<p>After the above two have failed, we just kinda grapple attempting to
+return <em>something</em>.</p>
+</li>
+</ul>
+<p>If any form of authentication fails, libgit2 will repeatedly ask us for
+credentials until we give it a reason to not do so. To ensure we don’t
+just sit here looping forever we keep track of authentications we’ve
+attempted and we don’t try the same ones again.</p>
+</div></details></section></div></main></body></html>

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["echo","echo_subcommand","echo_wrapper","wrapped_clippy_driver"],"static":["CLIPPY_DRIVER","ECHO","ECHO_WRAPPER"]};

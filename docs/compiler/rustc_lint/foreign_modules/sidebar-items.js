@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SymbolName"],"fn":["clashing_extern_declarations","get_lints","get_relevant_span","name_of_extern_decl","provide","structurally_same_type","structurally_same_type_impl"],"static":["CLASHING_EXTERN_DECLARATIONS"],"struct":["ClashingExternDeclarations"]};

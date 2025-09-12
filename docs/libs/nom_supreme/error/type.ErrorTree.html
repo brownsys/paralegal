@@ -1,0 +1,202 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="A comprehensive tree of nom errors describing a parse failure."><title>ErrorTree in nom_supreme::error - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="nom_supreme" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc type"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../nom_supreme/index.html">nom_<wbr>supreme</a><span class="version">0.8.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Error<wbr>Tree</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#examples" title="Examples">Examples</a><ul><li><a href="#base-parser-errors" title="Base parser errors">Base parser errors</a></li><li><a href="#stacks" title="Stacks">Stacks</a></li><li><a href="#alternatives" title="Alternatives">Alternatives</a></li><li><a href="#contexts-and-alternatives" title="Contexts and Alternatives">Contexts and Alternatives</a></li></ul></li><li><a href="#display-formatting" title="Display formatting">Display formatting</a></li></ul><h3><a href="#aliased-type">Aliased type</a></h3><h3><a href="#variants">Variants</a></h3><ul class="block variant"><li><a href="#variant.Alt" title="Alt">Alt</a></li><li><a href="#variant.Base" title="Base">Base</a></li><li><a href="#variant.Stack" title="Stack">Stack</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="index.html">In nom_<wbr>supreme::<wbr>error</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">nom_supreme</a>::<wbr><a href="index.html">error</a></span><h1>Type Alias <span class="type">ErrorTree</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/nom_supreme/error.rs.html#377-378">Source</a> </span></div><pre class="rust item-decl"><code>pub type ErrorTree&lt;I&gt; = <a class="enum" href="enum.GenericErrorTree.html" title="enum nom_supreme::error::GenericErrorTree">GenericErrorTree</a>&lt;I, &amp;'static <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>, &amp;'static <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>, <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;dyn <a class="trait" href="https://doc.rust-lang.org/nightly/core/error/trait.Error.html" title="trait core::error::Error">Error</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Send.html" title="trait core::marker::Send">Send</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Sync.html" title="trait core::marker::Sync">Sync</a> + 'static&gt;&gt;;</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>A comprehensive tree of nom errors describing a parse failure.</p>
+<p>This Error type is designed to be <a href="../../nom/error/struct.VerboseError.html" title="struct nom::error::VerboseError"><code>VerboseError</code></a><code>++</code>. While
+<a href="../../nom/error/struct.VerboseError.html" title="struct nom::error::VerboseError"><code>VerboseError</code></a> can represent a <em>stack</em> of errors, this type can represent
+a full tree. In addition to representing a particular specific parse error,
+it can also represent a stack of nested error contexts (for instance, as
+provided by <a href="../parser_ext/trait.ParserExt.html#method.context" title="method nom_supreme::parser_ext::ParserExt::context"><code>context</code></a>), or a list of
+alternatives that were all tried individually by <a href="../../nom/branch/fn.alt.html" title="fn nom::branch::alt"><code>alt</code></a>
+and all failed.</p>
+<p>In general, the design goal for this type is to discard as little useful
+information as possible. That being said, many <a href="../../nom/error/enum.ErrorKind.html" title="enum nom::error::ErrorKind"><code>ErrorKind</code></a> variants add
+very little useful contextual information to error traces; for example,
+<a href="../../nom/error/enum.ErrorKind.html#variant.Alt" title="variant nom::error::ErrorKind::Alt"><code>ErrorKind::Alt</code></a> doesn’t add any interesting context to an
+<a href="enum.GenericErrorTree.html#variant.Alt" title="variant nom_supreme::error::GenericErrorTree::Alt"><code>ErrorTree::Alt</code></a>, and its presence in a stack precludes merging together
+adjacent sets of <a href="enum.GenericErrorTree.html#variant.Alt" title="variant nom_supreme::error::GenericErrorTree::Alt"><code>ErrorTree::Alt</code></a> siblings.</p>
+<h2 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h2><h3 id="base-parser-errors"><a class="doc-anchor" href="#base-parser-errors">§</a>Base parser errors</h3>
+<p>An <code>ErrorTree::Base</code> is an error that occurred at the “bottom” of the stack,
+from a parser looking for 1 specific kind of thing.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>cool_asserts::assert_matches;
+<span class="kw">use </span>nom::{Parser, <span class="prelude-val">Err</span>};
+<span class="kw">use </span>nom::character::complete::{digit1, char};
+<span class="kw">use </span>nom_supreme::error::{ErrorTree, BaseErrorKind, StackContext, Expectation};
+<span class="kw">use </span>nom_supreme::parser_ext::ParserExt;
+
+<span class="kw">let </span>err: <span class="prelude-val">Err</span>&lt;ErrorTree&lt;<span class="kw-2">&amp;</span>str&gt;&gt; = digit1.parse(<span class="string">"abc"</span>).unwrap_err();
+
+<span class="macro">assert_matches!</span>(err, Err::Error(ErrorTree::Base{
+    location: <span class="string">"abc"</span>,
+    kind: BaseErrorKind::Expected(Expectation::Digit),
+}));
+
+<span class="kw">let </span>err: <span class="prelude-val">Err</span>&lt;ErrorTree&lt;<span class="kw-2">&amp;</span>str&gt;&gt; = char(<span class="string">'a'</span>).and(char(<span class="string">'b'</span>)).parse(<span class="string">"acb"</span>).unwrap_err();
+
+<span class="macro">assert_matches!</span>(err, Err::Error(ErrorTree::Base{
+    location: <span class="string">"cb"</span>,
+    kind: BaseErrorKind::Expected(Expectation::Char(<span class="string">'b'</span>)),
+}));</code></pre></div>
+<h3 id="stacks"><a class="doc-anchor" href="#stacks">§</a>Stacks</h3>
+<p>An <a href="enum.GenericErrorTree.html#variant.Stack" title="variant nom_supreme::error::GenericErrorTree::Stack"><code>ErrorTree::Stack</code></a> is created when a parser combinator—typically
+<a href="../../nom/error/fn.context.html" title="fn nom::error::context"><code>context</code></a>—attaches additional error context to a subparser error. It can
+have any <a href="type.ErrorTree.html" title="type nom_supreme::error::ErrorTree"><code>ErrorTree</code></a> at the base of the stack.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>cool_asserts::assert_matches;
+<span class="kw">use </span>nom::{Parser, <span class="prelude-val">Err</span>};
+<span class="kw">use </span>nom::character::complete::{alpha1, space1, char,};
+<span class="kw">use </span>nom::sequence::{separated_pair, delimited};
+<span class="kw">use </span>nom_supreme::parser_ext::ParserExt;
+<span class="kw">use </span>nom_supreme::error::{ErrorTree, BaseErrorKind, StackContext, Expectation};
+
+<span class="comment">// Parse a single identifier, defined as just a string of letters.
+</span><span class="kw">let </span>identifier = alpha1.context(<span class="string">"identifier"</span>);
+
+<span class="comment">// Parse a pair of identifiers, separated by whitespace
+</span><span class="kw">let </span>identifier_pair = separated_pair(identifier, space1, identifier)
+    .context(<span class="string">"identifier pair"</span>);
+
+<span class="comment">// Parse a pair of identifiers in parenthesis.
+</span><span class="kw">let </span><span class="kw-2">mut </span>parenthesized = delimited(char(<span class="string">'('</span>), identifier_pair, char(<span class="string">')'</span>))
+    .context(<span class="string">"parenthesized"</span>);
+
+<span class="kw">let </span>err: <span class="prelude-val">Err</span>&lt;ErrorTree&lt;<span class="kw-2">&amp;</span>str&gt;&gt; = parenthesized.parse(<span class="string">"(abc 123)"</span>).unwrap_err();
+
+<span class="macro">assert_matches!</span>(err, Err::Error(ErrorTree::Stack {
+    base,
+    contexts,
+}) =&gt; {
+    <span class="macro">assert_matches!</span>(<span class="kw-2">*</span>base, ErrorTree::Base {
+        location: <span class="string">"123)"</span>,
+        kind: BaseErrorKind::Expected(Expectation::Alpha)
+    });
+
+    <span class="macro">assert_eq!</span>(contexts, [
+        (<span class="string">"123)"</span>, StackContext::Context(<span class="string">"identifier"</span>)),
+        (<span class="string">"abc 123)"</span>, StackContext::Context(<span class="string">"identifier pair"</span>)),
+        (<span class="string">"(abc 123)"</span>, StackContext::Context(<span class="string">"parenthesized"</span>)),
+    ]);
+});</code></pre></div>
+<h3 id="alternatives"><a class="doc-anchor" href="#alternatives">§</a>Alternatives</h3>
+<p>An <a href="enum.GenericErrorTree.html#variant.Alt" title="variant nom_supreme::error::GenericErrorTree::Alt"><code>ErrorTree::Alt</code></a> is created when a series of parsers are all tried,
+and all of them fail. Most commonly this will happen via the
+<a href="../../nom/branch/fn.alt.html" title="fn nom::branch::alt"><code>alt</code></a> combinator or the equivalent <a href="../../nom/internal/trait.Parser.html#method.or" title="method nom::internal::Parser::or"><code>.or</code></a> postfix
+combinator. When all of these subparsers fail, their errors (each
+individually their own <code>ErrorTree</code>) are aggregated into an
+<a href="enum.GenericErrorTree.html#variant.Alt" title="variant nom_supreme::error::GenericErrorTree::Alt"><code>ErrorTree::Alt</code></a>, indicating that “any one of these things were
+expected.”</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>cool_asserts::assert_matches;
+<span class="kw">use </span>nom::{Parser, <span class="prelude-val">Err</span>};
+<span class="kw">use </span>nom::branch::alt;
+<span class="kw">use </span>nom_supreme::error::{ErrorTree, BaseErrorKind, StackContext, Expectation};
+<span class="kw">use </span>nom_supreme::parser_ext::ParserExt;
+<span class="kw">use </span>nom_supreme::tag::complete::tag;
+
+<span class="kw">let </span>parse_bool = alt((
+    tag(<span class="string">"true"</span>).value(<span class="bool-val">true</span>),
+    tag(<span class="string">"false"</span>).value(<span class="bool-val">false</span>),
+));
+
+<span class="kw">let </span><span class="kw-2">mut </span>parse_null_bool = alt((
+    parse_bool.map(<span class="prelude-val">Some</span>),
+    tag(<span class="string">"null"</span>).value(<span class="prelude-val">None</span>),
+));
+
+<span class="macro">assert_eq!</span>(parse_null_bool.parse(<span class="string">"true"</span>).unwrap(), (<span class="string">""</span>, <span class="prelude-val">Some</span>(<span class="bool-val">true</span>)));
+<span class="macro">assert_eq!</span>(parse_null_bool.parse(<span class="string">"false"</span>).unwrap(), (<span class="string">""</span>, <span class="prelude-val">Some</span>(<span class="bool-val">false</span>)));
+<span class="macro">assert_eq!</span>(parse_null_bool.parse(<span class="string">"null"</span>).unwrap(), (<span class="string">""</span>, <span class="prelude-val">None</span>));
+
+<span class="kw">let </span>err: <span class="prelude-val">Err</span>&lt;ErrorTree&lt;<span class="kw-2">&amp;</span>str&gt;&gt; = parse_null_bool.parse(<span class="string">"123"</span>).unwrap_err();
+
+<span class="comment">// This error communicates to the caller that any one of "true", "false",
+// or "null" was expected at that location.
+</span><span class="macro">assert_matches!</span>(err, Err::Error(ErrorTree::Alt(choices)) =&gt; {
+    <span class="macro">assert_matches!</span>(choices.as_slice(), [
+        ErrorTree::Base {
+            location: <span class="string">"123"</span>,
+            kind: BaseErrorKind::Expected(Expectation::Tag(<span class="string">"true"</span>))},
+        ErrorTree::Base {
+            location: <span class="string">"123"</span>,
+            kind: BaseErrorKind::Expected(Expectation::Tag(<span class="string">"false"</span>))},
+        ErrorTree::Base {
+            location: <span class="string">"123"</span>,
+            kind: BaseErrorKind::Expected(Expectation::Tag(<span class="string">"null"</span>))},
+    ])
+});</code></pre></div>
+<h3 id="contexts-and-alternatives"><a class="doc-anchor" href="#contexts-and-alternatives">§</a>Contexts and Alternatives</h3>
+<p>Because <a href="enum.GenericErrorTree.html#variant.Stack" title="variant nom_supreme::error::GenericErrorTree::Stack"><code>Stack</code></a> and <a href="enum.GenericErrorTree.html#variant.Alt" title="variant nom_supreme::error::GenericErrorTree::Alt"><code>Alt</code></a> recursively contain <a href="type.ErrorTree.html" title="type nom_supreme::error::ErrorTree"><code>ErrorTree</code></a> errors from
+subparsers, they can be can combined to create error trees of arbitrary
+complexity.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>cool_asserts::assert_matches;
+<span class="kw">use </span>nom::{Parser, <span class="prelude-val">Err</span>};
+<span class="kw">use </span>nom::branch::alt;
+<span class="kw">use </span>nom_supreme::error::{ErrorTree, BaseErrorKind, StackContext, Expectation};
+<span class="kw">use </span>nom_supreme::parser_ext::ParserExt;
+<span class="kw">use </span>nom_supreme::tag::complete::tag;
+
+<span class="kw">let </span>parse_bool = alt((
+    tag(<span class="string">"true"</span>).value(<span class="bool-val">true</span>),
+    tag(<span class="string">"false"</span>).value(<span class="bool-val">false</span>),
+)).context(<span class="string">"bool"</span>);
+
+<span class="kw">let </span><span class="kw-2">mut </span>parse_null_bool = alt((
+    parse_bool.map(<span class="prelude-val">Some</span>),
+    tag(<span class="string">"null"</span>).value(<span class="prelude-val">None</span>).context(<span class="string">"null"</span>),
+)).context(<span class="string">"null or bool"</span>);
+
+<span class="macro">assert_eq!</span>(parse_null_bool.parse(<span class="string">"true"</span>).unwrap(), (<span class="string">""</span>, <span class="prelude-val">Some</span>(<span class="bool-val">true</span>)));
+<span class="macro">assert_eq!</span>(parse_null_bool.parse(<span class="string">"false"</span>).unwrap(), (<span class="string">""</span>, <span class="prelude-val">Some</span>(<span class="bool-val">false</span>)));
+<span class="macro">assert_eq!</span>(parse_null_bool.parse(<span class="string">"null"</span>).unwrap(), (<span class="string">""</span>, <span class="prelude-val">None</span>));
+
+<span class="kw">let </span>err: <span class="prelude-val">Err</span>&lt;ErrorTree&lt;<span class="kw-2">&amp;</span>str&gt;&gt; = parse_null_bool.parse(<span class="string">"123"</span>).unwrap_err();
+
+<span class="macro">assert_matches!</span>(err, Err::Error(ErrorTree::Stack{base, contexts}) =&gt; {
+    <span class="macro">assert_eq!</span>(contexts, [(<span class="string">"123"</span>, StackContext::Context(<span class="string">"null or bool"</span>))]);
+    <span class="macro">assert_matches!</span>(<span class="kw-2">*</span>base, ErrorTree::Alt(choices) =&gt; {
+        <span class="macro">assert_matches!</span>(<span class="kw-2">&amp;</span>choices[<span class="number">0</span>], ErrorTree::Stack{base, contexts} =&gt; {
+            <span class="macro">assert_eq!</span>(contexts, <span class="kw-2">&amp;</span>[(<span class="string">"123"</span>, StackContext::Context(<span class="string">"bool"</span>))]);
+            <span class="macro">assert_matches!</span>(<span class="kw-2">&amp;**</span>base, ErrorTree::Alt(choices) =&gt; {
+                <span class="macro">assert_matches!</span>(<span class="kw-2">&amp;</span>choices[<span class="number">0</span>], ErrorTree::Base {
+                    location: <span class="string">"123"</span>,
+                    kind: BaseErrorKind::Expected(Expectation::Tag(<span class="string">"true"</span>))
+                });
+                <span class="macro">assert_matches!</span>(<span class="kw-2">&amp;</span>choices[<span class="number">1</span>], ErrorTree::Base {
+                    location: <span class="string">"123"</span>,
+                    kind: BaseErrorKind::Expected(Expectation::Tag(<span class="string">"false"</span>))
+                });
+           });
+        });
+        <span class="macro">assert_matches!</span>(<span class="kw-2">&amp;</span>choices[<span class="number">1</span>], ErrorTree::Stack{base, contexts} =&gt; {
+            <span class="macro">assert_eq!</span>(contexts, <span class="kw-2">&amp;</span>[(<span class="string">"123"</span>, StackContext::Context(<span class="string">"null"</span>))]);
+            <span class="macro">assert_matches!</span>(<span class="kw-2">&amp;**</span>base, ErrorTree::Base {
+                location: <span class="string">"123"</span>,
+                kind: BaseErrorKind::Expected(Expectation::Tag(<span class="string">"null"</span>))
+            });
+        });
+    });
+});</code></pre></div>
+<h2 id="display-formatting"><a class="doc-anchor" href="#display-formatting">§</a>Display formatting</h2>
+<p>TODO WRITE THIS SECTION</p>
+</div></details><h2 id="aliased-type" class="section-header">Aliased Type<a href="#aliased-type" class="anchor">§</a></h2><pre class="rust item-decl"><code>enum ErrorTree&lt;I&gt; {
+    Base {
+        location: I,
+        kind: <a class="enum" href="enum.BaseErrorKind.html" title="enum nom_supreme::error::BaseErrorKind">BaseErrorKind</a>&lt;&amp;'static <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>, <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;dyn <a class="trait" href="https://doc.rust-lang.org/nightly/core/error/trait.Error.html" title="trait core::error::Error">Error</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Send.html" title="trait core::marker::Send">Send</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Sync.html" title="trait core::marker::Sync">Sync</a>&gt;&gt;,
+    },
+    Stack {
+        base: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="enum" href="enum.GenericErrorTree.html" title="enum nom_supreme::error::GenericErrorTree">GenericErrorTree</a>&lt;I, &amp;'static <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>, &amp;'static <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>, <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;dyn <a class="trait" href="https://doc.rust-lang.org/nightly/core/error/trait.Error.html" title="trait core::error::Error">Error</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Send.html" title="trait core::marker::Send">Send</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Sync.html" title="trait core::marker::Sync">Sync</a>&gt;&gt;&gt;,
+        contexts: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;(I, <a class="enum" href="enum.StackContext.html" title="enum nom_supreme::error::StackContext">StackContext</a>&lt;&amp;'static <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>&gt;)&gt;,
+    },
+    Alt(<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="enum" href="enum.GenericErrorTree.html" title="enum nom_supreme::error::GenericErrorTree">GenericErrorTree</a>&lt;I, &amp;'static <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>, &amp;'static <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>, <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;dyn <a class="trait" href="https://doc.rust-lang.org/nightly/core/error/trait.Error.html" title="trait core::error::Error">Error</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Send.html" title="trait core::marker::Send">Send</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Sync.html" title="trait core::marker::Sync">Sync</a>&gt;&gt;&gt;),
+}</code></pre><h2 id="variants" class="variants section-header">Variants<a href="#variants" class="anchor">§</a></h2><div class="variants"><section id="variant.Base" class="variant"><a href="#variant.Base" class="anchor">§</a><h3 class="code-header">Base</h3></section><div class="docblock"><p>A specific error event at a specific location. Often this will indicate
+that something like a tag or character was expected at that location.</p>
+</div><div class="sub-variant" id="variant.Base.fields"><h4>Fields</h4><div class="sub-variant-field"><span id="variant.Base.field.location" class="section-header"><a href="#variant.Base.field.location" class="anchor field">§</a><code>location: I</code></span><div class="docblock"><p>The location of this error in the input</p>
+</div></div><div class="sub-variant-field"><span id="variant.Base.field.kind" class="section-header"><a href="#variant.Base.field.kind" class="anchor field">§</a><code>kind: <a class="enum" href="enum.BaseErrorKind.html" title="enum nom_supreme::error::BaseErrorKind">BaseErrorKind</a>&lt;&amp;'static <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>, <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;dyn <a class="trait" href="https://doc.rust-lang.org/nightly/core/error/trait.Error.html" title="trait core::error::Error">Error</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Send.html" title="trait core::marker::Send">Send</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Sync.html" title="trait core::marker::Sync">Sync</a>&gt;&gt;</code></span><div class="docblock"><p>The specific error that occurred</p>
+</div></div></div><section id="variant.Stack" class="variant"><a href="#variant.Stack" class="anchor">§</a><h3 class="code-header">Stack</h3></section><div class="docblock"><p>A stack indicates a chain of error contexts was provided. The stack
+should be read “backwards”; that is, errors <em>earlier</em> in the <code>Vec</code>
+occurred “sooner” (deeper in the call stack).</p>
+</div><div class="sub-variant" id="variant.Stack.fields"><h4>Fields</h4><div class="sub-variant-field"><span id="variant.Stack.field.base" class="section-header"><a href="#variant.Stack.field.base" class="anchor field">§</a><code>base: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;<a class="enum" href="enum.GenericErrorTree.html" title="enum nom_supreme::error::GenericErrorTree">GenericErrorTree</a>&lt;I, &amp;'static <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>, &amp;'static <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>, <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;dyn <a class="trait" href="https://doc.rust-lang.org/nightly/core/error/trait.Error.html" title="trait core::error::Error">Error</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Send.html" title="trait core::marker::Send">Send</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Sync.html" title="trait core::marker::Sync">Sync</a>&gt;&gt;&gt;</code></span><div class="docblock"><p>The original error</p>
+</div></div><div class="sub-variant-field"><span id="variant.Stack.field.contexts" class="section-header"><a href="#variant.Stack.field.contexts" class="anchor field">§</a><code>contexts: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;(I, <a class="enum" href="enum.StackContext.html" title="enum nom_supreme::error::StackContext">StackContext</a>&lt;&amp;'static <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>&gt;)&gt;</code></span><div class="docblock"><p>The stack of contexts attached to that error</p>
+</div></div></div><section id="variant.Alt" class="variant"><a href="#variant.Alt" class="anchor">§</a><h3 class="code-header">Alt(<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="enum" href="enum.GenericErrorTree.html" title="enum nom_supreme::error::GenericErrorTree">GenericErrorTree</a>&lt;I, &amp;'static <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>, &amp;'static <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>, <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;dyn <a class="trait" href="https://doc.rust-lang.org/nightly/core/error/trait.Error.html" title="trait core::error::Error">Error</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Send.html" title="trait core::marker::Send">Send</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Sync.html" title="trait core::marker::Sync">Sync</a>&gt;&gt;&gt;)</h3></section><div class="docblock"><p>A series of parsers were tried at the same location (for instance, via
+the <a href="../../nom/branch/fn.alt.html" title="fn nom::branch::alt"><code>alt</code></a> combinator) and all of them failed. All
+of the errors in this set are “siblings”.</p>
+</div></div><script src="../../type.impl/nom_supreme/error/enum.GenericErrorTree.js" data-self-path="nom_supreme::error::ErrorTree" async></script></section></div></main></body></html>

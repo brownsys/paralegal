@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PathContext","SegmentParam"],"fn":["can_be_overflowed_type","format_function_type","get_tactics","is_generic_bounds_in_order","join_bounds","join_bounds_inner","opaque_ty","rewrite_bare_fn","rewrite_bound_params","rewrite_bounded_lifetime","rewrite_generic_args","rewrite_path","rewrite_path_segments","rewrite_segment","type_bound_colon"]};

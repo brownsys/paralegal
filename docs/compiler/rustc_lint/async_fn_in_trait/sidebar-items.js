@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"static":["ASYNC_FN_IN_TRAIT"],"struct":["AsyncFnInTrait"]};

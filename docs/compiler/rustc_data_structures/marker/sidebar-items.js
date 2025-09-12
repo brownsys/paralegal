@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["assert_dyn_send","assert_dyn_send_sync_val","assert_dyn_send_val","assert_dyn_sync"],"macro":["already_send","already_sync","impl_dyn_send","impl_dyn_sync","impls_dyn_send_neg","impls_dyn_sync_neg"],"struct":["FromDyn","IntoDynSyncSend"],"trait":["DynSend","DynSync"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["MovePathResult"],"fn":["gather_moves","new_move_path"],"struct":["MoveDataBuilder"]};

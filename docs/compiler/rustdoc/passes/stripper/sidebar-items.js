@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["is_item_reachable"],"struct":["ImplStripper","ImportStripper","Stripper"]};

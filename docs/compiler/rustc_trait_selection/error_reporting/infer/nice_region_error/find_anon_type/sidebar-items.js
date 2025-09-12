@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["find_anon_type","find_component_for_bound_region"],"struct":["FindNestedTypeVisitor","TyPathVisitor"]};

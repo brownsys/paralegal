@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["table"],"struct":["ConstrainOpaqueTypeRegionVisitor","OpaqueTypeDecl"],"type":["OpaqueTypeMap"]};

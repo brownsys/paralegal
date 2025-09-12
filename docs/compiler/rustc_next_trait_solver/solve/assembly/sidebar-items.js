@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["structural_traits"],"struct":["Candidate"],"trait":["GoalKind"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DOCS_RS_URL"],"enum":["RustdocExternMode","RustdocScrapeExamples"],"fn":["add_output_format","add_root_urls","build_all_urls","default_crates_io_to_docs_rs"],"struct":["RustdocExternMap"]};

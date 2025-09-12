@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["decode_interleaved","encode_interleaved","trailing_zeros"],"macro":["fixed_size_enum"],"struct":["TableBuilder"],"trait":["FixedSizeEncoding","IsDefault"]};

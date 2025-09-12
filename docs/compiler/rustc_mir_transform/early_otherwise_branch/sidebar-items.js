@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["evaluate_candidate","verify_candidate_branch"],"struct":["EarlyOtherwiseBranch","OptimizationData"]};

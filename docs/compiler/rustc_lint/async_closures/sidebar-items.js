@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"static":["CLOSURE_RETURNING_ASYNC_BLOCK"],"struct":["AsyncClosureSugg","AsyncClosureUsage","ClosureReturningAsyncBlock"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["RequirementError"],"fn":["build_requirements","resolve_features"],"struct":["RegistryQueryer","Requirements"]};

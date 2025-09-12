@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["argument_shape","attr_prefix","filter_inline_attrs","format_derive","get_attrs_from_stmt","get_span_without_attrs","has_newlines_before_after_comment","is_derive","rewrite_initial_doc_comments","take_while_with_pred"],"mod":["doc_comment"],"trait":["MetaVisitor"]};

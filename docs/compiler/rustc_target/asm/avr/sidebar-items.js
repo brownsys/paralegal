@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AvrInlineAsmReg","AvrInlineAsmRegClass"],"fn":["fill_reg_map","regclass_map"],"macro":["emit_pairs"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["child_read","child_write","foreign_read","foreign_write","perform_access"]};

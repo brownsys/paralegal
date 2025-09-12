@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["MethodKind","Target"],"macro":["arena_types"],"mod":["arena","def","def_id","def_path_hash_map","definitions","diagnostic_items","hir","hir_id","intravisit","lang_items","pat_util","stable_hash_impls","target","weak_lang_items"],"struct":["Arena"],"trait":["ArenaAllocatable","HashStableContext"]};

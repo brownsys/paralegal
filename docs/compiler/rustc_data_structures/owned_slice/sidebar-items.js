@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["slice_owned","try_slice_owned"],"struct":["OwnedSlice"]};

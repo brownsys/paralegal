@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["RAW_IDENT_ERR","UNSUPPORTED_CONCAT_ELEM_ERR"],"enum":["MetaVarExpr","MetaVarExprConcatElem"],"fn":["check_trailing_token","eat_dollar","parse_count","parse_depth","parse_ident","parse_ident_from_token","parse_token","try_eat_comma","try_eat_dollar"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["bare_rustdoc","rustdoc","setup_common"],"struct":["Rustdoc"]};

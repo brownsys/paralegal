@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["LabelText","RenderOption","Style"],"fn":["escape_html","render","render_opts"],"struct":["Id"],"trait":["GraphWalk","Labeller"],"type":["Edges","Nodes"]};

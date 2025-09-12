@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["INITIAL_RETRY_JITTER_MS","INITIAL_RETRY_SLEEP_BASE_MS","MAX_RETRY_SLEEP_MS"],"enum":["RetryResult"],"fn":["maybe_spurious","with_retry"],"struct":["Retry"]};

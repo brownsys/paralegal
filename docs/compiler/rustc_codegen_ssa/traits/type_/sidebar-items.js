@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"trait":["ArgAbiBuilderMethods","BaseTypeCodegenMethods","DerivedTypeCodegenMethods","LayoutTypeCodegenMethods","TypeMembershipCodegenMethods"],"traitalias":["TypeCodegenMethods"]};

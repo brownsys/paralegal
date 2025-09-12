@@ -1,0 +1,101 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/tools/run-make-support/src/string.rs`."><title>string.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="run_make_support" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../../static.files/src-script-56102188.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">run_make_support/</div>string.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<a href="#1" id="1">1</a>
+<a href="#2" id="2">2</a>
+<a href="#3" id="3">3</a>
+<a href="#4" id="4">4</a>
+<a href="#5" id="5">5</a>
+<a href="#6" id="6">6</a>
+<a href="#7" id="7">7</a>
+<a href="#8" id="8">8</a>
+<a href="#9" id="9">9</a>
+<a href="#10" id="10">10</a>
+<a href="#11" id="11">11</a>
+<a href="#12" id="12">12</a>
+<a href="#13" id="13">13</a>
+<a href="#14" id="14">14</a>
+<a href="#15" id="15">15</a>
+<a href="#16" id="16">16</a>
+<a href="#17" id="17">17</a>
+<a href="#18" id="18">18</a>
+<a href="#19" id="19">19</a>
+<a href="#20" id="20">20</a>
+<a href="#21" id="21">21</a>
+<a href="#22" id="22">22</a>
+<a href="#23" id="23">23</a>
+<a href="#24" id="24">24</a>
+<a href="#25" id="25">25</a>
+<a href="#26" id="26">26</a>
+<a href="#27" id="27">27</a>
+<a href="#28" id="28">28</a>
+<a href="#29" id="29">29</a>
+<a href="#30" id="30">30</a>
+<a href="#31" id="31">31</a>
+<a href="#32" id="32">32</a>
+<a href="#33" id="33">33</a>
+<a href="#34" id="34">34</a>
+<a href="#35" id="35">35</a>
+<a href="#36" id="36">36</a>
+<a href="#37" id="37">37</a>
+<a href="#38" id="38">38</a>
+<a href="#39" id="39">39</a>
+<a href="#40" id="40">40</a>
+<a href="#41" id="41">41</a>
+<a href="#42" id="42">42</a>
+<a href="#43" id="43">43</a>
+<a href="#44" id="44">44</a>
+<a href="#45" id="45">45</a>
+<a href="#46" id="46">46</a>
+<a href="#47" id="47">47</a>
+<a href="#48" id="48">48</a>
+<a href="#49" id="49">49</a>
+<a href="#50" id="50">50</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::path::Path;
+
+<span class="kw">use </span><span class="kw">crate</span>::fs;
+<span class="kw">use </span><span class="kw">crate</span>::path_helpers::{cwd, has_extension, shallow_find_files};
+
+<span class="doccomment">/// Gathers all files in the current working directory that have the extension `ext`, and counts
+/// the number of lines within that contain a match with the regex pattern `re`.
+</span><span class="kw">pub fn </span>count_regex_matches_in_files_with_extension(re: <span class="kw-2">&amp;</span>regex::Regex, ext: <span class="kw-2">&amp;</span>str) -&gt; usize {
+    <span class="kw">let </span>fetched_files = shallow_find_files(cwd(), |path| has_extension(path, ext));
+
+    <span class="kw">let </span><span class="kw-2">mut </span>count = <span class="number">0</span>;
+    <span class="kw">for </span>file <span class="kw">in </span>fetched_files {
+        <span class="kw">let </span>content = fs::read_to_string(file);
+        count += content.lines().filter(|line| re.is_match(<span class="kw-2">&amp;</span>line)).count();
+    }
+
+    count
+}
+
+<span class="doccomment">/// Read the contents of a file that cannot simply be read by
+/// [`read_to_string`][crate::fs::read_to_string], due to invalid UTF-8 data, then assert
+/// that it contains `expected`.
+</span><span class="attr">#[track_caller]
+</span><span class="kw">pub fn </span>invalid_utf8_contains&lt;P: AsRef&lt;Path&gt;, S: AsRef&lt;str&gt;&gt;(path: P, expected: S) {
+    <span class="kw">let </span>buffer = fs::read(path.as_ref());
+    <span class="kw">let </span>expected = expected.as_ref();
+    <span class="kw">if </span>!String::from_utf8_lossy(<span class="kw-2">&amp;</span>buffer).contains(expected) {
+        <span class="macro">eprintln!</span>(<span class="string">"=== FILE CONTENTS (LOSSY) ==="</span>);
+        <span class="macro">eprintln!</span>(<span class="string">"{}"</span>, String::from_utf8_lossy(<span class="kw-2">&amp;</span>buffer));
+        <span class="macro">eprintln!</span>(<span class="string">"=== SPECIFIED TEXT ==="</span>);
+        <span class="macro">eprintln!</span>(<span class="string">"{}"</span>, expected);
+        <span class="macro">panic!</span>(<span class="string">"specified text was not found in file"</span>);
+    }
+}
+
+<span class="doccomment">/// Read the contents of a file that cannot simply be read by
+/// [`read_to_string`][crate::fs::read_to_string], due to invalid UTF-8 data, then assert
+/// that it does not contain `expected`.
+</span><span class="attr">#[track_caller]
+</span><span class="kw">pub fn </span>invalid_utf8_not_contains&lt;P: AsRef&lt;Path&gt;, S: AsRef&lt;str&gt;&gt;(path: P, expected: S) {
+    <span class="kw">let </span>buffer = fs::read(path.as_ref());
+    <span class="kw">let </span>expected = expected.as_ref();
+    <span class="kw">if </span>String::from_utf8_lossy(<span class="kw-2">&amp;</span>buffer).contains(expected) {
+        <span class="macro">eprintln!</span>(<span class="string">"=== FILE CONTENTS (LOSSY) ==="</span>);
+        <span class="macro">eprintln!</span>(<span class="string">"{}"</span>, String::from_utf8_lossy(<span class="kw-2">&amp;</span>buffer));
+        <span class="macro">eprintln!</span>(<span class="string">"=== SPECIFIED TEXT ==="</span>);
+        <span class="macro">eprintln!</span>(<span class="string">"{}"</span>, expected);
+        <span class="macro">panic!</span>(<span class="string">"specified text was unexpectedly found in file"</span>);
+    }
+}
+</code></pre></div></section></main></body></html>

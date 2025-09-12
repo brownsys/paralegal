@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["is_copy_raw","is_freeze_raw","is_item_raw","is_sized_raw","is_unpin_raw","provide"]};

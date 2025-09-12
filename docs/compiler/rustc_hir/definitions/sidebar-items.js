@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DefPathData","DefPathDataName"],"struct":["DefKey","DefPath","DefPathHash","DefPathTable","Definitions","DisambiguatedDefPathData"]};

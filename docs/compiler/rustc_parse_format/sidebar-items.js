@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Alignment","Count","DebugHex","InputStringKind","ParseMode","Piece","Position","Sign","Suggestion"],"fn":["find_width_map_from_snippet","unescape_string"],"struct":["Argument","FormatSpec","InnerOffset","InnerSpan","InnerWidthMapping","ParseError","Parser"]};

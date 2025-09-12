@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"static":["OPAQUE_HIDDEN_INFERRED_BOUND"],"struct":["AddBound","OpaqueHiddenInferredBound","OpaqueHiddenInferredBoundLint"]};

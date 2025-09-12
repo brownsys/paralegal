@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CandidateSource"],"fn":["compute_applicable_impls_for_diagnostics"],"struct":["HasNumericInferVisitor"]};

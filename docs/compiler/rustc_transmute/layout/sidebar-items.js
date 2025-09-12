@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Byte"],"mod":["dfa","nfa","rustc","tree"],"struct":["Uninhabited"],"trait":["Def","Ref"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ALLOWED_UNCLOSED"],"fn":["drop_tag","extract_html_tag","extract_path_backwards","extract_path_forward","extract_tags","is_valid_for_html_tag_name","visit_item"]};

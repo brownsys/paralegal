@@ -1,0 +1,123 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Definition of how to encode a `Resolve` into a TOML `Cargo.lock` file"><title>cargo::core::resolver::encode - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="cargo" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../../static.files/storage-59e33391.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../../cargo/index.html">cargo</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module encode</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#changing-cargolock" title="Changing `Cargo.lock`">Changing <code>Cargo.lock</code></a></li><li><a href="#historical-changes-to-cargolock" title="Historical changes to `Cargo.lock`">Historical changes to <code>Cargo.lock</code></a></li><li><a href="#other-oddities-about-cargolock" title="Other oddities about `Cargo.lock`">Other oddities about <code>Cargo.lock</code></a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#functions" title="Functions">Functions</a></li><li><a href="#types" title="Type Aliases">Type Aliases</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In cargo::<wbr>core::<wbr>resolver</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../../index.html">cargo</a>::<wbr><a href="../../index.html">core</a>::<wbr><a href="../index.html">resolver</a></span><h1>Module <span>encode</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../../src/cargo/core/resolver/encode.rs.html#1-845">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Definition of how to encode a <code>Resolve</code> into a TOML <code>Cargo.lock</code> file</p>
+<p>This module contains all machinery necessary to parse a <code>Resolve</code> from a
+<code>Cargo.lock</code> as well as serialize a <code>Resolve</code> to a <code>Cargo.lock</code>.</p>
+<h3 id="changing-cargolock"><a class="doc-anchor" href="#changing-cargolock">§</a>Changing <code>Cargo.lock</code></h3>
+<p>In general Cargo is quite conservative about changing the format of
+<code>Cargo.lock</code>. Usage of new features in Cargo can change <code>Cargo.lock</code> at any
+time, but otherwise changing the serialization of <code>Cargo.lock</code> is a
+difficult operation to do that we typically avoid.</p>
+<p>The main problem with changing the format of <code>Cargo.lock</code> is that it can
+cause quite a bad experience for end users who use different versions of
+Cargo. If every PR to a project oscillates between the stable channel’s
+encoding of Cargo.lock and the nightly channel’s encoding then that’s a
+pretty bad experience.</p>
+<p>We do, however, want to change <code>Cargo.lock</code> over time. (and we have!). To do
+this the rules that we currently have are:</p>
+<ul>
+<li>
+<p>Add support for the new format to Cargo. This involves code changes in
+Cargo itself, likely by adding a new variant of <code>ResolveVersion</code> and
+branching on that where necessary. This is accompanied with tests in the
+<code>lockfile_compat</code> module.</p>
+<ul>
+<li>
+<p>Do not update <code>ResolveVersion::default()</code>. The new lockfile format will
+not be used yet.</p>
+</li>
+<li>
+<p>Preserve the new format if found. This means that if Cargo finds the new
+version it’ll keep using it, but otherwise it continues to use whatever
+format it previously found.</p>
+</li>
+</ul>
+</li>
+<li>
+<p>Wait a “long time”. This is at least until the changes here hit stable
+Rust. Often though we wait a little longer to let the changes percolate
+into one or two older stable releases.</p>
+</li>
+<li>
+<p>Change the return value of <code>ResolveVersion::default()</code> to the new format.
+This will cause new lock files to use the latest encoding as well as
+causing any operation which updates the lock file to update to the new
+format.</p>
+</li>
+</ul>
+<p>This migration scheme in general means that Cargo we’ll get <em>support</em> for a
+new format into Cargo ASAP, but it won’t be exercised yet (except in Cargo’s
+own tests). Eventually when stable/beta/nightly all have support for the new
+format (and maybe a few previous stable versions) we flip the switch.
+Projects on nightly will quickly start seeing changes, but
+stable/beta/nightly will all understand this new format and will preserve
+it.</p>
+<p>While this does mean that projects’ <code>Cargo.lock</code> changes over time, it’s
+typically a pretty minimal effort change that’s just “check in what’s
+there”.</p>
+<h3 id="historical-changes-to-cargolock"><a class="doc-anchor" href="#historical-changes-to-cargolock">§</a>Historical changes to <code>Cargo.lock</code></h3>
+<p>Listed from most recent to oldest, these are some of the changes we’ve made
+to <code>Cargo.lock</code>’s serialization format:</p>
+<ul>
+<li>
+<p>A <code>version</code> marker is now at the top of the lock file which is a way for
+super-old Cargos (at least since this was implemented) to give a formal
+error if they see a lock file from a super-future Cargo. Additionally as
+part of this change the encoding of <code>git</code> dependencies in lock files
+changed where <code>branch = "master"</code> is now encoded with <code>branch=master</code>
+instead of with nothing at all.</p>
+</li>
+<li>
+<p>The entries in <code>dependencies</code> arrays have been shortened and the
+<code>checksum</code> field now shows up directly in <code>[[package]]</code> instead of always
+at the end of the file. The goal of this change was to ideally reduce
+merge conflicts being generated on <code>Cargo.lock</code>. Updating a version of a
+package now only updates two lines in the file, the checksum and the
+version number, most of the time. Dependency edges are specified in a
+compact form where possible where just the name is listed. The
+version/source on dependency edges are only listed if necessary to
+disambiguate which version or which source is in use.</p>
+</li>
+<li>
+<p>A comment at the top of the file indicates that the file is a generated
+file and contains the special symbol <code>@generated</code> to indicate to common
+review tools that it’s a generated file.</p>
+</li>
+<li>
+<p>A <code>[root]</code> entry for the “root crate” has been removed and instead now
+included in <code>[[package]]</code> like everything else.</p>
+</li>
+<li>
+<p>All packages from registries contain a <code>checksum</code> which is a sha256
+checksum of the tarball the package is associated with. This is all stored
+in the <code>[metadata]</code> table of <code>Cargo.lock</code> which all versions of Cargo
+since 1.0 have preserved. The goal of this was to start recording
+checksums so mirror sources can be verified.</p>
+</li>
+</ul>
+<h3 id="other-oddities-about-cargolock"><a class="doc-anchor" href="#other-oddities-about-cargolock">§</a>Other oddities about <code>Cargo.lock</code></h3>
+<p>There’s a few other miscellaneous weird things about <code>Cargo.lock</code> that you
+may want to be aware of when reading this file:</p>
+<ul>
+<li>
+<p>All packages have a <code>source</code> listed to indicate where they come from. For
+<code>path</code> dependencies, however, no <code>source</code> is listed. There’s no way we
+could emit a filesystem path name and have that be portable across
+systems, so all packages from a <code>path</code> are not listed with a <code>source</code>.
+Note that this also means that all packages with <code>path</code> sources must have
+unique names.</p>
+</li>
+<li>
+<p>The <code>[metadata]</code> table in <code>Cargo.lock</code> is intended to be a generic mapping
+of strings to strings that’s simply preserved by Cargo. This was a very
+early effort to be forward compatible against changes to <code>Cargo.lock</code>’s
+format. This is nowadays sort of deemed a bad idea though and we don’t
+really use it that much except for <code>checksum</code>s historically. It’s not
+really recommended to use this.</p>
+</li>
+<li>
+<p>The actual literal on-disk serialiation is found in
+<code>src/cargo/ops/lockfile.rs</code> which basically renders a <code>toml::Value</code> in a
+special fashion to make sure we have strict control over the on-disk
+format.</p>
+</li>
+</ul>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.EncodableDependency.html" title="struct cargo::core::resolver::encode::EncodableDependency">Encodable<wbr>Dependency</a></div></li><li><div class="item-name"><a class="struct" href="struct.EncodablePackageId.html" title="struct cargo::core::resolver::encode::EncodablePackageId">Encodable<wbr>Package<wbr>Id</a></div></li><li><div class="item-name"><a class="struct" href="struct.EncodableResolve.html" title="struct cargo::core::resolver::encode::EncodableResolve">Encodable<wbr>Resolve</a></div><div class="desc docblock-short">The <code>Cargo.lock</code> structure.</div></li><li><div class="item-name"><a class="struct" href="struct.EncodableSourceId.html" title="struct cargo::core::resolver::encode::EncodableSourceId">Encodable<wbr>Source<wbr>Id</a></div><div class="desc docblock-short">Pretty much equivalent to <a href="../../source_id/struct.SourceId.html" title="struct cargo::core::source_id::SourceId"><code>SourceId</code></a> with a different serialization method.</div></li><li><div class="item-name"><a class="struct" href="struct.EncodeState.html" title="struct cargo::core::resolver::encode::EncodeState">Encode<wbr>State</a></div></li><li><div class="item-name"><a class="struct" href="struct.Patch.html" title="struct cargo::core::resolver::encode::Patch">Patch</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.build_path_deps.html" title="fn cargo::core::resolver::encode::build_path_deps">build_<wbr>path_<wbr>deps</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.encodable_package_id.html" title="fn cargo::core::resolver::encode::encodable_package_id">encodable_<wbr>package_<wbr>id</a></div></li><li><div class="item-name"><a class="fn" href="fn.encodable_resolve_node.html" title="fn cargo::core::resolver::encode::encodable_resolve_node">encodable_<wbr>resolve_<wbr>node</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.encodable_source_id.html" title="fn cargo::core::resolver::encode::encodable_source_id">encodable_<wbr>source_<wbr>id</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="types" class="section-header">Type Aliases<a href="#types" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="type" href="type.Metadata.html" title="type cargo::core::resolver::encode::Metadata">Metadata</a></div></li></ul></section></div></main></body></html>

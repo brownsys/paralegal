@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["edit_distance","edit_distance_with_substrings","find_best_match_for_name","find_best_match_for_name_impl","find_best_match_for_name_with_substrings","find_best_match_for_names","find_match_by_sorted_words","sort_by_words"]};

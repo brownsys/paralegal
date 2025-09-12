@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CollectionMode"],"fn":["opaque_types_defined_by","provide"],"struct":["OpaqueTypeCollector"]};

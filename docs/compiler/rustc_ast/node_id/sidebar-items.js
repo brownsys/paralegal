@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CRATE_NODE_ID","DUMMY_NODE_ID"],"struct":["NodeId"],"type":["NodeMap","NodeMapEntry","NodeSet"]};

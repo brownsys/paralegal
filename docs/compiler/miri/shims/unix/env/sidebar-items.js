@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["alloc_env_var","alloc_environ_block"],"struct":["UnixEnvVars"],"trait":["EvalContextExt"]};

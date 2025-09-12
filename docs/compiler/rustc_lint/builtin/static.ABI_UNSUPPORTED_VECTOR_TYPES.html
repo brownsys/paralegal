@@ -1,0 +1,44 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="The `abi_unsupported_vector_types` lint detects function definitions and calls whose ABI depends on enabling certain target features, but those features are not enabled."><title>ABI_UNSUPPORTED_VECTOR_TYPES in rustc_lint::builtin - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_lint" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc static"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button><a class="logo-container" href="../../rustc_lint/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt=""></a></nav><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../rustc_lint/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt="logo"></a><h2><a href="../../rustc_lint/index.html">rustc_<wbr>lint</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">ABI_<wbr>UNSUPPORTED_<wbr>VECTOR_<wbr>TYPES</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#example" title="Example">Example</a></li><li><a href="#explanation" title="Explanation">Explanation</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="index.html">In rustc_<wbr>lint::<wbr>builtin</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">rustc_lint</a>::<wbr><a href="index.html">builtin</a></span><h1>Static <span class="static">ABI_UNSUPPORTED_VECTOR_TYPES</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustc_lint_defs/builtin.rs.html#5116-5180">Source</a> </span></div><pre class="rust item-decl"><code>pub static ABI_UNSUPPORTED_VECTOR_TYPES: &amp;'static <a class="struct" href="../struct.Lint.html" title="struct rustc_lint::Lint">Lint</a></code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The <code>abi_unsupported_vector_types</code> lint detects function definitions and calls
+whose ABI depends on enabling certain target features, but those features are not enabled.</p>
+<h4 id="example"><a class="doc-anchor" href="#example">§</a>Example</h4>
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">extern </span><span class="string">"C" </span><span class="kw">fn </span>missing_target_feature(<span class="kw">_</span>: std::arch::x86_64::__m256) {
+  <span class="macro">todo!</span>()
+}
+
+<span class="attr">#[target_feature(enable = <span class="string">"avx"</span>)]
+</span><span class="kw">unsafe extern </span><span class="string">"C" </span><span class="kw">fn </span>with_target_feature(<span class="kw">_</span>: std::arch::x86_64::__m256) {
+  <span class="macro">todo!</span>()
+}
+
+<span class="kw">fn </span>main() {
+  <span class="kw">let </span>v = <span class="kw">unsafe </span>{ std::mem::zeroed() };
+  <span class="kw">unsafe </span>{ with_target_feature(v); }
+}</code></pre></div>
+<div class="example-wrap"><pre class="language-text"><code>warning: ABI error: this function call uses a avx vector type, which is not enabled in the caller
+ --&gt; lint_example.rs:18:12
+  |
+  |   unsafe { with_target_feature(v); }
+  |            ^^^^^^^^^^^^^^^^^^^^^^ function called here
+  |
+  = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+  = note: for more information, see issue #116558 &lt;https://github.com/rust-lang/rust/issues/116558&gt;
+  = help: consider enabling it globally (-C target-feature=+avx) or locally (#[target_feature(enable=&quot;avx&quot;)])
+  = note: `#[warn(abi_unsupported_vector_types)]` on by default
+
+
+warning: ABI error: this function definition uses a avx vector type, which is not enabled
+ --&gt; lint_example.rs:3:1
+  |
+  | pub extern &quot;C&quot; fn with_target_feature(_: std::arch::x86_64::__m256) {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ function defined here
+  |
+  = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+  = note: for more information, see issue #116558 &lt;https://github.com/rust-lang/rust/issues/116558&gt;
+  = help: consider enabling it globally (-C target-feature=+avx) or locally (#[target_feature(enable=&quot;avx&quot;)])</code></pre></div><h4 id="explanation"><a class="doc-anchor" href="#explanation">§</a>Explanation</h4>
+<p>The C ABI for <code>__m256</code> requires the value to be passed in an AVX register,
+which is only possible when the <code>avx</code> target feature is enabled.
+Therefore, <code>missing_target_feature</code> cannot be compiled without that target feature.
+A similar (but complementary) message is triggered when <code>with_target_feature</code> is called
+by a function that does not enable the <code>avx</code> target feature.</p>
+<p>Note that this lint is very similar to the <code>-Wpsabi</code> warning in <code>gcc</code>/<code>clang</code>.</p>
+</div></details></section></div></main></body></html>

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CHECKSUM_TEMPLATE","CRATE_TEMPLATE","LOWER_PREFIX_TEMPLATE","PREFIX_TEMPLATE","VERSION_TEMPLATE"],"fn":["download","finish_download","is_crate_downloaded"]};

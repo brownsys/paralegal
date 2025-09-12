@@ -1,0 +1,283 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `compiler/rustc_builtin_macros/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_builtin_macros" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../../static.files/src-script-56102188.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">rustc_builtin_macros/</div>lib.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<a href="#1" id="1">1</a>
+<a href="#2" id="2">2</a>
+<a href="#3" id="3">3</a>
+<a href="#4" id="4">4</a>
+<a href="#5" id="5">5</a>
+<a href="#6" id="6">6</a>
+<a href="#7" id="7">7</a>
+<a href="#8" id="8">8</a>
+<a href="#9" id="9">9</a>
+<a href="#10" id="10">10</a>
+<a href="#11" id="11">11</a>
+<a href="#12" id="12">12</a>
+<a href="#13" id="13">13</a>
+<a href="#14" id="14">14</a>
+<a href="#15" id="15">15</a>
+<a href="#16" id="16">16</a>
+<a href="#17" id="17">17</a>
+<a href="#18" id="18">18</a>
+<a href="#19" id="19">19</a>
+<a href="#20" id="20">20</a>
+<a href="#21" id="21">21</a>
+<a href="#22" id="22">22</a>
+<a href="#23" id="23">23</a>
+<a href="#24" id="24">24</a>
+<a href="#25" id="25">25</a>
+<a href="#26" id="26">26</a>
+<a href="#27" id="27">27</a>
+<a href="#28" id="28">28</a>
+<a href="#29" id="29">29</a>
+<a href="#30" id="30">30</a>
+<a href="#31" id="31">31</a>
+<a href="#32" id="32">32</a>
+<a href="#33" id="33">33</a>
+<a href="#34" id="34">34</a>
+<a href="#35" id="35">35</a>
+<a href="#36" id="36">36</a>
+<a href="#37" id="37">37</a>
+<a href="#38" id="38">38</a>
+<a href="#39" id="39">39</a>
+<a href="#40" id="40">40</a>
+<a href="#41" id="41">41</a>
+<a href="#42" id="42">42</a>
+<a href="#43" id="43">43</a>
+<a href="#44" id="44">44</a>
+<a href="#45" id="45">45</a>
+<a href="#46" id="46">46</a>
+<a href="#47" id="47">47</a>
+<a href="#48" id="48">48</a>
+<a href="#49" id="49">49</a>
+<a href="#50" id="50">50</a>
+<a href="#51" id="51">51</a>
+<a href="#52" id="52">52</a>
+<a href="#53" id="53">53</a>
+<a href="#54" id="54">54</a>
+<a href="#55" id="55">55</a>
+<a href="#56" id="56">56</a>
+<a href="#57" id="57">57</a>
+<a href="#58" id="58">58</a>
+<a href="#59" id="59">59</a>
+<a href="#60" id="60">60</a>
+<a href="#61" id="61">61</a>
+<a href="#62" id="62">62</a>
+<a href="#63" id="63">63</a>
+<a href="#64" id="64">64</a>
+<a href="#65" id="65">65</a>
+<a href="#66" id="66">66</a>
+<a href="#67" id="67">67</a>
+<a href="#68" id="68">68</a>
+<a href="#69" id="69">69</a>
+<a href="#70" id="70">70</a>
+<a href="#71" id="71">71</a>
+<a href="#72" id="72">72</a>
+<a href="#73" id="73">73</a>
+<a href="#74" id="74">74</a>
+<a href="#75" id="75">75</a>
+<a href="#76" id="76">76</a>
+<a href="#77" id="77">77</a>
+<a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
+<a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a></pre></div><pre class="rust"><code><span class="doccomment">//! This crate contains implementations of built-in macros and other code generating facilities
+//! injecting code into the crate before it is lowered to HIR.
+
+</span><span class="comment">// tidy-alphabetical-start
+</span><span class="attr">#![allow(internal_features)]
+#![allow(rustc::diagnostic_outside_of_impl)]
+#![allow(rustc::untranslatable_diagnostic)]
+#![doc(html_root_url = <span class="string">"https://doc.rust-lang.org/nightly/nightly-rustc/"</span>)]
+#![doc(rust_logo)]
+#![feature(assert_matches)]
+#![feature(autodiff)]
+#![feature(box_patterns)]
+#![feature(decl_macro)]
+#![feature(if_let_guard)]
+#![feature(let_chains)]
+#![feature(proc_macro_internals)]
+#![feature(proc_macro_quote)]
+#![feature(rustdoc_internals)]
+#![feature(try_blocks)]
+#![warn(unreachable_pub)]
+</span><span class="comment">// tidy-alphabetical-end
+
+</span><span class="kw">extern crate </span>proc_macro;
+
+<span class="kw">use </span>rustc_expand::base::{MacroExpanderFn, ResolverExpand, SyntaxExtensionKind};
+<span class="kw">use </span>rustc_expand::proc_macro::BangProcMacro;
+<span class="kw">use </span>rustc_span::symbol::sym;
+
+<span class="kw">use </span><span class="kw">crate</span>::deriving::<span class="kw-2">*</span>;
+
+<span class="kw">mod </span>alloc_error_handler;
+<span class="kw">mod </span>assert;
+<span class="kw">mod </span>autodiff;
+<span class="kw">mod </span>cfg;
+<span class="kw">mod </span>cfg_accessible;
+<span class="kw">mod </span>cfg_eval;
+<span class="kw">mod </span>compile_error;
+<span class="kw">mod </span>concat;
+<span class="kw">mod </span>concat_bytes;
+<span class="kw">mod </span>concat_idents;
+<span class="kw">mod </span>derive;
+<span class="kw">mod </span>deriving;
+<span class="kw">mod </span>edition_panic;
+<span class="kw">mod </span>env;
+<span class="kw">mod </span>errors;
+<span class="kw">mod </span>format;
+<span class="kw">mod </span>format_foreign;
+<span class="kw">mod </span>global_allocator;
+<span class="kw">mod </span>log_syntax;
+<span class="kw">mod </span>pattern_type;
+<span class="kw">mod </span>source_util;
+<span class="kw">mod </span>test;
+<span class="kw">mod </span>trace_macros;
+
+<span class="kw">pub mod </span>asm;
+<span class="kw">pub mod </span>cmdline_attrs;
+<span class="kw">pub mod </span>proc_macro_harness;
+<span class="kw">pub mod </span>standard_library_imports;
+<span class="kw">pub mod </span>test_harness;
+<span class="kw">pub mod </span>util;
+
+<span class="macro">rustc_fluent_macro::fluent_messages!</span> { <span class="string">"../messages.ftl" </span>}
+
+<span class="kw">pub fn </span>register_builtin_macros(resolver: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>ResolverExpand) {
+    <span class="kw">let </span><span class="kw-2">mut </span>register = |name, kind| resolver.register_builtin_macro(name, kind);
+    <span class="kw">macro </span>register_bang($(<span class="macro-nonterminal">$name</span>:ident: <span class="macro-nonterminal">$f</span>:expr,)<span class="kw-2">*</span>) {
+        $(register(sym::<span class="macro-nonterminal">$name</span>, SyntaxExtensionKind::LegacyBang(Box::new(<span class="macro-nonterminal">$f </span><span class="kw">as </span>MacroExpanderFn)));)*
+    }
+    <span class="kw">macro </span>register_attr($(<span class="macro-nonterminal">$name</span>:ident: <span class="macro-nonterminal">$f</span>:expr,)<span class="kw-2">*</span>) {
+        $(register(sym::<span class="macro-nonterminal">$name</span>, SyntaxExtensionKind::LegacyAttr(Box::new(<span class="macro-nonterminal">$f</span>)));)*
+    }
+    <span class="kw">macro </span>register_derive($(<span class="macro-nonterminal">$name</span>:ident: <span class="macro-nonterminal">$f</span>:expr,)<span class="kw-2">*</span>) {
+        $(register(sym::<span class="macro-nonterminal">$name</span>, SyntaxExtensionKind::LegacyDerive(Box::new(BuiltinDerive(<span class="macro-nonterminal">$f</span>))));)*
+    }
+
+    <span class="macro">register_bang!</span> {
+        <span class="comment">// tidy-alphabetical-start
+        </span>asm: asm::expand_asm,
+        assert: assert::expand_assert,
+        cfg: cfg::expand_cfg,
+        column: source_util::expand_column,
+        compile_error: compile_error::expand_compile_error,
+        concat: concat::expand_concat,
+        concat_bytes: concat_bytes::expand_concat_bytes,
+        concat_idents: concat_idents::expand_concat_idents,
+        const_format_args: format::expand_format_args,
+        core_panic: edition_panic::expand_panic,
+        env: env::expand_env,
+        file: source_util::expand_file,
+        format_args: format::expand_format_args,
+        format_args_nl: format::expand_format_args_nl,
+        global_asm: asm::expand_global_asm,
+        include: source_util::expand_include,
+        include_bytes: source_util::expand_include_bytes,
+        include_str: source_util::expand_include_str,
+        line: source_util::expand_line,
+        log_syntax: log_syntax::expand_log_syntax,
+        module_path: source_util::expand_mod,
+        naked_asm: asm::expand_naked_asm,
+        option_env: env::expand_option_env,
+        pattern_type: pattern_type::expand,
+        std_panic: edition_panic::expand_panic,
+        stringify: source_util::expand_stringify,
+        trace_macros: trace_macros::expand_trace_macros,
+        unreachable: edition_panic::expand_unreachable,
+        <span class="comment">// tidy-alphabetical-end
+    </span>}
+
+    <span class="macro">register_attr!</span> {
+        alloc_error_handler: alloc_error_handler::expand,
+        autodiff: autodiff::expand,
+        bench: test::expand_bench,
+        cfg_accessible: cfg_accessible::Expander,
+        cfg_eval: cfg_eval::expand,
+        derive: derive::Expander { is_const: <span class="bool-val">false </span>},
+        derive_const: derive::Expander { is_const: <span class="bool-val">true </span>},
+        global_allocator: global_allocator::expand,
+        test: test::expand_test,
+        test_case: test::expand_test_case,
+    }
+
+    <span class="macro">register_derive!</span> {
+        Clone: clone::expand_deriving_clone,
+        Copy: bounds::expand_deriving_copy,
+        ConstParamTy: bounds::expand_deriving_const_param_ty,
+        UnsizedConstParamTy: bounds::expand_deriving_unsized_const_param_ty,
+        Debug: debug::expand_deriving_debug,
+        Default: default::expand_deriving_default,
+        Eq: eq::expand_deriving_eq,
+        Hash: hash::expand_deriving_hash,
+        Ord: ord::expand_deriving_ord,
+        PartialEq: partial_eq::expand_deriving_partial_eq,
+        PartialOrd: partial_ord::expand_deriving_partial_ord,
+        RustcDecodable: decodable::expand_deriving_rustc_decodable,
+        RustcEncodable: encodable::expand_deriving_rustc_encodable,
+        CoercePointee: coerce_pointee::expand_deriving_coerce_pointee,
+    }
+
+    <span class="kw">let </span>client = proc_macro::bridge::client::Client::expand1(proc_macro::quote);
+    register(sym::quote, SyntaxExtensionKind::Bang(Box::new(BangProcMacro { client })));
+}
+</code></pre></div></section></main></body></html>

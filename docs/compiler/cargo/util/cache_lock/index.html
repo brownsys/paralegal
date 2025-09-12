@@ -1,0 +1,75 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Support for locking the package and index caches."><title>cargo::util::cache_lock - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="cargo" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../cargo/index.html">cargo</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module cache_<wbr>lock</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#usage" title="Usage">Usage</a></li><li><a href="#types-of-locking" title="Types of locking">Types of locking</a></li><li><a href="#locking-implementation-details" title="Locking implementation details">Locking implementation details</a></li><li><a href="#interaction-with-older-cargos" title="Interaction with older cargos">Interaction with older cargos</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#constants" title="Constants">Constants</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In cargo::<wbr>util</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../index.html">cargo</a>::<wbr><a href="../index.html">util</a></span><h1>Module <span>cache_lock</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/cargo/util/cache_lock.rs.html#1-548">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Support for locking the package and index caches.</p>
+<p>This implements locking on the package and index caches (source files,
+<code>.crate</code> files, and index caches) to coordinate when multiple cargos are
+running at the same time.</p>
+<h3 id="usage"><a class="doc-anchor" href="#usage">§</a>Usage</h3>
+<p>There is a global <a href="struct.CacheLocker.html" title="struct cargo::util::cache_lock::CacheLocker"><code>CacheLocker</code></a> held inside cargo’s venerable
+<a href="../context/struct.GlobalContext.html" title="struct cargo::util::context::GlobalContext"><code>GlobalContext</code></a>. The <code>CacheLocker</code> manages creating and tracking the locks
+being held. There are methods on <a href="../context/struct.GlobalContext.html" title="struct cargo::util::context::GlobalContext"><code>GlobalContext</code></a> for managing the locks:</p>
+<ul>
+<li><a href="../context/struct.GlobalContext.html#method.acquire_package_cache_lock" title="method cargo::util::context::GlobalContext::acquire_package_cache_lock"><code>GlobalContext::acquire_package_cache_lock</code></a> — Acquires a lock. May block if
+another process holds a lock.</li>
+<li><a href="../context/struct.GlobalContext.html#method.try_acquire_package_cache_lock" title="method cargo::util::context::GlobalContext::try_acquire_package_cache_lock"><code>GlobalContext::try_acquire_package_cache_lock</code></a> — Acquires a lock, returning
+immediately if it would block.</li>
+<li><a href="../context/struct.GlobalContext.html#method.assert_package_cache_locked" title="method cargo::util::context::GlobalContext::assert_package_cache_locked"><code>GlobalContext::assert_package_cache_locked</code></a> — This is used to ensure the
+proper lock is being held.</li>
+</ul>
+<p>Lower-level code that accesses the package cache typically just use
+<code>assert_package_cache_locked</code> to ensure that the correct lock is being
+held. Higher-level code is responsible for acquiring the appropriate lock,
+and holding it during the duration that it is performing its operation.</p>
+<h3 id="types-of-locking"><a class="doc-anchor" href="#types-of-locking">§</a>Types of locking</h3>
+<p>There are three styles of locks:</p>
+<ul>
+<li><a href="enum.CacheLockMode.html#variant.DownloadExclusive" title="variant cargo::util::cache_lock::CacheLockMode::DownloadExclusive"><code>CacheLockMode::DownloadExclusive</code></a> – This is an exclusive lock
+acquired while downloading packages and doing resolution.</li>
+<li><a href="enum.CacheLockMode.html#variant.Shared" title="variant cargo::util::cache_lock::CacheLockMode::Shared"><code>CacheLockMode::Shared</code></a> – This is a shared lock acquired while a
+build is running. In other words, whenever cargo just needs to read from
+the cache, it should hold this lock. This is here to ensure that no
+cargos are trying to read the source caches when cache garbage
+collection runs.</li>
+<li><a href="enum.CacheLockMode.html#variant.MutateExclusive" title="variant cargo::util::cache_lock::CacheLockMode::MutateExclusive"><code>CacheLockMode::MutateExclusive</code></a> – This is an exclusive lock acquired
+whenever needing to modify existing source files (for example, with
+cache garbage collection). This is acquired to make sure that no other
+cargo is reading from the cache.</li>
+</ul>
+<p>Importantly, a <code>DownloadExclusive</code> lock does <em>not</em> interfere with a
+<code>Shared</code> lock. The download process generally does not modify source files
+(it only adds new ones), so other cargos should be able to safely proceed
+in reading source files<sup id="fnref1"><a href="#fn1">1</a></sup>.</p>
+<p>See the <a href="enum.CacheLockMode.html" title="enum cargo::util::cache_lock::CacheLockMode"><code>CacheLockMode</code></a> enum docs for more details on when the different
+modes should be used.</p>
+<h3 id="locking-implementation-details"><a class="doc-anchor" href="#locking-implementation-details">§</a>Locking implementation details</h3>
+<p>This is implemented by two separate lock files, the “download” one and the
+“mutate” one. The <code>MutateExclusive</code> lock acquired both the “mutate” and
+“download” locks. The <code>Shared</code> lock acquires the “mutate” lock in share
+mode.</p>
+<p>An important rule is that <code>MutateExclusive</code> acquires the locks in the
+order “mutate” first and then the “download”. That helps prevent
+deadlocks. It is not allowed for a cargo to first acquire a
+<code>DownloadExclusive</code> lock and then a <code>Shared</code> lock because that would open
+it up for deadlock.</p>
+<p>Another rule is that there should be only one <a href="struct.CacheLocker.html" title="struct cargo::util::cache_lock::CacheLocker"><code>CacheLocker</code></a> per process
+to uphold the ordering rules. You could in theory have multiple if you
+could ensure that other threads would make progress and drop a lock, but
+cargo is not architected that way.</p>
+<p>It is safe to recursively acquire a lock as many times as you want.</p>
+<h3 id="interaction-with-older-cargos"><a class="doc-anchor" href="#interaction-with-older-cargos">§</a>Interaction with older cargos</h3>
+<p>Before version 1.74, cargo only acquired the <code>DownloadExclusive</code> lock when
+downloading and doing resolution. Newer cargos that acquire
+<code>MutateExclusive</code> should still correctly block when an old cargo is
+downloading (because it also acquires <code>DownloadExclusive</code>), but they do
+not properly coordinate when an old cargo is in the build phase (because
+it holds no locks). This isn’t expected to be much of a problem because
+the intended use of mutating the cache is only to delete old contents
+which aren’t currently being used. It is possible for there to be a
+conflict, particularly if the user manually deletes the entire cache, but
+it is not expected for this scenario to happen too often, and the only
+consequence is that one side or the other encounters an error and needs to
+retry.</p>
+<div class="footnotes"><hr><ol><li id="fn1"><p>A minor caveat is that downloads will delete an existing <code>src</code>
+directory if it was extracted via an old cargo. See
+<a href="../../sources/registry/struct.RegistrySource.html#method.unpack_package" title="method cargo::sources::registry::RegistrySource::unpack_package"><code>crate::sources::registry::RegistrySource::unpack_package</code></a>. This
+should probably be fixed, but is unlikely to be a problem if the user is
+only using versions of cargo with the same deletion logic.&nbsp;<a href="#fnref1">↩</a></p></li></ol></div></div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.CacheLock.html" title="struct cargo::util::cache_lock::CacheLock">Cache<wbr>Lock</a></div><div class="desc docblock-short">A held lock guard.</div></li><li><div class="item-name"><a class="struct" href="struct.CacheLocker.html" title="struct cargo::util::cache_lock::CacheLocker">Cache<wbr>Locker</a></div><div class="desc docblock-short">A locker that can be used to acquire locks.</div></li><li><div class="item-name"><a class="struct" href="struct.CacheState.html" title="struct cargo::util::cache_lock::CacheState">Cache<wbr>State</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">The state of the <a href="struct.CacheLocker.html" title="struct cargo::util::cache_lock::CacheLocker"><code>CacheLocker</code></a>.</div></li><li><div class="item-name"><a class="struct" href="struct.RecursiveLock.html" title="struct cargo::util::cache_lock::RecursiveLock">Recursive<wbr>Lock</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">A file lock, with a counter to assist with recursive locking.</div></li></ul><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="enum" href="enum.BlockingMode.html" title="enum cargo::util::cache_lock::BlockingMode">Blocking<wbr>Mode</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Whether or not a lock attempt should block.</div></li><li><div class="item-name"><a class="enum" href="enum.CacheLockMode.html" title="enum cargo::util::cache_lock::CacheLockMode">Cache<wbr>Lock<wbr>Mode</a></div><div class="desc docblock-short">The style of lock to acquire.</div></li><li><div class="item-name"><a class="enum" href="enum.LockingResult.html" title="enum cargo::util::cache_lock::LockingResult">Locking<wbr>Result</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Whether or not a lock attempt blocked or succeeded.</div></li></ul><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="constant" href="constant.CACHE_LOCK_NAME.html" title="constant cargo::util::cache_lock::CACHE_LOCK_NAME">CACHE_<wbr>LOCK_<wbr>NAME</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">The filename for the <a href="enum.CacheLockMode.html#variant.DownloadExclusive" title="variant cargo::util::cache_lock::CacheLockMode::DownloadExclusive"><code>CacheLockMode::DownloadExclusive</code></a> lock.</div></li><li><div class="item-name"><a class="constant" href="constant.DOWNLOAD_EXCLUSIVE_DESCR.html" title="constant cargo::util::cache_lock::DOWNLOAD_EXCLUSIVE_DESCR">DOWNLOAD_<wbr>EXCLUSIVE_<wbr>DESCR</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="constant" href="constant.MUTATE_EXCLUSIVE_DESCR.html" title="constant cargo::util::cache_lock::MUTATE_EXCLUSIVE_DESCR">MUTATE_<wbr>EXCLUSIVE_<wbr>DESCR</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="constant" href="constant.MUTATE_NAME.html" title="constant cargo::util::cache_lock::MUTATE_NAME">MUTATE_<wbr>NAME</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">The filename for the <a href="enum.CacheLockMode.html#variant.MutateExclusive" title="variant cargo::util::cache_lock::CacheLockMode::MutateExclusive"><code>CacheLockMode::MutateExclusive</code></a> and
+<a href="enum.CacheLockMode.html#variant.Shared" title="variant cargo::util::cache_lock::CacheLockMode::Shared"><code>CacheLockMode::Shared</code></a> lock.</div></li><li><div class="item-name"><a class="constant" href="constant.SHARED_DESCR.html" title="constant cargo::util::cache_lock::SHARED_DESCR">SHARED_<wbr>DESCR</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.maybe_readonly.html" title="fn cargo::util::cache_lock::maybe_readonly">maybe_<wbr>readonly</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Returns whether or not the error appears to be from a read-only filesystem.</div></li></ul></section></div></main></body></html>

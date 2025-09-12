@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Kind"],"fn":["lock","summary_for_patch"],"struct":["LockedPatchDependency","PackageRegistry"],"trait":["Registry"],"type":["LockedMap","PatchDependency"]};

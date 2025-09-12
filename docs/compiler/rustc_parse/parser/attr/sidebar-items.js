@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AllowLeadingUnsafe","InnerAttrForbiddenReason","InnerAttrPolicy","OuterAttributeType"]};

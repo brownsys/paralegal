@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DW_TAG_arg_variable","DW_TAG_auto_variable"],"fn":["finalize"],"mod":["create_scope_map","gdb","metadata","namespace","utils"],"struct":["CodegenUnitDebugContext","DebugLoc"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["rvalue_locals"],"struct":["ContainsRegion","PossibleBorrowerMap","PossibleBorrowerVisitor"]};

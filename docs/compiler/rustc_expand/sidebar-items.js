@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["compile_declarative_macro"],"macro":["configure"],"mod":["base","build","config","errors","expand","mbe","module","placeholders","proc_macro","proc_macro_server"],"static":["DEFAULT_LOCALE_RESOURCE"]};

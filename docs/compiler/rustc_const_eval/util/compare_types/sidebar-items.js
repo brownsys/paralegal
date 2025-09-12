@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["relate_types","sub_types"]};

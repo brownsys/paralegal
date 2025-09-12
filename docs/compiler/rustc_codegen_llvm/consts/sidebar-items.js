@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check_and_apply_linkage","codegen_static_initializer","const_alloc_to_llvm","set_global_alignment"]};

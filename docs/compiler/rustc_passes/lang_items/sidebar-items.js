@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Duplicate"],"fn":["get_lang_items","provide"],"struct":["LanguageItemCollector"]};

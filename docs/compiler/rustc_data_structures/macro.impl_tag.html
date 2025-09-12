@@ -1,0 +1,76 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Implements `Tag` for a given type."><title>impl_tag in rustc_data_structures - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="rustc_data_structures" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc macro"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button><a class="logo-container" href="../rustc_data_structures/index.html"><img class="rust-logo" src="../static.files/rust-logo-9a9549ea.svg" alt=""></a></nav><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../rustc_data_structures/index.html"><img class="rust-logo" src="../static.files/rust-logo-9a9549ea.svg" alt="logo"></a><h2><a href="../rustc_data_structures/index.html">rustc_<wbr>data_<wbr>structures</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">impl_<wbr>tag</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#examples" title="Examples">Examples</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="index.html">In crate rustc_<wbr>data_<wbr>structures</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="index.html">rustc_data_structures</a></span><h1>Macro <span class="macro">impl_tag</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/rustc_data_structures/tagged_ptr/impl_tag.rs.html#85-141">Source</a> </span></div><pre class="rust item-decl"><code>macro_rules! impl_tag {
+    (
+        impl Tag for $Self:ty;
+        $(
+            $($path:ident)::* $( { $( $fields:tt )* })?,
+        )*
+    ) =&gt; { ... };
+}</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Implements <a href="tagged_ptr/trait.Tag.html" title="trait rustc_data_structures::tagged_ptr::Tag"><code>Tag</code></a> for a given type.</p>
+<p>You can use <code>impl_tag</code> on structs and enums.
+You need to specify the type and all its possible values,
+which can only be paths with optional fields.</p>
+<h2 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h2>
+<p>Basic usage:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="attr">#![feature(macro_metavar_expr)]
+</span><span class="kw">use </span>rustc_data_structures::{impl_tag, tagged_ptr::Tag};
+
+<span class="attr">#[derive(Copy, Clone, PartialEq, Debug)]
+</span><span class="kw">enum </span>SomeTag {
+    A,
+    B,
+    X { v: bool },
+    Y(bool, bool),
+}
+
+<span class="macro">impl_tag!</span> {
+    <span class="comment">// The type for which the `Tag` will be implemented
+    </span><span class="kw">impl </span>Tag <span class="kw">for </span>SomeTag;
+    <span class="comment">// You need to specify all possible tag values:
+    </span>SomeTag::A, <span class="comment">// 0
+    </span>SomeTag::B, <span class="comment">// 1
+    // For variants with fields, you need to specify the fields:
+    </span>SomeTag::X { v: <span class="bool-val">true  </span>}, <span class="comment">// 2
+    </span>SomeTag::X { v: <span class="bool-val">false </span>}, <span class="comment">// 3
+    // For tuple variants use named syntax:
+    </span>SomeTag::Y { <span class="number">0</span>: <span class="bool-val">true</span>,  <span class="number">1</span>: <span class="bool-val">true  </span>}, <span class="comment">// 4
+    </span>SomeTag::Y { <span class="number">0</span>: <span class="bool-val">false</span>, <span class="number">1</span>: <span class="bool-val">true  </span>}, <span class="comment">// 5
+    </span>SomeTag::Y { <span class="number">0</span>: <span class="bool-val">true</span>,  <span class="number">1</span>: <span class="bool-val">false </span>}, <span class="comment">// 6
+    </span>SomeTag::Y { <span class="number">0</span>: <span class="bool-val">false</span>, <span class="number">1</span>: <span class="bool-val">false </span>}, <span class="comment">// 7
+</span>}
+
+<span class="comment">// Tag values are assigned in order:
+</span><span class="macro">assert_eq!</span>(SomeTag::A.into_usize(), <span class="number">0</span>);
+<span class="macro">assert_eq!</span>(SomeTag::X { v: <span class="bool-val">false </span>}.into_usize(), <span class="number">3</span>);
+<span class="macro">assert_eq!</span>(SomeTag::Y(<span class="bool-val">false</span>, <span class="bool-val">true</span>).into_usize(), <span class="number">5</span>);
+
+<span class="macro">assert_eq!</span>(<span class="kw">unsafe </span>{ SomeTag::from_usize(<span class="number">1</span>) }, SomeTag::B);
+<span class="macro">assert_eq!</span>(<span class="kw">unsafe </span>{ SomeTag::from_usize(<span class="number">2</span>) }, SomeTag::X { v: <span class="bool-val">true </span>});
+<span class="macro">assert_eq!</span>(<span class="kw">unsafe </span>{ SomeTag::from_usize(<span class="number">7</span>) }, SomeTag::Y(<span class="bool-val">false</span>, <span class="bool-val">false</span>));</code></pre></div>
+<p>Structs are supported:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="attr">#![feature(macro_metavar_expr)]
+#[derive(Copy, Clone)]
+</span><span class="kw">struct </span>Flags { a: bool, b: bool }
+
+<span class="macro">impl_tag!</span> {
+    <span class="kw">impl </span>Tag <span class="kw">for </span>Flags;
+    Flags { a: <span class="bool-val">true</span>,  b: <span class="bool-val">true  </span>},
+    Flags { a: <span class="bool-val">false</span>, b: <span class="bool-val">true  </span>},
+    Flags { a: <span class="bool-val">true</span>,  b: <span class="bool-val">false </span>},
+    Flags { a: <span class="bool-val">false</span>, b: <span class="bool-val">false </span>},
+}</code></pre></div>
+<p>Not specifying all values results in a compile error:</p>
+
+<div class="example-wrap compile_fail"><a href="#" class="tooltip" title="This example deliberately fails to compile">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="attr">#![feature(macro_metavar_expr)]
+#[derive(Copy, Clone)]
+</span><span class="kw">enum </span>E {
+    A,
+    B,
+}
+
+<span class="macro">impl_tag!</span> {
+    <span class="kw">impl </span>Tag <span class="kw">for </span>E;
+    E::A,
+}</code></pre></div>
+</div></details></section></div></main></body></html>

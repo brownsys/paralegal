@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Packages"],"fn":["build_glob","emit_package_not_found","emit_pattern_not_found","match_patterns","opt_patterns_and_ids"]};

@@ -1,0 +1,54 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="The `rust_2021_incompatible_closure_captures` lint detects variables that aren’t completely captured in Rust 2021, such that the `Drop` order of their fields may differ between Rust 2018 and 2021."><title>RUST_2021_INCOMPATIBLE_CLOSURE_CAPTURES in rustc_lint_defs::builtin - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_lint_defs" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc static"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../rustc_lint_defs/index.html">rustc_<wbr>lint_<wbr>defs</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">RUST_<wbr>2021_<wbr>INCOMPATIBLE_<wbr>CLOSURE_<wbr>CAPTURES</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#example-of-drop-reorder" title="Example of drop reorder">Example of drop reorder</a></li><li><a href="#explanation" title="Explanation">Explanation</a></li><li><a href="#example-of-auto-trait" title="Example of auto-trait">Example of auto-trait</a></li><li><a href="#explanation-1" title="Explanation">Explanation</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="index.html">In rustc_<wbr>lint_<wbr>defs::<wbr>builtin</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">rustc_lint_defs</a>::<wbr><a href="index.html">builtin</a></span><h1>Static <span class="static">RUST_2021_INCOMPATIBLE_CLOSURE_CAPTURES</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustc_lint_defs/builtin.rs.html#3494-3571">Source</a> </span></div><pre class="rust item-decl"><code>pub static RUST_2021_INCOMPATIBLE_CLOSURE_CAPTURES: &amp;<a class="struct" href="../struct.Lint.html" title="struct rustc_lint_defs::Lint">Lint</a></code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The <code>rust_2021_incompatible_closure_captures</code> lint detects variables that aren’t completely
+captured in Rust 2021, such that the <code>Drop</code> order of their fields may differ between
+Rust 2018 and 2021.</p>
+<p>It can also detect when a variable implements a trait like <code>Send</code>, but one of its fields does not,
+and the field is captured by a closure and used with the assumption that said field implements
+the same trait as the root variable.</p>
+<h4 id="example-of-drop-reorder"><a class="doc-anchor" href="#example-of-drop-reorder">§</a>Example of drop reorder</h4>
+<div class="example-wrap compile_fail"><a href="#" class="tooltip" title="This example deliberately fails to compile">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="attr">#![deny(rust_2021_incompatible_closure_captures)]
+
+</span><span class="kw">struct </span>FancyInteger(i32);
+
+<span class="kw">impl </span>Drop <span class="kw">for </span>FancyInteger {
+    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="macro">println!</span>(<span class="string">"Just dropped {}"</span>, <span class="self">self</span>.<span class="number">0</span>);
+    }
+}
+
+<span class="kw">struct </span>Point { x: FancyInteger, y: FancyInteger }
+
+<span class="kw">fn </span>main() {
+  <span class="kw">let </span>p = Point { x: FancyInteger(<span class="number">10</span>), y: FancyInteger(<span class="number">20</span>) };
+
+  <span class="kw">let </span>c = || {
+     <span class="kw">let </span>x = p.x;
+  };
+
+  c();
+
+  <span class="comment">// ... More code ...
+</span>}</code></pre></div>
+<p>{{produces}}</p>
+<h4 id="explanation"><a class="doc-anchor" href="#explanation">§</a>Explanation</h4>
+<p>In the above example, <code>p.y</code> will be dropped at the end of <code>f</code> instead of
+with <code>c</code> in Rust 2021.</p>
+<h4 id="example-of-auto-trait"><a class="doc-anchor" href="#example-of-auto-trait">§</a>Example of auto-trait</h4>
+<div class="example-wrap compile_fail"><a href="#" class="tooltip" title="This example deliberately fails to compile">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="attr">#![deny(rust_2021_incompatible_closure_captures)]
+</span><span class="kw">use </span>std::thread;
+
+<span class="kw">struct </span>Pointer(<span class="kw-2">*mut </span>i32);
+<span class="kw">unsafe impl </span>Send <span class="kw">for </span>Pointer {}
+
+<span class="kw">fn </span>main() {
+    <span class="kw">let </span><span class="kw-2">mut </span>f = <span class="number">10</span>;
+    <span class="kw">let </span>fptr = Pointer(<span class="kw-2">&amp;mut </span>f <span class="kw">as </span><span class="kw-2">*mut </span>i32);
+    thread::spawn(<span class="kw">move </span>|| <span class="kw">unsafe </span>{
+        <span class="kw-2">*</span>fptr.<span class="number">0 </span>= <span class="number">20</span>;
+    });
+}</code></pre></div>
+<p>{{produces}}</p>
+<h4 id="explanation-1"><a class="doc-anchor" href="#explanation-1">§</a>Explanation</h4>
+<p>In the above example, only <code>fptr.0</code> is captured in Rust 2021.
+The field is of type <code>*mut i32</code>, which doesn’t implement <code>Send</code>,
+making the code invalid as the field cannot be sent between threads safely.</p>
+</div></details></section></div></main></body></html>

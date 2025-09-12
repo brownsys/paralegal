@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check","check_dash_files","check_unused_files"]};

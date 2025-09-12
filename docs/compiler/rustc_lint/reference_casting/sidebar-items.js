@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PatternKind"],"fn":["borrow_or_assign","is_cast_from_ref_to_mut_ptr","is_cast_to_bigger_memory_layout","peel_casts"],"static":["INVALID_REFERENCE_CASTING"],"struct":["InvalidReferenceCasting"]};

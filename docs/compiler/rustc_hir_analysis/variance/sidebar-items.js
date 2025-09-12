@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ForceCaptureTraitArgs"],"fn":["crate_variances","provide","variance_of_opaque","variances_of"],"mod":["constraints","dump","solve","terms","xform"]};

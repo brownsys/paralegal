@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["TEXT_FLOW_CONTROL_CHARS"],"fn":["contains_text_flow_control_chars"]};

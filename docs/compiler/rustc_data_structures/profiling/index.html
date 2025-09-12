@@ -1,0 +1,75 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Rust Compiler Self-Profiling"><title>rustc_data_structures::profiling - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_data_structures" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button><a class="logo-container" href="../../rustc_data_structures/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt=""></a></nav><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../rustc_data_structures/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt="logo"></a><h2><a href="../../rustc_data_structures/index.html">rustc_<wbr>data_<wbr>structures</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module profiling</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#rust-compiler-self-profiling" title="Rust Compiler Self-Profiling">Rust Compiler Self-Profiling</a><ul><li><a href="#event-overview" title="Event Overview">Event Overview</a></li><li><a href="#event-filtering" title="Event Filtering">Event Filtering</a></li><li><a href="#event_id-assignment" title="`event_id` Assignment"><code>event_id</code> Assignment</a></li></ul></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#constants" title="Constants">Constants</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate rustc_<wbr>data_<wbr>structures</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">rustc_data_structures</a></span><h1>Module <span>profiling</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustc_data_structures/profiling.rs.html#1-925">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><h2 id="rust-compiler-self-profiling"><a class="doc-anchor" href="#rust-compiler-self-profiling">§</a>Rust Compiler Self-Profiling</h2>
+<p>This module implements the basic framework for the compiler’s self-
+profiling support. It provides the <code>SelfProfiler</code> type which enables
+recording “events”. An event is something that starts and ends at a given
+point in time and has an ID and a kind attached to it. This allows for
+tracing the compiler’s activity.</p>
+<p>Internally this module uses the custom tailored <a href="https://github.com/rust-lang/measureme/">measureme</a> crate for
+efficiently recording events to disk in a compact format that can be
+post-processed and analyzed by the suite of tools in the <code>measureme</code>
+project. The highest priority for the tracing framework is on incurring as
+little overhead as possible.</p>
+<h3 id="event-overview"><a class="doc-anchor" href="#event-overview">§</a>Event Overview</h3>
+<p>Events have a few properties:</p>
+<ul>
+<li>The <code>event_kind</code> designates the broad category of an event (e.g. does it
+correspond to the execution of a query provider or to loading something
+from the incr. comp. on-disk cache, etc).</li>
+<li>The <code>event_id</code> designates the query invocation or function call it
+corresponds to, possibly including the query key or function arguments.</li>
+<li>Each event stores the ID of the thread it was recorded on.</li>
+<li>The timestamp stores beginning and end of the event, or the single point
+in time it occurred at for “instant” events.</li>
+</ul>
+<h3 id="event-filtering"><a class="doc-anchor" href="#event-filtering">§</a>Event Filtering</h3>
+<p>Event generation can be filtered by event kind. Recording all possible
+events generates a lot of data, much of which is not needed for most kinds
+of analysis. So, in order to keep overhead as low as possible for a given
+use case, the <code>SelfProfiler</code> will only record the kinds of events that
+pass the filter specified as a command line argument to the compiler.</p>
+<h3 id="event_id-assignment"><a class="doc-anchor" href="#event_id-assignment">§</a><code>event_id</code> Assignment</h3>
+<p>As far as <code>measureme</code> is concerned, <code>event_id</code>s are just strings. However,
+it would incur too much overhead to generate and persist each <code>event_id</code>
+string at the point where the event is recorded. In order to make this more
+efficient <code>measureme</code> has two features:</p>
+<ul>
+<li>
+<p>Strings can share their content, so that re-occurring parts don’t have to
+be copied over and over again. One allocates a string in <code>measureme</code> and
+gets back a <code>StringId</code>. This <code>StringId</code> is then used to refer to that
+string. <code>measureme</code> strings are actually DAGs of string components so that
+arbitrary sharing of substrings can be done efficiently. This is useful
+because <code>event_id</code>s contain lots of redundant text like query names or
+def-path components.</p>
+</li>
+<li>
+<p><code>StringId</code>s can be “virtual” which means that the client picks a numeric
+ID according to some application-specific scheme and can later make that
+ID be mapped to an actual string. This is used to cheaply generate
+<code>event_id</code>s while the events actually occur, causing little timing
+distortion, and then later map those <code>StringId</code>s, in bulk, to actual
+<code>event_id</code> strings. This way the largest part of the tracing overhead is
+localized to one contiguous chunk of time.</p>
+</li>
+</ul>
+<p>How are these <code>event_id</code>s generated in the compiler? For things that occur
+infrequently (e.g. “generic activities”), we just allocate the string the
+first time it is used and then keep the <code>StringId</code> in a hash table. This
+is implemented in <code>SelfProfiler::get_or_alloc_cached_string()</code>.</p>
+<p>For queries it gets more interesting: First we need a unique numeric ID for
+each query invocation (the <code>QueryInvocationId</code>). This ID is used as the
+virtual <code>StringId</code> we use as <code>event_id</code> for a given event. This ID has to
+be available both when the query is executed and later, together with the
+query key, when we allocate the actual <code>event_id</code> strings in bulk.</p>
+<p>We could make the compiler generate and keep track of such an ID for each
+query invocation but luckily we already have something that fits all the
+the requirements: the query’s <code>DepNodeIndex</code>. So we use the numeric value
+of the <code>DepNodeIndex</code> as <code>event_id</code> when recording the event and then,
+just before the query context is dropped, we walk the entire query cache
+(which stores the <code>DepNodeIndex</code> along with the query key for each
+invocation) and allocate the corresponding strings together with a mapping
+for <code>DepNodeIndex as StringId</code>.</p>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.EventArgRecorder.html" title="struct rustc_data_structures::profiling::EventArgRecorder">Event<wbr>ArgRecorder</a></div><div class="desc docblock-short">A helper for recording costly arguments to self-profiling events. Used with
+<code>SelfProfilerRef::generic_activity_with_arg_recorder</code>.</div></li><li><div class="item-name"><a class="struct" href="struct.EventFilter.html" title="struct rustc_data_structures::profiling::EventFilter">Event<wbr>Filter</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="struct" href="struct.EventId.html" title="struct rustc_data_structures::profiling::EventId">EventId</a></div><div class="desc docblock-short">An <code>EventId</code> is a <code>StringId</code> with the additional guarantee that the
+corresponding string conforms to the event_id grammar.</div></li><li><div class="item-name"><a class="struct" href="struct.JsonTimePassesEntry.html" title="struct rustc_data_structures::profiling::JsonTimePassesEntry">Json<wbr>Time<wbr>Passes<wbr>Entry</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="struct" href="struct.QueryInvocationId.html" title="struct rustc_data_structures::profiling::QueryInvocationId">Query<wbr>Invocation<wbr>Id</a></div><div class="desc docblock-short">Something that uniquely identifies a query invocation.</div></li><li><div class="item-name"><a class="struct" href="struct.SelfProfiler.html" title="struct rustc_data_structures::profiling::SelfProfiler">Self<wbr>Profiler</a></div></li><li><div class="item-name"><a class="struct" href="struct.SelfProfilerRef.html" title="struct rustc_data_structures::profiling::SelfProfilerRef">Self<wbr>Profiler<wbr>Ref</a></div><div class="desc docblock-short">A reference to the SelfProfiler. It can be cloned and sent across thread
+boundaries at will.</div></li><li><div class="item-name"><a class="struct" href="struct.TimingGuard.html" title="struct rustc_data_structures::profiling::TimingGuard">Timing<wbr>Guard</a></div></li><li><div class="item-name"><a class="struct" href="struct.VerboseInfo.html" title="struct rustc_data_structures::profiling::VerboseInfo">Verbose<wbr>Info</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="struct" href="struct.VerboseTimingGuard.html" title="struct rustc_data_structures::profiling::VerboseTimingGuard">Verbose<wbr>Timing<wbr>Guard</a></div></li></ul><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="enum" href="enum.TimePassesFormat.html" title="enum rustc_data_structures::profiling::TimePassesFormat">Time<wbr>Passes<wbr>Format</a></div><div class="desc docblock-short">Which format to use for <code>-Z time-passes</code></div></li></ul><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="constant" href="constant.EVENT_FILTERS_BY_NAME.html" title="constant rustc_data_structures::profiling::EVENT_FILTERS_BY_NAME">EVENT_<wbr>FILTERS_<wbr>BY_<wbr>NAME</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.duration_to_secs_str.html" title="fn rustc_data_structures::profiling::duration_to_secs_str">duration_<wbr>to_<wbr>secs_<wbr>str</a></div></li><li><div class="item-name"><a class="fn" href="fn.get_resident_set_size.html" title="fn rustc_data_structures::profiling::get_resident_set_size">get_<wbr>resident_<wbr>set_<wbr>size</a></div></li><li><div class="item-name"><a class="fn" href="fn.get_thread_id.html" title="fn rustc_data_structures::profiling::get_thread_id">get_<wbr>thread_<wbr>id</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.print_time_passes_entry.html" title="fn rustc_data_structures::profiling::print_time_passes_entry">print_<wbr>time_<wbr>passes_<wbr>entry</a></div></li></ul></section></div></main></body></html>

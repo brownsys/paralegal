@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"macro":["into_diag_arg_for_number"],"struct":["DiagArgFromDisplay","DiagSymbolList","ElidedLifetimeInPathSubdiag","ExpectedLifetimeParameter","IndicateAnonymousLifetime","SingleLabelManySpans"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["count_regex_matches_in_files_with_extension","invalid_utf8_contains","invalid_utf8_not_contains"]};

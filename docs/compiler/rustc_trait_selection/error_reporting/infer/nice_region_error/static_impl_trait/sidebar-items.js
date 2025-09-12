@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["make_elided_region_spans_suggs","suggest_new_region_bound"],"struct":["HirTraitObjectVisitor","TraitObjectVisitor"]};

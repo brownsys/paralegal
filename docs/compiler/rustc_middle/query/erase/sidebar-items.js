@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["erase","restore"],"macro":["tcx_lifetime","trivial"],"struct":["Erased"],"trait":["EraseType"],"type":["Erase"]};

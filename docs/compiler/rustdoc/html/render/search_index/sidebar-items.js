@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DESC_INDEX_SHARD_LEN"],"enum":["SimplifiedParam"],"fn":["build_index","get_fn_inputs_and_outputs","get_function_type_for_search","get_index_type","get_index_type_id","simplify_fn_constraint","simplify_fn_type"],"mod":["encode"],"struct":["SerializedSearchIndex"]};

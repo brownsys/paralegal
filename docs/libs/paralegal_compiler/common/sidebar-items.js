@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PolicyScope"],"fn":["count_references_to_variable"],"mod":["ast","templates","verify_scope","vis"],"struct":["Policy"]};

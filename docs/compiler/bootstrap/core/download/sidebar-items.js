@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DownloadSource"],"fn":["curl_version","extract_curl_version","is_download_ci_available","path_is_dylib","recorded_entries","try_run"],"static":["SHOULD_FIX_BINS_AND_DYLIBS"]};

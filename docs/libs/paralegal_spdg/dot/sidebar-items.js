@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["dump","dump_for_controller","dump_for_selection"],"struct":["DotPrintableProgramDescription"]};

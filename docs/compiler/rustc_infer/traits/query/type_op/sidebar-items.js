@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["AscribeUserType","DropckOutlives","Eq","ImpliedOutlivesBounds","Normalize","ProvePredicate","Subtype"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check","compare_themes","compare_themes_from_files"]};

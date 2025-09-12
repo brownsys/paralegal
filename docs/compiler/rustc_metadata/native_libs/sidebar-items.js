@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["collect","find_bundled_library","find_native_static_library","relevant_lib","try_find_native_dynamic_library","try_find_native_static_library","walk_native_lib_search_dirs"],"struct":["Collector"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["COMPRESSED_FIRST_GREEN","COMPRESSED_NONE","COMPRESSED_RED"],"enum":["DepNodeColor","TaskDepsRef"],"fn":["hash_result","panic_on_forbidden_read","print_markframe_trace"],"struct":["CurrentDepGraph","DepGraph","DepGraphData","DepNodeColorMap","DepNodeIndex","EdgeIndex","MarkFrame","TaskDeps","WorkProduct"],"type":["WorkProductMap"]};

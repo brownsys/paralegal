@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FIRST_GLOBAL_INDEX","FR"],"enum":["DefiningTy","RegionClassification"],"fn":["for_each_late_bound_region_in_item","for_each_late_bound_region_in_recursive_scope"],"struct":["UniversalRegionIndices","UniversalRegions","UniversalRegionsBuilder"],"trait":["InferCtxtExt"]};

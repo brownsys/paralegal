@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["EvaluationFailure"],"fn":["evaluate_host_effect_from_bounds","evaluate_host_effect_from_selection_candiate","evaluate_host_effect_obligation","match_candidate"],"type":["HostEffectObligation"]};

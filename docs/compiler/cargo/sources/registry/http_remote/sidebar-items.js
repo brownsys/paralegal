@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ETAG","IF_MODIFIED_SINCE","IF_NONE_MATCH","LAST_MODIFIED","UNKNOWN","WWW_AUTHENTICATE"],"enum":["StatusCode"],"mod":["tls"],"struct":["CompletedDownload","Download","Downloads","Headers","HttpRegistry"]};

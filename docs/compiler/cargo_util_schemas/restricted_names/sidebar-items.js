@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ErrorKind"],"fn":["sanitize_name","sanitize_package_name","validate_feature_name","validate_name","validate_package_name","validate_path_base_name","validate_profile_name","validate_registry_name"],"struct":["NameValidationError"],"type":["Result"]};

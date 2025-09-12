@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["MethodLateContext"],"fn":["assoc_item_in_trait_impl","char_has_case","is_camel_case","method_context","to_camel_case"],"static":["NON_CAMEL_CASE_TYPES","NON_SNAKE_CASE","NON_UPPER_CASE_GLOBALS"],"struct":["NonCamelCaseTypes","NonSnakeCase","NonUpperCaseGlobals"]};

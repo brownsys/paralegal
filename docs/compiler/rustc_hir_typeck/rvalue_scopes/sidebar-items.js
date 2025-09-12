@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["record_rvalue_scope","record_rvalue_scope_rec","resolve_rvalue_scopes"]};

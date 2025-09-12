@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ArrowShape","CompassPoint","Fill","Kind","LabelText","RankDir","RenderOption","Side","Style"],"fn":["default_options","escape_html","render","render_opts"],"struct":["Arrow","Id"],"trait":["GraphWalk","Labeller"],"type":["Edges","Nodes"]};

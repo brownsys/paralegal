@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["item_namespace","mangled_name_of_instance"]};

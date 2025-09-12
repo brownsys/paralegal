@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check_inline_or_reference_unknown_redundancy","check_redundant_explicit_link","check_redundant_explicit_link_for_did","check_reference_redundancy","collect_link_data","find_resolution","offset_explicit_range","offset_reference_def_range","visit_item"],"struct":["LinkData"]};

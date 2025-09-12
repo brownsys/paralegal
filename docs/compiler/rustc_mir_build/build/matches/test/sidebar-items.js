@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["is_switch_ty","trait_method"]};

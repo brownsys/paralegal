@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["MaxEscapingBoundVarVisitor","NormalizationResult","QueryNormalizer"],"trait":["QueryNormalizeExt"]};

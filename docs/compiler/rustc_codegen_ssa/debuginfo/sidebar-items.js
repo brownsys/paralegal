@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["tag_base_type","tag_base_type_opt","wants_c_like_enum_debuginfo"],"mod":["type_names"]};
