@@ -34,6 +34,7 @@ use crate::{discover::AttrMatchT, sym_vec, utils::MetaItemMatch};
 #[derive(
     PartialEq, Eq, Debug, Clone, Deserialize, Serialize, strum::EnumIs, Encodable, Decodable,
 )]
+#[serde(deny_unknown_fields)]
 pub enum Annotation {
     Marker(MarkerAnnotation),
     OType(#[serde(with = "rustc_proxies::DefId")] TypeId),
@@ -71,6 +72,7 @@ pub type VerificationHash = u128;
 #[derive(
     PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize, Encodable, Decodable,
 )]
+#[serde(deny_unknown_fields)]
 pub struct ExceptionAnnotation {
     /// The value of the verification hash we found in the annotation. Is `None`
     /// if there was no verification hash in the annotation.

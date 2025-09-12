@@ -19,6 +19,7 @@ use crate::{
     },
     Either, HashMap, HashSet,
 };
+use anyhow::Context;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
     body_cache::{local_or_remote_paths, BodyCache},
@@ -40,6 +41,7 @@ use rustc_serialize::Decodable;
 
 use rustc_span::Span;
 use rustc_utils::cache::Cache;
+use serde::Deserialize;
 use serde_json::json;
 
 use std::{
@@ -865,24 +867,67 @@ impl ExternalAnnotationEntry {
 
 type RawExternalMarkers = HashMap<String, Vec<ExternalAnnotationEntry>>;
 
+fn check_format(from_toml: &toml::Value) -> anyhow::Result<()> {
+    use anyhow::bail;
+    let Some(table) = from_toml.as_table() else {
+        bail!("External annotations must be a table");
+    };
+    for (key, v) in table {
+        let Some(arr) = v.as_array() else {
+            bail!("External annotation entry for `{key}` must be an array");
+        };
+        for (i, entry) in arr.iter().enumerate() {
+            let Some(e) = entry.as_table() else {
+                bail!("External annotation entry for `{key}.[{i}]` must be a table");
+            };
+            for k in e.keys() {
+                if k != "marker"
+                    && k != "markers"
+                    && k != "on_argument"
+                    && k != "on_return"
+                    && k != "refinements"
+                {
+                    bail!("External annotation entry for `{key}.[{i}]` may only have `marker`, `markers`, `on_argument`, `on_return` or `refinements` fields");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn parse_external_marker_file(s: &str) -> anyhow::Result<RawExternalMarkers> {
+    let from_toml = toml::from_str(s)?;
+    check_format(&from_toml)?;
+
+    Ok(RawExternalMarkers::deserialize(
+        serde::de::IntoDeserializer::into_deserializer(from_toml),
+    )?)
+}
+
 /// Given the TOML of external annotations we have parsed, resolve the paths
 /// (keys of the map) to [`DefId`]s.
 fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
     //let relaxed = opts.relaxed();
     let relaxed = false;
     if let Some(annotation_file) = opts.marker_control().external_annotations() {
-        let from_toml: RawExternalMarkers = toml::from_str(
-            &std::fs::read_to_string(annotation_file).unwrap_or_else(|_| {
-                panic!(
-                    "Could not open file {}",
-                    annotation_file
-                        .canonicalize()
-                        .unwrap_or_else(|_| annotation_file.to_path_buf())
-                        .display()
+        let data = std::fs::read_to_string(annotation_file).unwrap_or_else(|_| {
+            panic!(
+                "Could not open file {}",
+                annotation_file
+                    .canonicalize()
+                    .unwrap_or_else(|_| annotation_file.to_path_buf())
+                    .display()
+            )
+        });
+        let from_toml = parse_external_marker_file(&data)
+            .with_context(|| {
+                anyhow::anyhow!(
+                    "When parsing external annotation file {}",
+                    annotation_file.display()
                 )
-            }),
-        )
-        .unwrap();
+            })
+            .unwrap();
+
         let new_map: ExternalMarkers = from_toml
             .iter()
             .filter_map(|(path, entries)| {
@@ -900,5 +945,83 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
         new_map
     } else {
         HashMap::new()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::ann::db::parse_external_marker_file;
+
+    #[test]
+    fn test_parse_marker_file() {
+        let examples = [
+            (
+                "[[\"std::vec::Vec\"]]
+                marker = \"test\"",
+                true,
+            ),
+            (
+                "[[\"std::vec::Vec\"]]
+                marker = \"test\"
+                on_return = true",
+                true,
+            ),
+            (
+                "[[\"std::vec::Vec\"]]
+                marker = \"test\"
+                on_argument = [0]",
+                true,
+            ),
+            (
+                "[[\"std::vec::Vec\"]]
+                marker = \"test\"
+                on_argument = [0]
+                on_return = true",
+                true,
+            ),
+            // Technically this should also fail, but we don't check this
+            // property during deserialization, but later
+            // (
+            //     "[[\"std::vec::Vec\"]]
+            //     on_argument = [0]",
+            //     false,
+            // ),
+            (
+                "[[\"std::vec::Vec\"]]
+                marker = \"test\"
+                on-argument = [0]
+                on_return = true",
+                false,
+            ),
+            (
+                "[[\"std::vec::Vec\"]]
+                marker = \"test\"
+                on_argument = [0]
+                on-return = true",
+                false,
+            ),
+            (
+                "[[\"std::vec::Vec\"]]
+                marker = \"test\"
+                on_argument = [0]
+                on_return = true
+                extra = []",
+                false,
+            ),
+        ];
+
+        for (input, expected) in examples {
+            let ret = parse_external_marker_file(input);
+            assert_eq!(
+                ret.is_ok(),
+                expected,
+                "Expected {input} to {}, but {}",
+                if expected { "succeed" } else { "fail" },
+                match ret {
+                    Ok(_) => "succeeded".to_string(),
+                    Err(e) => format!("failed with error: {}", e),
+                }
+            );
+        }
     }
 }

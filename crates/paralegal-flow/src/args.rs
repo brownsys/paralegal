@@ -664,6 +664,7 @@ impl DumpArgs {
 
 /// Dependency specific configuration
 #[derive(serde::Serialize, serde::Deserialize, Default, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct DepConfig {
     #[serde(default, alias = "rust-features")]
     /// Additional rust features to enable
@@ -672,6 +673,7 @@ pub struct DepConfig {
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 #[serde(tag = "mode", rename_all = "kebab-case")]
+#[serde(deny_unknown_fields)]
 pub enum Stub {
     #[serde(rename_all = "kebab-case")]
     /// Replaces the result of a call to a higher-order function with a call to
@@ -685,6 +687,7 @@ pub enum Stub {
 /// Additional configuration for the build process/rustc
 #[derive(serde::Deserialize, serde::Serialize, Default, Debug)]
 #[serde(rename_all = "kebab-case")]
+#[serde(deny_unknown_fields)]
 pub struct BuildConfig {
     /// Dependency specific configuration
     #[serde(default)]
