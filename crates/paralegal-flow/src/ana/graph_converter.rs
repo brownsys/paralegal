@@ -1,4 +1,4 @@
-use std::{rc::Rc, time::Instant};
+use std::{marker::PhantomData, rc::Rc, time::Instant};
 
 use self::call_string_resolver::CallStringResolver;
 use super::{default_index, path_for_item, src_loc_for_span, SPDGGenerator};
@@ -6,19 +6,21 @@ use crate::{
     ann::MarkerAnnotation, desc::*, discover::FnToAnalyze, stats::TimedStat, utils::*, HashMap,
     HashSet, MarkerCtx, Pctx,
 };
-use flowistry_pdg::SourceUse;
+use flowistry_pdg::{rustc_portable::Location, SourceUse};
 use flowistry_pdg_construction::{
     body_cache::BodyCache,
-    graph::{DepEdge, DepEdgeKind, DepGraph, DepNode},
+    call_tree_visit::{VisitDriver, Visitor},
+    graph::{DepEdge, DepEdgeKind, DepGraph, DepNode, OneHopLocation, PartialGraph},
     is_async_trait_fn, match_async_trait_assign,
     utils::{handle_shims, try_monomorphize, try_resolve_function, type_as_fn, ShimResult},
 };
 use paralegal_spdg::{Node, SPDGStats};
 
+use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_middle::{
     mir,
-    ty::{self, TyCtxt, TypingEnv},
+    ty::{self, Instance, TyCtxt, TypingEnv},
 };
 
 use anyhow::Result;
@@ -542,20 +544,28 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
     }
 }
 
+fn dep_edge_kind_to_edge_kind(kind: DepEdgeKind) -> EdgeKind {
+    match kind {
+        DepEdgeKind::Control => EdgeKind::Control,
+        DepEdgeKind::Data => EdgeKind::Data,
+    }
+}
+
 #[cfg(debug_assertions)]
-fn assert_edge_location_invariant<'tcx>(
+fn assert_edge_location_invariant<'tcx, Loc: Eq + std::fmt::Display>(
     tcx: TyCtxt<'tcx>,
-    at: CallString,
+    at: Loc,
     body: &mir::Body<'tcx>,
-    location: CallString,
+    location: Loc,
+    leaf: impl Fn(&Loc) -> GlobalLocation,
 ) {
     // Normal case. The edge is introduced where the operation happens
     if location == at {
         return;
     }
     // Control flow case. The edge is introduced at the `switchInt`
-    if let RichLocation::Location(loc) = at.leaf().location {
-        if at.leaf().function == location.leaf().function
+    if let RichLocation::Location(loc) = leaf(&at).location {
+        if leaf(&at).function == leaf(&location).function
             && matches!(
                 body.stmt_at(loc),
                 Either::Right(mir::Terminator {
@@ -568,14 +578,14 @@ fn assert_edge_location_invariant<'tcx>(
         }
     }
     let mut msg = tcx.dcx().struct_span_fatal(
-        (body, at.leaf().location).span(tcx),
+        (body, leaf(&at).location).span(tcx),
         format!(
             "This operation is performed in a different location: {}",
             at
         ),
     );
     msg.span_note(
-        (body, location.leaf().location).span(tcx),
+        (body, leaf(&location).location).span(tcx),
         format!("Expected to originate here: {}", at),
     );
     msg.emit()
@@ -744,6 +754,363 @@ mod call_string_resolver {
                 };
                 res
             })
+        }
+    }
+}
+
+struct GraphAssembler<'tcx, 'a> {
+    graph: SPDGImpl,
+    // nodes: FxHashMap<DepNode<'tcx, CallString>, petgraph::graph::NodeIndex>,
+    // control_inputs: Box<[(NodeIndex, DepEdge<CallString>)]>,
+    nodes: FxHashMap<NodeInfo, petgraph::graph::NodeIndex>,
+    control_inputs: Box<[(Node, EdgeInfo)]>,
+    marker_assignments: HashMap<Node, HashSet<Identifier>>,
+    known_def_ids: &'a mut FxHashSet<DefId>,
+    /// A map of which nodes are of which (marked) type. We build this up during
+    /// conversion.
+    types: HashMap<Node, Vec<DefId>>,
+    generator: &'a SPDGGenerator<'tcx>,
+}
+
+impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
+    fn new(generator: &'a SPDGGenerator<'tcx>, known_def_ids: &'a mut FxHashSet<DefId>) -> Self {
+        Self {
+            graph: SPDGImpl::new(),
+            nodes: Default::default(),
+            control_inputs: Box::new([]),
+            marker_assignments: Default::default(),
+            known_def_ids,
+            types: Default::default(),
+            generator,
+        }
+    }
+
+    fn register_markers(&mut self, node: Node, markers: impl IntoIterator<Item = Identifier>) {
+        let mut markers = markers.into_iter().peekable();
+
+        if markers.peek().is_some() {
+            self.marker_assignments
+                .entry(node)
+                .or_default()
+                .extend(markers);
+        }
+    }
+
+    fn add_node(&mut self, node: NodeInfo) -> petgraph::graph::NodeIndex {
+        *self
+            .nodes
+            .entry(node.clone())
+            .or_insert_with(|| self.graph.add_node(node))
+    }
+
+    /// Forwarding of control flow. It is sound to replace the control inputs
+    /// here rather than extend them because we are guaranteed that these new
+    /// nodes are connected to the old ctrl nodes, possibly transitively.
+    ///
+    /// Each node in our graph is either connected to a local control flow
+    /// node or to the ones coming from the parent, which is established by
+    /// the `visit_partial_graph` function. By induction all nodes, including
+    /// these control flow sources are connected to the old ctrl inputs.
+    fn with_new_ctr_inputs<'c, F, R, K: Clone>(
+        &mut self,
+        vis: &mut VisitDriver<'tcx, 'c, K>,
+        new_ctrl_inputs: &[(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)],
+        f: F,
+    ) -> R
+    where
+        F: FnOnce(&mut Self, &mut VisitDriver<'tcx, 'c, K>) -> R,
+    {
+        let new_ctrl_inputs: Box<[(Node, EdgeInfo)]> = new_ctrl_inputs
+            .iter()
+            .map(|(src, edge)| {
+                let src = globalize_node(vis, src, self.tcx());
+                let src_idx = self.add_node(src);
+                let new_edge = globalize_edge(vis, edge);
+                (src_idx, new_edge)
+            })
+            .collect();
+        // The last thing we need to ensure for that to hold is that the new
+        // ctrl inputs must not be empty. So if they are we leave the old one's intact.
+        let old_ctrl_inputs = if new_ctrl_inputs.is_empty() {
+            Box::new([])
+        } else {
+            std::mem::replace(&mut self.control_inputs, new_ctrl_inputs)
+        };
+        let r = f(self, vis);
+        if !old_ctrl_inputs.is_empty() {
+            self.control_inputs = old_ctrl_inputs;
+        }
+        r
+    }
+
+    fn ctx(&self) -> &Pctx<'tcx> {
+        &self.generator.ctx
+    }
+
+    fn tcx(&self) -> TyCtxt<'tcx> {
+        self.ctx().tcx()
+    }
+
+    fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
+        self.generator.marker_ctx()
+    }
+
+    /// Fetch annotations item identified by this `id`.
+    ///
+    /// The callback is used to filter out annotations where the "refinement"
+    /// doesn't match. The idea is that the caller of this function knows
+    /// whether they are looking for annotations on an argument or return of a
+    /// function identified by this `id` or on a type and the callback should be
+    /// used to enforce this.
+    fn register_annotations_for_function(
+        &mut self,
+        node: Node,
+        function: DefId,
+        mut filter: impl FnMut(&MarkerAnnotation) -> bool,
+    ) {
+        let parent = get_parent(self.tcx(), function);
+        let marker_ctx = self.marker_ctx().clone();
+        self.register_markers(
+            node,
+            marker_ctx
+                .combined_markers(function)
+                .chain(
+                    parent
+                        .into_iter()
+                        .flat_map(|parent| marker_ctx.combined_markers(parent)),
+                )
+                .filter(|ann| filter(ann))
+                .map(|ann| ann.marker),
+        );
+        self.known_def_ids.extend(parent);
+    }
+
+    fn node_annotations<K: Clone>(
+        &mut self,
+        node: Node,
+        weight: &DepNode<'tcx, OneHopLocation>,
+        vis: &VisitDriver<'tcx, '_, K>,
+    ) {
+        if weight.at.in_child.is_some() {
+            // Transition nodes are handled again in the child right?
+            return;
+        }
+        let leaf_loc = weight.at.location;
+        let function = vis.current_function();
+        let function_id = function.def_id();
+
+        let body = self
+            .generator
+            .pdg_constructor
+            .body_cache()
+            .get(function.def_id())
+            .body();
+
+        match leaf_loc {
+            RichLocation::Start
+                if matches!(body.local_kind(weight.place.local), mir::LocalKind::Arg) =>
+            {
+                let arg_num = weight.place.local.as_u32() - 1;
+                self.known_def_ids.extend(Some(function_id));
+
+                self.register_annotations_for_function(node, function_id, |ann| {
+                    ann.refinement.on_argument().contains(arg_num).unwrap()
+                });
+            }
+            RichLocation::End if weight.place.local == mir::RETURN_PLACE => {
+                self.known_def_ids.extend(Some(function_id));
+                self.register_annotations_for_function(node, function_id, |ann| {
+                    ann.refinement.on_return()
+                });
+            }
+            RichLocation::Location(loc) => {
+                let crate::Either::Right(
+                    term @ mir::Terminator {
+                        kind: mir::TerminatorKind::Call { func, .. },
+                        ..
+                    },
+                ) = body.stmt_at(loc)
+                else {
+                    return;
+                };
+                debug!("Assigning markers to {:?}", term.kind);
+                let res = function;
+                let param_env = TypingEnv::post_analysis(self.tcx(), res.def_id());
+                let func =
+                    try_monomorphize(res, self.tcx(), param_env, func, term.source_info.span)
+                        .unwrap();
+                let Some(funcc) = func.constant() else {
+                    self.generator.ctx.maybe_span_err(
+                        weight.span,
+                        "SOUNDNESS: Cannot determine markers for function call",
+                    );
+                    return;
+                };
+                let (inst, args) = type_as_fn(self.tcx(), ty_of_const(funcc)).unwrap();
+                let f = if let Some(inst) = try_resolve_function(
+                    self.tcx(),
+                    inst,
+                    TypingEnv::post_analysis(self.tcx(), function_id),
+                    args,
+                ) {
+                    match handle_shims(inst, self.tcx(), param_env, weight.span) {
+                        ShimResult::IsHandledShim { instance, .. } => instance,
+                        ShimResult::IsNotShim => inst,
+                        ShimResult::IsNonHandleableShim => {
+                            self.ctx().maybe_span_err(
+                                weight.span,
+                                "SOUNDNESS: Cannot determine markers for shim usage",
+                            );
+                            return;
+                        }
+                    }
+                    .def_id()
+                } else {
+                    debug!("Could not resolve {inst:?} properly during marker assignment");
+                    inst
+                };
+
+                self.known_def_ids.extend(Some(f));
+
+                let graph = vis.current_graph();
+
+                // Question: Could a function with no input produce an
+                // output that has aliases? E.g. could some place, where the
+                // local portion isn't the local from the destination of
+                // this function call be affected/modified by this call? If
+                // so, that location would also need to have this marker
+                // attached
+                //
+                // Also yikes. This should have better detection of whether
+                // a place is (part of) a function return
+
+                let mut is_return_use = false;
+                let mut has_no_data_edges = true;
+
+                for (from, to, edge_weight) in graph.iter_edges() {
+                    if from == weight {
+                        let SourceUse::Argument(arg) = edge_weight.source_use else {
+                            continue;
+                        };
+                        self.register_annotations_for_function(node, f, |ann| {
+                            ann.refinement.on_argument().contains(arg as u32).unwrap()
+                        });
+                    } else if to == weight && edge_weight.kind == DepEdgeKind::Data {
+                        has_no_data_edges = false;
+                        let at = edge_weight.at.clone();
+                        #[cfg(debug_assertions)]
+                        assert_edge_location_invariant(
+                            self.tcx(),
+                            at.clone(),
+                            body,
+                            weight.at.clone(),
+                            |at| GlobalLocation {
+                                function: function.def_id(),
+                                location: at.location,
+                            },
+                        );
+                        if weight.at == at && edge_weight.target_use.is_return() {
+                            is_return_use = true;
+                        }
+                    }
+                }
+                let needs_return_markers = has_no_data_edges | is_return_use;
+
+                if needs_return_markers {
+                    self.register_annotations_for_function(node, f, |ann| {
+                        ann.refinement.on_return()
+                    });
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+fn globalize_node<'tcx, K: Clone>(
+    vis: &mut VisitDriver<'tcx, '_, K>,
+    node: &DepNode<'tcx, OneHopLocation>,
+    tcx: TyCtxt<'tcx>,
+) -> NodeInfo {
+    let at = vis.globalize_location(&node.at);
+    NodeInfo {
+        at,
+        description: format!("{:?}", node.place),
+        span: src_loc_for_span(node.span, tcx),
+    }
+}
+
+fn globalize_edge<K: Clone>(
+    vis: &mut VisitDriver<'_, '_, K>,
+    edge: &DepEdge<OneHopLocation>,
+) -> EdgeInfo {
+    let at = vis.globalize_location(&edge.at);
+    EdgeInfo {
+        kind: dep_edge_kind_to_edge_kind(edge.kind),
+        at,
+        source_use: edge.source_use,
+        target_use: edge.target_use,
+    }
+}
+
+impl<'tcx, 'a, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssembler<'tcx, 'a> {
+    fn visit_inlined_call(
+        &mut self,
+        vis: &mut VisitDriver<'tcx, '_, K>,
+        loc: Location,
+        inst: Instance<'tcx>,
+        k: &K,
+        ctrl_inputs: &[(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)],
+    ) {
+        self.with_new_ctr_inputs(vis, ctrl_inputs, |slf, vis| {
+            vis.visit_inlined_call(slf, loc, inst, k)
+        })
+    }
+
+    fn visit_edge(
+        &mut self,
+        vis: &mut VisitDriver<'tcx, '_, K>,
+        src: &DepNode<'tcx, OneHopLocation>,
+        dst: &DepNode<'tcx, OneHopLocation>,
+        kind: &DepEdge<OneHopLocation>,
+    ) {
+        let src = globalize_node(vis, src, self.tcx());
+        let src_idx = self.add_node(src);
+        let dst = globalize_node(vis, dst, self.tcx());
+        let dst_idx = self.add_node(dst);
+        let new_kind = globalize_edge(vis, kind);
+        self.graph.add_edge(src_idx, dst_idx, new_kind);
+    }
+
+    fn visit_partial_graph(
+        &mut self,
+        vis: &mut VisitDriver<'tcx, '_, K>,
+        graph: &PartialGraph<'tcx, K>,
+    ) {
+        vis.visit_partial_graph(self, graph);
+
+        // This loop connects the control inputs that
+        // are incoming to the function to those nodes in the graph who have no
+        // control inputs yet.
+        //
+        // We do this here instead of in "visit_node", because that gets called
+        // before the "visit_edge" function, meaning we can't yet see the
+        // potential control inputs of the node. We could have the visitor use
+        // an opposite ordering, but that is counterintuitive to other potential
+        // users of the visitor.
+        for node in graph.iter_nodes() {
+            let new_node = globalize_node(vis, node, self.tcx());
+            let node = self.add_node(new_node);
+
+            if !self
+                .graph
+                .edges_directed(node, petgraph::Direction::Incoming)
+                .any(|e| e.weight().is_control())
+            {
+                for (src, edge) in self.control_inputs.iter() {
+                    self.graph.add_edge(*src, node, edge.clone());
+                }
+            }
         }
     }
 }

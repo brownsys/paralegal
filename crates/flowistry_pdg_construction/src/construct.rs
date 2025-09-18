@@ -653,47 +653,18 @@ struct GraphAssembler<'tcx> {
     control_inputs: Box<[(NodeIndex, DepEdge<CallString>)]>,
 }
 
-fn globalize_location<T>(
-    vis: &mut VisitDriver<'_, '_, T>,
-    location: &OneHopLocation,
-) -> CallString {
-    vis.with_pushed_stack(
-        GlobalLocation {
-            function: vis.current_function().def_id(),
-            location: location.location,
-        },
-        |vis| {
-            if let Some((c, start)) = location.in_child {
-                vis.with_pushed_stack(
-                    GlobalLocation {
-                        function: c,
-                        location: if start {
-                            RichLocation::Start
-                        } else {
-                            RichLocation::End
-                        },
-                    },
-                    |vis| CallString::new(vis.call_stack()),
-                )
-            } else {
-                CallString::new(vis.call_stack())
-            }
-        },
-    )
-}
-
-fn globalize_node<'tcx, K>(
+fn globalize_node<'tcx, K: Clone>(
     vis: &mut VisitDriver<'tcx, '_, K>,
     node: &DepNode<'tcx, OneHopLocation>,
 ) -> DepNode<'tcx, CallString> {
-    node.map_at(|location| globalize_location(vis, location))
+    node.map_at(|location| vis.globalize_location(location))
 }
 
-fn globalize_edge<K>(
+fn globalize_edge<K: Clone>(
     vis: &mut VisitDriver<'_, '_, K>,
     edge: &DepEdge<OneHopLocation>,
 ) -> DepEdge<CallString> {
-    edge.map_at(|location| globalize_location(vis, location))
+    edge.map_at(|location| vis.globalize_location(location))
 }
 
 impl<'tcx> GraphAssembler<'tcx> {
@@ -720,7 +691,7 @@ impl<'tcx> GraphAssembler<'tcx> {
     /// node or to the ones coming from the parent, which is established by
     /// the `visit_partial_graph` function. By induction all nodes, including
     /// these control flow sources are connected to the old ctrl inputs.
-    fn with_new_ctr_inputs<'c, F, R, K>(
+    fn with_new_ctr_inputs<'c, F, R, K: Clone>(
         &mut self,
         vis: &mut VisitDriver<'tcx, 'c, K>,
         new_ctrl_inputs: &[(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)],

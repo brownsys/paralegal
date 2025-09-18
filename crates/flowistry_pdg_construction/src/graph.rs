@@ -350,6 +350,22 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
         }
     }
 
+    pub fn iter_nodes(&self) -> impl Iterator<Item = &DepNode<'tcx, OneHopLocation>> + Clone {
+        self.nodes.iter()
+    }
+
+    pub fn iter_edges(
+        &self,
+    ) -> impl Iterator<
+        Item = &(
+            DepNode<'tcx, OneHopLocation>,
+            DepNode<'tcx, OneHopLocation>,
+            DepEdge<OneHopLocation>,
+        ),
+    > {
+        self.edges.iter()
+    }
+
     /// Returns the set of source places that the parent can access (write to)
     pub(crate) fn parentable_srcs<'a>(&'a self) -> FxHashSet<(DepNode<'tcx, bool>, Option<u8>)> {
         self.edges

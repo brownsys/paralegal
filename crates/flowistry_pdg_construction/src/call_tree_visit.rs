@@ -10,9 +10,9 @@
 //! method on Visitor is called first. It should then call the corresponding
 //! `*_visit` method on the VisitDriver which will take care of the recursion.
 
-use std::hash::Hash;
+use std::{borrow::Cow, hash::Hash, rc::Rc};
 
-use flowistry_pdg::GlobalLocation;
+use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 use rustc_middle::{mir::Location, ty::Instance};
 
 use crate::{
@@ -20,23 +20,14 @@ use crate::{
     MemoPdgConstructor,
 };
 
-pub struct VisitDriver<'tcx, 'c, K> {
+pub struct VisitDriver<'tcx, 'c, K: Clone> {
     memo: &'c MemoPdgConstructor<'tcx, K>,
     call_string_stack: Vec<GlobalLocation>,
-    current_function: Instance<'tcx>,
-    k: K,
+    current: (Instance<'tcx>, Rc<Cow<'c, PartialGraph<'tcx, K>>>),
+    _k: K,
 }
 
-impl<'tcx, 'c, K> VisitDriver<'tcx, 'c, K> {
-    pub fn new(memo: &'c MemoPdgConstructor<'tcx, K>, start: Instance<'tcx>, k: K) -> Self {
-        Self {
-            memo,
-            call_string_stack: Vec::new(),
-            current_function: start,
-            k,
-        }
-    }
-
+impl<'tcx, 'c, K: Clone> VisitDriver<'tcx, 'c, K> {
     pub fn with_pushed_stack<F, R>(&mut self, location: GlobalLocation, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
@@ -52,7 +43,38 @@ impl<'tcx, 'c, K> VisitDriver<'tcx, 'c, K> {
     }
 
     pub fn current_function(&self) -> Instance<'tcx> {
-        self.current_function
+        self.current.0
+    }
+
+    pub fn current_graph(&self) -> &PartialGraph<'tcx, K> {
+        use std::borrow::Borrow;
+        self.current.1.as_ref().borrow()
+    }
+
+    pub fn globalize_location(&mut self, location: &OneHopLocation) -> CallString {
+        self.with_pushed_stack(
+            GlobalLocation {
+                function: self.current_function().def_id(),
+                location: location.location,
+            },
+            |vis| {
+                if let Some((c, start)) = location.in_child {
+                    vis.with_pushed_stack(
+                        GlobalLocation {
+                            function: c,
+                            location: if start {
+                                RichLocation::Start
+                            } else {
+                                RichLocation::End
+                            },
+                        },
+                        |vis| CallString::new(vis.call_stack()),
+                    )
+                } else {
+                    CallString::new(vis.call_stack())
+                }
+            },
+        )
     }
 }
 
@@ -93,7 +115,19 @@ pub trait Visitor<'tcx, K: Hash + Eq + Clone> {
     }
 }
 
-impl<'tcx, K: Clone + Hash + Eq> VisitDriver<'tcx, '_, K> {
+impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
+    pub fn new(memo: &'c MemoPdgConstructor<'tcx, K>, start: Instance<'tcx>, k: K) -> Self
+    where
+        K: Clone,
+    {
+        let g = memo.construct_for((start, k.clone())).unwrap();
+        Self {
+            memo,
+            call_string_stack: Vec::new(),
+            current: (start, Rc::new(g)),
+            _k: k,
+        }
+    }
     pub fn visit_partial_graph<V: Visitor<'tcx, K> + ?Sized>(
         &mut self,
         vis: &mut V,
@@ -123,21 +157,22 @@ impl<'tcx, K: Clone + Hash + Eq> VisitDriver<'tcx, '_, K> {
                 location: loc.into(),
             },
             |slf| {
-                let old_fn = std::mem::replace(&mut slf.current_function, inst);
-                let graph = slf.memo.construct_for((inst, k.clone())).unwrap();
+                let old = std::mem::replace(
+                    &mut slf.current,
+                    (
+                        inst,
+                        Rc::new(slf.memo.construct_for((inst, k.clone())).unwrap()),
+                    ),
+                );
+                let graph: Rc<_> = slf.current.1.clone();
                 vis.visit_partial_graph(slf, &graph);
-                slf.current_function = old_fn;
+                slf.current = old;
             },
         );
     }
 
     pub fn start<V: Visitor<'tcx, K> + ?Sized>(&mut self, vis: &mut V) {
-        vis.visit_partial_graph(
-            self,
-            &self
-                .memo
-                .construct_for((self.current_function, self.k.clone()))
-                .unwrap(),
-        );
+        let g = self.current.1.clone();
+        vis.visit_partial_graph(self, &g);
     }
 }
