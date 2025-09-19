@@ -171,9 +171,7 @@ impl<'tcx, K> MemoPdgConstructor<'tcx, K> {
 }
 
 impl<'tcx, K: std::hash::Hash + Eq + Clone> MemoPdgConstructor<'tcx, K> {
-    /// Construct the intermediate PDG for this function. Instantiates any
-    /// generic arguments as `dyn <constraints>`.
-    pub fn construct_root<'a>(&'a self, function: LocalDefId) -> Cow<'a, PartialGraph<'tcx, K>> {
+    pub fn create_root_key(&self, function: LocalDefId) -> (Instance<'tcx>, K) {
         let generics = manufacture_substs_for(self.tcx, function.to_def_id())
             .map_err(|i| vec![i])
             .unwrap();
@@ -185,10 +183,18 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> MemoPdgConstructor<'tcx, K> {
         )
         .unwrap();
 
-        let key = (resolution, self.call_change_callback.root_k(resolution));
+        (resolution, self.call_change_callback.root_k(resolution))
+    }
 
-        self.construct_for(key).unwrap_or_msg(|| {
-            format!("Failed to construct PDG for {function:?} with generics {generics:?}")
+    /// Construct the intermediate PDG for this function. Instantiates any
+    /// generic arguments as `dyn <constraints>`.
+    pub fn construct_root<'a>(&'a self, function: LocalDefId) -> Cow<'a, PartialGraph<'tcx, K>> {
+        let key = self.create_root_key(function);
+        self.construct_for(key.clone()).unwrap_or_msg(|| {
+            format!(
+                "Failed to construct PDG for {function:?} with generics {:?}",
+                key.0.args
+            )
         })
     }
 
@@ -653,47 +659,18 @@ struct GraphAssembler<'tcx> {
     control_inputs: Box<[(NodeIndex, DepEdge<CallString>)]>,
 }
 
-fn globalize_location<T>(
-    vis: &mut VisitDriver<'_, '_, T>,
-    location: &OneHopLocation,
-) -> CallString {
-    vis.with_pushed_stack(
-        GlobalLocation {
-            function: vis.current_function().def_id(),
-            location: location.location,
-        },
-        |vis| {
-            if let Some((c, start)) = location.in_child {
-                vis.with_pushed_stack(
-                    GlobalLocation {
-                        function: c,
-                        location: if start {
-                            RichLocation::Start
-                        } else {
-                            RichLocation::End
-                        },
-                    },
-                    |vis| CallString::new(vis.call_stack()),
-                )
-            } else {
-                CallString::new(vis.call_stack())
-            }
-        },
-    )
-}
-
-fn globalize_node<'tcx, K>(
+fn globalize_node<'tcx, K: Clone>(
     vis: &mut VisitDriver<'tcx, '_, K>,
     node: &DepNode<'tcx, OneHopLocation>,
 ) -> DepNode<'tcx, CallString> {
-    node.map_at(|location| globalize_location(vis, location))
+    node.map_at(|location| vis.globalize_location(location))
 }
 
-fn globalize_edge<K>(
+fn globalize_edge<K: Clone>(
     vis: &mut VisitDriver<'_, '_, K>,
     edge: &DepEdge<OneHopLocation>,
 ) -> DepEdge<CallString> {
-    edge.map_at(|location| globalize_location(vis, location))
+    edge.map_at(|location| vis.globalize_location(location))
 }
 
 impl<'tcx> GraphAssembler<'tcx> {
@@ -720,7 +697,7 @@ impl<'tcx> GraphAssembler<'tcx> {
     /// node or to the ones coming from the parent, which is established by
     /// the `visit_partial_graph` function. By induction all nodes, including
     /// these control flow sources are connected to the old ctrl inputs.
-    fn with_new_ctr_inputs<'c, F, R, K>(
+    fn with_new_ctr_inputs<'c, F, R, K: Clone>(
         &mut self,
         vis: &mut VisitDriver<'tcx, 'c, K>,
         new_ctrl_inputs: &[(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)],

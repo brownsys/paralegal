@@ -874,7 +874,7 @@ impl GlobalEdge {
 }
 
 /// Node metadata in the [`SPDGImpl`]
-#[derive(Clone, Debug, Serialize, Deserialize, Allocative)]
+#[derive(Clone, Debug, Serialize, Deserialize, Allocative, PartialEq, Eq, Hash)]
 pub struct NodeInfo {
     /// Location of the node in the call stack
     pub at: CallString,
@@ -882,6 +882,9 @@ pub struct NodeInfo {
     pub description: String,
     /// Span information for this node
     pub span: Span,
+    /// The local variable this node references. This is an MIR implementation
+    /// detail and should not be relied upon.
+    pub local: u32,
 }
 
 impl Display for NodeInfo {
