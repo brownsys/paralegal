@@ -10,6 +10,7 @@ use flowistry_pdg::{rustc_portable::Location, SourceUse};
 use flowistry_pdg_construction::{
     body_cache::BodyCache,
     call_tree_visit::{VisitDriver, Visitor},
+    determine_async,
     graph::{DepEdge, DepEdgeKind, DepGraph, DepNode, OneHopLocation, PartialGraph},
     is_async_trait_fn, match_async_trait_assign,
     utils::{handle_shims, try_monomorphize, try_resolve_function, type_as_fn, ShimResult},
@@ -782,10 +783,117 @@ pub fn assemble_pdg<'tcx, 'a>(
     target: &'a FnToAnalyze,
 ) -> SPDG {
     let tcx = generator.tcx();
-    let (instance, k) = generator.pdg_constructor.create_root_key(target.def_id);
+    let def_id = target.def_id.to_def_id();
+    let base_body = generator
+        .pdg_constructor
+        .body_cache()
+        .try_get(def_id)
+        .unwrap_or_else(|| {
+            panic!("INVARIANT VIOLATED: body for local function {def_id:?} cannot be loaded.",)
+        })
+        .body();
+    let async_state = determine_async(tcx, def_id, base_body);
+
+    let base_function_id = async_state.map_or(def_id, |(generator, ..)| generator.def_id());
+
+    let (instance, k) = generator
+        .pdg_constructor
+        .create_root_key(base_function_id.expect_local());
     let mut driver = VisitDriver::new(&generator.pdg_constructor, instance, k);
     let mut assembler = GraphAssembler::new(generator, known_def_ids, target.def_id.to_def_id());
-    driver.start(&mut assembler);
+    if let Some((generator, loc, ..)) = async_state {
+        driver.with_pushed_stack(
+            GlobalLocation {
+                function: def_id,
+                location: RichLocation::Location(loc),
+            },
+            |driver| {
+                driver.start(&mut assembler);
+                let pgraph = driver.current_graph_as_rc();
+                let args_as_nodes = base_body
+                    .args_iter()
+                    .map(|arg| {
+                        DepNode::new(
+                            arg.into(),
+                            OneHopLocation {
+                                location: RichLocation::Start,
+                                in_child: None,
+                            },
+                            tcx,
+                            base_body,
+                            def_id,
+                            false,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let return_node = DepNode::new(
+                    mir::RETURN_PLACE.into(),
+                    OneHopLocation {
+                        location: RichLocation::End,
+                        in_child: None,
+                    },
+                    tcx,
+                    base_body,
+                    def_id,
+                    false,
+                );
+                for n in pgraph.iter_nodes() {
+                    let generator_loc = RichLocation::Location(loc);
+                    let relocated_n = |start_or_end| {
+                        n.map_at(|_| OneHopLocation {
+                            location: generator_loc,
+                            in_child: Some((generator.def_id(), start_or_end)),
+                        })
+                    };
+
+                    if n.place.local.as_u32() != 1 && n.at.location == RichLocation::Start {
+                        let Some(mir::ProjectionElem::Field(id, _)) = n.place.projection.first()
+                        else {
+                            tcx.dcx().span_err(
+                                n.span,
+                                "Expected field projection on async generator in {def_id:?}",
+                            );
+                            continue;
+                        };
+
+                        let arg = &args_as_nodes[id.as_usize()];
+                        assert!(false, "TODO remap location of n");
+                        assembler.visit_edge(
+                            driver,
+                            arg,
+                            &relocated_n(true),
+                            &DepEdge {
+                                kind: DepEdgeKind::Data,
+                                at: OneHopLocation {
+                                    location: generator_loc,
+                                    in_child: None,
+                                },
+                                source_use: SourceUse::Argument(id.as_u32() as u8),
+                                target_use: TargetUse::Assign,
+                            },
+                        );
+                    } else if n.place.local == mir::RETURN_PLACE {
+                        assembler.visit_edge(
+                            driver,
+                            &relocated_n(true),
+                            &return_node,
+                            &DepEdge {
+                                kind: DepEdgeKind::Data,
+                                at: OneHopLocation {
+                                    location: generator_loc,
+                                    in_child: None,
+                                },
+                                source_use: SourceUse::Operand,
+                                target_use: TargetUse::Return,
+                            },
+                        );
+                    }
+                }
+            },
+        );
+    } else {
+        driver.start(&mut assembler);
+    }
     let return_ = assembler.determine_return();
     let arguments = assembler.determine_arguments();
     let graph = assembler.graph;
@@ -1167,6 +1275,15 @@ impl<'tcx, 'a, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssemb
         self.with_new_ctr_inputs(vis, ctrl_inputs, |slf, vis| {
             vis.visit_inlined_call(slf, loc, inst, k)
         })
+    }
+
+    fn visit_node(
+        &mut self,
+        vis: &mut VisitDriver<'tcx, '_, K>,
+        node: &DepNode<'tcx, OneHopLocation>,
+    ) {
+        let idx = self.add_node(globalize_node(vis, node, self.tcx()));
+        self.node_annotations(idx, node, vis);
     }
 
     fn visit_edge(

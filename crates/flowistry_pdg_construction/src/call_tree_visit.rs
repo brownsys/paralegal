@@ -51,6 +51,10 @@ impl<'tcx, 'c, K: Clone> VisitDriver<'tcx, 'c, K> {
         self.current.1.as_ref().borrow()
     }
 
+    pub fn current_graph_as_rc(&self) -> Rc<Cow<'c, PartialGraph<'tcx, K>>> {
+        self.current.1.clone()
+    }
+
     pub fn globalize_location(&mut self, location: &OneHopLocation) -> CallString {
         self.with_pushed_stack(
             GlobalLocation {
