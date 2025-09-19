@@ -241,7 +241,9 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     || in_edges.any(|e| {
                         let at = e.weight().at;
                         #[cfg(debug_assertions)]
-                        assert_edge_location_invariant(self.tcx(), at, body, weight.at);
+                        assert_edge_location_invariant(self.tcx(), at, body, weight.at, |cs| {
+                            cs.leaf()
+                        });
                         weight.at == at && e.weight().target_use.is_return()
                     });
 
@@ -446,6 +448,7 @@ impl<'a, 'tcx, C: Extend<DefId>> GraphConverter<'tcx, 'a, C> {
                     at: weight.at,
                     description: format!("{:?}", weight.place),
                     span: src_loc_for_span(node_span, tcx),
+                    local: weight.place.local.as_u32(),
                 },
             );
             self.node_annotations(i, weight);
@@ -759,6 +762,7 @@ mod call_string_resolver {
 }
 
 struct GraphAssembler<'tcx, 'a> {
+    def_id: DefId,
     graph: SPDGImpl,
     // nodes: FxHashMap<DepNode<'tcx, CallString>, petgraph::graph::NodeIndex>,
     // control_inputs: Box<[(NodeIndex, DepEdge<CallString>)]>,
@@ -772,9 +776,48 @@ struct GraphAssembler<'tcx, 'a> {
     generator: &'a SPDGGenerator<'tcx>,
 }
 
+pub fn assemble_pdg<'tcx, 'a>(
+    generator: &'a SPDGGenerator<'tcx>,
+    known_def_ids: &'a mut FxHashSet<DefId>,
+    target: &'a FnToAnalyze,
+) -> SPDG {
+    let tcx = generator.tcx();
+    let (instance, k) = generator.pdg_constructor.create_root_key(target.def_id);
+    let mut driver = VisitDriver::new(&generator.pdg_constructor, instance, k);
+    let mut assembler = GraphAssembler::new(generator, known_def_ids, target.def_id.to_def_id());
+    driver.start(&mut assembler);
+    let return_ = assembler.determine_return();
+    let arguments = assembler.determine_arguments();
+    let graph = assembler.graph;
+    SPDG {
+        name: Identifier::new(target.name()),
+        path: path_for_item(target.def_id.to_def_id(), tcx),
+        id: target.def_id.to_def_id(),
+        graph,
+        markers: assembler
+            .marker_assignments
+            .into_iter()
+            .map(|(node, markers)| (node, markers.into_iter().collect()))
+            .collect(),
+        arguments,
+        return_,
+        type_assigns: assembler
+            .types
+            .into_iter()
+            .map(|(k, v)| (k, Types(v.into())))
+            .collect(),
+        statistics: Default::default(),
+    }
+}
+
 impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
-    fn new(generator: &'a SPDGGenerator<'tcx>, known_def_ids: &'a mut FxHashSet<DefId>) -> Self {
+    fn new(
+        generator: &'a SPDGGenerator<'tcx>,
+        known_def_ids: &'a mut FxHashSet<DefId>,
+        def_id: DefId,
+    ) -> Self {
         Self {
+            def_id,
             graph: SPDGImpl::new(),
             nodes: Default::default(),
             control_inputs: Box::new([]),
@@ -1025,6 +1068,64 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             _ => (),
         }
     }
+
+    /// Determine the set if nodes corresponding to the inputs to the
+    /// entrypoint. The order is guaranteed to be the same as the source-level
+    /// function declaration.
+    fn determine_arguments(&self) -> Box<[Node]> {
+        let mut g_nodes: Vec<_> = self
+            .graph
+            .node_references()
+            .filter(|n| {
+                let at = n.weight().at;
+                let is_candidate =
+                    matches!(self.try_as_root(at), Some(l) if l.location == RichLocation::Start);
+                is_candidate
+            })
+            .collect();
+
+        g_nodes.sort_by_key(|(_, i)| i.local);
+
+        g_nodes.into_iter().map(|(n, _)| n).collect()
+    }
+
+    /// Try to find the node corresponding to the values returned from this
+    /// controller.
+    ///
+    /// TODO: Include mutable inputs
+    fn determine_return(&self) -> Box<[Node]> {
+        // In async functions
+        self.graph
+            .node_references()
+            .filter(|n| {
+                let weight = n.weight();
+                let at = weight.at;
+                matches!(self.try_as_root(at), Some(l) if l.location == RichLocation::End)
+            })
+            .map(|n| n.id())
+            .collect()
+    }
+
+    /// Similar to `CallString::is_at_root`, but takes into account top-level
+    /// async functions
+    fn try_as_root(&self, at: CallString) -> Option<GlobalLocation> {
+        if self.entrypoint_is_async() && at.len() == 2 {
+            at.iter_from_root().nth(1)
+        } else if at.is_at_root() {
+            Some(at.leaf())
+        } else {
+            None
+        }
+    }
+
+    /// Is the top-level function (entrypoint) an `async fn`
+    fn entrypoint_is_async(&self) -> bool {
+        entrypoint_is_async(
+            self.generator.pdg_constructor.body_cache(),
+            self.tcx(),
+            self.def_id,
+        )
+    }
 }
 
 fn globalize_node<'tcx, K: Clone>(
@@ -1037,6 +1138,7 @@ fn globalize_node<'tcx, K: Clone>(
         at,
         description: format!("{:?}", node.place),
         span: src_loc_for_span(node.span, tcx),
+        local: node.place.local.as_u32(),
     }
 }
 

@@ -171,9 +171,7 @@ impl<'tcx, K> MemoPdgConstructor<'tcx, K> {
 }
 
 impl<'tcx, K: std::hash::Hash + Eq + Clone> MemoPdgConstructor<'tcx, K> {
-    /// Construct the intermediate PDG for this function. Instantiates any
-    /// generic arguments as `dyn <constraints>`.
-    pub fn construct_root<'a>(&'a self, function: LocalDefId) -> Cow<'a, PartialGraph<'tcx, K>> {
+    pub fn create_root_key(&self, function: LocalDefId) -> (Instance<'tcx>, K) {
         let generics = manufacture_substs_for(self.tcx, function.to_def_id())
             .map_err(|i| vec![i])
             .unwrap();
@@ -185,10 +183,18 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> MemoPdgConstructor<'tcx, K> {
         )
         .unwrap();
 
-        let key = (resolution, self.call_change_callback.root_k(resolution));
+        (resolution, self.call_change_callback.root_k(resolution))
+    }
 
-        self.construct_for(key).unwrap_or_msg(|| {
-            format!("Failed to construct PDG for {function:?} with generics {generics:?}")
+    /// Construct the intermediate PDG for this function. Instantiates any
+    /// generic arguments as `dyn <constraints>`.
+    pub fn construct_root<'a>(&'a self, function: LocalDefId) -> Cow<'a, PartialGraph<'tcx, K>> {
+        let key = self.create_root_key(function);
+        self.construct_for(key.clone()).unwrap_or_msg(|| {
+            format!(
+                "Failed to construct PDG for {function:?} with generics {:?}",
+                key.0.args
+            )
         })
     }
 

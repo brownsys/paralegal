@@ -882,6 +882,9 @@ pub struct NodeInfo {
     pub description: String,
     /// Span information for this node
     pub span: Span,
+    /// The local variable this node references. This is an MIR implementation
+    /// detail and should not be relied upon.
+    pub local: u32,
 }
 
 impl Display for NodeInfo {
