@@ -16,7 +16,7 @@ use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 use rustc_middle::{mir::Location, ty::Instance};
 
 use crate::{
-    graph::{DepEdge, DepNode, Node, OneHopLocation, PartialGraph},
+    graph::{DepEdge, DepNode, GraphConnectionPoint, Node, OneHopLocation, PartialGraph},
     MemoPdgConstructor,
 };
 
@@ -114,7 +114,7 @@ pub trait Visitor<'tcx, K: Hash + Eq + Clone> {
         loc: Location,
         inst: Instance<'tcx>,
         k: &K,
-        _ctrl_inputs: &[(Node, DepEdge<OneHopLocation>)],
+        _ctrl_inputs: &[GraphConnectionPoint<'tcx>],
     ) {
         vis.visit_inlined_call(self, loc, inst, k);
     }

@@ -24,7 +24,10 @@ use crate::{
     call_tree_visit::{self, VisitDriver},
     callback::DefaultCallback,
     calling_convention::PlaceTranslator,
-    graph::{DepEdge, DepGraph, DepNode, OneHopLocation, PartialGraph, SourceUse, TargetUse},
+    graph::{
+        DepEdge, DepGraph, DepNode, GraphConnectionPoint, Node, OneHopLocation, PartialGraph,
+        SourceUse, TargetUse,
+    },
     local_analysis::{CallHandling, InstructionState, LocalAnalysis},
     mutation::{ModularMutationVisitor, Mutation, Time},
     two_level_cache::TwoLevelCache,
@@ -482,13 +485,13 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                 return false;
             }
         };
-
-        self.inlined_calls.push((
-            location,
-            child_instance,
-            k,
-            constructor.find_control_inputs(location),
-        ));
+        let ctrl_inputs = constructor
+            .find_control_inputs(location)
+            .into_iter()
+            .map(|(place, loc, edge)| (self.get_node(place, loc).unwrap(), edge))
+            .collect();
+        self.inlined_calls
+            .push((location, child_instance, k, ctrl_inputs));
         let child_graph = child_descriptor.as_ref();
 
         trace!("Child graph has generics {:?}", child_descriptor.generics);
@@ -513,14 +516,17 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         trace!("PARENT -> CHILD EDGES:");
         for (child_src, _kind) in child_graph.parentable_srcs() {
             let child_src = child_src.map_at(|b| bool_to_loc(*b));
-            if let Some(translation) = translator.translate_to_parent(child_src.place) {
+            let child_place = child_src.place;
+            let child_node =
+                self.get_or_construct_node(child_place, child_src.at.clone(), || child_src);
+            if let Some(translation) = translator.translate_to_parent(child_place) {
                 self.register_mutation(
                     results,
                     state,
                     Inputs::Unresolved {
                         places: vec![(translation, None)],
                     },
-                    Either::Right(child_src),
+                    Either::Right(child_node),
                     location,
                     TargetUse::Assign,
                 );
@@ -535,12 +541,15 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         trace!("CHILD -> PARENT EDGES:");
         for (child_dst, kind) in child_graph.parentable_dsts() {
             let child_dst = child_dst.map_at(|b| bool_to_loc(*b));
-            if let Some(parent_place) = translator.translate_to_parent(child_dst.place) {
+            let child_place = child_dst.place;
+            let child_node =
+                self.get_or_construct_node(child_place, child_dst.at.clone(), || child_dst);
+            if let Some(parent_place) = translator.translate_to_parent(child_place) {
                 self.register_mutation(
                     results,
                     state,
                     Inputs::Resolved {
-                        node: child_dst.clone(),
+                        node: child_node,
                         node_use: SourceUse::Operand,
                     },
                     Either::Left(parent_place),
@@ -568,7 +577,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         results: &LocalAnalysisResults<'tcx, '_, K>,
         state: &InstructionState<'tcx>,
         inputs: Inputs<'tcx>,
-        mutated: Either<Place<'tcx>, DepNode<'tcx, OneHopLocation>>,
+        mutated: Either<Place<'tcx>, Node>,
         location: Location,
         target_use: TargetUse,
     ) where
@@ -588,12 +597,13 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                     constructor
                         .find_data_inputs(state, input)
                         .into_iter()
-                        .map(move |input| {
-                            (
-                                input,
-                                input_use.map_or(SourceUse::Operand, SourceUse::Argument),
-                            )
-                        })
+                        .zip(std::iter::repeat(input_use))
+                })
+                .map(|(input, input_use)| {
+                    (
+                        self.insert_node(input),
+                        input_use.map_or(SourceUse::Operand, SourceUse::Argument),
+                    )
                 })
                 .collect::<Vec<_>>(),
             Inputs::Resolved { node_use, node } => vec![(node, node_use)],
@@ -606,31 +616,25 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                 .analysis
                 .find_outputs(place, location)
                 .into_iter()
-                .map(|t| t.1)
+                .map(|t| self.insert_node(t.1))
                 .collect(),
         };
         trace!("  Outputs: {outputs:?}");
-
-        for output in &outputs {
-            trace!("  Adding node {output}");
-            self.nodes.insert(output.clone());
-        }
 
         // Add data dependencies: data_input -> output
         for (data_input, source_use) in data_inputs {
             let data_edge = DepEdge::data(location.into(), source_use, target_use);
             for output in &outputs {
-                trace!("  Adding edge {data_input} -> {output}");
-                self.edges
-                    .insert((data_input.clone(), output.clone(), data_edge.clone()));
+                trace!("  Adding edge {data_input:?} -> {output:?}");
+                self.insert_edge(data_input.clone(), *output, data_edge.clone());
             }
         }
 
         // Add control dependencies: ctrl_input -> output
-        for (ctrl_input, edge) in &ctrl_inputs {
+        for (ctrl_input, loc, edge) in &ctrl_inputs {
+            let from = self.get_node(*ctrl_input, loc.clone()).unwrap();
             for output in &outputs {
-                self.edges
-                    .insert((ctrl_input.clone(), output.clone(), edge.clone()));
+                self.insert_edge(from, *output, edge.clone());
             }
         }
     }
@@ -648,7 +652,7 @@ enum Inputs<'tcx> {
         places: Vec<(Place<'tcx>, Option<u8>)>,
     },
     Resolved {
-        node: DepNode<'tcx, OneHopLocation>,
+        node: Node,
         node_use: SourceUse,
     },
 }
@@ -730,68 +734,6 @@ impl<'tcx> GraphAssembler<'tcx> {
     }
 }
 
-impl<'tcx, K: Hash + Eq + Clone> call_tree_visit::Visitor<'tcx, K> for GraphAssembler<'tcx> {
-    fn visit_inlined_call(
-        &mut self,
-        vis: &mut VisitDriver<'tcx, '_, K>,
-        loc: Location,
-        inst: Instance<'tcx>,
-        k: &K,
-        ctrl_inputs: &[(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)],
-    ) {
-        self.with_new_ctr_inputs(vis, ctrl_inputs, |slf, vis| {
-            vis.visit_inlined_call(slf, loc, inst, k)
-        })
-    }
-
-    fn visit_edge(
-        &mut self,
-        vis: &mut VisitDriver<'tcx, '_, K>,
-        src: &DepNode<'tcx, OneHopLocation>,
-        dst: &DepNode<'tcx, OneHopLocation>,
-        kind: &DepEdge<OneHopLocation>,
-    ) {
-        let src = globalize_node(vis, src);
-        let src_idx = self.add_node(src);
-        let dst = globalize_node(vis, dst);
-        let dst_idx = self.add_node(dst);
-        let new_kind = globalize_edge(vis, kind);
-        self.graph.add_edge(src_idx, dst_idx, new_kind);
-    }
-
-    fn visit_partial_graph(
-        &mut self,
-        vis: &mut VisitDriver<'tcx, '_, K>,
-        graph: &PartialGraph<'tcx, K>,
-    ) {
-        vis.visit_partial_graph(self, graph);
-
-        // This loop connects the control inputs that
-        // are incoming to the function to those nodes in the graph who have no
-        // control inputs yet.
-        //
-        // We do this here instead of in "visit_node", because that gets called
-        // before the "visit_edge" function, meaning we can't yet see the
-        // potential control inputs of the node. We could have the visitor use
-        // an opposite ordering, but that is counterintuitive to other potential
-        // users of the visitor.
-        for node in &graph.nodes {
-            let new_node = globalize_node(vis, node);
-            let node = self.add_node(new_node);
-
-            if !self
-                .graph
-                .edges_directed(node, petgraph::Direction::Incoming)
-                .any(|e| e.weight().is_control())
-            {
-                for (src, edge) in self.control_inputs.iter() {
-                    self.graph.add_edge(*src, node, edge.clone());
-                }
-            }
-        }
-    }
-}
-
 struct GraphSizeEstimator {
     nodes: usize,
     edges: usize,
@@ -842,8 +784,8 @@ impl<'tcx, K: Hash + Eq + Clone> call_tree_visit::Visitor<'tcx, K> for GraphSize
         vis: &mut VisitDriver<'tcx, '_, K>,
         graph: &PartialGraph<'tcx, K>,
     ) {
-        self.nodes += graph.nodes.len();
-        self.edges += graph.edges.len();
+        self.nodes += graph.node_count();
+        self.edges += graph.edge_count();
         self.functions += 1;
         let call_string = vis.call_stack();
         if self.max_call_string.len() < call_string.len() {
@@ -886,7 +828,8 @@ impl<'tcx, K: Clone + Hash + Eq> PartialGraph<'tcx, K> {
         let mut size_estimator = GraphSizeEstimator::new();
         visitor.start(&mut size_estimator);
         log::info!("Estimating a size of {}", size_estimator.format_size());
-        visitor.start(&mut assembler);
+        unimplemented!();
+        //visitor.start(&mut assembler);
         DepGraph {
             graph: assembler.graph,
         }
@@ -915,7 +858,8 @@ impl<'tcx, K: Clone + Hash + Eq> PartialGraph<'tcx, K> {
         visitor.start(&mut size_estimator);
         log::info!("Estimating a size of {}", size_estimator.format_size());
         visitor.with_pushed_stack(extra_global_location, |visitor| {
-            visitor.start(&mut assembler);
+            unimplemented!();
+            //visitor.start(&mut assembler);
         });
         DepGraph {
             graph: assembler.graph,

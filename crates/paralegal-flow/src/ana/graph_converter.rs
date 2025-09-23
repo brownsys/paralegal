@@ -11,7 +11,9 @@ use flowistry_pdg_construction::{
     body_cache::BodyCache,
     call_tree_visit::{VisitDriver, Visitor},
     determine_async,
-    graph::{DepEdge, DepEdgeKind, DepGraph, DepNode, OneHopLocation, PartialGraph},
+    graph::{
+        DepEdge, DepEdgeKind, DepGraph, DepNode, GraphConnectionPoint, OneHopLocation, PartialGraph,
+    },
     is_async_trait_fn, match_async_trait_assign,
     utils::{handle_shims, try_monomorphize, try_resolve_function, type_as_fn, ShimResult},
 };
@@ -767,13 +769,13 @@ struct GraphAssembler<'tcx, 'a> {
     graph: SPDGImpl,
     // nodes: FxHashMap<DepNode<'tcx, CallString>, petgraph::graph::NodeIndex>,
     // control_inputs: Box<[(NodeIndex, DepEdge<CallString>)]>,
-    nodes: FxHashMap<NodeInfo, petgraph::graph::NodeIndex>,
-    control_inputs: Box<[(Node, EdgeInfo)]>,
-    marker_assignments: HashMap<Node, HashSet<Identifier>>,
+    nodes: FxHashMap<(Node, CallString), GNode>,
+    control_inputs: Box<[(GNode, EdgeInfo)]>,
+    marker_assignments: HashMap<GNode, HashSet<Identifier>>,
     known_def_ids: &'a mut FxHashSet<DefId>,
     /// A map of which nodes are of which (marked) type. We build this up during
     /// conversion.
-    types: HashMap<Node, Vec<DefId>>,
+    types: HashMap<GNode, Vec<DefId>>,
     generator: &'a SPDGGenerator<'tcx>,
 }
 
@@ -826,14 +828,14 @@ pub fn assemble_pdg<'tcx, 'a>(
         markers: assembler
             .marker_assignments
             .into_iter()
-            .map(|(node, markers)| (node, markers.into_iter().collect()))
+            .map(|(GNode(node), markers)| (node, markers.into_iter().collect()))
             .collect(),
         arguments,
         return_,
         type_assigns: assembler
             .types
             .into_iter()
-            .map(|(k, v)| (k, Types(v.into())))
+            .map(|(GNode(k), v)| (k, Types(v.into())))
             .collect(),
         statistics: Default::default(),
     }
@@ -857,7 +859,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         }
     }
 
-    fn register_markers(&mut self, node: Node, markers: impl IntoIterator<Item = Identifier>) {
+    fn register_markers(&mut self, node: GNode, markers: impl IntoIterator<Item = Identifier>) {
         let mut markers = markers.into_iter().peekable();
 
         if markers.peek().is_some() {
@@ -868,16 +870,31 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         }
     }
 
-    fn add_node(&mut self, node: NodeInfo) -> petgraph::graph::NodeIndex {
-        let mut was_added = false;
-        let idx = *self.nodes.entry(node.clone()).or_insert_with(|| {
-            was_added = true;
-            self.graph.add_node(node.clone())
-        });
-        if was_added {
-            trace!("Added new node {idx:?} for {node}");
-        }
-        idx
+    fn add_node<K: Clone>(
+        &mut self,
+        node: Node,
+        vis: &mut VisitDriver<'tcx, '_, K>,
+        weight: &DepNode<'tcx, OneHopLocation>,
+    ) -> GNode {
+        let weight = globalize_node(vis, weight, self.tcx());
+        let cs = weight.at;
+        let my_idx = GNode(self.graph.add_node(weight));
+        self.nodes.insert((node, cs), my_idx);
+        my_idx
+    }
+
+    fn add_untranslatable_node(
+        &mut self,
+        place: mir::Place,
+        at: CallString,
+        span: rustc_span::Span,
+    ) -> GNode {
+        GNode(self.graph.add_node(NodeInfo {
+            at,
+            description: format!("{place:?}"),
+            span: src_loc_for_span(span, self.tcx()),
+            local: place.local.as_u32(),
+        }))
     }
 
     /// Forwarding of control flow. It is sound to replace the control inputs
@@ -891,18 +908,18 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     fn with_new_ctr_inputs<'c, F, R, K: Clone>(
         &mut self,
         vis: &mut VisitDriver<'tcx, 'c, K>,
-        new_ctrl_inputs: &[(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)],
+        new_ctrl_inputs: &[GraphConnectionPoint<'tcx>],
         f: F,
     ) -> R
     where
         F: FnOnce(&mut Self, &mut VisitDriver<'tcx, 'c, K>) -> R,
     {
-        let new_ctrl_inputs: Box<[(Node, EdgeInfo)]> = new_ctrl_inputs
+        let g = vis.current_graph_as_rc();
+        let new_ctrl_inputs: Box<[(GNode, EdgeInfo)]> = new_ctrl_inputs
             .iter()
-            .map(|(src, edge)| {
-                let src = globalize_node(vis, src, self.tcx());
-                trace!("in control input forwarding");
-                let src_idx = self.add_node(src);
+            .map(|(node, edge)| {
+                let cs = vis.globalize_location(&g.node_props(*node).at);
+                let src_idx = self.translate_node(*node, cs).unwrap();
                 let new_edge = globalize_edge(vis, edge);
                 (src_idx, new_edge)
             })
@@ -942,7 +959,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     /// used to enforce this.
     fn register_annotations_for_function(
         &mut self,
-        node: Node,
+        node: GNode,
         function: DefId,
         mut filter: impl FnMut(&MarkerAnnotation) -> bool,
     ) {
@@ -966,12 +983,10 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     /// Check if this node is of a marked type and register that type.
     fn handle_node_types<K: Clone>(
         &mut self,
-        node: Node,
+        node: GNode,
         weight: &DepNode<'tcx, OneHopLocation>,
         vis: &VisitDriver<'tcx, '_, K>,
     ) {
-        let i = node;
-
         trace!("Checking types for node {node:?} ({:?})", weight.place);
 
         let Some(place_ty) =
@@ -992,7 +1007,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         self.known_def_ids.extend(node_types.iter().copied());
         let tcx = self.tcx();
         if !node_types.is_empty() {
-            self.types.entry(i).or_default().extend(
+            self.types.entry(node).or_default().extend(
                 node_types
                     .iter()
                     .filter(|t| !tcx.is_coroutine(**t) && !tcx.def_kind(*t).is_fn_like()),
@@ -1071,7 +1086,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
 
     fn node_annotations<K: Clone>(
         &mut self,
-        node: Node,
+        node: GNode,
         weight: &DepNode<'tcx, OneHopLocation>,
         vis: &VisitDriver<'tcx, '_, K>,
     ) {
@@ -1082,6 +1097,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         let leaf_loc = weight.at.location;
         let function = vis.current_function();
         let function_id = function.def_id();
+        let cs = self.graph.node_weight(node.to_index()).unwrap().at;
 
         let body = self
             .generator
@@ -1172,14 +1188,16 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                 let mut has_no_data_edges = true;
 
                 for (from, to, edge_weight) in graph.iter_edges() {
-                    if from == weight {
+                    let from = self.translate_node(from, cs).unwrap();
+                    let to = self.translate_node(to, cs).unwrap();
+                    if from == node {
                         let SourceUse::Argument(arg) = edge_weight.source_use else {
                             continue;
                         };
                         self.register_annotations_for_function(node, f, |ann| {
                             ann.refinement.on_argument().contains(arg as u32).unwrap()
                         });
-                    } else if to == weight && edge_weight.kind == DepEdgeKind::Data {
+                    } else if to == node && edge_weight.kind == DepEdgeKind::Data {
                         has_no_data_edges = false;
                         let at = edge_weight.at.clone();
                         #[cfg(debug_assertions)]
@@ -1289,37 +1307,29 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         let args_as_nodes = base_body
             .args_iter()
             .map(|arg| {
-                DepNode::new(
+                self.add_untranslatable_node(
                     arg.into(),
-                    OneHopLocation {
-                        location: RichLocation::Start,
-                        in_child: None,
-                    },
-                    tcx,
-                    base_body,
-                    def_id,
-                    false,
+                    driver.globalize_location(&RichLocation::Start.into()),
+                    base_body.local_decls[arg].source_info.span,
                 )
             })
             .collect::<Vec<_>>();
-        let return_node = DepNode::new(
+        let return_node = self.add_untranslatable_node(
             mir::RETURN_PLACE.into(),
-            OneHopLocation {
-                location: RichLocation::End,
-                in_child: None,
-            },
-            tcx,
-            base_body,
-            def_id,
-            false,
+            driver.globalize_location(&RichLocation::End.into()),
+            base_body.local_decls[mir::RETURN_PLACE].source_info.span,
         );
-        for n in pgraph.iter_nodes() {
+        for (nidx, n) in pgraph.iter_nodes() {
             let generator_loc = RichLocation::Location(loc);
-            let relocated_n = |start_or_end| {
-                n.map_at(|_| OneHopLocation {
-                    location: generator_loc,
-                    in_child: Some((generator.def_id(), start_or_end)),
-                })
+            let relocated_n = |slf: &mut Self, vis, start_or_end| {
+                slf.add_node(
+                    nidx,
+                    vis,
+                    &n.map_at(|_| OneHopLocation {
+                        location: generator_loc,
+                        in_child: Some((generator.def_id(), start_or_end)),
+                    }),
+                )
             };
 
             if n.place.local.as_u32() != 1 && n.at.location == RichLocation::Start {
@@ -1331,39 +1341,49 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     continue;
                 };
 
-                let arg = &args_as_nodes[id.as_usize()];
+                let arg = args_as_nodes[id.as_usize()];
                 assert!(false, "TODO remap location of n");
-                self.visit_edge(
-                    driver,
-                    arg,
-                    &relocated_n(true),
-                    &DepEdge {
-                        kind: DepEdgeKind::Data,
-                        at: OneHopLocation {
-                            location: generator_loc,
-                            in_child: None,
+                let ridx = relocated_n(self, driver, false).to_index();
+                self.graph.add_edge(
+                    arg.to_index(),
+                    ridx,
+                    globalize_edge(
+                        driver,
+                        &DepEdge {
+                            kind: DepEdgeKind::Data,
+                            at: OneHopLocation {
+                                location: generator_loc,
+                                in_child: None,
+                            },
+                            source_use: SourceUse::Argument(id.as_u32() as u8),
+                            target_use: TargetUse::Assign,
                         },
-                        source_use: SourceUse::Argument(id.as_u32() as u8),
-                        target_use: TargetUse::Assign,
-                    },
+                    ),
                 );
             } else if n.place.local == mir::RETURN_PLACE {
-                self.visit_edge(
-                    driver,
-                    &relocated_n(true),
-                    &return_node,
-                    &DepEdge {
-                        kind: DepEdgeKind::Data,
-                        at: OneHopLocation {
-                            location: generator_loc,
-                            in_child: None,
+                let ridx = relocated_n(self, driver, true).to_index();
+                self.graph.add_edge(
+                    ridx,
+                    return_node.to_index(),
+                    globalize_edge(
+                        driver,
+                        &DepEdge {
+                            kind: DepEdgeKind::Data,
+                            at: OneHopLocation {
+                                location: generator_loc,
+                                in_child: None,
+                            },
+                            source_use: SourceUse::Operand,
+                            target_use: TargetUse::Return,
                         },
-                        source_use: SourceUse::Operand,
-                        target_use: TargetUse::Return,
-                    },
+                    ),
                 );
             }
         }
+    }
+
+    fn translate_node(&self, node: Node, cs: CallString) -> Option<GNode> {
+        self.nodes.get(&(node, cs)).cloned()
     }
 }
 
@@ -1394,6 +1414,16 @@ fn globalize_edge<K: Clone>(
     }
 }
 
+/// A newtype for indices into the global graph
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GNode(petgraph::graph::NodeIndex);
+
+impl GNode {
+    fn to_index(self) -> petgraph::graph::NodeIndex {
+        self.0
+    }
+}
+
 impl<'tcx, 'a, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssembler<'tcx, 'a> {
     fn visit_inlined_call(
         &mut self,
@@ -1401,7 +1431,7 @@ impl<'tcx, 'a, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssemb
         loc: Location,
         inst: Instance<'tcx>,
         k: &K,
-        ctrl_inputs: &[(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)],
+        ctrl_inputs: &[GraphConnectionPoint<'tcx>],
     ) {
         self.with_new_ctr_inputs(vis, ctrl_inputs, |slf, vis| {
             vis.visit_inlined_call(slf, loc, inst, k)
@@ -1411,9 +1441,10 @@ impl<'tcx, 'a, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssemb
     fn visit_node(
         &mut self,
         vis: &mut VisitDriver<'tcx, '_, K>,
+        k: Node,
         node: &DepNode<'tcx, OneHopLocation>,
     ) {
-        let idx = self.add_node(globalize_node(vis, node, self.tcx()));
+        let idx = self.add_node(k, vis, node);
         self.node_annotations(idx, node, vis);
         self.handle_node_types(idx, node, vis);
     }
@@ -1421,17 +1452,16 @@ impl<'tcx, 'a, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssemb
     fn visit_edge(
         &mut self,
         vis: &mut VisitDriver<'tcx, '_, K>,
-        src: &DepNode<'tcx, OneHopLocation>,
-        dst: &DepNode<'tcx, OneHopLocation>,
+        src: Node,
+        dst: Node,
         kind: &DepEdge<OneHopLocation>,
     ) {
-        trace!("In visit edge");
-        let src = globalize_node(vis, src, self.tcx());
-        let src_idx = self.add_node(src);
-        let dst = globalize_node(vis, dst, self.tcx());
-        let dst_idx = self.add_node(dst);
+        let at = vis.globalize_location(&kind.at);
+        let src = self.translate_node(src, at).unwrap();
+        let dst = self.translate_node(dst, at).unwrap();
         let new_kind = globalize_edge(vis, kind);
-        self.graph.add_edge(src_idx, dst_idx, new_kind);
+        self.graph
+            .add_edge(src.to_index(), dst.to_index(), new_kind);
     }
 
     fn visit_partial_graph(
@@ -1452,18 +1482,17 @@ impl<'tcx, 'a, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssemb
         // potential control inputs of the node. We could have the visitor use
         // an opposite ordering, but that is counterintuitive to other potential
         // users of the visitor.
-        for node in graph.iter_nodes() {
-            let new_node = globalize_node(vis, node, self.tcx());
-            trace!("In control assignment loop");
-            let node = self.add_node(new_node);
-
-            if !self
-                .graph
+        for (node, node_weight) in graph.iter_nodes() {
+            if !graph
+                .raw()
                 .edges_directed(node, petgraph::Direction::Incoming)
                 .any(|e| e.weight().is_control())
             {
+                let at = vis.globalize_location(&node_weight.at);
+                let local_node = self.translate_node(node, at).unwrap();
                 for (src, edge) in self.control_inputs.iter() {
-                    self.graph.add_edge(*src, node, edge.clone());
+                    self.graph
+                        .add_edge(src.to_index(), local_node.to_index(), edge.clone());
                 }
             }
         }

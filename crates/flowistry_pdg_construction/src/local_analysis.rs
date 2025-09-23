@@ -28,7 +28,9 @@ use crate::{
     async_support::{self, *},
     body_cache::CachedBody,
     calling_convention::*,
-    graph::{DepEdge, DepNode, OneHopLocation, PartialGraph, SourceUse, TargetUse},
+    graph::{
+        DepEdge, DepNode, GraphConnectionPoint, OneHopLocation, PartialGraph, SourceUse, TargetUse,
+    },
     mutation::{ModularMutationVisitor, Mutation, Time},
     utils::{
         self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize, ShimResult,
@@ -86,7 +88,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
     pub(crate) fn find_control_inputs(
         &self,
         location: Location,
-    ) -> Vec<(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)> {
+    ) -> Vec<(Place<'tcx>, OneHopLocation, DepEdge<OneHopLocation>)> {
         let mut blocks_seen = HashSet::<BasicBlock>::from_iter(Some(location.block));
         let mut block_queue = vec![location.block];
         let mut out = vec![];
@@ -116,10 +118,9 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                     let Some(ctrl_place) = discr.place() else {
                         continue;
                     };
-                    let at = ctrl_loc.into();
-                    let src = self.make_dep_node(ctrl_place, ctrl_loc);
-                    let edge = DepEdge::control(at, SourceUse::Operand, TargetUse::Assign);
-                    out.push((src, edge));
+                    let at: OneHopLocation = ctrl_loc.into();
+                    let edge = DepEdge::control(at.clone(), SourceUse::Operand, TargetUse::Assign);
+                    out.push((ctrl_place, at, edge));
                 }
             }
         }
@@ -743,14 +744,17 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
                     continue;
                 };
                 for location in locations {
-                    let src = self.make_dep_node(*place, *location);
-                    let dst = self.make_dep_node(*place, RichLocation::End);
+                    let src = final_state.get_node(*place, location.into()).unwrap();
+                    let dst =
+                        final_state.get_or_construct_node(*place, RichLocation::End.into(), || {
+                            self.make_dep_node(*place, *location)
+                        });
                     let edge = DepEdge::data(
                         self.mono_body.terminator_loc(block).into(),
                         SourceUse::Operand,
                         ret_kind,
                     );
-                    final_state.edges.insert((src, dst, edge));
+                    final_state.insert_edge(src, dst, edge);
                 }
             }
         }
