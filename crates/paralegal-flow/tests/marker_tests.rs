@@ -191,10 +191,12 @@ define_test!(wrapping_typed_input: ctrl -> {
 
 define_test!(typed_input: ctrl -> {
     let marker = Identifier::new_intern("marked");
-    assert!(ctrl.spdg().arguments.iter().any(|node| {
+    let tyinf = dbg!(&ctrl.graph().desc.type_info);
+    dbg!(&ctrl.spdg().type_assigns);
+    assert!(dbg!(&ctrl.spdg().arguments).iter().any(|node| {
         let ts = ctrl.spdg().node_types(*node);
         dbg!(ts).iter().any(|t| {
-            ctrl.graph().desc.type_info[t].markers.contains(&marker)
+            tyinf[t].markers.contains(&marker)
         })
     }))
 });

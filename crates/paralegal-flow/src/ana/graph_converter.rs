@@ -809,88 +809,9 @@ pub fn assemble_pdg<'tcx, 'a>(
             },
             |driver| {
                 driver.start(&mut assembler);
-                let pgraph = driver.current_graph_as_rc();
-                let args_as_nodes = base_body
-                    .args_iter()
-                    .map(|arg| {
-                        DepNode::new(
-                            arg.into(),
-                            OneHopLocation {
-                                location: RichLocation::Start,
-                                in_child: None,
-                            },
-                            tcx,
-                            base_body,
-                            def_id,
-                            false,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                let return_node = DepNode::new(
-                    mir::RETURN_PLACE.into(),
-                    OneHopLocation {
-                        location: RichLocation::End,
-                        in_child: None,
-                    },
-                    tcx,
-                    base_body,
-                    def_id,
-                    false,
-                );
-                for n in pgraph.iter_nodes() {
-                    let generator_loc = RichLocation::Location(loc);
-                    let relocated_n = |start_or_end| {
-                        n.map_at(|_| OneHopLocation {
-                            location: generator_loc,
-                            in_child: Some((generator.def_id(), start_or_end)),
-                        })
-                    };
-
-                    if n.place.local.as_u32() != 1 && n.at.location == RichLocation::Start {
-                        let Some(mir::ProjectionElem::Field(id, _)) = n.place.projection.first()
-                        else {
-                            tcx.dcx().span_err(
-                                n.span,
-                                "Expected field projection on async generator in {def_id:?}",
-                            );
-                            continue;
-                        };
-
-                        let arg = &args_as_nodes[id.as_usize()];
-                        assert!(false, "TODO remap location of n");
-                        assembler.visit_edge(
-                            driver,
-                            arg,
-                            &relocated_n(true),
-                            &DepEdge {
-                                kind: DepEdgeKind::Data,
-                                at: OneHopLocation {
-                                    location: generator_loc,
-                                    in_child: None,
-                                },
-                                source_use: SourceUse::Argument(id.as_u32() as u8),
-                                target_use: TargetUse::Assign,
-                            },
-                        );
-                    } else if n.place.local == mir::RETURN_PLACE {
-                        assembler.visit_edge(
-                            driver,
-                            &relocated_n(true),
-                            &return_node,
-                            &DepEdge {
-                                kind: DepEdgeKind::Data,
-                                at: OneHopLocation {
-                                    location: generator_loc,
-                                    in_child: None,
-                                },
-                                source_use: SourceUse::Operand,
-                                target_use: TargetUse::Return,
-                            },
-                        );
-                    }
-                }
             },
         );
+        assembler.fix_async_args(def_id, generator, loc, &mut driver);
     } else {
         driver.start(&mut assembler);
     }
@@ -948,10 +869,15 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     }
 
     fn add_node(&mut self, node: NodeInfo) -> petgraph::graph::NodeIndex {
-        *self
-            .nodes
-            .entry(node.clone())
-            .or_insert_with(|| self.graph.add_node(node))
+        let mut was_added = false;
+        let idx = *self.nodes.entry(node.clone()).or_insert_with(|| {
+            was_added = true;
+            self.graph.add_node(node.clone())
+        });
+        if was_added {
+            trace!("Added new node {idx:?} for {node}");
+        }
+        idx
     }
 
     /// Forwarding of control flow. It is sound to replace the control inputs
@@ -975,6 +901,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             .iter()
             .map(|(src, edge)| {
                 let src = globalize_node(vis, src, self.tcx());
+                trace!("in control input forwarding");
                 let src_idx = self.add_node(src);
                 let new_edge = globalize_edge(vis, edge);
                 (src_idx, new_edge)
@@ -1034,6 +961,112 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                 .map(|ann| ann.marker),
         );
         self.known_def_ids.extend(parent);
+    }
+
+    /// Check if this node is of a marked type and register that type.
+    fn handle_node_types<K: Clone>(
+        &mut self,
+        node: Node,
+        weight: &DepNode<'tcx, OneHopLocation>,
+        vis: &VisitDriver<'tcx, '_, K>,
+    ) {
+        let i = node;
+
+        trace!("Checking types for node {node:?} ({:?})", weight.place);
+
+        let Some(place_ty) =
+            self.determine_place_type(&weight.at, weight.place.as_ref(), weight.span, vis)
+        else {
+            return;
+        };
+        trace!("Has place type {:?}", place_ty);
+        // Restore after fixing https://github.com/brownsys/paralegal/issues/138
+        //let deep = !weight.is_split;
+        let deep = true;
+        let mut node_types = self.type_is_marked(place_ty, deep).collect::<HashSet<_>>();
+        for (p, _) in weight.place.iter_projections() {
+            if let Some(place_ty) = self.determine_place_type(&weight.at, p, weight.span, vis) {
+                node_types.extend(self.type_is_marked(place_ty, false));
+            }
+        }
+        self.known_def_ids.extend(node_types.iter().copied());
+        let tcx = self.tcx();
+        if !node_types.is_empty() {
+            self.types.entry(i).or_default().extend(
+                node_types
+                    .iter()
+                    .filter(|t| !tcx.is_coroutine(**t) && !tcx.def_kind(*t).is_fn_like()),
+            )
+        }
+        trace!(
+            "For node {:?} found marked node types {node_types:?}",
+            weight.place
+        );
+    }
+
+    /// Return the (sub)types of this type that are marked.
+    fn type_is_marked(
+        &'a self,
+        typ: mir::tcx::PlaceTy<'tcx>,
+        deep: bool,
+    ) -> impl Iterator<Item = TypeId> + 'a {
+        if deep {
+            Either::Left(self.marker_ctx().deep_type_markers(typ.ty).iter().copied())
+        } else {
+            Either::Right(self.marker_ctx().shallow_type_markers(typ.ty))
+        }
+        .map(|(d, _)| d)
+    }
+
+    /// Reconstruct the type for the data this node represents.
+    fn determine_place_type<K: Clone>(
+        &self,
+        at: &OneHopLocation,
+        place: mir::PlaceRef<'tcx>,
+        span: rustc_span::Span,
+        vis: &VisitDriver<'tcx, '_, K>,
+    ) -> Option<mir::tcx::PlaceTy<'tcx>> {
+        let tcx = self.tcx();
+        let function = vis.current_function();
+
+        // So actually we're going to check the base place only, because
+        // Flowistry sometimes tracks subplaces instead but we want the marker
+        // from the base place.
+        let place =
+            if self.entrypoint_is_async() && place.local.as_u32() == 1 && at.in_child.is_none() {
+                if place.projection.is_empty() {
+                    return None;
+                }
+                // in the case of targeting the top-level async closure (e.g. async args)
+                // we'll keep the first projection.
+                mir::Place {
+                    local: place.local,
+                    projection: self.tcx().mk_place_elems(&place.projection[..1]),
+                }
+            } else {
+                place.local.into()
+            };
+
+        let resolution = vis.current_function();
+
+        // Thread through each caller to recover generic arguments
+        let body = self
+            .generator
+            .pdg_constructor
+            .body_cache()
+            .get(function.def_id())
+            .body();
+        let raw_ty = place.ty(body, tcx);
+        Some(
+            try_monomorphize(
+                resolution,
+                tcx,
+                TypingEnv::fully_monomorphized(),
+                &raw_ty,
+                span,
+            )
+            .unwrap(),
+        )
     }
 
     fn node_annotations<K: Clone>(
@@ -1234,6 +1267,104 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             self.def_id,
         )
     }
+
+    fn fix_async_args<K: Clone + std::hash::Hash + Eq>(
+        &mut self,
+        def_id: DefId,
+        generator: Instance<'tcx>,
+        loc: Location,
+        driver: &mut VisitDriver<'tcx, 'a, K>,
+    ) {
+        let tcx = self.generator.tcx();
+        let base_body = self
+            .generator
+            .pdg_constructor
+            .body_cache()
+            .try_get(def_id)
+            .unwrap_or_else(|| {
+                panic!("INVARIANT VIOLATED: body for local function {def_id:?} cannot be loaded.",)
+            })
+            .body();
+        let pgraph = driver.current_graph_as_rc();
+        let args_as_nodes = base_body
+            .args_iter()
+            .map(|arg| {
+                DepNode::new(
+                    arg.into(),
+                    OneHopLocation {
+                        location: RichLocation::Start,
+                        in_child: None,
+                    },
+                    tcx,
+                    base_body,
+                    def_id,
+                    false,
+                )
+            })
+            .collect::<Vec<_>>();
+        let return_node = DepNode::new(
+            mir::RETURN_PLACE.into(),
+            OneHopLocation {
+                location: RichLocation::End,
+                in_child: None,
+            },
+            tcx,
+            base_body,
+            def_id,
+            false,
+        );
+        for n in pgraph.iter_nodes() {
+            let generator_loc = RichLocation::Location(loc);
+            let relocated_n = |start_or_end| {
+                n.map_at(|_| OneHopLocation {
+                    location: generator_loc,
+                    in_child: Some((generator.def_id(), start_or_end)),
+                })
+            };
+
+            if n.place.local.as_u32() != 1 && n.at.location == RichLocation::Start {
+                let Some(mir::ProjectionElem::Field(id, _)) = n.place.projection.first() else {
+                    tcx.dcx().span_err(
+                        n.span,
+                        "Expected field projection on async generator in {def_id:?}",
+                    );
+                    continue;
+                };
+
+                let arg = &args_as_nodes[id.as_usize()];
+                assert!(false, "TODO remap location of n");
+                self.visit_edge(
+                    driver,
+                    arg,
+                    &relocated_n(true),
+                    &DepEdge {
+                        kind: DepEdgeKind::Data,
+                        at: OneHopLocation {
+                            location: generator_loc,
+                            in_child: None,
+                        },
+                        source_use: SourceUse::Argument(id.as_u32() as u8),
+                        target_use: TargetUse::Assign,
+                    },
+                );
+            } else if n.place.local == mir::RETURN_PLACE {
+                self.visit_edge(
+                    driver,
+                    &relocated_n(true),
+                    &return_node,
+                    &DepEdge {
+                        kind: DepEdgeKind::Data,
+                        at: OneHopLocation {
+                            location: generator_loc,
+                            in_child: None,
+                        },
+                        source_use: SourceUse::Operand,
+                        target_use: TargetUse::Return,
+                    },
+                );
+            }
+        }
+    }
 }
 
 fn globalize_node<'tcx, K: Clone>(
@@ -1284,6 +1415,7 @@ impl<'tcx, 'a, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssemb
     ) {
         let idx = self.add_node(globalize_node(vis, node, self.tcx()));
         self.node_annotations(idx, node, vis);
+        self.handle_node_types(idx, node, vis);
     }
 
     fn visit_edge(
@@ -1293,6 +1425,7 @@ impl<'tcx, 'a, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssemb
         dst: &DepNode<'tcx, OneHopLocation>,
         kind: &DepEdge<OneHopLocation>,
     ) {
+        trace!("In visit edge");
         let src = globalize_node(vis, src, self.tcx());
         let src_idx = self.add_node(src);
         let dst = globalize_node(vis, dst, self.tcx());
@@ -1308,6 +1441,8 @@ impl<'tcx, 'a, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssemb
     ) {
         vis.visit_partial_graph(self, graph);
 
+        // TODO move to driver
+        //
         // This loop connects the control inputs that
         // are incoming to the function to those nodes in the graph who have no
         // control inputs yet.
@@ -1319,6 +1454,7 @@ impl<'tcx, 'a, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssemb
         // users of the visitor.
         for node in graph.iter_nodes() {
             let new_node = globalize_node(vis, node, self.tcx());
+            trace!("In control assignment loop");
             let node = self.add_node(new_node);
 
             if !self
