@@ -31,7 +31,7 @@ use either::Either;
 use flowistry::mir::FlowistryInput;
 use petgraph::{
     visit::{IntoNodeReferences, NodeIndexable, NodeRef},
-    Direction,
+    Direction::{self, Outgoing},
 };
 
 /// Structure responsible for converting one [`DepGraph`] into an [`SPDG`].
@@ -769,7 +769,6 @@ struct GraphAssembler<'tcx, 'a> {
     graph: SPDGImpl,
     // nodes: FxHashMap<DepNode<'tcx, CallString>, petgraph::graph::NodeIndex>,
     // control_inputs: Box<[(NodeIndex, DepEdge<CallString>)]>,
-    nodes: FxHashMap<(Node, CallString), GNode>,
     control_inputs: Box<[(GNode, EdgeInfo)]>,
     marker_assignments: HashMap<GNode, HashSet<Identifier>>,
     known_def_ids: &'a mut FxHashSet<DefId>,
@@ -777,6 +776,9 @@ struct GraphAssembler<'tcx, 'a> {
     /// conversion.
     types: HashMap<GNode, Vec<DefId>>,
     generator: &'a SPDGGenerator<'tcx>,
+
+    /// The translation table for the function we're currently visiting.
+    nodes: Vec<GNode>,
 }
 
 pub fn assemble_pdg<'tcx, 'a>(
@@ -877,10 +879,14 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         weight: &DepNode<'tcx, OneHopLocation>,
     ) -> GNode {
         let weight = globalize_node(vis, weight, self.tcx());
-        let cs = weight.at;
-        let my_idx = GNode(self.graph.add_node(weight));
-        self.nodes.insert((node, cs), my_idx);
-        my_idx
+        let prior = self.nodes[node.index()];
+        if GNode(Node::end()) != prior {
+            return prior;
+        } else {
+            let my_idx = GNode(self.graph.add_node(weight));
+            self.nodes[node.index()] = my_idx;
+            my_idx
+        }
     }
 
     fn add_untranslatable_node(
@@ -918,8 +924,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         let new_ctrl_inputs: Box<[(GNode, EdgeInfo)]> = new_ctrl_inputs
             .iter()
             .map(|(node, edge)| {
-                let cs = vis.globalize_location(&g.node_props(*node).at);
-                let src_idx = self.translate_node(*node, cs).unwrap();
+                let src_idx = self.translate_node(*node);
                 let new_edge = globalize_edge(vis, edge);
                 (src_idx, new_edge)
             })
@@ -1086,6 +1091,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
 
     fn node_annotations<K: Clone>(
         &mut self,
+        local_node: Node,
         node: GNode,
         weight: &DepNode<'tcx, OneHopLocation>,
         vis: &VisitDriver<'tcx, '_, K>,
@@ -1097,7 +1103,6 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         let leaf_loc = weight.at.location;
         let function = vis.current_function();
         let function_id = function.def_id();
-        let cs = self.graph.node_weight(node.to_index()).unwrap().at;
 
         let body = self
             .generator
@@ -1187,19 +1192,18 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                 let mut is_return_use = false;
                 let mut has_no_data_edges = true;
 
-                for (from, to, edge_weight) in graph.iter_edges() {
-                    let from = self.translate_node(from, cs).unwrap();
-                    let to = self.translate_node(to, cs).unwrap();
-                    if from == node {
-                        let SourceUse::Argument(arg) = edge_weight.source_use else {
-                            continue;
-                        };
-                        self.register_annotations_for_function(node, f, |ann| {
-                            ann.refinement.on_argument().contains(arg as u32).unwrap()
-                        });
-                    } else if to == node && edge_weight.kind == DepEdgeKind::Data {
+                for eref in graph.raw().edges_directed(local_node, petgraph::Outgoing) {
+                    let SourceUse::Argument(arg) = eref.weight().source_use else {
+                        continue;
+                    };
+                    self.register_annotations_for_function(node, f, |ann| {
+                        ann.refinement.on_argument().contains(arg as u32).unwrap()
+                    });
+                }
+                for eref in graph.raw().edges_directed(local_node, petgraph::Incoming) {
+                    if eref.weight().kind == DepEdgeKind::Data {
                         has_no_data_edges = false;
-                        let at = edge_weight.at.clone();
+                        let at = eref.weight().at.clone();
                         #[cfg(debug_assertions)]
                         assert_edge_location_invariant(
                             self.tcx(),
@@ -1211,7 +1215,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                                 location: at.location,
                             },
                         );
-                        if weight.at == at && edge_weight.target_use.is_return() {
+                        if weight.at == at && eref.weight().target_use.is_return() {
                             is_return_use = true;
                         }
                     }
@@ -1382,8 +1386,17 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         }
     }
 
-    fn translate_node(&self, node: Node, cs: CallString) -> Option<GNode> {
-        self.nodes.get(&(node, cs)).cloned()
+    fn translate_node(&self, node: Node) -> GNode {
+        let idx = self.nodes[node.index()];
+        assert_ne!(idx.to_index(), Node::end(), "Node {node:?} is unknown");
+        idx
+    }
+
+    fn with_new_translation_table<R>(&mut self, size: usize, f: impl FnOnce(&mut Self) -> R) -> R {
+        let old_table = std::mem::replace(&mut self.nodes, vec![GNode(Node::end()); size]);
+        let result = f(self);
+        self.nodes = old_table;
+        result
     }
 }
 
@@ -1445,7 +1458,7 @@ impl<'tcx, 'a, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssemb
         node: &DepNode<'tcx, OneHopLocation>,
     ) {
         let idx = self.add_node(k, vis, node);
-        self.node_annotations(idx, node, vis);
+        self.node_annotations(k, idx, node, vis);
         self.handle_node_types(idx, node, vis);
     }
 
@@ -1456,9 +1469,8 @@ impl<'tcx, 'a, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssemb
         dst: Node,
         kind: &DepEdge<OneHopLocation>,
     ) {
-        let at = vis.globalize_location(&kind.at);
-        let src = self.translate_node(src, at).unwrap();
-        let dst = self.translate_node(dst, at).unwrap();
+        let src = self.translate_node(src);
+        let dst = self.translate_node(dst);
         let new_kind = globalize_edge(vis, kind);
         self.graph
             .add_edge(src.to_index(), dst.to_index(), new_kind);
@@ -1469,32 +1481,33 @@ impl<'tcx, 'a, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssemb
         vis: &mut VisitDriver<'tcx, '_, K>,
         graph: &PartialGraph<'tcx, K>,
     ) {
-        vis.visit_partial_graph(self, graph);
+        self.with_new_translation_table(graph.node_count(), |slf: &mut Self| {
+            vis.visit_partial_graph(slf, graph);
 
-        // TODO move to driver
-        //
-        // This loop connects the control inputs that
-        // are incoming to the function to those nodes in the graph who have no
-        // control inputs yet.
-        //
-        // We do this here instead of in "visit_node", because that gets called
-        // before the "visit_edge" function, meaning we can't yet see the
-        // potential control inputs of the node. We could have the visitor use
-        // an opposite ordering, but that is counterintuitive to other potential
-        // users of the visitor.
-        for (node, node_weight) in graph.iter_nodes() {
-            if !graph
-                .raw()
-                .edges_directed(node, petgraph::Direction::Incoming)
-                .any(|e| e.weight().is_control())
-            {
-                let at = vis.globalize_location(&node_weight.at);
-                let local_node = self.translate_node(node, at).unwrap();
-                for (src, edge) in self.control_inputs.iter() {
-                    self.graph
-                        .add_edge(src.to_index(), local_node.to_index(), edge.clone());
+            // TODO move to driver
+            //
+            // This loop connects the control inputs that
+            // are incoming to the function to those nodes in the graph who have no
+            // control inputs yet.
+            //
+            // We do this here instead of in "visit_node", because that gets called
+            // before the "visit_edge" function, meaning we can't yet see the
+            // potential control inputs of the node. We could have the visitor use
+            // an opposite ordering, but that is counterintuitive to other potential
+            // users of the visitor.
+            for (node, _) in graph.iter_nodes() {
+                if !graph
+                    .raw()
+                    .edges_directed(node, petgraph::Direction::Incoming)
+                    .any(|e| e.weight().is_control())
+                {
+                    let local_node = slf.translate_node(node);
+                    for (src, edge) in slf.control_inputs.iter() {
+                        slf.graph
+                            .add_edge(src.to_index(), local_node.to_index(), edge.clone());
+                    }
                 }
             }
-        }
+        })
     }
 }

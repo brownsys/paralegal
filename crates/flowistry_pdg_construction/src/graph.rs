@@ -376,11 +376,13 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
         at: OneHopLocation,
         construct: impl FnOnce() -> DepNode<'tcx, OneHopLocation>,
     ) -> Node {
-        if let Some(node) = self.get_node(place, at) {
+        if let Some(node) = self.get_node(place, at.clone()) {
             node
         } else {
             let node = construct();
-            self.insert_node(node)
+            let idx = self.graph.add_node(node);
+            self.node_mapping.insert((place, at), idx);
+            idx
         }
     }
 
