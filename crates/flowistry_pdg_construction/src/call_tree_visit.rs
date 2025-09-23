@@ -16,7 +16,7 @@ use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 use rustc_middle::{mir::Location, ty::Instance};
 
 use crate::{
-    graph::{DepEdge, DepNode, OneHopLocation, PartialGraph},
+    graph::{DepEdge, DepNode, Node, OneHopLocation, PartialGraph},
     MemoPdgConstructor,
 };
 
@@ -94,8 +94,8 @@ pub trait Visitor<'tcx, K: Hash + Eq + Clone> {
     fn visit_edge(
         &mut self,
         _vis: &mut VisitDriver<'tcx, '_, K>,
-        _src: &DepNode<'tcx, OneHopLocation>,
-        _dst: &DepNode<'tcx, OneHopLocation>,
+        _src: Node,
+        _dst: Node,
         _kind: &DepEdge<OneHopLocation>,
     ) {
     }
@@ -103,6 +103,7 @@ pub trait Visitor<'tcx, K: Hash + Eq + Clone> {
     fn visit_node(
         &mut self,
         _vis: &mut VisitDriver<'tcx, '_, K>,
+        _k: Node,
         _node: &DepNode<'tcx, OneHopLocation>,
     ) {
     }
@@ -113,7 +114,7 @@ pub trait Visitor<'tcx, K: Hash + Eq + Clone> {
         loc: Location,
         inst: Instance<'tcx>,
         k: &K,
-        _ctrl_inputs: &[(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)],
+        _ctrl_inputs: &[(Node, DepEdge<OneHopLocation>)],
     ) {
         vis.visit_inlined_call(self, loc, inst, k);
     }
@@ -137,10 +138,10 @@ impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
         vis: &mut V,
         graph: &PartialGraph<'tcx, K>,
     ) {
-        for node in &graph.nodes {
-            vis.visit_node(self, node);
+        for (node, info) in graph.iter_nodes() {
+            vis.visit_node(self, node, info);
         }
-        for (src, dst, kind) in &graph.edges {
+        for (src, dst, kind) in graph.iter_edges() {
             vis.visit_edge(self, src, dst, kind);
         }
         for (loc, inst, k, ctrl_inputs) in &graph.inlined_calls {

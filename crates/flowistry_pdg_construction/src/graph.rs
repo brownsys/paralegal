@@ -10,7 +10,7 @@ use flowistry_pdg::{CallString, RichLocation};
 use internment::Intern;
 use petgraph::{dot, graph::DiGraph};
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
 use rustc_middle::{
@@ -306,23 +306,33 @@ impl DepGraph<'_> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Node(usize);
+
+#[derive(Debug, Clone)]
+pub struct DepNodeProps {
+    key: Node,
+    is_split: bool,
+    place_pretty: Option<Intern<String>>,
+    span: Span,
+}
+
 #[derive(Debug, Clone)]
 pub struct PartialGraph<'tcx, K> {
-    pub(crate) nodes: FxHashSet<DepNode<'tcx, OneHopLocation>>,
-    pub(crate) edges: FxHashSet<(
+    pub(crate) nodes: FxHashMap<(Place<'tcx>, OneHopLocation), Node>,
+    pub(crate) assoc: Vec<(
         DepNode<'tcx, OneHopLocation>,
-        DepNode<'tcx, OneHopLocation>,
-        DepEdge<OneHopLocation>,
+        Vec<(Node, DepEdge<OneHopLocation>)>,
     )>,
     pub(crate) generics: GenericArgsRef<'tcx>,
     pub(crate) def_id: DefId,
     arg_count: usize,
     local_decls: IndexVec<Local, LocalDecl<'tcx>>,
     pub(crate) k: K,
-    pub(crate) inlined_calls: Vec<(Location, Instance<'tcx>, K, Vec<GraphConnectionPoint<'tcx>>)>,
+    pub(crate) inlined_calls: Vec<(Location, Instance<'tcx>, K, Vec<GraphConnectionPoint>)>,
 }
 
-type GraphConnectionPoint<'tcx> = (DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>);
+type GraphConnectionPoint = (Node, DepEdge<OneHopLocation>);
 
 impl<'tcx, K> HasLocalDecls<'tcx> for PartialGraph<'tcx, K> {
     fn local_decls(&self) -> &LocalDecls<'tcx> {
@@ -340,7 +350,7 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
     ) -> Self {
         Self {
             nodes: Default::default(),
-            edges: Default::default(),
+            assoc: Default::default(),
             generics,
             def_id,
             arg_count,
@@ -350,28 +360,31 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
         }
     }
 
-    pub fn iter_nodes(&self) -> impl Iterator<Item = &DepNode<'tcx, OneHopLocation>> + Clone {
-        self.nodes.iter()
+    pub fn iter_nodes(
+        &self,
+    ) -> impl Iterator<Item = (Node, &DepNode<'tcx, OneHopLocation>)> + Clone {
+        self.assoc.iter().enumerate().map(|(n, v)| (Node(n), &v.0))
     }
 
-    pub fn iter_edges(
-        &self,
-    ) -> impl Iterator<
-        Item = &(
-            DepNode<'tcx, OneHopLocation>,
-            DepNode<'tcx, OneHopLocation>,
-            DepEdge<OneHopLocation>,
-        ),
-    > {
-        self.edges.iter()
+    pub fn iter_edges<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = (Node, Node, &'a DepEdge<OneHopLocation>)> + use<'tcx, 'a, K> {
+        self.assoc
+            .iter()
+            .enumerate()
+            .flat_map(|(from, v)| v.1.iter().map(move |(to, props)| (Node(from), *to, props)))
+    }
+
+    pub fn node_props(&self, Node(node): Node) -> &DepNode<'tcx, OneHopLocation> {
+        &self.assoc[node].0
     }
 
     /// Returns the set of source places that the parent can access (write to)
     pub(crate) fn parentable_srcs<'a>(&'a self) -> FxHashSet<(DepNode<'tcx, bool>, Option<u8>)> {
-        self.edges
-            .iter()
-            .filter(|&(n, _, _)| n.at.location.is_start())
+        self.iter_edges()
+            .filter(|&(n, _, _)| self.node_props(n).at.location.is_start())
             .map(|(n, _, _)| {
+                let n = self.node_props(n);
                 n.map_at(|_| {
                     assert!(n.at.in_child.is_none());
                     true
@@ -387,10 +400,10 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
     /// Returns the set of destination places that the parent can access (read
     /// from)
     pub(crate) fn parentable_dsts<'a>(&'a self) -> FxHashSet<(DepNode<'tcx, bool>, Option<u8>)> {
-        self.edges
-            .iter()
-            .filter(|&(_, n, _)| n.at.location.is_end())
+        self.iter_edges()
+            .filter(|&(_, n, _)| self.node_props(n).at.location.is_end())
             .map(|(_, n, _)| {
+                let n = self.node_props(n);
                 assert!(n.at.in_child.is_none());
                 n.map_at(|_| false)
             })
