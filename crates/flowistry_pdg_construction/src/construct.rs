@@ -632,7 +632,9 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
 
         // Add control dependencies: ctrl_input -> output
         for (ctrl_input, loc, edge) in &ctrl_inputs {
-            let from = self.get_node(*ctrl_input, loc.clone()).unwrap();
+            let from = self.get_or_construct_node(*ctrl_input, loc.clone(), || {
+                constructor.make_dep_node(*ctrl_input, loc.location)
+            });
             for output in &outputs {
                 self.insert_edge(from, *output, edge.clone());
             }

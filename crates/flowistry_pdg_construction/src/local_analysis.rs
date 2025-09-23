@@ -135,7 +135,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
         &self.memo.async_info
     }
 
-    fn make_dep_node(
+    pub(super) fn make_dep_node(
         &self,
         place: Place<'tcx>,
         location: impl Into<RichLocation>,

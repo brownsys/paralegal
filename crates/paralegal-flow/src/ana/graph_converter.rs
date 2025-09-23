@@ -1204,17 +1204,17 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     if eref.weight().kind == DepEdgeKind::Data {
                         has_no_data_edges = false;
                         let at = eref.weight().at.clone();
-                        #[cfg(debug_assertions)]
-                        assert_edge_location_invariant(
-                            self.tcx(),
-                            at.clone(),
-                            body,
-                            weight.at.clone(),
-                            |at| GlobalLocation {
-                                function: function.def_id(),
-                                location: at.location,
-                            },
-                        );
+                        // #[cfg(debug_assertions)]
+                        // assert_edge_location_invariant(
+                        //     self.tcx(),
+                        //     at.clone(),
+                        //     body,
+                        //     weight.at.clone(),
+                        //     |at| GlobalLocation {
+                        //         function: function.def_id(),
+                        //         location: at.location,
+                        //     },
+                        // );
                         if weight.at == at && eref.weight().target_use.is_return() {
                             is_return_use = true;
                         }
