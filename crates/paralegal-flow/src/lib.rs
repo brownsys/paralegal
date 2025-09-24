@@ -52,14 +52,14 @@ use desc::utils::write_sep;
 
 use flowistry_pdg_construction::body_cache::{dump_mir_and_borrowck_facts, intermediate_out_dir};
 use log::Level;
-use paralegal_spdg::{AnalyzerStats, ProgramDescription, STAT_FILE_EXT};
+use paralegal_spdg::{AnalyzerStats, DisplayPath, ProgramDescription, STAT_FILE_EXT};
 use rustc_middle::ty::TyCtxt;
 use rustc_plugin::CrateFilter;
 use rustc_span::ErrorGuaranteed;
 
 pub use std::collections::{HashMap, HashSet};
 use std::{
-    fmt::Display,
+    fmt::{write, Display},
     fs::File,
     io::BufWriter,
     path::PathBuf,
@@ -316,8 +316,27 @@ impl Callbacks {
         tcx.dcx().abort_if_errors();
 
         if self.opts.dbg().dump_spdg() {
-            let out = std::fs::File::create("call-only-flow.gv")?;
-            paralegal_spdg::dot::dump(&desc, out)?;
+            let td = std::env::var("CARGO_MANIFEST_DIR").unwrap_or(".".to_string());
+            let mut pb = std::path::PathBuf::from(&td);
+            pb.push("target");
+            if !pb.exists() {
+                error!(
+                    "Target directory {} should exist, will create one.",
+                    pb.display()
+                );
+            }
+            pb.push("paralegal-dump");
+            pb.push("graph");
+            std::fs::create_dir_all(&pb).unwrap();
+            paralegal_spdg::dot::dump_all_separate(&desc, |name| {
+                let mut pb = pb.clone();
+                pb.push(format!(
+                    "{}",
+                    Print(|f| write_sep(f, "-", name.iter(), Display::fmt))
+                ));
+                pb.set_extension("graph.gv");
+                pb
+            })?;
         }
 
         generator

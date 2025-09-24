@@ -193,6 +193,18 @@ pub fn dump<W: std::io::Write>(spdg: &ProgramDescription, out: W) -> std::io::Re
     dump_for_selection(spdg, out, |_| true)
 }
 
+pub fn dump_all_separate<P: AsRef<std::path::Path>>(
+    spdg: &ProgramDescription,
+    file_name_schema: impl Fn(&[crate::Identifier]) -> P,
+) -> std::io::Result<()> {
+    for (_, ctrl) in &spdg.controllers {
+        let path = file_name_schema(&ctrl.path);
+        let out = std::fs::File::create(path)?;
+        dump_for_selection(spdg, out, |i| i == ctrl.id)?
+    }
+    Ok(())
+}
+
 /// Dump the SPDG for one select controller in dot format
 pub fn dump_for_controller(
     spdg: &ProgramDescription,
