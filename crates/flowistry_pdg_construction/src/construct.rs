@@ -706,16 +706,17 @@ impl<'tcx> GraphAssembler<'tcx> {
     fn with_new_ctr_inputs<'c, F, R, K: Clone>(
         &mut self,
         vis: &mut VisitDriver<'tcx, 'c, K>,
-        new_ctrl_inputs: &[(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)],
+        new_ctrl_inputs: &[GraphConnectionPoint<'tcx>],
         f: F,
     ) -> R
     where
         F: FnOnce(&mut Self, &mut VisitDriver<'tcx, 'c, K>) -> R,
     {
+        let g = vis.current_graph_as_rc();
         let new_ctrl_inputs: Box<[(NodeIndex, DepEdge<CallString>)]> = new_ctrl_inputs
             .iter()
             .map(|(src, edge)| {
-                let src = globalize_node(vis, src);
+                let src = globalize_node(vis, g.node_props(*src));
                 let src_idx = self.add_node(src);
                 let new_edge = globalize_edge(vis, edge);
                 (src_idx, new_edge)
@@ -733,6 +734,69 @@ impl<'tcx> GraphAssembler<'tcx> {
             self.control_inputs = old_ctrl_inputs;
         }
         r
+    }
+}
+
+impl<'tcx, K: Hash + Eq + Clone> call_tree_visit::Visitor<'tcx, K> for GraphAssembler<'tcx> {
+    fn visit_inlined_call(
+        &mut self,
+        vis: &mut VisitDriver<'tcx, '_, K>,
+        loc: Location,
+        inst: Instance<'tcx>,
+        k: &K,
+        ctrl_inputs: &[GraphConnectionPoint<'tcx>],
+    ) {
+        self.with_new_ctr_inputs(vis, ctrl_inputs, |slf, vis| {
+            vis.visit_inlined_call(slf, loc, inst, k)
+        })
+    }
+
+    fn visit_edge(
+        &mut self,
+        vis: &mut VisitDriver<'tcx, '_, K>,
+        src: Node,
+        dst: Node,
+        kind: &DepEdge<OneHopLocation>,
+    ) {
+        let g = vis.current_graph_as_rc();
+        let src = globalize_node(vis, g.node_props(src));
+        let src_idx = self.add_node(src);
+        let dst = globalize_node(vis, g.node_props(dst));
+        let dst_idx = self.add_node(dst);
+        let new_kind = globalize_edge(vis, kind);
+        self.graph.add_edge(src_idx, dst_idx, new_kind);
+    }
+
+    fn visit_partial_graph(
+        &mut self,
+        vis: &mut VisitDriver<'tcx, '_, K>,
+        graph: &PartialGraph<'tcx, K>,
+    ) {
+        vis.visit_partial_graph(self, graph);
+
+        // This loop connects the control inputs that
+        // are incoming to the function to those nodes in the graph who have no
+        // control inputs yet.
+        //
+        // We do this here instead of in "visit_node", because that gets called
+        // before the "visit_edge" function, meaning we can't yet see the
+        // potential control inputs of the node. We could have the visitor use
+        // an opposite ordering, but that is counterintuitive to other potential
+        // users of the visitor.
+        for (idx, node) in graph.iter_nodes() {
+            let new_node = globalize_node(vis, node);
+            let node = self.add_node(new_node);
+
+            if !self
+                .graph
+                .edges_directed(node, petgraph::Direction::Incoming)
+                .any(|e| e.weight().is_control())
+            {
+                for (src, edge) in self.control_inputs.iter() {
+                    self.graph.add_edge(*src, node, edge.clone());
+                }
+            }
+        }
     }
 }
 
@@ -830,8 +894,7 @@ impl<'tcx, K: Clone + Hash + Eq> PartialGraph<'tcx, K> {
         let mut size_estimator = GraphSizeEstimator::new();
         visitor.start(&mut size_estimator);
         log::info!("Estimating a size of {}", size_estimator.format_size());
-        unimplemented!();
-        //visitor.start(&mut assembler);
+        visitor.start(&mut assembler);
         DepGraph {
             graph: assembler.graph,
         }
@@ -860,8 +923,7 @@ impl<'tcx, K: Clone + Hash + Eq> PartialGraph<'tcx, K> {
         visitor.start(&mut size_estimator);
         log::info!("Estimating a size of {}", size_estimator.format_size());
         visitor.with_pushed_stack(extra_global_location, |visitor| {
-            unimplemented!();
-            //visitor.start(&mut assembler);
+            visitor.start(&mut assembler);
         });
         DepGraph {
             graph: assembler.graph,
