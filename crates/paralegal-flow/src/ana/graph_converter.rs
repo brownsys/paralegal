@@ -778,7 +778,7 @@ struct GraphAssembler<'tcx, 'a> {
     generator: &'a SPDGGenerator<'tcx>,
 
     /// The translation table for the function we're currently visiting.
-    nodes: Vec<GNode>,
+    nodes: Vec<Vec<GNode>>,
 }
 
 pub fn assemble_pdg<'tcx, 'a>(
@@ -879,12 +879,13 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         weight: &DepNode<'tcx, OneHopLocation>,
     ) -> GNode {
         let weight = globalize_node(vis, weight, self.tcx());
-        let prior = self.nodes[node.index()];
+        let table = self.nodes.last_mut().unwrap();
+        let prior = table[node.index()];
         if GNode(Node::end()) != prior {
             return prior;
         } else {
             let my_idx = GNode(self.graph.add_node(weight));
-            self.nodes[node.index()] = my_idx;
+            table[node.index()] = my_idx;
             my_idx
         }
     }
@@ -1387,15 +1388,15 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     }
 
     fn translate_node(&self, node: Node) -> GNode {
-        let idx = self.nodes[node.index()];
+        let idx = self.nodes.last().unwrap()[node.index()];
         assert_ne!(idx.to_index(), Node::end(), "Node {node:?} is unknown");
         idx
     }
 
     fn with_new_translation_table<R>(&mut self, size: usize, f: impl FnOnce(&mut Self) -> R) -> R {
-        let old_table = std::mem::replace(&mut self.nodes, vec![GNode(Node::end()); size]);
+        self.nodes.push(vec![GNode(Node::end()); size]);
         let result = f(self);
-        self.nodes = old_table;
+        assert_eq!(self.nodes.pop().unwrap().len(), size);
         result
     }
 }
@@ -1449,6 +1450,17 @@ impl<'tcx, 'a, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssemb
         self.with_new_ctr_inputs(vis, ctrl_inputs, |slf, vis| {
             vis.visit_inlined_call(slf, loc, inst, k)
         })
+    }
+
+    fn visit_parent_connection(
+        &mut self,
+        _vis: &mut VisitDriver<'tcx, '_, K>,
+        in_caller: Node,
+        in_this: Node,
+        _is_at_start: bool,
+    ) {
+        let [parent_table, this_table] = self.nodes.last_chunk_mut().unwrap();
+        this_table[in_this.index()] = parent_table[in_caller.index()]
     }
 
     fn visit_node(

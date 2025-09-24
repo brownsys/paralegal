@@ -23,7 +23,7 @@ use crate::{
 pub struct VisitDriver<'tcx, 'c, K: Clone> {
     memo: &'c MemoPdgConstructor<'tcx, K>,
     call_string_stack: Vec<GlobalLocation>,
-    current: (Instance<'tcx>, Rc<Cow<'c, PartialGraph<'tcx, K>>>),
+    graph_stack: Vec<(Instance<'tcx>, Rc<Cow<'c, PartialGraph<'tcx, K>>>)>,
     _k: K,
 }
 
@@ -43,16 +43,16 @@ impl<'tcx, 'c, K: Clone> VisitDriver<'tcx, 'c, K> {
     }
 
     pub fn current_function(&self) -> Instance<'tcx> {
-        self.current.0
+        self.graph_stack.last().unwrap().0
     }
 
     pub fn current_graph(&self) -> &PartialGraph<'tcx, K> {
         use std::borrow::Borrow;
-        self.current.1.as_ref().borrow()
+        self.graph_stack.last().unwrap().1.as_ref().borrow()
     }
 
     pub fn current_graph_as_rc(&self) -> Rc<Cow<'c, PartialGraph<'tcx, K>>> {
-        self.current.1.clone()
+        self.graph_stack.last().unwrap().1.clone()
     }
 
     pub fn globalize_location(&mut self, location: &OneHopLocation) -> CallString {
@@ -100,6 +100,17 @@ pub trait Visitor<'tcx, K: Hash + Eq + Clone> {
     ) {
     }
 
+    /// These nodes between the current graph and the caller should be
+    /// considered the same.
+    fn visit_parent_connection(
+        &mut self,
+        _vis: &mut VisitDriver<'tcx, '_, K>,
+        _in_caller: Node,
+        _in_this: Node,
+        _is_at_start: bool,
+    ) {
+    }
+
     fn visit_node(
         &mut self,
         _vis: &mut VisitDriver<'tcx, '_, K>,
@@ -129,7 +140,7 @@ impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
         Self {
             memo,
             call_string_stack: Vec::new(),
-            current: (start, Rc::new(g)),
+            graph_stack: vec![(start, Rc::new(g))],
             _k: k,
         }
     }
@@ -138,6 +149,34 @@ impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
         vis: &mut V,
         graph: &PartialGraph<'tcx, K>,
     ) {
+        if self.graph_stack.len() > 1 {
+            let parent = self.graph_stack[self.graph_stack.len() - 2].1.clone();
+            let cloc = self.call_stack().last().unwrap().location;
+            for (node, info) in parent.iter_nodes() {
+                if info.at.in_child.map_or(false, |(d, _)| d == graph.def_id)
+                    && info.at.location == cloc
+                {
+                    let is_at_start = info.at.in_child.unwrap().1;
+                    vis.visit_parent_connection(
+                        self,
+                        node,
+                        graph
+                            .get_node(
+                                info.place,
+                                if is_at_start {
+                                    RichLocation::Start
+                                } else {
+                                    RichLocation::End
+                                }
+                                .into(),
+                            )
+                            .unwrap()
+                            .into(),
+                        is_at_start,
+                    );
+                }
+            }
+        }
         for (node, info) in graph.iter_nodes() {
             vis.visit_node(self, node, info);
         }
@@ -162,22 +201,19 @@ impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
                 location: loc.into(),
             },
             |slf| {
-                let old = std::mem::replace(
-                    &mut slf.current,
-                    (
-                        inst,
-                        Rc::new(slf.memo.construct_for((inst, k.clone())).unwrap()),
-                    ),
-                );
-                let graph: Rc<_> = slf.current.1.clone();
+                slf.graph_stack.push((
+                    inst,
+                    Rc::new(slf.memo.construct_for((inst, k.clone())).unwrap()),
+                ));
+                let graph: Rc<_> = slf.current_graph_as_rc();
                 vis.visit_partial_graph(slf, &graph);
-                slf.current = old;
+                slf.graph_stack.pop();
             },
         );
     }
 
     pub fn start<V: Visitor<'tcx, K> + ?Sized>(&mut self, vis: &mut V) {
-        let g = self.current.1.clone();
+        let g = self.current_graph_as_rc();
         vis.visit_partial_graph(self, &g);
     }
 }
