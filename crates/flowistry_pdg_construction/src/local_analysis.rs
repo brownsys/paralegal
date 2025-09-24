@@ -745,10 +745,10 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
                 };
                 for location in locations {
                     let src = final_state.get_node(*place, location.into()).unwrap();
-                    let dst =
-                        final_state.get_or_construct_node(*place, RichLocation::End.into(), || {
-                            self.make_dep_node(*place, *location)
-                        });
+                    let eloc = RichLocation::End;
+                    let dst = final_state.get_or_construct_node(*place, eloc.into(), || {
+                        self.make_dep_node(*place, eloc)
+                    });
                     let edge = DepEdge::data(
                         self.mono_body.terminator_loc(block).into(),
                         SourceUse::Operand,

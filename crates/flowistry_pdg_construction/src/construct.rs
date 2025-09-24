@@ -360,16 +360,19 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
         location: Location,
     ) {
         if let TerminatorKind::Call { func, args, .. } = &terminator.kind {
-            if matches!(
-                results.analysis.determine_call_handling(
-                    location,
-                    Cow::Borrowed(func),
-                    Cow::Borrowed(args),
-                    terminator.source_info.span
-                ),
-                Some(CallHandling::Ready { .. })
-            ) {
-                return;
+            let handling = results.analysis.determine_call_handling(
+                location,
+                Cow::Borrowed(func),
+                Cow::Borrowed(args),
+                terminator.source_info.span,
+            );
+            match handling {
+                Some(CallHandling::Ready { .. }) | Some(CallHandling::ApproxAsyncSM(_)) => {
+                    // I'm not totally sure whether we need to call the
+                    // approximation handler again here
+                    return;
+                }
+                _ => (),
             }
         }
 
@@ -538,7 +541,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         //
         // PRECISION TODO: for a given child place, we only want to connect
         // the *last* nodes in the child function to the parent, not *all* of them.
-        trace!("CHILD -> PARENT EDGES:");
+        trace!("CHILD -> PARENT EDGES for {:?}:", child_graph.def_id);
         for (child_dst, kind) in child_graph.parentable_dsts() {
             let child_dst = child_dst.map_at(|b| bool_to_loc(*b));
             let child_place = child_dst.place;
@@ -558,17 +561,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                 );
             }
         }
-        // self.edges.extend(
-        //     constructor
-        //         .find_control_inputs(location)
-        //         .into_iter()
-        //         .flat_map(|(ctrl_src, edge)| {
-        //             child_graph
-        //                 .nodes
-        //                 .iter()
-        //                 .map(move |dest| (ctrl_src.clone(), dest.clone(), edge.clone()))
-        //         }),
-        // );
+        trace!("Call handling finished");
         true
     }
 

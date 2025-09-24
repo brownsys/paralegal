@@ -8,6 +8,7 @@ use std::{
 
 use flowistry_pdg::{CallString, RichLocation};
 use internment::Intern;
+use log::trace;
 use petgraph::{
     dot,
     graph::{DiGraph, EdgeIndex},
@@ -313,17 +314,8 @@ impl DepGraph<'_> {
 pub type Node = petgraph::graph::NodeIndex;
 
 #[derive(Debug, Clone)]
-pub struct DepNodeProps {
-    key: Node,
-    is_split: bool,
-    place_pretty: Option<Intern<String>>,
-    span: Span,
-}
-
-#[derive(Debug, Clone)]
 pub struct PartialGraph<'tcx, K> {
     node_mapping: FxHashMap<(Place<'tcx>, OneHopLocation), Node>,
-    edge_mapping: FxHashMap<(Node, Node), EdgeIndex>,
     graph: petgraph::Graph<DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>>,
     pub(crate) def_id: DefId,
     arg_count: usize,
@@ -351,7 +343,6 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
     ) -> Self {
         Self {
             node_mapping: Default::default(),
-            edge_mapping: Default::default(),
             graph: petgraph::Graph::new(),
             generics,
             def_id,
@@ -387,13 +378,18 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
     }
 
     pub fn insert_edge(&mut self, source: Node, target: Node, edge: DepEdge<OneHopLocation>) {
-        let key = (source, target);
-        if let Some(prior) = self.edge_mapping.get(&key) {
-            let e = self.graph.edge_weight(*prior).unwrap();
-            assert_eq!(e, &edge);
+        if let Some(prior) = self.graph.find_edge(source, target) {
+            let e = self.graph.edge_weight(prior).unwrap();
+            assert_eq!(
+                e,
+                &edge,
+                "Edge {:?} -> {:?} already exists in {:?}",
+                self.node_props(source).place,
+                self.node_props(target).place,
+                self.def_id
+            );
         } else {
-            let edge = self.graph.add_edge(source, target, edge);
-            self.edge_mapping.insert(key, edge);
+            self.graph.add_edge(source, target, edge);
         }
     }
 
@@ -437,10 +433,10 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
     /// Returns the set of destination places that the parent can access (read
     /// from)
     pub(crate) fn parentable_dsts<'a>(&'a self) -> FxHashSet<(DepNode<'tcx, bool>, Option<u8>)> {
-        self.iter_edges()
-            .filter(|&(_, n, _)| self.node_props(n).at.location.is_end())
-            .map(|(_, n, _)| {
-                let n = self.node_props(n);
+        self.iter_nodes()
+            .map(|(_, n)| n)
+            .filter(|n| n.at.location.is_end())
+            .map(|n| {
                 assert!(n.at.in_child.is_none());
                 n.map_at(|_| false)
             })
