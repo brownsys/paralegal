@@ -36,8 +36,10 @@ pub struct DisplayList<I> {
 }
 
 /// Display this iterator as a list
-pub fn display_list<I>(iter: I) -> DisplayList<I> {
-    DisplayList { iter }
+pub fn display_list<I: IntoIterator>(iter: I) -> DisplayList<<I as IntoIterator>::IntoIter> {
+    DisplayList {
+        iter: iter.into_iter(),
+    }
 }
 
 impl<E: Display, I: IntoIterator<Item = E> + Clone> Display for DisplayList<I> {

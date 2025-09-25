@@ -1294,7 +1294,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     fn fix_async_args<K: Clone + std::hash::Hash + Eq>(
         &mut self,
         def_id: DefId,
-        generator: Instance<'tcx>,
+        _generator: Instance<'tcx>,
         loc: Location,
         driver: &mut VisitDriver<'tcx, 'a, K>,
     ) {
@@ -1324,9 +1324,12 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             driver.globalize_location(&RichLocation::End.into()),
             base_body.local_decls[mir::RETURN_PLACE].source_info.span,
         );
+        let generator_loc = RichLocation::Location(loc);
+        let transition_at = CallString::new(&[GlobalLocation {
+            location: generator_loc,
+            function: def_id,
+        }]);
         for (nidx, n) in pgraph.iter_nodes() {
-            let generator_loc = RichLocation::Location(loc);
-
             if n.place.local.as_u32() == 1 && n.at.location == RichLocation::Start {
                 let ridx = self.translate_node(nidx);
                 let Some(mir::ProjectionElem::Field(id, _)) = n.place.projection.first() else {
@@ -1341,36 +1344,24 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                 self.graph.add_edge(
                     arg.to_index(),
                     ridx.to_index(),
-                    globalize_edge(
-                        driver,
-                        &DepEdge {
-                            kind: DepEdgeKind::Data,
-                            at: OneHopLocation {
-                                location: generator_loc,
-                                in_child: None,
-                            },
-                            source_use: SourceUse::Argument(id.as_u32() as u8),
-                            target_use: TargetUse::Assign,
-                        },
-                    ),
+                    EdgeInfo {
+                        kind: EdgeKind::Data,
+                        at: transition_at,
+                        source_use: SourceUse::Argument(id.as_u32() as u8),
+                        target_use: TargetUse::Assign,
+                    },
                 );
             } else if n.place.local == mir::RETURN_PLACE {
                 let ridx = self.translate_node(nidx);
                 self.graph.add_edge(
                     ridx.to_index(),
                     return_node.to_index(),
-                    globalize_edge(
-                        driver,
-                        &DepEdge {
-                            kind: DepEdgeKind::Data,
-                            at: OneHopLocation {
-                                location: generator_loc,
-                                in_child: None,
-                            },
-                            source_use: SourceUse::Operand,
-                            target_use: TargetUse::Return,
-                        },
-                    ),
+                    EdgeInfo {
+                        kind: EdgeKind::Data,
+                        at: transition_at,
+                        source_use: SourceUse::Operand,
+                        target_use: TargetUse::Return,
+                    },
                 );
             }
         }

@@ -105,6 +105,19 @@ impl<'a> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDescri
         Some(LabelText::LabelStr("record".into()))
     }
 
+    fn edge_label(&'a self, e: &GlobalEdge) -> LabelText<'a> {
+        LabelText::LabelStr(
+            self.format_call_string(
+                self.spdg.controllers[&e.controller_id]
+                    .graph
+                    .edge_weight(e.index)
+                    .unwrap()
+                    .at,
+            )
+            .into(),
+        )
+    }
+
     fn node_label(&'a self, n: &CallString) -> LabelText<'a> {
         let (ctrl_id, nodes) = &self.call_sites[n];
         let ctrl = &self.spdg.controllers[ctrl_id];

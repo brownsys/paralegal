@@ -2,6 +2,7 @@
 #[macro_use]
 extern crate lazy_static;
 
+use flowistry_pdg::CallString;
 use paralegal_flow::test_utils::*;
 use paralegal_spdg::Identifier;
 
@@ -242,6 +243,24 @@ define_test!(no_overtaint_over_poll
 
 define_test!(return_from_async: graph -> {
     let input_fn = graph.function("some_input");
+    let instruction_info = &graph.graph().desc.instruction_info;
+    println!("Looking for function {:?}", input_fn.ident);
+    let filter = |m: CallString| {
+        instruction_info[&m.leaf()]
+            .kind
+            .as_function_call()
+            .is_some_and(|i| i.id == input_fn.ident)
+    };
+    for e in graph.spdg().graph
+            .edge_weights()
+            .filter(|e| filter(e.at)) {
+                println!("Edge {e} is at function in question");
+            }
+    for n in graph.spdg()
+            .graph.node_weights()
+            .filter(|n| filter(n.at)) {
+                println!("Node {n} is at function in question");
+            }
     let input = graph.call_site(&input_fn);
 
     assert!(graph.returns(&input.output()))

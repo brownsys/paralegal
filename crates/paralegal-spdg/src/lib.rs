@@ -178,6 +178,12 @@ pub struct DefInfo {
 /// Provides a way to format rust paths
 pub struct DisplayPath<'a>(&'a [Identifier]);
 
+impl std::fmt::Debug for DisplayPath<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        Display::fmt(self, f)
+    }
+}
+
 impl Display for DisplayPath<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write_sep(f, "::", self.0, Display::fmt)

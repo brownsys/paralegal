@@ -23,8 +23,8 @@ use std::{
 
 use paralegal_spdg::{
     traverse::{generic_flows_to, generic_influencers, EdgeSelection},
-    utils::write_sep,
-    DefInfo, EdgeInfo, Endpoint, Node, TypeId, SPDG,
+    utils::{display_list, write_sep, DisplayList},
+    DefInfo, DisplayPath, EdgeInfo, Endpoint, Node, TypeId, SPDG,
 };
 
 use flowistry_pdg::CallString;
@@ -495,7 +495,7 @@ impl<'g> CtrlRef<'g> {
             cs.len() == 1,
             "expected only one call site for {}, found {}",
             fun.info_for(fun.ident).name,
-            cs.len()
+            display_list(cs.iter().map(|c| c.call_site))
         );
         cs.pop().unwrap()
     }
@@ -540,6 +540,15 @@ impl<'g> FnRef<'g> {
 pub struct CallStringRef<'g> {
     call_site: CallString,
     ctrl: &'g CtrlRef<'g>,
+}
+
+impl std::fmt::Debug for CallStringRef<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CallStringRef")
+            .field("call_site", &self.call_site)
+            .field("ctrl", &DisplayPath::from(&self.ctrl.ctrl.path))
+            .finish()
+    }
 }
 
 impl Hash for CallStringRef<'_> {
