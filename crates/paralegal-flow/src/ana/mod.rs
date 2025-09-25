@@ -28,7 +28,6 @@ use flowistry_pdg_construction::{
 };
 use inline_judge::{InlineJudgement, K};
 use itertools::Itertools;
-use petgraph::visit::GraphBase;
 
 use rustc_hash::FxHashSet;
 use rustc_hir::{
@@ -44,7 +43,6 @@ use rustc_span::{ErrorGuaranteed, FileNameDisplayPreference, Span as RustSpan, S
 mod graph_converter;
 mod inline_judge;
 
-use graph_converter::GraphConverter;
 use std::time::Duration;
 
 pub use self::inline_judge::InlineJudge;
@@ -457,10 +455,6 @@ fn src_loc_for_span(span: RustSpan, tcx: TyCtxt) -> Span {
             col: end_col as u32,
         },
     }
-}
-
-fn default_index() -> <SPDGImpl as GraphBase>::NodeId {
-    <SPDGImpl as GraphBase>::NodeId::end()
 }
 
 /// Checks the invariant that [`SPDGGenerator::collect_type_info`] should

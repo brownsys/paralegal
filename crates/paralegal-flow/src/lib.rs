@@ -52,14 +52,14 @@ use desc::utils::write_sep;
 
 use flowistry_pdg_construction::body_cache::{dump_mir_and_borrowck_facts, intermediate_out_dir};
 use log::Level;
-use paralegal_spdg::{AnalyzerStats, DisplayPath, ProgramDescription, STAT_FILE_EXT};
+use paralegal_spdg::{AnalyzerStats, ProgramDescription, STAT_FILE_EXT};
 use rustc_middle::ty::TyCtxt;
 use rustc_plugin::CrateFilter;
 use rustc_span::ErrorGuaranteed;
 
 pub use std::collections::{HashMap, HashSet};
 use std::{
-    fmt::{write, Display},
+    fmt::Display,
     fs::File,
     io::BufWriter,
     path::PathBuf,

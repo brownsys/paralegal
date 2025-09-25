@@ -23,7 +23,7 @@ use std::{
 
 use paralegal_spdg::{
     traverse::{generic_flows_to, generic_influencers, EdgeSelection},
-    utils::{display_list, write_sep, DisplayList},
+    utils::{display_list, write_sep},
     DefInfo, DisplayPath, EdgeInfo, Endpoint, Node, TypeId, SPDG,
 };
 

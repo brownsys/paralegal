@@ -8,12 +8,7 @@ use std::{
 
 use flowistry_pdg::{CallString, RichLocation};
 use internment::Intern;
-use log::trace;
-use petgraph::{
-    dot,
-    graph::{DiGraph, EdgeIndex},
-    visit::IntoNodeReferences,
-};
+use petgraph::{dot, graph::DiGraph, visit::IntoNodeReferences};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;

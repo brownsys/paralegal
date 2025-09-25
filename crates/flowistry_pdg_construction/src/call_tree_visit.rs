@@ -153,7 +153,7 @@ impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
             let parent = self.graph_stack[self.graph_stack.len() - 2].1.clone();
             let cloc = self.call_stack().last().unwrap().location;
             for (node, info) in parent.iter_nodes() {
-                if info.at.in_child.map_or(false, |(d, _)| d == graph.def_id)
+                if info.at.in_child.is_some_and(|(d, _)| d == graph.def_id)
                     && info.at.location == cloc
                 {
                     let is_at_start = info.at.in_child.unwrap().1;
@@ -170,8 +170,7 @@ impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
                                 }
                                 .into(),
                             )
-                            .unwrap()
-                            .into(),
+                            .unwrap(),
                         is_at_start,
                     );
                 }

@@ -206,11 +206,13 @@ pub fn dump<W: std::io::Write>(spdg: &ProgramDescription, out: W) -> std::io::Re
     dump_for_selection(spdg, out, |_| true)
 }
 
+/// Dump all PDGs, each in a separate dot file, with the naming schema provided
+/// by the supplied function
 pub fn dump_all_separate<P: AsRef<std::path::Path>>(
     spdg: &ProgramDescription,
     file_name_schema: impl Fn(&[crate::Identifier]) -> P,
 ) -> std::io::Result<()> {
-    for (_, ctrl) in &spdg.controllers {
+    for ctrl in spdg.controllers.values() {
         let path = file_name_schema(&ctrl.path);
         let out = std::fs::File::create(path)?;
         dump_for_selection(spdg, out, |i| i == ctrl.id)?

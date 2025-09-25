@@ -5,7 +5,7 @@ use flowistry::mir::FlowistryInput;
 use log::trace;
 use petgraph::graph::{DiGraph, NodeIndex};
 
-use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
+use flowistry_pdg::{CallString, GlobalLocation};
 
 use df::ResultsVisitor;
 use rustc_errors::DiagMessage;
@@ -619,7 +619,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
             let data_edge = DepEdge::data(location.into(), source_use, target_use);
             for output in &outputs {
                 trace!("  Adding edge {data_input:?} -> {output:?}");
-                self.insert_edge(data_input.clone(), *output, data_edge.clone());
+                self.insert_edge(data_input, *output, data_edge.clone());
             }
         }
 
@@ -776,7 +776,7 @@ impl<'tcx, K: Hash + Eq + Clone> call_tree_visit::Visitor<'tcx, K> for GraphAsse
         // potential control inputs of the node. We could have the visitor use
         // an opposite ordering, but that is counterintuitive to other potential
         // users of the visitor.
-        for (idx, node) in graph.iter_nodes() {
+        for (_, node) in graph.iter_nodes() {
             let new_node = globalize_node(vis, node);
             let node = self.add_node(new_node);
 

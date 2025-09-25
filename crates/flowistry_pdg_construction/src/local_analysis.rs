@@ -28,9 +28,7 @@ use crate::{
     async_support::{self, *},
     body_cache::CachedBody,
     calling_convention::*,
-    graph::{
-        DepEdge, DepNode, GraphConnectionPoint, OneHopLocation, PartialGraph, SourceUse, TargetUse,
-    },
+    graph::{DepEdge, DepNode, OneHopLocation, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
     utils::{
         self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize, ShimResult,
