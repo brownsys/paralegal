@@ -1326,32 +1326,21 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         );
         for (nidx, n) in pgraph.iter_nodes() {
             let generator_loc = RichLocation::Location(loc);
-            let relocated_n = |slf: &mut Self, vis, start_or_end| {
-                slf.add_node(
-                    nidx,
-                    vis,
-                    &n.map_at(|_| OneHopLocation {
-                        location: generator_loc,
-                        in_child: Some((generator.def_id(), start_or_end)),
-                    }),
-                )
-            };
 
-            if n.place.local.as_u32() != 1 && n.at.location == RichLocation::Start {
+            if n.place.local.as_u32() == 1 && n.at.location == RichLocation::Start {
+                let ridx = self.translate_node(nidx);
                 let Some(mir::ProjectionElem::Field(id, _)) = n.place.projection.first() else {
                     tcx.dcx().span_err(
                         n.span,
-                        "Expected field projection on async generator in {def_id:?}",
+                        format!("Expected field projection on async generator in {def_id:?}, found {:?}", n.place),
                     );
                     continue;
                 };
 
                 let arg = args_as_nodes[id.as_usize()];
-                assert!(false, "TODO remap location of n");
-                let ridx = relocated_n(self, driver, false).to_index();
                 self.graph.add_edge(
                     arg.to_index(),
-                    ridx,
+                    ridx.to_index(),
                     globalize_edge(
                         driver,
                         &DepEdge {
@@ -1366,9 +1355,9 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     ),
                 );
             } else if n.place.local == mir::RETURN_PLACE {
-                let ridx = relocated_n(self, driver, true).to_index();
+                let ridx = self.translate_node(nidx);
                 self.graph.add_edge(
-                    ridx,
+                    ridx.to_index(),
                     return_node.to_index(),
                     globalize_edge(
                         driver,
@@ -1396,7 +1385,11 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     fn with_new_translation_table<R>(&mut self, size: usize, f: impl FnOnce(&mut Self) -> R) -> R {
         self.nodes.push(vec![GNode(Node::end()); size]);
         let result = f(self);
-        assert_eq!(self.nodes.pop().unwrap().len(), size);
+        if self.nodes.len() != 1 {
+            // Yuck. In oder to still be able to fix up the async args we let
+            // the bottom translation table remain.
+            assert_eq!(self.nodes.pop().unwrap().len(), size);
+        }
         result
     }
 }
