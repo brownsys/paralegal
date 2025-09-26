@@ -3,7 +3,7 @@
 #[macro_use]
 extern crate lazy_static;
 
-use paralegal_flow::{define_flow_test_template, test_utils::*};
+use paralegal_flow::{define_flow_test_template, inline_test, test_utils::*};
 use paralegal_spdg::{Identifier, InstructionKind};
 
 const TEST_CRATE_NAME: &str = "tests/marker-tests";
@@ -210,3 +210,45 @@ define_test!(typed_input_zst: ctrl -> {
         })
     }))
 });
+
+#[test]
+fn no_overtaint_from_sibling_markers() {
+    inline_test! {
+        #[paralegal_flow::marker(marked)]
+        struct Marked;
+
+        struct Parent {
+            marked: Marked,
+            unmarked: u32,
+        }
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn reached<T>(_: T) {}
+
+        #[paralegal_flow::marker(sink_2, arguments = [0])]
+        fn reached_2<T>(_: T) {}
+
+        fn main(parent: Parent) {
+            reached(parent.unmarked);
+            reached_2(parent.marked);
+        }
+    }
+    .check_ctrl(|ctrl| {
+        let src = ctrl.marked("marked");
+        let reached = ctrl.marked("sink");
+        let reached_2 = ctrl.marked("sink_2");
+        println!("{:?}", ctrl.spdg().type_assigns);
+        println!("{:?}", ctrl.spdg().markers);
+        assert!(!src.is_empty());
+        assert!(!reached.is_empty());
+        assert!(!reached_2.is_empty());
+        for n in src.nodes() {
+            assert!(
+                !reached.nodes().contains(n),
+                "{n:?} is marked both `sink` and `marked`"
+            );
+        }
+        assert!(!src.flows_to_data(&reached));
+        assert!(src.flows_to_data(&reached_2));
+    });
+}

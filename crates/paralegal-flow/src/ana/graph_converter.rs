@@ -369,12 +369,12 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         projections: &[mir::PlaceElem<'tcx>],
     ) {
         trace!("Has place type {base_ty:?}");
-        let deep = true;
-        let mut node_types = self.type_is_marked(base_ty, deep).collect::<HashSet<_>>();
+        let mut node_types = HashSet::new();
         for proj in projections {
-            base_ty = base_ty.projection_ty(self.tcx(), *proj);
             node_types.extend(self.type_is_marked(base_ty, false));
+            base_ty = base_ty.projection_ty(self.tcx(), *proj);
         }
+        node_types.extend(self.type_is_marked(base_ty, true));
         self.known_def_ids.extend(node_types.iter().copied());
         let tcx = self.tcx();
         if !node_types.is_empty() {
