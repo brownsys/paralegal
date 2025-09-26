@@ -3,6 +3,7 @@
 extern crate lazy_static;
 
 use flowistry_pdg::CallString;
+use paralegal_flow::inline_test;
 use paralegal_flow::test_utils::*;
 use paralegal_spdg::Identifier;
 
@@ -648,4 +649,76 @@ fn explicit_call_to_poll() {
         "mir".to_string(),
     ])
     .check_ctrl(|_| ());
+}
+
+#[test]
+fn async_arg_markers() {
+    inline_test! {
+        #[paralegal_flow::marker(source, arguments = [0])]
+        #[paralegal_flow::marker(no_source, arguments = [1])]
+        #[paralegal_flow::marker(source_2, arguments = [2])]
+        #[paralegal_flow::marker(sink, return)]
+        async fn main(src: usize, other: usize, last: usize) -> usize {
+            let some = src + other;
+            src + 9 + last
+        }
+    }
+    .check_ctrl(|ctrl| {
+        // check direct
+        let args = ctrl.arguments().as_singles().collect::<Vec<_>>();
+        let [src, other, last] = args.as_slice() else {
+            panic!("Expected exactly two arguments, got {:?}", args);
+        };
+        let returns = ctrl.return_value().as_singles().collect::<Vec<_>>();
+        let [snk] = returns.as_slice() else {
+            panic!("Expected exactly one return value, got {:?}", returns);
+        };
+
+        assert!(src.flows_to_data(snk));
+        assert!(!other.flows_to_data(snk));
+        assert!(last.flows_to_data(snk));
+
+        // Check via markers
+        let sources = ctrl.marked(Identifier::new_intern("source"));
+        let source_2 = ctrl.marked(Identifier::new_intern("source_2"));
+        let no_source = ctrl.marked(Identifier::new_intern("no_source"));
+        let sinks = ctrl.marked(Identifier::new_intern("sink"));
+        assert!(!sources.is_empty());
+        assert!(!source_2.is_empty());
+        assert!(!no_source.is_empty());
+        assert!(!sinks.is_empty());
+        assert!(sources.flows_to_any(&sinks));
+        assert!(source_2.flows_to_any(&sinks));
+        assert!(!no_source.flows_to_any(&sinks));
+    })
+}
+
+// TODO marked type as argument test
+#[test]
+fn async_arg_marked_via_type() {
+    inline_test! {
+        #[paralegal_flow::marker(source)]
+        struct T1(u32);
+
+        #[paralegal_flow::marker(source_2)]
+        struct T2(u32);
+
+        #[paralegal_flow::marker(sink)]
+        struct T3(u32);
+
+        async fn main(src: T1, other: T2) -> T3 {
+            let some = src.0 + other.0;
+            T3(src.0 + 9)
+        }
+    }
+    .check_ctrl(|ctrl| {
+        let sources = ctrl.marked(Identifier::new_intern("source"));
+        let source_2 = ctrl.marked(Identifier::new_intern("source_2"));
+        let sinks = ctrl.marked(Identifier::new_intern("sink"));
+        assert!(!sources.is_empty());
+        assert!(!source_2.is_empty());
+        assert!(!sinks.is_empty());
+        assert!(sources.flows_to_any(&sinks));
+        assert!(!source_2.flows_to_any(&sinks));
+    })
 }

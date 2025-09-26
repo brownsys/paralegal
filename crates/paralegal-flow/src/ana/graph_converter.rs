@@ -93,35 +93,42 @@ pub fn assemble_pdg<'a>(
     target: &'a FnToAnalyze,
 ) -> SPDG {
     let tcx = generator.tcx();
-    let def_id = target.def_id.to_def_id();
+    let base_body_def_id = target.def_id.to_def_id();
     let base_body = generator
         .pdg_constructor
         .body_cache()
-        .try_get(def_id)
+        .try_get(base_body_def_id)
         .unwrap_or_else(|| {
-            panic!("INVARIANT VIOLATED: body for local function {def_id:?} cannot be loaded.",)
+            panic!("INVARIANT VIOLATED: body for local function {base_body_def_id:?} cannot be loaded.",)
         })
         .body();
-    let async_state = determine_async(tcx, def_id, base_body);
+    let async_state = determine_async(tcx, base_body_def_id, base_body);
 
-    let base_function_id = async_state.map_or(def_id, |(generator, ..)| generator.def_id());
+    let possibly_generator_id =
+        async_state.map_or(base_body_def_id, |(generator, ..)| generator.def_id());
 
-    let (instance, k) = generator
+    let (possible_generator_instance, k) = generator
         .pdg_constructor
-        .create_root_key(base_function_id.expect_local());
-    let mut driver = VisitDriver::new(&generator.pdg_constructor, instance, k);
+        .create_root_key(possibly_generator_id.expect_local());
+    let mut driver = VisitDriver::new(&generator.pdg_constructor, possible_generator_instance, k);
     let mut assembler = GraphAssembler::new(generator, known_def_ids, target.def_id.to_def_id());
-    if let Some((generator, loc, ..)) = async_state {
+    if let Some((generator_instance, loc, ..)) = async_state {
         driver.with_pushed_stack(
             GlobalLocation {
-                function: def_id,
+                function: base_body_def_id,
                 location: RichLocation::Location(loc),
             },
             |driver| {
                 driver.start(&mut assembler);
             },
         );
-        assembler.fix_async_args(def_id, generator, loc, &mut driver);
+        // Using create_root_key might seem weird here but it currently does what
+        // we need (resolve the instance)
+        let base_instance = generator
+            .pdg_constructor
+            .create_root_key(base_body_def_id.expect_local())
+            .0;
+        assembler.fix_async_args(base_instance, generator_instance, loc, &mut driver);
     } else {
         driver.start(&mut assembler);
     }
@@ -295,25 +302,29 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     fn handle_node_types<K: Clone>(
         &mut self,
         node: GNode,
-        weight: &DepNode<'tcx, OneHopLocation>,
+        at: &OneHopLocation,
+        place: mir::Place<'tcx>,
+        span: rustc_span::Span,
         vis: &VisitDriver<'tcx, '_, K>,
     ) {
-        trace!("Checking types for node {node:?} ({:?})", weight.place);
+        trace!("Checking types for node {node:?} ({:?})", place);
+        if let Some(t) = self.determine_place_type(at, place.as_ref(), span, vis) {
+            self.handle_node_types_helper(node, place, t);
+        }
+    }
 
-        let Some(place_ty) =
-            self.determine_place_type(&weight.at, weight.place.as_ref(), weight.span, vis)
-        else {
-            return;
-        };
-        trace!("Has place type {:?}", place_ty);
-        // Restore after fixing https://github.com/brownsys/paralegal/issues/138
-        //let deep = !weight.is_split;
+    fn handle_node_types_helper(
+        &mut self,
+        node: GNode,
+        place: mir::Place<'tcx>,
+        mut base_ty: mir::tcx::PlaceTy<'tcx>,
+    ) {
+        trace!("Has place type {base_ty:?}");
         let deep = true;
-        let mut node_types = self.type_is_marked(place_ty, deep).collect::<HashSet<_>>();
-        for (p, _) in weight.place.iter_projections() {
-            if let Some(place_ty) = self.determine_place_type(&weight.at, p, weight.span, vis) {
-                node_types.extend(self.type_is_marked(place_ty, false));
-            }
+        let mut node_types = self.type_is_marked(base_ty, deep).collect::<HashSet<_>>();
+        for (_, proj) in place.iter_projections() {
+            base_ty = base_ty.projection_ty(self.tcx(), proj);
+            node_types.extend(self.type_is_marked(base_ty, false));
         }
         self.known_def_ids.extend(node_types.iter().copied());
         let tcx = self.tcx();
@@ -326,7 +337,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         }
         trace!(
             "For node {:?} found marked node types {node_types:?}",
-            weight.place
+            place
         );
     }
 
@@ -422,23 +433,28 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                 if matches!(body.local_kind(weight.place.local), mir::LocalKind::Arg) =>
             {
                 let arg_num = weight.place.local.as_u32() - 1;
-                self.known_def_ids.extend(Some(function_id));
-
-                self.register_annotations_for_function(node, function_id, |ann| {
-                    ann.refinement.on_argument().contains(arg_num).unwrap()
-                });
+                self.known_def_ids.extend([function_id]);
+                self.register_annotations_for_argument(node, arg_num, function_id);
             }
             RichLocation::End if weight.place.local == mir::RETURN_PLACE => {
-                self.known_def_ids.extend(Some(function_id));
-                self.register_annotations_for_function(node, function_id, |ann| {
-                    ann.refinement.on_return()
-                });
+                self.known_def_ids.extend([function_id]);
+                self.register_annotations_for_return(node, function_id);
             }
             RichLocation::Location(loc) => self.handle_node_annotations_for_regular_location(
                 local_node, node, weight, body, loc, vis,
             ),
             _ => (),
         }
+    }
+
+    fn register_annotations_for_argument(&mut self, node: GNode, arg_num: u32, function_id: DefId) {
+        self.register_annotations_for_function(node, function_id, |ann| {
+            ann.refinement.on_argument().contains(arg_num).unwrap()
+        });
+    }
+
+    fn register_annotations_for_return(&mut self, node: GNode, function_id: DefId) {
+        self.register_annotations_for_function(node, function_id, |ann| ann.refinement.on_return());
     }
 
     fn handle_node_annotations_for_regular_location<K: Clone>(
@@ -588,13 +604,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     /// Similar to `CallString::is_at_root`, but takes into account top-level
     /// async functions
     fn try_as_root(&self, at: CallString) -> Option<GlobalLocation> {
-        if self.entrypoint_is_async() && at.len() == 2 {
-            at.iter_from_root().nth(1)
-        } else if at.is_at_root() {
-            Some(at.leaf())
-        } else {
-            None
-        }
+        at.is_at_root().then(|| at.leaf())
     }
 
     /// Is the top-level function (entrypoint) an `async fn`
@@ -608,11 +618,12 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
 
     fn fix_async_args<K: Clone + std::hash::Hash + Eq>(
         &mut self,
-        def_id: DefId,
+        instance: Instance<'tcx>,
         _generator: Instance<'tcx>,
         loc: Location,
         driver: &mut VisitDriver<'tcx, 'a, K>,
     ) {
+        let def_id = instance.def_id();
         let tcx = self.generator.tcx();
         let base_body = self
             .generator
@@ -623,6 +634,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                 panic!("INVARIANT VIOLATED: body for local function {def_id:?} cannot be loaded.",)
             })
             .body();
+        self.known_def_ids.extend([def_id]);
         let pgraph = driver.current_graph_as_rc();
         let args_as_nodes = base_body
             .args_iter()
@@ -639,6 +651,30 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             driver.globalize_location(&RichLocation::End.into()),
             base_body.local_decls[mir::RETURN_PLACE].source_info.span,
         );
+
+        let mono_ty = |place: mir::Place<'tcx>| {
+            let base_ty = place.ty(base_body, tcx);
+            try_monomorphize(
+                instance,
+                tcx,
+                TypingEnv::fully_monomorphized(),
+                &base_ty,
+                base_body.local_decls[place.local].source_info.span,
+            )
+            .unwrap()
+        };
+
+        for (arg_num, a) in args_as_nodes.iter().enumerate() {
+            self.register_annotations_for_argument(*a, arg_num as u32, def_id);
+            let local = mir::Local::from_usize(arg_num + 1);
+            let place: mir::Place<'tcx> = local.into();
+            self.handle_node_types_helper(*a, place, mono_ty(place));
+        }
+
+        self.register_annotations_for_return(return_node, def_id);
+        let place: mir::Place<'tcx> = mir::RETURN_PLACE.into();
+        self.handle_node_types_helper(return_node, place, mono_ty(place));
+
         let generator_loc = RichLocation::Location(loc);
         let transition_at = CallString::new(&[GlobalLocation {
             location: generator_loc,
@@ -770,7 +806,7 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssembler<
     ) {
         let idx = self.add_node(k, vis, node);
         self.node_annotations(k, idx, node, vis);
-        self.handle_node_types(idx, node, vis);
+        self.handle_node_types(idx, &node.at, node.place, node.span, vis);
     }
 
     fn visit_edge(
