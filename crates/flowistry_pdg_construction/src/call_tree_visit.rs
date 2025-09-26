@@ -33,10 +33,7 @@ impl<'tcx, 'c, K: Clone> VisitDriver<'tcx, 'c, K> {
     where
         F: FnOnce(&mut Self) -> R,
     {
-        self.call_string_stack.push(location);
-        let result = f(self);
-        self.call_string_stack.pop();
-        result
+        with_pushed_stack(self, |s| &mut s.call_string_stack, location, f)
     }
 
     pub fn call_stack(&self) -> &[GlobalLocation] {
@@ -232,33 +229,61 @@ impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
         k: &K,
         ctrl_inputs: &[GraphConnectionPoint<'tcx>],
     ) {
+        let swap_ctrl_input = !ctrl_inputs.is_empty();
+        let old_ctrl_inputs = if swap_ctrl_input {
+            std::mem::replace(
+                &mut self.ctrl_inputs,
+                Some((
+                    self.graph_stack.len() - 1,
+                    ctrl_inputs.to_vec().into_boxed_slice(),
+                )),
+            )
+        } else {
+            None
+        };
         self.with_pushed_stack(
             GlobalLocation {
                 function: self.current_function().def_id(),
                 location: loc.into(),
             },
             |slf| {
-                slf.graph_stack.push((
-                    inst,
-                    Rc::new(slf.memo.construct_for((inst, k.clone())).unwrap()),
-                ));
-                let old_ctrl_inputs = std::mem::replace(
-                    &mut slf.ctrl_inputs,
-                    Some((
-                        slf.graph_stack.len() - 1,
-                        ctrl_inputs.to_vec().into_boxed_slice(),
-                    )),
-                );
-                let graph: Rc<_> = slf.current_graph_as_rc();
-                vis.visit_partial_graph(slf, &graph);
-                slf.graph_stack.pop();
-                slf.ctrl_inputs = old_ctrl_inputs;
+                with_pushed_stack(
+                    slf,
+                    |s| &mut s.graph_stack,
+                    (
+                        inst,
+                        Rc::new(slf.memo.construct_for((inst, k.clone())).unwrap()),
+                    ),
+                    |slf| {
+                        let graph: Rc<_> = slf.current_graph_as_rc();
+                        vis.visit_partial_graph(slf, &graph);
+                    },
+                )
             },
         );
+        if swap_ctrl_input {
+            self.ctrl_inputs = old_ctrl_inputs;
+        }
     }
 
     pub fn start<V: Visitor<'tcx, K> + ?Sized>(&mut self, vis: &mut V) {
         let g = self.current_graph_as_rc();
         vis.visit_partial_graph(self, &g);
     }
+}
+
+fn with_pushed_stack<T, E, R>(
+    obj: &mut T,
+    access: impl Fn(&mut T) -> &mut Vec<E>,
+    elem: E,
+    inner: impl FnOnce(&mut T) -> R,
+) -> R {
+    let stack = access(obj);
+    stack.push(elem);
+    let len_before = stack.len();
+    let result = inner(obj);
+    let stack = access(obj);
+    assert_eq!(stack.len(), len_before);
+    stack.pop();
+    result
 }

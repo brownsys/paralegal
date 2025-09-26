@@ -565,8 +565,8 @@ fn field_precision_at_future_consumption() {
 
 fn control_flow_overtaint_check(ctrl: CtrlRef<'_>) {
     let checks = ctrl.marked(Identifier::new_intern("is_check"));
-    let sensitive_1 = ctrl.marked(Identifier::new_intern("is_sensitive1"));
-    let sensitive_2 = ctrl.marked(Identifier::new_intern("is_sensitive2"));
+    let sensitive_1 = dbg!(ctrl.marked(Identifier::new_intern("is_sensitive1")));
+    let sensitive_2 = dbg!(ctrl.marked(Identifier::new_intern("is_sensitive2")));
 
     assert!(!checks.is_empty());
     assert!(!sensitive_1.is_empty());
