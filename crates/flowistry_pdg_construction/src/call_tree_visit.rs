@@ -25,6 +25,7 @@ pub struct VisitDriver<'tcx, 'c, K: Clone> {
     call_string_stack: Vec<GlobalLocation>,
     graph_stack: Vec<(Instance<'tcx>, Rc<Cow<'c, PartialGraph<'tcx, K>>>)>,
     _k: K,
+    ctrl_inputs: Option<(usize, Box<[GraphConnectionPoint<'tcx>]>)>,
 }
 
 impl<'tcx, 'c, K: Clone> VisitDriver<'tcx, 'c, K> {
@@ -111,6 +112,21 @@ pub trait Visitor<'tcx, K: Hash + Eq + Clone> {
     ) {
     }
 
+    /// The index is which level in the call stack this control edge comes from,
+    /// since they can sometimes skip a function.
+    ///
+    /// For implementation reasons, this index is negative, e.g. from the back
+    /// of the call stack.
+    fn visit_ctrl_edge(
+        &mut self,
+        _vis: &mut VisitDriver<'tcx, '_, K>,
+        _index: usize,
+        _src: Node,
+        _dst: Node,
+        _kind: &DepEdge<OneHopLocation>,
+    ) {
+    }
+
     fn visit_node(
         &mut self,
         _vis: &mut VisitDriver<'tcx, '_, K>,
@@ -125,9 +141,9 @@ pub trait Visitor<'tcx, K: Hash + Eq + Clone> {
         loc: Location,
         inst: Instance<'tcx>,
         k: &K,
-        _ctrl_inputs: &[GraphConnectionPoint<'tcx>],
+        ctrl_inputs: &[GraphConnectionPoint<'tcx>],
     ) {
-        vis.visit_inlined_call(self, loc, inst, k);
+        vis.visit_inlined_call(self, loc, inst, k, ctrl_inputs);
     }
 }
 
@@ -142,8 +158,10 @@ impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
             call_string_stack: Vec::new(),
             graph_stack: vec![(start, Rc::new(g))],
             _k: k,
+            ctrl_inputs: None,
         }
     }
+
     pub fn visit_partial_graph<V: Visitor<'tcx, K> + ?Sized>(
         &mut self,
         vis: &mut V,
@@ -182,6 +200,25 @@ impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
         for (src, dst, kind) in graph.iter_edges() {
             vis.visit_edge(self, src, dst, kind);
         }
+        // We annoyingly "need" to use a negative index here, because async
+        // handling messes with the length of our call stack, making the
+        // positive indices on them go out of sync.
+
+        if let Some((idx, ctrl_in)) = self.ctrl_inputs.take() {
+            for (node, _) in graph.iter_nodes() {
+                if !graph
+                    .raw()
+                    .edges_directed(node, petgraph::Direction::Incoming)
+                    .any(|e| e.weight().is_control())
+                {
+                    for (src, edge) in ctrl_in.iter() {
+                        vis.visit_ctrl_edge(self, idx, *src, node, edge);
+                    }
+                }
+            }
+            self.ctrl_inputs = Some((idx, ctrl_in));
+        }
+
         for (loc, inst, k, ctrl_inputs) in &graph.inlined_calls {
             vis.visit_inlined_call(self, *loc, *inst, k, ctrl_inputs);
         }
@@ -193,6 +230,7 @@ impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
         loc: Location,
         inst: Instance<'tcx>,
         k: &K,
+        ctrl_inputs: &[GraphConnectionPoint<'tcx>],
     ) {
         self.with_pushed_stack(
             GlobalLocation {
@@ -204,9 +242,17 @@ impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
                     inst,
                     Rc::new(slf.memo.construct_for((inst, k.clone())).unwrap()),
                 ));
+                let old_ctrl_inputs = std::mem::replace(
+                    &mut slf.ctrl_inputs,
+                    Some((
+                        slf.graph_stack.len() - 1,
+                        ctrl_inputs.to_vec().into_boxed_slice(),
+                    )),
+                );
                 let graph: Rc<_> = slf.current_graph_as_rc();
                 vis.visit_partial_graph(slf, &graph);
                 slf.graph_stack.pop();
+                slf.ctrl_inputs = old_ctrl_inputs;
             },
         );
     }

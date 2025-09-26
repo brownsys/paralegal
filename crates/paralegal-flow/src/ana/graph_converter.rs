@@ -7,7 +7,7 @@ use flowistry_pdg::{rustc_portable::Location, SourceUse};
 use flowistry_pdg_construction::{
     call_tree_visit::{VisitDriver, Visitor},
     determine_async,
-    graph::{DepEdge, DepEdgeKind, DepNode, GraphConnectionPoint, OneHopLocation, PartialGraph},
+    graph::{DepEdge, DepEdgeKind, DepNode, OneHopLocation, PartialGraph},
     utils::{handle_shims, try_monomorphize, try_resolve_function, type_as_fn, ShimResult},
 };
 use paralegal_spdg::Node;
@@ -74,7 +74,6 @@ struct GraphAssembler<'tcx, 'a> {
     graph: SPDGImpl,
     // nodes: FxHashMap<DepNode<'tcx, CallString>, petgraph::graph::NodeIndex>,
     // control_inputs: Box<[(NodeIndex, DepEdge<CallString>)]>,
-    control_inputs: Box<[(GNode, EdgeInfo)]>,
     marker_assignments: HashMap<GNode, HashSet<Identifier>>,
     known_def_ids: &'a mut FxHashSet<DefId>,
     /// A map of which nodes are of which (marked) type. We build this up during
@@ -170,7 +169,6 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         Self {
             graph: SPDGImpl::new(),
             nodes: Default::default(),
-            control_inputs: Box::new([]),
             marker_assignments: Default::default(),
             known_def_ids,
             types: Default::default(),
@@ -220,45 +218,6 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             span: src_loc_for_span(span, self.tcx()),
             local: place.local.as_u32(),
         }))
-    }
-
-    /// Forwarding of control flow. It is sound to replace the control inputs
-    /// here rather than extend them because we are guaranteed that these new
-    /// nodes are connected to the old ctrl nodes, possibly transitively.
-    ///
-    /// Each node in our graph is either connected to a local control flow
-    /// node or to the ones coming from the parent, which is established by
-    /// the `visit_partial_graph` function. By induction all nodes, including
-    /// these control flow sources are connected to the old ctrl inputs.
-    fn with_new_ctr_inputs<'c, F, R, K: Clone>(
-        &mut self,
-        vis: &mut VisitDriver<'tcx, 'c, K>,
-        new_ctrl_inputs: &[GraphConnectionPoint<'tcx>],
-        f: F,
-    ) -> R
-    where
-        F: FnOnce(&mut Self, &mut VisitDriver<'tcx, 'c, K>) -> R,
-    {
-        let new_ctrl_inputs: Box<[(GNode, EdgeInfo)]> = new_ctrl_inputs
-            .iter()
-            .map(|(node, edge)| {
-                let src_idx = self.translate_node(*node);
-                let new_edge = globalize_edge(vis, edge);
-                (src_idx, new_edge)
-            })
-            .collect();
-        // The last thing we need to ensure for that to hold is that the new
-        // ctrl inputs must not be empty. So if they are we leave the old one's intact.
-        let old_ctrl_inputs = if new_ctrl_inputs.is_empty() {
-            Box::new([])
-        } else {
-            std::mem::replace(&mut self.control_inputs, new_ctrl_inputs)
-        };
-        let r = f(self, vis);
-        if !old_ctrl_inputs.is_empty() {
-            self.control_inputs = old_ctrl_inputs;
-        }
-        r
     }
 
     fn ctx(&self) -> &Pctx<'tcx> {
@@ -707,7 +666,11 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     }
 
     fn translate_node(&self, node: Node) -> GNode {
-        let idx = self.nodes.last().unwrap()[node.index()];
+        self.translate_node_in(node, self.nodes.len() - 1)
+    }
+
+    fn translate_node_in(&self, node: Node, index: usize) -> GNode {
+        let idx = self.nodes[index][node.index()];
         assert_ne!(idx.to_index(), Node::end(), "Node {node:?} is unknown");
         idx
     }
@@ -762,19 +725,6 @@ impl GNode {
 }
 
 impl<'tcx, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssembler<'tcx, '_> {
-    fn visit_inlined_call(
-        &mut self,
-        vis: &mut VisitDriver<'tcx, '_, K>,
-        loc: Location,
-        inst: Instance<'tcx>,
-        k: &K,
-        ctrl_inputs: &[GraphConnectionPoint<'tcx>],
-    ) {
-        self.with_new_ctr_inputs(vis, ctrl_inputs, |slf, vis| {
-            vis.visit_inlined_call(slf, loc, inst, k)
-        })
-    }
-
     fn visit_parent_connection(
         &mut self,
         _vis: &mut VisitDriver<'tcx, '_, K>,
@@ -825,31 +775,21 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssembler<
                 slf.tcx().def_path_str(graph.def_id())
             );
             vis.visit_partial_graph(slf, graph);
-
-            // TODO move to driver
-            //
-            // This loop connects the control inputs that
-            // are incoming to the function to those nodes in the graph who have no
-            // control inputs yet.
-            //
-            // We do this here instead of in "visit_node", because that gets called
-            // before the "visit_edge" function, meaning we can't yet see the
-            // potential control inputs of the node. We could have the visitor use
-            // an opposite ordering, but that is counterintuitive to other potential
-            // users of the visitor.
-            for (node, _) in graph.iter_nodes() {
-                if !graph
-                    .raw()
-                    .edges_directed(node, petgraph::Direction::Incoming)
-                    .any(|e| e.weight().is_control())
-                {
-                    let local_node = slf.translate_node(node);
-                    for (src, edge) in slf.control_inputs.iter() {
-                        slf.graph
-                            .add_edge(src.to_index(), local_node.to_index(), edge.clone());
-                    }
-                }
-            }
         })
+    }
+
+    fn visit_ctrl_edge(
+        &mut self,
+        vis: &mut VisitDriver<'tcx, '_, K>,
+        index: usize,
+        src: Node,
+        dst: Node,
+        kind: &DepEdge<OneHopLocation>,
+    ) {
+        let src = self.translate_node_in(src, index);
+        let dst = self.translate_node(dst);
+        let new_kind = globalize_edge(vis, kind);
+        self.graph
+            .add_edge(src.to_index(), dst.to_index(), new_kind);
     }
 }

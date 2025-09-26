@@ -24,10 +24,7 @@ use crate::{
     call_tree_visit::{self, VisitDriver},
     callback::DefaultCallback,
     calling_convention::PlaceTranslator,
-    graph::{
-        DepEdge, DepGraph, DepNode, GraphConnectionPoint, Node, OneHopLocation, PartialGraph,
-        SourceUse, TargetUse,
-    },
+    graph::{DepEdge, DepGraph, DepNode, Node, OneHopLocation, PartialGraph, SourceUse, TargetUse},
     local_analysis::{CallHandling, InstructionState, LocalAnalysis},
     mutation::{ModularMutationVisitor, Mutation, Time},
     two_level_cache::TwoLevelCache,
@@ -687,63 +684,9 @@ impl<'tcx> GraphAssembler<'tcx> {
             .entry(node.clone())
             .or_insert_with(|| self.graph.add_node(node))
     }
-
-    /// Forwarding of control flow. It is sound to replace the control inputs
-    /// here rather than extend them because we are guaranteed that these new
-    /// nodes are connected to the old ctrl nodes, possibly transitively.
-    ///
-    /// Each node in our graph is either connected to a local control flow
-    /// node or to the ones coming from the parent, which is established by
-    /// the `visit_partial_graph` function. By induction all nodes, including
-    /// these control flow sources are connected to the old ctrl inputs.
-    fn with_new_ctr_inputs<'c, F, R, K: Clone>(
-        &mut self,
-        vis: &mut VisitDriver<'tcx, 'c, K>,
-        new_ctrl_inputs: &[GraphConnectionPoint<'tcx>],
-        f: F,
-    ) -> R
-    where
-        F: FnOnce(&mut Self, &mut VisitDriver<'tcx, 'c, K>) -> R,
-    {
-        let g = vis.current_graph_as_rc();
-        let new_ctrl_inputs: Box<[(NodeIndex, DepEdge<CallString>)]> = new_ctrl_inputs
-            .iter()
-            .map(|(src, edge)| {
-                let src = globalize_node(vis, g.node_props(*src));
-                let src_idx = self.add_node(src);
-                let new_edge = globalize_edge(vis, edge);
-                (src_idx, new_edge)
-            })
-            .collect();
-        // The last thing we need to ensure for that to hold is that the new
-        // ctrl inputs must not be empty. So if they are we leave the old one's intact.
-        let old_ctrl_inputs = if new_ctrl_inputs.is_empty() {
-            Box::new([])
-        } else {
-            std::mem::replace(&mut self.control_inputs, new_ctrl_inputs)
-        };
-        let r = f(self, vis);
-        if !old_ctrl_inputs.is_empty() {
-            self.control_inputs = old_ctrl_inputs;
-        }
-        r
-    }
 }
 
 impl<'tcx, K: Hash + Eq + Clone> call_tree_visit::Visitor<'tcx, K> for GraphAssembler<'tcx> {
-    fn visit_inlined_call(
-        &mut self,
-        vis: &mut VisitDriver<'tcx, '_, K>,
-        loc: Location,
-        inst: Instance<'tcx>,
-        k: &K,
-        ctrl_inputs: &[GraphConnectionPoint<'tcx>],
-    ) {
-        self.with_new_ctr_inputs(vis, ctrl_inputs, |slf, vis| {
-            vis.visit_inlined_call(slf, loc, inst, k)
-        })
-    }
-
     fn visit_edge(
         &mut self,
         vis: &mut VisitDriver<'tcx, '_, K>,
