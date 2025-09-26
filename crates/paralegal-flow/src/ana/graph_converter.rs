@@ -71,7 +71,6 @@ fn assert_edge_location_invariant<'tcx, Loc: Eq + std::fmt::Display>(
 }
 
 struct GraphAssembler<'tcx, 'a> {
-    def_id: DefId,
     graph: SPDGImpl,
     // nodes: FxHashMap<DepNode<'tcx, CallString>, petgraph::graph::NodeIndex>,
     // control_inputs: Box<[(NodeIndex, DepEdge<CallString>)]>,
@@ -169,7 +168,6 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             def_id,
         );
         Self {
-            def_id,
             graph: SPDGImpl::new(),
             nodes: Default::default(),
             control_inputs: Box::new([]),
