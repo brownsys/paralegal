@@ -780,16 +780,23 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssembler<
 
     fn visit_ctrl_edge(
         &mut self,
-        vis: &mut VisitDriver<'tcx, '_, K>,
+        _vis: &mut VisitDriver<'tcx, '_, K>,
         index: usize,
         src: Node,
         dst: Node,
-        kind: &DepEdge<OneHopLocation>,
+        edge: &DepEdge<CallString>,
     ) {
         let src = self.translate_node_in(src, index);
         let dst = self.translate_node(dst);
-        let new_kind = globalize_edge(vis, kind);
-        self.graph
-            .add_edge(src.to_index(), dst.to_index(), new_kind);
+        self.graph.add_edge(
+            src.to_index(),
+            dst.to_index(),
+            EdgeInfo {
+                kind: dep_edge_kind_to_edge_kind(edge.kind),
+                at: edge.at,
+                source_use: edge.source_use,
+                target_use: edge.target_use,
+            },
+        );
     }
 }

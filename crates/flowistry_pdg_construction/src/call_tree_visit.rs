@@ -25,7 +25,7 @@ pub struct VisitDriver<'tcx, 'c, K: Clone> {
     call_string_stack: Vec<GlobalLocation>,
     graph_stack: Vec<(Instance<'tcx>, Rc<Cow<'c, PartialGraph<'tcx, K>>>)>,
     _k: K,
-    ctrl_inputs: Option<(usize, Box<[GraphConnectionPoint<'tcx>]>)>,
+    ctrl_inputs: Option<(usize, Box<[GraphConnectionPoint<'tcx, CallString>]>)>,
 }
 
 impl<'tcx, 'c, K: Clone> VisitDriver<'tcx, 'c, K> {
@@ -120,7 +120,7 @@ pub trait Visitor<'tcx, K: Hash + Eq + Clone> {
         _index: usize,
         _src: Node,
         _dst: Node,
-        _kind: &DepEdge<OneHopLocation>,
+        _kind: &DepEdge<CallString>,
     ) {
     }
 
@@ -138,7 +138,7 @@ pub trait Visitor<'tcx, K: Hash + Eq + Clone> {
         loc: Location,
         inst: Instance<'tcx>,
         k: &K,
-        ctrl_inputs: &[GraphConnectionPoint<'tcx>],
+        ctrl_inputs: Box<[GraphConnectionPoint<'tcx, CallString>]>,
     ) {
         vis.visit_inlined_call(self, loc, inst, k, ctrl_inputs);
     }
@@ -217,7 +217,11 @@ impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
         }
 
         for (loc, inst, k, ctrl_inputs) in &graph.inlined_calls {
-            vis.visit_inlined_call(self, *loc, *inst, k, ctrl_inputs);
+            let globalized_ctrl_input = ctrl_inputs
+                .iter()
+                .map(|(src, edge)| (*src, edge.map_at(|a| self.globalize_location(a))))
+                .collect();
+            vis.visit_inlined_call(self, *loc, *inst, k, globalized_ctrl_input);
         }
     }
 
@@ -227,16 +231,13 @@ impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
         loc: Location,
         inst: Instance<'tcx>,
         k: &K,
-        ctrl_inputs: &[GraphConnectionPoint<'tcx>],
+        ctrl_inputs: Box<[GraphConnectionPoint<'tcx, CallString>]>,
     ) {
         let swap_ctrl_input = !ctrl_inputs.is_empty();
         let old_ctrl_inputs = if swap_ctrl_input {
             std::mem::replace(
                 &mut self.ctrl_inputs,
-                Some((
-                    self.graph_stack.len() - 1,
-                    ctrl_inputs.to_vec().into_boxed_slice(),
-                )),
+                Some((self.graph_stack.len() - 1, ctrl_inputs)),
             )
         } else {
             None

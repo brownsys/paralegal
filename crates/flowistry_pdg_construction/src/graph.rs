@@ -317,10 +317,15 @@ pub struct PartialGraph<'tcx, K> {
     pub(crate) generics: GenericArgsRef<'tcx>,
     local_decls: IndexVec<Local, LocalDecl<'tcx>>,
     pub(crate) k: K,
-    pub(crate) inlined_calls: Vec<(Location, Instance<'tcx>, K, Vec<GraphConnectionPoint<'tcx>>)>,
+    pub(crate) inlined_calls: Vec<(
+        Location,
+        Instance<'tcx>,
+        K,
+        Vec<GraphConnectionPoint<'tcx, OneHopLocation>>,
+    )>,
 }
 
-pub type GraphConnectionPoint<'tcx> = (Node, DepEdge<OneHopLocation>);
+pub type GraphConnectionPoint<'tcx, Loc> = (Node, DepEdge<Loc>);
 
 impl<'tcx, K> HasLocalDecls<'tcx> for PartialGraph<'tcx, K> {
     fn local_decls(&self) -> &LocalDecls<'tcx> {
