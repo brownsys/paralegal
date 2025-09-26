@@ -82,6 +82,7 @@ struct GraphAssembler<'tcx, 'a> {
     /// conversion.
     types: HashMap<GNode, Vec<DefId>>,
     generator: &'a SPDGGenerator<'tcx>,
+    is_async: bool,
 
     /// The translation table for the function we're currently visiting.
     nodes: Vec<Vec<GNode>>,
@@ -162,6 +163,11 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         known_def_ids: &'a mut FxHashSet<DefId>,
         def_id: DefId,
     ) -> Self {
+        let is_async = entrypoint_is_async(
+            generator.pdg_constructor.body_cache(),
+            generator.tcx(),
+            def_id,
+        );
         Self {
             def_id,
             graph: SPDGImpl::new(),
@@ -171,6 +177,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             known_def_ids,
             types: Default::default(),
             generator,
+            is_async,
         }
     }
 
@@ -308,22 +315,66 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         vis: &VisitDriver<'tcx, '_, K>,
     ) {
         trace!("Checking types for node {node:?} ({:?})", place);
-        if let Some(t) = self.determine_place_type(at, place.as_ref(), span, vis) {
-            self.handle_node_types_helper(node, place, t);
-        }
+
+        let tcx = self.tcx();
+        let function = vis.current_function();
+
+        // So actually we're going to check the base place only, because
+        // Flowistry sometimes tracks subplaces instead but we want the marker
+        // from the base place.
+        let (base_place, projections) =
+            if self.entrypoint_is_async() && place.local.as_u32() == 1 && at.in_child.is_none() {
+                if place.projection.is_empty() {
+                    return;
+                }
+                let (base_project, rest) = place.projection.split_first().unwrap();
+                // in the case of targeting the top-level async closure (e.g. async args)
+                // we'll keep the first projection.
+                (
+                    mir::Place {
+                        local: place.local,
+                        projection: self.tcx().mk_place_elems(&[*base_project]),
+                    },
+                    rest,
+                )
+            } else {
+                (place.local.into(), place.projection.as_slice())
+            };
+        trace!("Using base place {base_place:?} with projections {projections:?}");
+
+        let resolution = vis.current_function();
+
+        // Thread through each caller to recover generic arguments
+        let body = self
+            .generator
+            .pdg_constructor
+            .body_cache()
+            .get(function.def_id())
+            .body();
+        let raw_ty = base_place.ty(body, tcx);
+        let base_ty = try_monomorphize(
+            resolution,
+            tcx,
+            TypingEnv::fully_monomorphized(),
+            &raw_ty,
+            span,
+        )
+        .unwrap();
+
+        self.handle_node_types_helper(node, base_ty, projections);
     }
 
     fn handle_node_types_helper(
         &mut self,
         node: GNode,
-        place: mir::Place<'tcx>,
         mut base_ty: mir::tcx::PlaceTy<'tcx>,
+        projections: &[mir::PlaceElem<'tcx>],
     ) {
         trace!("Has place type {base_ty:?}");
         let deep = true;
         let mut node_types = self.type_is_marked(base_ty, deep).collect::<HashSet<_>>();
-        for (_, proj) in place.iter_projections() {
-            base_ty = base_ty.projection_ty(self.tcx(), proj);
+        for proj in projections {
+            base_ty = base_ty.projection_ty(self.tcx(), *proj);
             node_types.extend(self.type_is_marked(base_ty, false));
         }
         self.known_def_ids.extend(node_types.iter().copied());
@@ -335,10 +386,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     .filter(|t| !tcx.is_coroutine(**t) && !tcx.def_kind(*t).is_fn_like()),
             )
         }
-        trace!(
-            "For node {:?} found marked node types {node_types:?}",
-            place
-        );
+        trace!("Found marked node types {node_types:?}",);
     }
 
     /// Return the (sub)types of this type that are marked.
@@ -355,57 +403,6 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         .map(|(d, _)| d)
     }
 
-    /// Reconstruct the type for the data this node represents.
-    fn determine_place_type<K: Clone>(
-        &self,
-        at: &OneHopLocation,
-        place: mir::PlaceRef<'tcx>,
-        span: rustc_span::Span,
-        vis: &VisitDriver<'tcx, '_, K>,
-    ) -> Option<mir::tcx::PlaceTy<'tcx>> {
-        let tcx = self.tcx();
-        let function = vis.current_function();
-
-        // So actually we're going to check the base place only, because
-        // Flowistry sometimes tracks subplaces instead but we want the marker
-        // from the base place.
-        let place =
-            if self.entrypoint_is_async() && place.local.as_u32() == 1 && at.in_child.is_none() {
-                if place.projection.is_empty() {
-                    return None;
-                }
-                // in the case of targeting the top-level async closure (e.g. async args)
-                // we'll keep the first projection.
-                mir::Place {
-                    local: place.local,
-                    projection: self.tcx().mk_place_elems(&place.projection[..1]),
-                }
-            } else {
-                place.local.into()
-            };
-
-        let resolution = vis.current_function();
-
-        // Thread through each caller to recover generic arguments
-        let body = self
-            .generator
-            .pdg_constructor
-            .body_cache()
-            .get(function.def_id())
-            .body();
-        let raw_ty = place.ty(body, tcx);
-        Some(
-            try_monomorphize(
-                resolution,
-                tcx,
-                TypingEnv::fully_monomorphized(),
-                &raw_ty,
-                span,
-            )
-            .unwrap(),
-        )
-    }
-
     fn node_annotations<K: Clone>(
         &mut self,
         local_node: Node,
@@ -413,10 +410,6 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         weight: &DepNode<'tcx, OneHopLocation>,
         vis: &VisitDriver<'tcx, '_, K>,
     ) {
-        if weight.at.in_child.is_some() {
-            // Transition nodes are handled again in the child right?
-            return;
-        }
         let leaf_loc = weight.at.location;
         let function = vis.current_function();
         let function_id = function.def_id();
@@ -609,11 +602,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
 
     /// Is the top-level function (entrypoint) an `async fn`
     fn entrypoint_is_async(&self) -> bool {
-        entrypoint_is_async(
-            self.generator.pdg_constructor.body_cache(),
-            self.tcx(),
-            self.def_id,
-        )
+        self.is_async
     }
 
     fn fix_async_args<K: Clone + std::hash::Hash + Eq>(
@@ -652,28 +641,29 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             base_body.local_decls[mir::RETURN_PLACE].source_info.span,
         );
 
-        let mono_ty = |place: mir::Place<'tcx>| {
-            let base_ty = place.ty(base_body, tcx);
-            try_monomorphize(
-                instance,
-                tcx,
-                TypingEnv::fully_monomorphized(),
-                &base_ty,
-                base_body.local_decls[place.local].source_info.span,
+        let mono_ty = |local| {
+            let decl = &base_body.local_decls[local];
+            mir::tcx::PlaceTy::from_ty(
+                try_monomorphize(
+                    instance,
+                    tcx,
+                    TypingEnv::fully_monomorphized(),
+                    &decl.ty,
+                    decl.source_info.span,
+                )
+                .unwrap(),
             )
-            .unwrap()
         };
 
         for (arg_num, a) in args_as_nodes.iter().enumerate() {
             self.register_annotations_for_argument(*a, arg_num as u32, def_id);
             let local = mir::Local::from_usize(arg_num + 1);
-            let place: mir::Place<'tcx> = local.into();
-            self.handle_node_types_helper(*a, place, mono_ty(place));
+            self.handle_node_types_helper(*a, mono_ty(local), &[]);
         }
 
         self.register_annotations_for_return(return_node, def_id);
-        let place: mir::Place<'tcx> = mir::RETURN_PLACE.into();
-        self.handle_node_types_helper(return_node, place, mono_ty(place));
+        let local = mir::RETURN_PLACE;
+        self.handle_node_types_helper(return_node, mono_ty(local), &[]);
 
         let generator_loc = RichLocation::Location(loc);
         let transition_at = CallString::new(&[GlobalLocation {
@@ -804,9 +794,12 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssembler<
         k: Node,
         node: &DepNode<'tcx, OneHopLocation>,
     ) {
+        let is_in_child = node.at.in_child.is_some();
         let idx = self.add_node(k, vis, node);
-        self.node_annotations(k, idx, node, vis);
-        self.handle_node_types(idx, &node.at, node.place, node.span, vis);
+        if !is_in_child {
+            self.node_annotations(k, idx, node, vis);
+            self.handle_node_types(idx, &node.at, node.place, node.span, vis);
+        }
     }
 
     fn visit_edge(
@@ -829,6 +822,10 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssembler<
         graph: &PartialGraph<'tcx, K>,
     ) {
         self.with_new_translation_table(graph.node_count(), |slf: &mut Self| {
+            trace!(
+                "Visiting partial graph {:?}",
+                slf.tcx().def_path_str(graph.def_id())
+            );
             vis.visit_partial_graph(slf, graph);
 
             // TODO move to driver

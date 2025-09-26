@@ -348,6 +348,10 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
         }
     }
 
+    pub fn def_id(&self) -> DefId {
+        self.def_id
+    }
+
     pub fn insert_node(&mut self, node: DepNode<'tcx, OneHopLocation>) -> Node {
         self.get_or_construct_node(node.place, node.at.clone(), || node)
     }
