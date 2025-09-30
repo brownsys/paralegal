@@ -202,7 +202,7 @@ fn cross_function_control_flow() {
 }
 
 #[test]
-fn cross_function_control_flow_with_skip() {
+fn cross_function_control_flow_with_skip_simple() {
     inline_test! {
         fn main() -> Result<(), ()> {
             has_influence()?;
@@ -235,5 +235,60 @@ fn cross_function_control_flow_with_skip() {
         assert!(!influenced.is_empty());
 
         assert!(has_influence.influences_ctrl(&influenced));
+    });
+}
+
+#[test]
+fn cross_function_control_flow_with_skip_complex() {
+    inline_test! {
+        fn main() -> Result<(), ()> {
+            let mut result = 0;
+            let status = has_influence()?;
+            result += 1;
+            let mut values = vec![1, 2, 3];
+            for v in &mut values {
+                *v += result;
+            }
+            if values.iter().sum::<i32>() > no_influence() {
+            } else {
+                result -= 1;
+            }
+            wrapper();
+            let _final_check = result * values.len() as i32;
+            Ok(())
+        }
+
+        fn wrapper() {
+            skip();
+        }
+
+        fn skip() {
+            influenced();
+        }
+
+        #[paralegal_flow::marker(has_influence, return)]
+        fn has_influence() -> Result<(), ()> {
+            Ok(())
+        }
+        #[paralegal_flow::marker(no_influence, return)]
+        fn no_influence() -> i32 {
+            0
+        }
+
+        #[paralegal_flow::marker(influenced, return)]
+        fn influenced() {
+        }
+    }
+    .check_ctrl(|ctrl| {
+        let has_influence = ctrl.marked("has_influence");
+        let influenced = ctrl.marked("influenced");
+        let no_influence = ctrl.marked("no_influence");
+
+        assert!(!has_influence.is_empty());
+        assert!(!influenced.is_empty());
+        assert!(!no_influence.is_empty());
+
+        assert!(has_influence.influences_ctrl(&influenced));
+        assert!(!no_influence.influences_ctrl(&influenced));
     });
 }

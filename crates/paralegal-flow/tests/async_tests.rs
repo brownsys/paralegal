@@ -722,3 +722,42 @@ fn async_arg_marked_via_type() {
         assert!(!source_2.flows_to_any(&sinks));
     })
 }
+
+#[test]
+fn async_args_and_local_variable() {
+    inline_test! {
+        #[paralegal_flow::marker(noinline, return)]
+        async fn i_force_await() {
+
+        }
+
+        fn compute() -> usize {
+            42
+        }
+
+        #[paralegal_flow::marker(source, arguments = [0])]
+        #[paralegal_flow::marker(no_source, arguments = [1])]
+        #[paralegal_flow::marker(source_2, arguments = [2])]
+        #[paralegal_flow::marker(sink, return)]
+        async fn main(src: usize, other: usize, last: usize) -> usize {
+            let some = src + other;
+            let intermediate = last + compute();
+            i_force_await().await;
+            src + intermediate
+        }
+    }
+    .check_ctrl(|ctrl| {
+        // Check via markers
+        let sources = ctrl.marked(Identifier::new_intern("source"));
+        let source_2 = ctrl.marked(Identifier::new_intern("source_2"));
+        let no_source = ctrl.marked(Identifier::new_intern("no_source"));
+        let sinks = ctrl.marked(Identifier::new_intern("sink"));
+        assert!(!sources.is_empty());
+        assert!(!source_2.is_empty());
+        assert!(!no_source.is_empty());
+        assert!(!sinks.is_empty());
+        assert!(sources.flows_to_any(&sinks));
+        assert!(source_2.flows_to_any(&sinks));
+        assert!(!no_source.flows_to_any(&sinks));
+    })
+}

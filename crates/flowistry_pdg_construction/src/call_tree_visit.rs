@@ -109,11 +109,14 @@ pub trait Visitor<'tcx, K: Hash + Eq + Clone> {
     ) {
     }
 
+    /// Visit a control edge coming from one of the callers of this function.
+    /// This function is only called for destination nodes that do not already
+    /// have incoming control flow edges.
+    ///
+    /// Note that _src is located in a caller graph, identified by the index.
+    ///
     /// The index is which level in the call stack this control edge comes from,
     /// since they can sometimes skip a function.
-    ///
-    /// For implementation reasons, this index is negative, e.g. from the back
-    /// of the call stack.
     fn visit_ctrl_edge(
         &mut self,
         _vis: &mut VisitDriver<'tcx, '_, K>,
@@ -197,10 +200,8 @@ impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
         for (src, dst, kind) in graph.iter_edges() {
             vis.visit_edge(self, src, dst, kind);
         }
-        // We annoyingly "need" to use a negative index here, because async
-        // handling messes with the length of our call stack, making the
-        // positive indices on them go out of sync.
 
+        // Handle incoming control edges.
         if let Some((idx, ctrl_in)) = self.ctrl_inputs.take() {
             for (node, _) in graph.iter_nodes() {
                 if !graph

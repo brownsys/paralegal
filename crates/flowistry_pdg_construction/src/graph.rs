@@ -334,7 +334,7 @@ impl<'tcx, K> HasLocalDecls<'tcx> for PartialGraph<'tcx, K> {
 }
 
 impl<'tcx, K> PartialGraph<'tcx, K> {
-    pub fn new(
+    pub(crate) fn new(
         generics: GenericArgsRef<'tcx>,
         def_id: DefId,
         arg_count: usize,
@@ -357,7 +357,7 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
         self.def_id
     }
 
-    pub fn insert_node(&mut self, node: DepNode<'tcx, OneHopLocation>) -> Node {
+    pub(crate) fn insert_node(&mut self, node: DepNode<'tcx, OneHopLocation>) -> Node {
         self.get_or_construct_node(node.place, node.at.clone(), || node)
     }
 
@@ -365,7 +365,7 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
         self.node_mapping.get(&(place, at)).copied()
     }
 
-    pub fn get_or_construct_node(
+    pub(crate) fn get_or_construct_node(
         &mut self,
         place: Place<'tcx>,
         at: OneHopLocation,
@@ -381,7 +381,12 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
         }
     }
 
-    pub fn insert_edge(&mut self, source: Node, target: Node, edge: DepEdge<OneHopLocation>) {
+    pub(crate) fn insert_edge(
+        &mut self,
+        source: Node,
+        target: Node,
+        edge: DepEdge<OneHopLocation>,
+    ) {
         if let Some(prior) = self.graph.find_edge(source, target) {
             let e = self.graph.edge_weight(prior).unwrap();
             assert_eq!(

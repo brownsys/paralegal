@@ -71,27 +71,33 @@ fn assert_edge_location_invariant<'tcx, Loc: Eq + std::fmt::Display>(
 }
 
 struct GraphAssembler<'tcx, 'a> {
-    graph: SPDGImpl,
-    // nodes: FxHashMap<DepNode<'tcx, CallString>, petgraph::graph::NodeIndex>,
-    // control_inputs: Box<[(NodeIndex, DepEdge<CallString>)]>,
-    marker_assignments: HashMap<GNode, HashSet<Identifier>>,
-    known_def_ids: &'a mut FxHashSet<DefId>,
-    /// A map of which nodes are of which (marked) type. We build this up during
-    /// conversion.
-    types: HashMap<GNode, Vec<DefId>>,
+    // read-only information
     generator: &'a SPDGGenerator<'tcx>,
     is_async: bool,
 
-    /// The translation table for the function we're currently visiting.
+    // Translation helpers
+    /// Translation tables for nodes from local PartialGraphs to the global PDG
     nodes: Vec<Vec<GNode>>,
+
+    // Incrementally built information
+    graph: SPDGImpl,
+    marker_assignments: HashMap<GNode, HashSet<Identifier>>,
+    /// A map of which nodes are of which (marked) type. We build this up during
+    /// conversion.
+    types: HashMap<GNode, Vec<DefId>>,
+    known_def_ids: &'a mut FxHashSet<DefId>,
 }
 
+/// Create a global PDG (spanning the entire call tree) starting from the given
+/// target function.
 pub fn assemble_pdg<'a>(
     generator: &'a SPDGGenerator<'_>,
     known_def_ids: &'a mut FxHashSet<DefId>,
     target: &'a FnToAnalyze,
 ) -> SPDG {
     let tcx = generator.tcx();
+
+    // Information and body of the provided target function
     let base_body_def_id = target.def_id.to_def_id();
     let base_body = generator
         .pdg_constructor
@@ -101,17 +107,27 @@ pub fn assemble_pdg<'a>(
             panic!("INVARIANT VIOLATED: body for local function {base_body_def_id:?} cannot be loaded.",)
         })
         .body();
+
     let async_state = determine_async(tcx, base_body_def_id, base_body);
 
+    // These will refer to the function we are actually analyzing from, which may
+    // be a generator if the target is async.
     let possibly_generator_id =
         async_state.map_or(base_body_def_id, |(generator, ..)| generator.def_id());
-
     let (possible_generator_instance, k) = generator
         .pdg_constructor
         .create_root_key(possibly_generator_id.expect_local());
+
     let mut driver = VisitDriver::new(&generator.pdg_constructor, possible_generator_instance, k);
     let mut assembler = GraphAssembler::new(generator, known_def_ids, target.def_id.to_def_id());
-    if let Some((generator_instance, loc, ..)) = async_state {
+
+    // If the top level function is async we start analysis from the generator
+    // instead (because the async function itself is basically empty, it just
+    // creates the generator object).
+    if let Some((_, loc, ..)) = async_state {
+        // If the top-level function is async we place that on the call stack
+        // first so it shows up in the call strings that are generated for the
+        // nodes.
         driver.with_pushed_stack(
             GlobalLocation {
                 function: base_body_def_id,
@@ -127,7 +143,9 @@ pub fn assemble_pdg<'a>(
             .pdg_constructor
             .create_root_key(base_body_def_id.expect_local())
             .0;
-        assembler.fix_async_args(base_instance, generator_instance, loc, &mut driver);
+        // Because we actually started the analysis from the generator, we now
+        // have to manually sync up the actual arguments to the async function.
+        assembler.fix_async_args(base_instance, loc, &mut driver);
     } else {
         driver.start(&mut assembler);
     }
@@ -177,6 +195,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         }
     }
 
+    /// Add these markers to our marker table we maintain for nodes.
     fn register_markers(&mut self, node: GNode, markers: impl IntoIterator<Item = Identifier>) {
         let mut markers = markers.into_iter().peekable();
 
@@ -188,6 +207,8 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         }
     }
 
+    /// Add a node from the current local graph to the global graph. Returns the
+    /// global index. If the node was already added, returns the prior index.
     fn add_node<K: Clone>(
         &mut self,
         node: Node,
@@ -206,6 +227,8 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         }
     }
 
+    /// Add a node that does not correspond to any local graph. This is only used
+    /// when fixing async args.
     fn add_untranslatable_node(
         &mut self,
         place: mir::Place,
@@ -321,6 +344,9 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         self.handle_node_types_helper(node, base_ty, projections);
     }
 
+    /// Adds the markers for all levels of projection on this node. For the
+    /// final projection we add all markers from that type (deep markers), for
+    /// others we only add the shallow markers.
     fn handle_node_types_helper(
         &mut self,
         node: GNode,
@@ -360,6 +386,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         .map(|(d, _)| d)
     }
 
+    /// Discover and register directly applied markers on this node.
     fn node_annotations<K: Clone>(
         &mut self,
         local_node: Node,
@@ -407,6 +434,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         self.register_annotations_for_function(node, function_id, |ann| ann.refinement.on_return());
     }
 
+    /// Helper for `node_annotations` to handle the case where the node is at a `RichLocation::Location`.
     fn handle_node_annotations_for_regular_location<K: Clone>(
         &mut self,
         local_node: Node,
@@ -562,14 +590,23 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         self.is_async
     }
 
+    /// When we analyze an async function (as entry point), we actually start
+    /// the analysis from the generator, since the async function itself is
+    /// mostly empty. However the arguments to the generator are not the same as
+    /// for the async function. It is the generator object that basically
+    /// tuples together the arguments to the original async function. (And as a
+    /// second argument there's a context object.)
+    ///
+    /// This function adds nodes for the original async function's arguments and
+    /// connects them to the fields of the generator object to establish the flows.
     fn fix_async_args<K: Clone + std::hash::Hash + Eq>(
         &mut self,
         instance: Instance<'tcx>,
-        _generator: Instance<'tcx>,
         loc: Location,
         driver: &mut VisitDriver<'tcx, 'a, K>,
     ) {
         let def_id = instance.def_id();
+        self.known_def_ids.extend([def_id]);
         let tcx = self.generator.tcx();
         let base_body = self
             .generator
@@ -580,8 +617,9 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                 panic!("INVARIANT VIOLATED: body for local function {def_id:?} cannot be loaded.",)
             })
             .body();
-        self.known_def_ids.extend([def_id]);
         let pgraph = driver.current_graph_as_rc();
+
+        // New nodes for arguments and return place
         let args_as_nodes = base_body
             .args_iter()
             .map(|arg| {
@@ -612,16 +650,17 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             )
         };
 
+        // Register the new nodes and add potential markers
         for (arg_num, a) in args_as_nodes.iter().enumerate() {
             self.register_annotations_for_argument(*a, arg_num as u32, def_id);
             let local = mir::Local::from_usize(arg_num + 1);
             self.handle_node_types_helper(*a, mono_ty(local), &[]);
         }
-
         self.register_annotations_for_return(return_node, def_id);
         let local = mir::RETURN_PLACE;
         self.handle_node_types_helper(return_node, mono_ty(local), &[]);
 
+        // Establish connections to existing nodes
         let generator_loc = RichLocation::Location(loc);
         let transition_at = CallString::new(&[GlobalLocation {
             location: generator_loc,
@@ -665,10 +704,12 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         }
     }
 
+    /// Translate a node from the current local graph to the global graph.
     fn translate_node(&self, node: Node) -> GNode {
         self.translate_node_in(node, self.nodes.len() - 1)
     }
 
+    /// Translate a node from a specific local graph to the global graph.
     fn translate_node_in(&self, node: Node, index: usize) -> GNode {
         let idx = self.nodes[index][node.index()];
         assert_ne!(idx.to_index(), Node::end(), "Node {node:?} is unknown");
@@ -714,7 +755,9 @@ fn globalize_edge<K: Clone>(
     }
 }
 
-/// A newtype for indices into the global graph
+/// A newtype for indices into the global graph. This type exists because under
+/// the hood local and global graphs use the same index types which makes it
+/// very easy to mistake them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GNode(petgraph::graph::NodeIndex);
 
