@@ -86,7 +86,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
     pub(crate) fn find_control_inputs(
         &self,
         location: Location,
-    ) -> Vec<(DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>)> {
+    ) -> Vec<(Place<'tcx>, OneHopLocation, DepEdge<OneHopLocation>)> {
         let mut blocks_seen = HashSet::<BasicBlock>::from_iter(Some(location.block));
         let mut block_queue = vec![location.block];
         let mut out = vec![];
@@ -116,10 +116,9 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                     let Some(ctrl_place) = discr.place() else {
                         continue;
                     };
-                    let at = ctrl_loc.into();
-                    let src = self.make_dep_node(ctrl_place, ctrl_loc);
-                    let edge = DepEdge::control(at, SourceUse::Operand, TargetUse::Assign);
-                    out.push((src, edge));
+                    let at: OneHopLocation = ctrl_loc.into();
+                    let edge = DepEdge::control(at.clone(), SourceUse::Operand, TargetUse::Assign);
+                    out.push((ctrl_place, at, edge));
                 }
             }
         }
@@ -134,7 +133,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
         &self.memo.async_info
     }
 
-    fn make_dep_node(
+    pub(super) fn make_dep_node(
         &self,
         place: Place<'tcx>,
         location: impl Into<RichLocation>,
@@ -743,14 +742,17 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
                     continue;
                 };
                 for location in locations {
-                    let src = self.make_dep_node(*place, *location);
-                    let dst = self.make_dep_node(*place, RichLocation::End);
+                    let src = final_state.get_node(*place, location.into()).unwrap();
+                    let eloc = RichLocation::End;
+                    let dst = final_state.get_or_construct_node(*place, eloc.into(), || {
+                        self.make_dep_node(*place, eloc)
+                    });
                     let edge = DepEdge::data(
                         self.mono_body.terminator_loc(block).into(),
                         SourceUse::Operand,
                         ret_kind,
                     );
-                    final_state.edges.insert((src, dst, edge));
+                    final_state.insert_edge(src, dst, edge);
                 }
             }
         }

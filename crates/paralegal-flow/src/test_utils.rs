@@ -23,8 +23,8 @@ use std::{
 
 use paralegal_spdg::{
     traverse::{generic_flows_to, generic_influencers, EdgeSelection},
-    utils::write_sep,
-    DefInfo, EdgeInfo, Endpoint, Node, TypeId, SPDG,
+    utils::{display_list, write_sep},
+    DefInfo, DisplayPath, EdgeInfo, Endpoint, Node, TypeId, SPDG,
 };
 
 use flowistry_pdg::CallString;
@@ -189,6 +189,13 @@ pub struct InlineTestBuilder {
     ctrl_name: String,
     input: String,
     extra_args: Vec<String>,
+}
+
+#[macro_export]
+macro_rules! inline_test {
+    ($($t:tt)*) => {
+        InlineTestBuilder::new(stringify!($($t)*))
+    };
 }
 
 impl InlineTestBuilder {
@@ -447,6 +454,11 @@ impl<'g> CtrlRef<'g> {
 
     pub fn marked(&self, marker: impl Into<Identifier>) -> NodeRefs<'_> {
         let marker = marker.into();
+        let marked_types = self
+            .graph
+            .marked_types(marker)
+            .into_iter()
+            .collect::<HashSet<_>>();
         NodeRefs {
             nodes: self
                 .ctrl
@@ -454,6 +466,13 @@ impl<'g> CtrlRef<'g> {
                 .iter()
                 .filter(|(_, markers)| markers.contains(&marker))
                 .map(|(n, _)| *n)
+                .chain(self.ctrl.type_assigns.iter().filter_map(|(n, types)| {
+                    types
+                        .0
+                        .iter()
+                        .any(|t| marked_types.contains(t))
+                        .then_some(*n)
+                }))
                 .collect(),
             graph: self,
         }
@@ -495,7 +514,7 @@ impl<'g> CtrlRef<'g> {
             cs.len() == 1,
             "expected only one call site for {}, found {}",
             fun.info_for(fun.ident).name,
-            cs.len()
+            display_list(cs.iter().map(|c| c.call_site))
         );
         cs.pop().unwrap()
     }
@@ -516,6 +535,13 @@ impl<'g> CtrlRef<'g> {
                 .iter()
                 .filter_map(|(n, types)| types.0.contains(&typ).then_some(*n))
                 .collect(),
+        }
+    }
+
+    pub fn arguments(&'g self) -> NodeRefs<'g> {
+        NodeRefs {
+            nodes: self.ctrl.arguments.to_vec(),
+            graph: self,
         }
     }
 }
@@ -540,6 +566,15 @@ impl<'g> FnRef<'g> {
 pub struct CallStringRef<'g> {
     call_site: CallString,
     ctrl: &'g CtrlRef<'g>,
+}
+
+impl std::fmt::Debug for CallStringRef<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CallStringRef")
+            .field("call_site", &self.call_site)
+            .field("ctrl", &DisplayPath::from(&self.ctrl.ctrl.path))
+            .finish()
+    }
 }
 
 impl Hash for CallStringRef<'_> {
@@ -658,6 +693,18 @@ impl<'g> NodeRefs<'g> {
 pub struct NodeRef<'g> {
     node: Node,
     graph: &'g CtrlRef<'g>,
+}
+
+impl Debug for NodeRef<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let weight = self.graph.ctrl.graph.node_weight(self.node).unwrap();
+        f.debug_struct("NodeRef")
+            .field("node", &self.node)
+            .field("description", &weight.description)
+            .field("at", &weight.at)
+            .field("graph", &DisplayPath::from(&self.graph.ctrl.path))
+            .finish()
+    }
 }
 
 impl<'g> HasGraph<'g> for &NodeRef<'g> {

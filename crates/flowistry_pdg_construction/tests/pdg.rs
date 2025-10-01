@@ -67,19 +67,11 @@ fn pdg(
             configure(tcx, &mut memo);
             let policy = memo.take_call_changes_policy();
             memo.with_call_change_callback(LocalLoadingOnly(policy));
+            memo.with_dump_mir(std::env::var("DUMP_MIR").is_ok());
             let pdg = memo.construct_graph(def_id);
             tests(tcx, memo.body_cache(), pdg)
         },
     )
-}
-
-#[allow(unused)]
-fn viz(g: &DepGraph<'_>) {
-    g.generate_graphviz(format!(
-        "{}/../../target/graph.pdf",
-        env!("CARGO_MANIFEST_DIR")
-    ))
-    .unwrap();
 }
 
 fn connects<'tcx>(

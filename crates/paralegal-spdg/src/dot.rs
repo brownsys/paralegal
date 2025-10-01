@@ -105,6 +105,19 @@ impl<'a> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDescri
         Some(LabelText::LabelStr("record".into()))
     }
 
+    fn edge_label(&'a self, e: &GlobalEdge) -> LabelText<'a> {
+        LabelText::LabelStr(
+            self.format_call_string(
+                self.spdg.controllers[&e.controller_id]
+                    .graph
+                    .edge_weight(e.index)
+                    .unwrap()
+                    .at,
+            )
+            .into(),
+        )
+    }
+
     fn node_label(&'a self, n: &CallString) -> LabelText<'a> {
         let (ctrl_id, nodes) = &self.call_sites[n];
         let ctrl = &self.spdg.controllers[ctrl_id];
@@ -191,6 +204,20 @@ impl<'a> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDescri
 /// Dump all SPDGs in a single dot expression
 pub fn dump<W: std::io::Write>(spdg: &ProgramDescription, out: W) -> std::io::Result<()> {
     dump_for_selection(spdg, out, |_| true)
+}
+
+/// Dump all PDGs, each in a separate dot file, with the naming schema provided
+/// by the supplied function
+pub fn dump_all_separate<P: AsRef<std::path::Path>>(
+    spdg: &ProgramDescription,
+    file_name_schema: impl Fn(&[crate::Identifier]) -> P,
+) -> std::io::Result<()> {
+    for ctrl in spdg.controllers.values() {
+        let path = file_name_schema(&ctrl.path);
+        let out = std::fs::File::create(path)?;
+        dump_for_selection(spdg, out, |i| i == ctrl.id)?
+    }
+    Ok(())
 }
 
 /// Dump the SPDG for one select controller in dot format

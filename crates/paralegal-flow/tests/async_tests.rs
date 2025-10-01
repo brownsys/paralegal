@@ -2,6 +2,8 @@
 #[macro_use]
 extern crate lazy_static;
 
+use flowistry_pdg::CallString;
+use paralegal_flow::inline_test;
 use paralegal_flow::test_utils::*;
 use paralegal_spdg::Identifier;
 
@@ -242,6 +244,24 @@ define_test!(no_overtaint_over_poll
 
 define_test!(return_from_async: graph -> {
     let input_fn = graph.function("some_input");
+    let instruction_info = &graph.graph().desc.instruction_info;
+    println!("Looking for function {:?}", input_fn.ident);
+    let filter = |m: CallString| {
+        instruction_info[&m.leaf()]
+            .kind
+            .as_function_call()
+            .is_some_and(|i| i.id == input_fn.ident)
+    };
+    for e in graph.spdg().graph
+            .edge_weights()
+            .filter(|e| filter(e.at)) {
+                println!("Edge {e} is at function in question");
+            }
+    for n in graph.spdg()
+            .graph.node_weights()
+            .filter(|n| filter(n.at)) {
+                println!("Node {n} is at function in question");
+            }
     let input = graph.call_site(&input_fn);
 
     assert!(graph.returns(&input.output()))
@@ -545,8 +565,8 @@ fn field_precision_at_future_consumption() {
 
 fn control_flow_overtaint_check(ctrl: CtrlRef<'_>) {
     let checks = ctrl.marked(Identifier::new_intern("is_check"));
-    let sensitive_1 = ctrl.marked(Identifier::new_intern("is_sensitive1"));
-    let sensitive_2 = ctrl.marked(Identifier::new_intern("is_sensitive2"));
+    let sensitive_1 = dbg!(ctrl.marked(Identifier::new_intern("is_sensitive1")));
+    let sensitive_2 = dbg!(ctrl.marked(Identifier::new_intern("is_sensitive2")));
 
     assert!(!checks.is_empty());
     assert!(!sensitive_1.is_empty());
@@ -629,4 +649,115 @@ fn explicit_call_to_poll() {
         "mir".to_string(),
     ])
     .check_ctrl(|_| ());
+}
+
+#[test]
+fn async_arg_markers() {
+    inline_test! {
+        #[paralegal_flow::marker(source, arguments = [0])]
+        #[paralegal_flow::marker(no_source, arguments = [1])]
+        #[paralegal_flow::marker(source_2, arguments = [2])]
+        #[paralegal_flow::marker(sink, return)]
+        async fn main(src: usize, other: usize, last: usize) -> usize {
+            let some = src + other;
+            src + 9 + last
+        }
+    }
+    .check_ctrl(|ctrl| {
+        // check direct
+        let args = ctrl.arguments().as_singles().collect::<Vec<_>>();
+        let [src, other, last] = args.as_slice() else {
+            panic!("Expected exactly two arguments, got {:?}", args);
+        };
+        let returns = ctrl.return_value().as_singles().collect::<Vec<_>>();
+        let [snk] = returns.as_slice() else {
+            panic!("Expected exactly one return value, got {:?}", returns);
+        };
+
+        assert!(src.flows_to_data(snk));
+        assert!(!other.flows_to_data(snk));
+        assert!(last.flows_to_data(snk));
+
+        // Check via markers
+        let sources = ctrl.marked(Identifier::new_intern("source"));
+        let source_2 = ctrl.marked(Identifier::new_intern("source_2"));
+        let no_source = ctrl.marked(Identifier::new_intern("no_source"));
+        let sinks = ctrl.marked(Identifier::new_intern("sink"));
+        assert!(!sources.is_empty());
+        assert!(!source_2.is_empty());
+        assert!(!no_source.is_empty());
+        assert!(!sinks.is_empty());
+        assert!(sources.flows_to_any(&sinks));
+        assert!(source_2.flows_to_any(&sinks));
+        assert!(!no_source.flows_to_any(&sinks));
+    })
+}
+
+// TODO marked type as argument test
+#[test]
+fn async_arg_marked_via_type() {
+    inline_test! {
+        #[paralegal_flow::marker(source)]
+        struct T1(u32);
+
+        #[paralegal_flow::marker(source_2)]
+        struct T2(u32);
+
+        #[paralegal_flow::marker(sink)]
+        struct T3(u32);
+
+        async fn main(src: T1, other: T2) -> T3 {
+            let some = src.0 + other.0;
+            T3(src.0 + 9)
+        }
+    }
+    .check_ctrl(|ctrl| {
+        let sources = ctrl.marked(Identifier::new_intern("source"));
+        let source_2 = ctrl.marked(Identifier::new_intern("source_2"));
+        let sinks = ctrl.marked(Identifier::new_intern("sink"));
+        assert!(!sources.is_empty());
+        assert!(!source_2.is_empty());
+        assert!(!sinks.is_empty());
+        assert!(sources.flows_to_any(&sinks));
+        assert!(!source_2.flows_to_any(&sinks));
+    })
+}
+
+#[test]
+fn async_args_and_local_variable() {
+    inline_test! {
+        #[paralegal_flow::marker(noinline, return)]
+        async fn i_force_await() {
+
+        }
+
+        fn compute() -> usize {
+            42
+        }
+
+        #[paralegal_flow::marker(source, arguments = [0])]
+        #[paralegal_flow::marker(no_source, arguments = [1])]
+        #[paralegal_flow::marker(source_2, arguments = [2])]
+        #[paralegal_flow::marker(sink, return)]
+        async fn main(src: usize, other: usize, last: usize) -> usize {
+            let some = src + other;
+            let intermediate = last + compute();
+            i_force_await().await;
+            src + intermediate
+        }
+    }
+    .check_ctrl(|ctrl| {
+        // Check via markers
+        let sources = ctrl.marked(Identifier::new_intern("source"));
+        let source_2 = ctrl.marked(Identifier::new_intern("source_2"));
+        let no_source = ctrl.marked(Identifier::new_intern("no_source"));
+        let sinks = ctrl.marked(Identifier::new_intern("sink"));
+        assert!(!sources.is_empty());
+        assert!(!source_2.is_empty());
+        assert!(!no_source.is_empty());
+        assert!(!sinks.is_empty());
+        assert!(sources.flows_to_any(&sinks));
+        assert!(source_2.flows_to_any(&sinks));
+        assert!(!no_source.flows_to_any(&sinks));
+    })
 }

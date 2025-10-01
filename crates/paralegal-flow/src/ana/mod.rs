@@ -5,6 +5,7 @@
 //! [`analyze`](SPDGGenerator::analyze).
 
 use crate::{
+    ana::graph_converter::assemble_pdg,
     ann::{Annotation, MarkerAnnotation},
     args::Stub,
     desc::*,
@@ -27,8 +28,8 @@ use flowistry_pdg_construction::{
 };
 use inline_judge::{InlineJudgement, K};
 use itertools::Itertools;
-use petgraph::visit::GraphBase;
 
+use rustc_hash::FxHashSet;
 use rustc_hir::{
     self as hir, def,
     def_id::{DefId, LOCAL_CRATE},
@@ -42,7 +43,6 @@ use rustc_span::{ErrorGuaranteed, FileNameDisplayPreference, Span as RustSpan, S
 mod graph_converter;
 mod inline_judge;
 
-use graph_converter::GraphConverter;
 use std::time::Duration;
 
 pub use self::inline_judge::InlineJudge;
@@ -99,7 +99,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         &mut self,
         //_hash_verifications: &mut HashVerifications,
         target: &FnToAnalyze,
-        known_def_ids: &mut impl Extend<DefId>,
+        known_def_ids: &mut FxHashSet<DefId>,
     ) -> Result<(Endpoint, SPDG)> {
         info!(
             "Handling target {}",
@@ -107,10 +107,9 @@ impl<'tcx> SPDGGenerator<'tcx> {
         );
         let local_def_id = target.def_id;
 
-        let converter = GraphConverter::new_with_flowistry(self, known_def_ids, target)?;
-        let spdg = converter.make_spdg();
+        let pdg = assemble_pdg(self, known_def_ids, target);
 
-        Ok((local_def_id.to_def_id(), spdg))
+        Ok((local_def_id.to_def_id(), pdg))
     }
 
     /// Main analysis driver. Essentially just calls [`Self::handle_target`]
@@ -132,7 +131,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
             )
         }
 
-        let mut known_def_ids = HashSet::new();
+        let mut known_def_ids = FxHashSet::default();
 
         targets
             .iter()
@@ -162,7 +161,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     fn make_program_description(
         &self,
         controllers: HashMap<Endpoint, SPDG>,
-        mut known_def_ids: HashSet<DefId>,
+        mut known_def_ids: FxHashSet<DefId>,
         _targets: &[FnToAnalyze],
     ) -> (ProgramDescription, AnalyzerStats) {
         let tcx = self.ctx.tcx();
@@ -456,10 +455,6 @@ fn src_loc_for_span(span: RustSpan, tcx: TyCtxt) -> Span {
             col: end_col as u32,
         },
     }
-}
-
-fn default_index() -> <SPDGImpl as GraphBase>::NodeId {
-    <SPDGImpl as GraphBase>::NodeId::end()
 }
 
 /// Checks the invariant that [`SPDGGenerator::collect_type_info`] should

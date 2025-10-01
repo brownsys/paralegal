@@ -1,8 +1,9 @@
 //! Utility functions, general purpose structs and extension traits
 
 extern crate smallvec;
+use flowistry::mir::FlowistryInput;
 use flowistry_pdg::RichLocation;
-use flowistry_pdg_construction::utils::type_as_fn;
+use flowistry_pdg_construction::{body_cache::BodyCache, is_async_trait_fn, utils::type_as_fn};
 use thiserror::Error;
 
 use crate::{desc::Identifier, rustc_span::ErrorGuaranteed, Either, Symbol, TyCtxt};
@@ -81,6 +82,33 @@ pub fn body_span<'tcx>(tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>) -> RustSpan {
         })
         .reduce(RustSpan::to)
         .unwrap_or(body_span)
+}
+
+/// If `did` is a method of an `impl` of a trait, then return the `DefId` that
+/// refers to the method on the trait definition.
+pub fn get_parent(tcx: TyCtxt, did: DefId) -> Option<DefId> {
+    let ident = tcx.opt_item_ident(did)?;
+    let kind = match tcx.def_kind(did) {
+        kind if kind.is_fn_like() => ty::AssocKind::Fn,
+        // todo allow constants and types also
+        _ => return None,
+    };
+    let r#impl = tcx.impl_of_method(did)?;
+    let r#trait = tcx.trait_id_of_impl(r#impl)?;
+    let id = tcx
+        .associated_items(r#trait)
+        .find_by_name_and_kind(tcx, ident, kind, r#trait)?
+        .def_id;
+    Some(id)
+}
+
+pub fn entrypoint_is_async<'tcx>(
+    body_cache: &BodyCache<'tcx>,
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+) -> bool {
+    tcx.asyncness(def_id).is_async()
+        || is_async_trait_fn(tcx, def_id, body_cache.get(def_id).body())
 }
 
 /// This is meant as an extension trait for `ast::Attribute`. The main method of

@@ -3,29 +3,7 @@
 use std::fmt;
 use std::fmt::{Display, Formatter, Write};
 
-/// Write all elements from `it` into the formatter `fmt` using `f`, separating
-/// them with `sep`
-pub fn write_sep<
-    E,
-    I: IntoIterator<Item = E>,
-    F: FnMut(E, &mut fmt::Formatter<'_>) -> fmt::Result,
->(
-    fmt: &mut fmt::Formatter<'_>,
-    sep: &str,
-    it: I,
-    mut f: F,
-) -> fmt::Result {
-    let mut first = true;
-    for e in it {
-        if first {
-            first = false;
-        } else {
-            fmt.write_str(sep)?;
-        }
-        f(e, fmt)?;
-    }
-    Ok(())
-}
+pub use flowistry_pdg::utils::write_sep;
 
 /// Has a [`Display`] implementation if the elements of the iterator inside have
 /// one. This will render them surrounded by `[` brackets and separated by `, `
@@ -36,8 +14,10 @@ pub struct DisplayList<I> {
 }
 
 /// Display this iterator as a list
-pub fn display_list<I>(iter: I) -> DisplayList<I> {
-    DisplayList { iter }
+pub fn display_list<I: IntoIterator>(iter: I) -> DisplayList<<I as IntoIterator>::IntoIter> {
+    DisplayList {
+        iter: iter.into_iter(),
+    }
 }
 
 impl<E: Display, I: IntoIterator<Item = E> + Clone> Display for DisplayList<I> {

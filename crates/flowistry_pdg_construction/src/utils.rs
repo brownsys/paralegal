@@ -1,4 +1,4 @@
-use std::{collections::hash_map::Entry, hash::Hash};
+use std::{collections::hash_map::Entry, fmt::Formatter, hash::Hash};
 
 use either::Either;
 
@@ -21,6 +21,14 @@ use rustc_middle::{
 use rustc_span::{source_map::Spanned, ErrorGuaranteed, Span};
 use rustc_type_ir::{fold::TypeFoldable, AliasTyKind, PredicatePolarity, RegionKind};
 use rustc_utils::{BodyExt, PlaceExt};
+
+pub struct Print<F: Fn(&mut Formatter<'_>) -> std::fmt::Result>(pub F);
+
+impl<F: Fn(&mut Formatter<'_>) -> std::fmt::Result> std::fmt::Display for Print<F> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        (self.0)(f)
+    }
+}
 
 /// An async check that does not crash if called on closures.
 pub fn is_async(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
