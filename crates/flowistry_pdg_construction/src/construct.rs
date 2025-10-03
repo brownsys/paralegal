@@ -5,7 +5,7 @@ use flowistry::mir::FlowistryInput;
 use log::trace;
 use petgraph::graph::{DiGraph, NodeIndex};
 
-use flowistry_pdg::{CallString, GlobalLocation};
+use flowistry_pdg::{CallString, Constant, GlobalLocation};
 
 use df::ResultsVisitor;
 use rustc_errors::DiagMessage;
@@ -26,7 +26,7 @@ use crate::{
     calling_convention::PlaceTranslator,
     graph::{
         DepEdge, DepGraph, DepNode, DepNodeKind, DepNodePlaceKind, Node, OneHopLocation,
-        PartialGraph, SourceUse, TargetUse,
+        PartialGraph, PlaceOrConst, SourceUse, TargetUse,
     },
     local_analysis::{CallHandling, InstructionState, LocalAnalysis},
     mutation::{ModularMutationVisitor, Mutation, Time},
@@ -320,8 +320,8 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
                 self.register_mutation(
                     results,
                     state,
-                    Inputs::Unresolved {
-                        places: vec![(place, None)],
+                    Input::Unresolved {
+                        place: vec![(place, None)],
                     },
                     Either::Left(place),
                     location,
@@ -340,8 +340,8 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
                 self.register_mutation(
                     results,
                     state,
-                    Inputs::Unresolved {
-                        places: mutation.inputs,
+                    Input::Unresolved {
+                        place: mutation.inputs,
                     },
                     Either::Left(mutation.mutated),
                     location,
@@ -382,8 +382,8 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
                 self.register_mutation(
                     results,
                     state,
-                    Inputs::Unresolved {
-                        places: mutation.inputs,
+                    Input::Unresolved {
+                        place: mutation.inputs,
                     },
                     Either::Left(mutation.mutated),
                     location,
@@ -410,12 +410,15 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
             let inputs = mutation
                 .inputs
                 .into_iter()
-                .map(|(place, o)| (results.analysis.normalize_place(&place), o))
-                .collect();
+                .map(|(place, o)| Input::Unresolved {
+                    place: results.analysis.normalize_place(&place).into(),
+                    use_: o,
+                })
+                .collect::<Box<_>>();
             self.register_mutation(
                 results,
                 state,
-                Inputs::Unresolved { places: inputs },
+                &inputs,
                 Either::Left(place),
                 location,
                 mutation.mutation_reason,
@@ -528,9 +531,10 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                 self.register_mutation(
                     results,
                     state,
-                    Inputs::Unresolved {
-                        places: vec![(translation, None)],
-                    },
+                    &[Input::Unresolved {
+                        place: translation.into(),
+                        use_: None,
+                    }],
                     Either::Right(child_node),
                     location,
                     TargetUse::Assign,
@@ -555,10 +559,10 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                 self.register_mutation(
                     results,
                     state,
-                    Inputs::Resolved {
+                    &[Input::Resolved {
                         node: child_node,
                         node_use: SourceUse::Operand,
-                    },
+                    }],
                     Either::Left(parent_place),
                     location,
                     kind.map_or(TargetUse::Return, TargetUse::MutArg),
@@ -573,7 +577,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         &mut self,
         results: &LocalAnalysisResults<'tcx, '_, K>,
         state: &InstructionState<'tcx>,
-        inputs: Inputs<'tcx>,
+        inputs: &[Input<'tcx>],
         mutated: Either<Place<'tcx>, Node>,
         location: Location,
         target_use: TargetUse,
@@ -587,24 +591,41 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
 
         trace!("  Found control inputs {ctrl_inputs:?}");
 
-        let data_inputs = match inputs {
-            Inputs::Unresolved { places } => places
-                .into_iter()
-                .flat_map(|(input, input_use)| {
+        let data_inputs = inputs
+            .iter()
+            .flat_map(|i| match i {
+                Input::Unresolved {
+                    place: PlaceOrConst::Place(place),
+                    use_,
+                } => Either::Right(
                     constructor
-                        .find_data_inputs(state, input)
+                        .find_data_inputs(state, *place)
                         .into_iter()
-                        .zip(std::iter::repeat(input_use))
-                })
-                .map(|(input, input_use)| {
-                    (
-                        self.insert_node(input),
-                        input_use.map_or(SourceUse::Operand, SourceUse::Argument),
-                    )
-                })
-                .collect::<Vec<_>>(),
-            Inputs::Resolved { node_use, node } => vec![(node, node_use)],
-        };
+                        .zip(std::iter::repeat(*use_))
+                        .map(|(input, input_use)| {
+                            (
+                                self.insert_node(input),
+                                input_use.map_or(SourceUse::Operand, SourceUse::Argument),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .into_iter(),
+                ),
+                Input::Unresolved {
+                    place: PlaceOrConst::Const(value),
+                    use_,
+                } => Either::Left(std::iter::once((
+                    self.get_or_construct_node(value.into(), location.into(), || DepNode {
+                        kind: DepNodeKind::Const(*value),
+                        at: location.into(),
+                    }),
+                    use_.map_or(SourceUse::Operand, SourceUse::Argument),
+                ))),
+                Input::Resolved { node_use, node } => {
+                    Either::Left(std::iter::once((*node, *node_use)))
+                }
+            })
+            .collect::<Vec<_>>();
         trace!("  Data inputs: {data_inputs:?}");
 
         let outputs = match mutated {
@@ -646,9 +667,10 @@ pub type PdgCacheKey<'tcx, K> = (Instance<'tcx>, K);
 pub type PdgCache<'tcx, K> = Rc<TwoLevelCache<Instance<'tcx>, K, Option<PartialGraph<'tcx, K>>>>;
 
 #[derive(Debug)]
-enum Inputs<'tcx> {
+enum Input<'tcx> {
     Unresolved {
-        places: Vec<(Place<'tcx>, Option<u8>)>,
+        place: PlaceOrConst<'tcx>,
+        use_: Option<u8>,
     },
     Resolved {
         node: Node,

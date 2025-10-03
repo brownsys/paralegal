@@ -16,7 +16,7 @@ use flowistry::mir::{
     utils::{self, AsyncHack},
 };
 
-use crate::utils::ty_resolve;
+use crate::{graph::PlaceOrConst, utils::ty_resolve};
 
 /// Indicator of certainty about whether a place is being mutated.
 /// Used to determine whether an update should be strong or weak.
@@ -39,7 +39,7 @@ pub struct Mutation<'tcx> {
     pub mutation_reason: TargetUse,
 
     /// The set of inputs to the mutating operation.
-    pub inputs: Vec<(Place<'tcx>, Option<u8>)>,
+    pub inputs: Vec<(PlaceOrConst<'tcx>, Option<u8>)>,
 
     #[allow(dead_code)]
     /// The certainty of whether the mutation is happening.
@@ -167,7 +167,10 @@ where
                             Mutation {
                                 mutated,
                                 mutation_reason: TargetUse::Assign,
-                                inputs: input.map(|i| (i, None)).into_iter().collect::<Vec<_>>(),
+                                inputs: input
+                                    .map(|i| (i.into(), None))
+                                    .into_iter()
+                                    .collect::<Vec<_>>(),
                                 status: MutationStatus::Definitely,
                             },
                         ),
@@ -210,7 +213,7 @@ where
                         Mutation {
                             mutated: *mutated,
                             mutation_reason: TargetUse::Assign,
-                            inputs: vec![(*place, None)],
+                            inputs: vec![(place.into(), None)],
                             status: MutationStatus::Definitely,
                         },
                     )
@@ -223,7 +226,7 @@ where
                         Mutation {
                             mutated: mutated_field,
                             mutation_reason: TargetUse::Assign,
-                            inputs: vec![(input_field, None)],
+                            inputs: vec![(input_field.into(), None)],
                             status: MutationStatus::Definitely,
                         },
                     )
@@ -255,55 +258,9 @@ where
     }
 
     #[allow(dead_code)]
-    fn handle_call_with_combine_on_return(
-        &mut self,
-        arg_places: Vec<(usize, Place<'tcx>)>,
-        location: Location,
-        destination: Place<'tcx>,
-    ) {
-        // Make sure we combine all inputs in the arguments.
-        let inputs = arg_places
-            .iter()
-            .copied()
-            .flat_map(|(num, arg)| {
-                self.place_info
-                    .reachable_values(arg, Mutability::Not)
-                    .iter()
-                    .map(move |v| (*v, Some(num as u8)))
-            })
-            .collect::<Vec<_>>();
-
-        for (num, arg) in arg_places.iter().copied() {
-            for arg_mut in self.place_info.reachable_values(arg, Mutability::Mut) {
-                if *arg_mut != arg {
-                    (self.f)(
-                        location,
-                        Mutation {
-                            mutated: *arg_mut,
-                            mutation_reason: TargetUse::MutArg(num as u8),
-                            inputs: inputs.clone(),
-                            status: MutationStatus::Possibly,
-                        },
-                    )
-                }
-            }
-        }
-
-        (self.f)(
-            location,
-            Mutation {
-                mutated: destination,
-                inputs,
-                mutation_reason: TargetUse::Return,
-                status: MutationStatus::Definitely,
-            },
-        );
-    }
-
-    #[allow(dead_code)]
     fn handle_call_with_combine_on_args(
         &mut self,
-        arg_places: Vec<(usize, Place<'tcx>)>,
+        arg_places: Vec<(usize, PlaceOrConst<'tcx>)>,
         location: Location,
         destination: Place<'tcx>,
     ) {
@@ -316,11 +273,14 @@ where
         if matches!(self.time, Time::Unspecified | Time::Before) {
             // Make sure we combine all inputs in the arguments.
             for (_, arg) in arg_places.iter().copied() {
+                let PlaceOrConst::Place(arg) = arg else {
+                    continue;
+                };
                 let inputs = self
                     .place_info
                     .reachable_values(arg, Mutability::Not)
                     .iter()
-                    .map(|v| (*v, None))
+                    .map(|v| (v.into(), None))
                     .collect();
                 (self.f)(
                     location,
@@ -335,6 +295,9 @@ where
         }
         if matches!(self.time, Time::Unspecified | Time::After) {
             for (num, arg) in arg_places.iter().copied() {
+                let PlaceOrConst::Place(arg) = arg else {
+                    continue;
+                };
                 for arg_mut in self.place_info.reachable_values(arg, Mutability::Mut) {
                     if *arg_mut != arg {
                         (self.f)(
@@ -377,7 +340,7 @@ where
                 Mutation {
                     mutated: *mutated,
                     mutation_reason: TargetUse::Assign,
-                    inputs: collector.0.into_iter().map(|p| (p, None)).collect(),
+                    inputs: collector.0.into_iter().map(|p| (p.into(), None)).collect(),
                     status: MutationStatus::Definitely,
                 },
             )

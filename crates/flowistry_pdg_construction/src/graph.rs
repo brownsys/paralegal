@@ -14,8 +14,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
 use rustc_middle::{
-    mir::{Body, HasLocalDecls, Local, LocalDecl, LocalDecls, Location, Place},
-    ty::{GenericArgsRef, Instance, TyCtxt},
+    mir::{self, Body, HasLocalDecls, Local, LocalDecl, LocalDecls, Location, Place},
+    ty::{self, GenericArgsRef, Instance, TyCtxt},
 };
 use rustc_span::Span;
 use rustc_utils::PlaceExt;
@@ -385,6 +385,94 @@ impl<'tcx, T: Copy + Into<PlaceOrConst<'tcx>>> From<&'_ T> for PlaceOrConst<'tcx
     fn from(value: &'_ T) -> Self {
         (*value).into()
     }
+}
+
+impl<'tcx> PlaceOrConst<'tcx> {
+    pub fn try_from_operand(
+        tcx: ty::TyCtxt<'tcx>,
+        operand: mir::Operand<'tcx>,
+    ) -> Result<Self, ConstConversionError<'tcx>> {
+        Ok(match operand {
+            mir::Operand::Copy(place) => Self::Place(place),
+            mir::Operand::Move(place) => Self::Place(place),
+            mir::Operand::Constant(constant) => {
+                Self::Const(constant_from_const(tcx, &constant.const_)?)
+            }
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+enum ConstConversionError<'tcx> {
+    UnsupportedConstType(mir::Const<'tcx>),
+    Integer128NotSupported { signed: bool },
+}
+
+pub fn constant_from_const<'tcx>(
+    tcx: ty::TyCtxt<'tcx>,
+    c: &mir::Const<'tcx>,
+) -> Result<Constant, ConstConversionError<'tcx>> {
+    match c {
+        mir::Const::Val(val, ty) => constant_from_const_value(tcx, *ty, val),
+        _ => Err(ConstConversionError::UnsupportedConstType(c.clone())),
+    }
+}
+
+fn constant_from_const_value<'tcx>(
+    tcx: ty::TyCtxt<'tcx>,
+    ty: ty::Ty<'tcx>,
+    ct: &mir::ConstValue<'tcx>,
+) -> Result<Constant, ConstConversionError<'tcx>> {
+    // largely from rustc_middle/mir/pretty.rs.html#1952-1962
+    match (ct, ty.kind()) {
+        (_, ty::Ref(_, inner_ty, _)) if matches!(inner_ty.kind(), ty::Str) => {
+            if let Some(data) = ct.try_get_slice_bytes_for_diagnostics(tcx) {
+                return Ok(Constant::String(Intern::from_ref(
+                    String::from_utf8_lossy(data).as_ref(),
+                )));
+            }
+            ()
+        }
+        (mir::ConstValue::Scalar(mir::interpret::Scalar::Int(int)), tyk) => match tyk {
+            ty::Bool => return Ok(Constant::Bool(int.try_to_bool().unwrap())),
+            // Skipping floats for now.
+            // ty::Float(fty) => Self::Float(match fty {
+            //     ty::FloatTy::F16 => int.to_f16() as f64,
+            //     ty::FloatTy::F32 => int.to_f32() as f64,
+            //     ty::FloatTy::F64 => int.to_f64() as f64,
+            // }),
+            ty::Int(ity) => {
+                return Ok(Constant::Int(match ity {
+                    ty::IntTy::I8 => int.to_u8() as i64,
+                    ty::IntTy::I16 => int.to_u16() as i64,
+                    ty::IntTy::I32 => int.to_u32() as i64,
+                    ty::IntTy::I64 => int.to_u64() as i64,
+                    ty::IntTy::Isize => int.to_target_isize(tcx) as i64,
+                    ty::IntTy::I128 => {
+                        return Err(ConstConversionError::Integer128NotSupported { signed: true })
+                    }
+                }))
+            }
+            ty::Uint(uty) => {
+                return Ok(Constant::Uint(match uty {
+                    ty::UintTy::U8 => int.to_u8() as u64,
+                    ty::UintTy::U16 => int.to_u16() as u64,
+                    ty::UintTy::U32 => int.to_u32() as u64,
+                    ty::UintTy::U64 => int.to_u64() as u64,
+                    ty::UintTy::Usize => int.to_target_usize(tcx) as u64,
+                    ty::UintTy::U128 => {
+                        return Err(ConstConversionError::Integer128NotSupported { signed: false })
+                    }
+                }))
+            }
+            _ => (),
+        },
+        _ => (),
+    }
+    Err(ConstConversionError::UnsupportedConstType(mir::Const::Val(
+        ct.clone(),
+        ty,
+    )))
 }
 
 #[derive(Debug, Clone)]
