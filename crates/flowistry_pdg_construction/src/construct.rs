@@ -24,7 +24,10 @@ use crate::{
     call_tree_visit::{self, VisitDriver},
     callback::DefaultCallback,
     calling_convention::PlaceTranslator,
-    graph::{DepEdge, DepGraph, DepNode, Node, OneHopLocation, PartialGraph, SourceUse, TargetUse},
+    graph::{
+        DepEdge, DepGraph, DepNode, DepNodeKind, DepNodePlaceKind, Node, OneHopLocation,
+        PartialGraph, SourceUse, TargetUse,
+    },
     local_analysis::{CallHandling, InstructionState, LocalAnalysis},
     mutation::{ModularMutationVisitor, Mutation, Time},
     two_level_cache::TwoLevelCache,
@@ -488,7 +491,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         let ctrl_inputs = constructor
             .find_control_inputs(location)
             .into_iter()
-            .map(|(place, loc, edge)| (self.get_node(place, loc).unwrap(), edge))
+            .map(|(place, loc, edge)| (self.get_place_node(place, loc).unwrap(), edge))
             .collect();
         self.inlined_calls
             .push((location, child_instance, k, ctrl_inputs));
@@ -516,9 +519,11 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         trace!("PARENT -> CHILD EDGES:");
         for (child_src, _kind) in child_graph.parentable_srcs() {
             let child_src = child_src.map_at(|b| bool_to_loc(*b));
-            let child_place = child_src.place;
+            let Some(child_place) = child_src.place() else {
+                continue;
+            };
             let child_node =
-                self.get_or_construct_node(child_place, child_src.at.clone(), || child_src);
+                self.get_or_construct_node(child_place.into(), child_src.at.clone(), || child_src);
             if let Some(translation) = translator.translate_to_parent(child_place) {
                 self.register_mutation(
                     results,
@@ -541,9 +546,11 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         trace!("CHILD -> PARENT EDGES for {:?}:", child_graph.def_id);
         for (child_dst, kind) in child_graph.parentable_dsts() {
             let child_dst = child_dst.map_at(|b| bool_to_loc(*b));
-            let child_place = child_dst.place;
+            let Some(child_place) = child_dst.place() else {
+                continue;
+            };
             let child_node =
-                self.get_or_construct_node(child_place, child_dst.at.clone(), || child_dst);
+                self.get_or_construct_node(child_place.into(), child_dst.at.clone(), || child_dst);
             if let Some(parent_place) = translator.translate_to_parent(child_place) {
                 self.register_mutation(
                     results,
@@ -622,7 +629,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
 
         // Add control dependencies: ctrl_input -> output
         for (ctrl_input, loc, edge) in &ctrl_inputs {
-            let from = self.get_or_construct_node(*ctrl_input, loc.clone(), || {
+            let from = self.get_or_construct_node(ctrl_input.into(), loc.clone(), || {
                 constructor.make_dep_node(*ctrl_input, loc.location)
             });
             for output in &outputs {

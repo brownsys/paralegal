@@ -1,12 +1,12 @@
 //! The representation of the PDG.
 
 use std::{
-    fmt::{self},
+    fmt::{self, Display},
     hash::Hash,
     path::Path,
 };
 
-use flowistry_pdg::{CallString, RichLocation};
+use flowistry_pdg::{CallString, Constant, RichLocation};
 use internment::Intern;
 use petgraph::{dot, graph::DiGraph, visit::IntoNodeReferences};
 
@@ -71,18 +71,9 @@ where
     }
 }
 
-/// A node in the program dependency graph.
-///
-/// Represents a place at a particular call-string.
-/// The place is in the body of the root of the call-string.
-#[derive(Clone, Debug)]
-pub struct DepNode<'tcx, Loc> {
-    /// A place in memory in a particular body.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DepNodePlaceKind<'tcx> {
     pub place: Place<'tcx>,
-
-    /// Location of the place in the program.
-    pub at: Loc,
-
     /// Pretty representation of the place.
     /// This is cached as an interned string on [`DepNode`] because to compute it later,
     /// we would have to regenerate the entire monomorphized body for a given place.
@@ -92,24 +83,49 @@ pub struct DepNode<'tcx, Loc> {
     pub span: Span,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DepNodeKind<'tcx> {
+    Place(DepNodePlaceKind<'tcx>),
+    Const(Constant),
+}
+
+/// A node in the program dependency graph.
+///
+/// Represents a place at a particular call-string.
+/// The place is in the body of the root of the call-string.
+#[derive(Clone, Debug)]
+pub struct DepNode<'tcx, Loc> {
+    pub kind: DepNodeKind<'tcx>,
+
+    /// Location of the place in the program.
+    pub at: Loc,
+}
+
 impl<Loc: PartialEq> PartialEq for DepNode<'_, Loc> {
     fn eq(&self, other: &Self) -> bool {
         // Using an explicit match here with all fields, so that should new
         // fields be added we remember to check whether they need to be included
         // here.
-        let Self {
-            place,
-            at,
-            place_pretty: _,
-            span,
-            is_split,
-        } = self;
-        let eq = (place, at).eq(&(&other.place, &other.at));
-        if eq {
-            debug_assert_eq!(span, &other.span);
-            debug_assert_eq!(is_split, &other.is_split);
+        let Self { at, kind } = self;
+        match (kind, &other.kind) {
+            (
+                DepNodeKind::Place(DepNodePlaceKind {
+                    place,
+                    place_pretty: _,
+                    span,
+                    is_split,
+                }),
+                DepNodeKind::Place(other_kind),
+            ) => {
+                let eq = (place, at).eq(&(&other_kind.place, &other.at));
+                if eq {
+                    debug_assert_eq!(span, &other_kind.span);
+                    debug_assert_eq!(is_split, &other_kind.is_split);
+                }
+                eq
+            }
+            (k1, k2) => at == &other.at && k1 == k2,
         }
-        eq
     }
 }
 
@@ -120,14 +136,11 @@ impl<Loc: Hash> Hash for DepNode<'_, Loc> {
         // Using an explicit match here with all fields, so that should new
         // fields be added we remember to check whether they need to be included
         // here.
-        let Self {
-            place,
-            at,
-            place_pretty: _,
-            span: _,
-            is_split: _,
-        } = self;
-        (place, at).hash(state)
+        let place_or_const = match &self.kind {
+            DepNodeKind::Const(c) => Ok(c),
+            DepNodeKind::Place(p) => Err(p.place),
+        };
+        (place_or_const, &self.at).hash(state)
     }
 }
 
@@ -136,7 +149,7 @@ impl<'tcx> DepNode<'tcx, OneHopLocation> {
     ///
     /// The `tcx` and `body` arguments are used to precompute a pretty string
     /// representation of the [`DepNode`].
-    pub fn new(
+    pub fn for_place(
         place: Place<'tcx>,
         at: OneHopLocation,
         tcx: TyCtxt<'tcx>,
@@ -154,11 +167,13 @@ impl<'tcx> DepNode<'tcx, OneHopLocation> {
             RichLocation::Start | RichLocation::End => tcx.def_span(context),
         };
         DepNode {
-            place,
+            kind: DepNodeKind::Place(DepNodePlaceKind {
+                place,
+                place_pretty: place.to_string(tcx, body).map(Intern::new),
+                span,
+                is_split,
+            }),
             at,
-            place_pretty: place.to_string(tcx, body).map(Intern::new),
-            span,
-            is_split,
         }
     }
 }
@@ -166,27 +181,67 @@ impl<'tcx> DepNode<'tcx, OneHopLocation> {
 impl<'a, Loc> DepNode<'a, Loc> {
     /// Returns a pretty string representation of the place, if one exists.
     pub fn place_pretty(&self) -> Option<&str> {
-        self.place_pretty.map(|s| s.as_ref().as_str())
+        if let DepNodeKind::Place(p) = &self.kind {
+            p.place_pretty.map(|s| s.as_ref().as_str())
+        } else {
+            None
+        }
     }
 
     pub fn map_at<'b, Loc2, F: FnOnce(&'b Loc) -> Loc2>(&'b self, f: F) -> DepNode<'a, Loc2> {
         DepNode {
-            place: self.place,
+            kind: self.kind.clone(),
             at: f(&self.at),
-            place_pretty: self.place_pretty,
-            span: self.span,
-            is_split: self.is_split,
+        }
+    }
+
+    pub fn make_descriptor(&self) -> PlaceOrConst<'a> {
+        match &self.kind {
+            DepNodeKind::Const(c) => PlaceOrConst::Const(*c),
+            DepNodeKind::Place(p) => PlaceOrConst::Place(p.place),
+        }
+    }
+
+    fn display_place(&self) -> DisplayNodeKind<'a> {
+        DisplayNodeKind(self.make_descriptor())
+    }
+
+    pub fn place(&self) -> Option<Place<'a>> {
+        if let DepNodeKind::Place(DepNodePlaceKind { place, .. }) = self.kind {
+            Some(place)
+        } else {
+            None
         }
     }
 }
 
 impl<Loc: fmt::Display> fmt::Display for DepNode<'_, Loc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.place_pretty() {
-            Some(s) => s.fmt(f)?,
-            None => write!(f, "{:?}", self.place)?,
-        };
+        match &self.kind {
+            DepNodeKind::Place(p) => match self.place_pretty() {
+                Some(s) => s.fmt(f)?,
+                None => write!(f, "{:?}", p.place)?,
+            },
+            DepNodeKind::Const(c) => write!(f, "{c}")?,
+        }
         write!(f, " @ {}", self.at)
+    }
+}
+
+pub struct DisplayNodeKind<'tcx>(PlaceOrConst<'tcx>);
+
+impl std::fmt::Display for DisplayNodeKind<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            PlaceOrConst::Place(p) => write!(f, "{:?}", p),
+            PlaceOrConst::Const(c) => write!(f, "{c}"),
+        }
+    }
+}
+
+impl std::fmt::Debug for DisplayNodeKind<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(self, f)
     }
 }
 
@@ -308,9 +363,33 @@ impl DepGraph<'_> {
 
 pub type Node = petgraph::graph::NodeIndex;
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum PlaceOrConst<'tcx> {
+    Place(Place<'tcx>),
+    Const(Constant),
+}
+
+impl<'tcx> From<Place<'tcx>> for PlaceOrConst<'tcx> {
+    fn from(value: Place<'tcx>) -> Self {
+        Self::Place(value)
+    }
+}
+
+impl<'tcx> From<Constant> for PlaceOrConst<'tcx> {
+    fn from(value: Constant) -> Self {
+        Self::Const(value)
+    }
+}
+
+impl<'tcx, T: Copy + Into<PlaceOrConst<'tcx>>> From<&'_ T> for PlaceOrConst<'tcx> {
+    fn from(value: &'_ T) -> Self {
+        (*value).into()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PartialGraph<'tcx, K> {
-    node_mapping: FxHashMap<(Place<'tcx>, OneHopLocation), Node>,
+    node_mapping: FxHashMap<(PlaceOrConst<'tcx>, OneHopLocation), Node>,
     graph: petgraph::Graph<DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>>,
     pub(crate) def_id: DefId,
     arg_count: usize,
@@ -358,16 +437,20 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
     }
 
     pub(crate) fn insert_node(&mut self, node: DepNode<'tcx, OneHopLocation>) -> Node {
-        self.get_or_construct_node(node.place, node.at.clone(), || node)
+        self.get_or_construct_node(node.make_descriptor(), node.at.clone(), || node)
     }
 
-    pub fn get_node(&self, place: Place<'tcx>, at: OneHopLocation) -> Option<Node> {
+    pub fn get_place_node(&self, place: Place<'tcx>, at: OneHopLocation) -> Option<Node> {
+        self.get_node(place.into(), at)
+    }
+
+    pub fn get_node(&self, place: PlaceOrConst<'tcx>, at: OneHopLocation) -> Option<Node> {
         self.node_mapping.get(&(place, at)).copied()
     }
 
     pub(crate) fn get_or_construct_node(
         &mut self,
-        place: Place<'tcx>,
+        place: PlaceOrConst<'tcx>,
         at: OneHopLocation,
         construct: impl FnOnce() -> DepNode<'tcx, OneHopLocation>,
     ) -> Node {
@@ -392,9 +475,9 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
             assert_eq!(
                 e,
                 &edge,
-                "Edge {:?} -> {:?} already exists in {:?}",
-                self.node_props(source).place,
-                self.node_props(target).place,
+                "Edge {} -> {} already exists in {:?}",
+                self.node_props(source).display_place(),
+                self.node_props(target).display_place(),
                 self.def_id
             );
         } else {
@@ -470,6 +553,9 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
 }
 
 fn as_arg<Loc>(node: &DepNode<'_, Loc>, arg_count: usize) -> Option<Option<u8>> {
+    let DepNodeKind::Place(node) = &node.kind else {
+        return None;
+    };
     let local = node.place.local.as_usize();
     if node.place.local == rustc_middle::mir::RETURN_PLACE {
         Some(None)

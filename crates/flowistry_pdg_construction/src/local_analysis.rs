@@ -151,7 +151,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
             "Place type is {:?}",
             place.ty(&self.mono_body, self.tcx()).ty,
         );
-        DepNode::new(
+        DepNode::for_place(
             place,
             location.into(),
             self.tcx(),
@@ -691,7 +691,10 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
         // the *last* nodes in the child function to the parent, not *all* of them.
         trace!("CHILD -> PARENT EDGES:");
         for (child_dst, _) in parentable_dsts {
-            if let Some(parent_place) = place_translator.translate_to_parent(child_dst.place) {
+            if let Some(parent_place) = child_dst
+                .place()
+                .and_then(|p| place_translator.translate_to_parent(p))
+            {
                 self.apply_mutation(state, location, parent_place);
             }
         }
@@ -742,11 +745,12 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
                     continue;
                 };
                 for location in locations {
-                    let src = final_state.get_node(*place, location.into()).unwrap();
+                    let src = final_state.get_place_node(*place, location.into()).unwrap();
                     let eloc = RichLocation::End;
-                    let dst = final_state.get_or_construct_node(*place, eloc.into(), || {
-                        self.make_dep_node(*place, eloc)
-                    });
+                    let dst =
+                        final_state.get_or_construct_node((*place).into(), eloc.into(), || {
+                            self.make_dep_node(*place, eloc)
+                        });
                     let edge = DepEdge::data(
                         self.mono_body.terminator_loc(block).into(),
                         SourceUse::Operand,

@@ -359,3 +359,27 @@ impl<T> Allocative for SimpleSizedAllocativeWrapper<T> {
         visitor.visit_simple_sized::<T>();
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
+pub enum Constant {
+    Int(i64),
+    Uint(u64),
+    // Placeholder. Floats in the rust compiler are a bit weird so I'll skip them for now.
+    //Float(f64),
+    Bool(bool),
+    String(Intern<String>),
+    Unknown(Intern<String>),
+}
+
+impl std::fmt::Display for Constant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use std::fmt::{Debug, Display};
+        match self {
+            Self::Bool(b) => Display::fmt(b, f),
+            Self::Int(i) => Display::fmt(i, f),
+            Self::Uint(u) => Display::fmt(u, f),
+            Self::String(s) => Debug::fmt(s, f),
+            Self::Unknown(u) => write!(f, "Unsupported constant: {u}"),
+        }
+    }
+}

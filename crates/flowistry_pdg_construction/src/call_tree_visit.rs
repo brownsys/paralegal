@@ -180,7 +180,7 @@ impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
                         node,
                         graph
                             .get_node(
-                                info.place,
+                                info.make_descriptor(),
                                 if is_at_start {
                                     RichLocation::Start
                                 } else {
