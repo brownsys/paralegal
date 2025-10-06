@@ -4,19 +4,20 @@ use flowistry_pdg::{rustc_portable::Place, TargetUse};
 use itertools::Itertools;
 use log::trace;
 use rustc_middle::{
-    mir::{visit::Visitor, *},
-    ty::{AdtKind, CoroutineArgsExt, TyKind},
+    mir::{self, visit::Visitor, *},
+    ty::{self, AdtKind, CoroutineArgsExt, TyKind},
 };
+use rustc_span::source_map::Spanned;
 use rustc_target::abi::FieldIdx;
 
-use rustc_utils::{mir::place::PlaceCollector, AdtDefExt, OperandExt, PlaceExt};
+use rustc_utils::{AdtDefExt, OperandExt, PlaceExt};
 
-use flowistry::mir::{
-    placeinfo::PlaceInfo,
-    utils::{self, AsyncHack},
+use flowistry::mir::{placeinfo::PlaceInfo, utils::AsyncHack};
+
+use crate::{
+    graph::{ConstConversionError, PlaceOrConst},
+    utils::ty_resolve,
 };
-
-use crate::{graph::PlaceOrConst, utils::ty_resolve};
 
 /// Indicator of certainty about whether a place is being mutated.
 /// Used to determine whether an update should be strong or weak.
@@ -239,7 +240,7 @@ where
             Rvalue::Ref(_, _, place) => {
                 let inputs = place
                     .refs_in_projection(self.place_info.body, self.place_info.tcx)
-                    .map(|(place_ref, _)| (Place::from_ref(place_ref, tcx), None))
+                    .map(|(place_ref, _)| (Place::from_ref(place_ref, tcx).into(), None))
                     .collect::<Vec<_>>();
                 (self.f)(
                     location,
@@ -333,14 +334,30 @@ where
         trace!("Checking {location:?}: {mutated:?} = {rvalue:?}");
 
         if !self.handle_special_rvalues(mutated, rvalue, location) {
-            let mut collector = PlaceCollector::default();
+            let mut collector = PlaceAndConstCollector::new(self.place_info.tcx);
             collector.visit_rvalue(rvalue, location);
             (self.f)(
                 location,
                 Mutation {
                     mutated: *mutated,
                     mutation_reason: TargetUse::Assign,
-                    inputs: collector.0.into_iter().map(|p| (p.into(), None)).collect(),
+                    inputs: collector
+                        .values
+                        .into_iter()
+                        .filter_map(|p| {
+                            let v = match p {
+                                Ok(v) => Some(v),
+                                Err(e) => {
+                                    self.place_info.tcx.dcx().span_err(
+                                        self.place_info.body.source_info(location).span,
+                                        e.to_string(),
+                                    );
+                                    None
+                                }
+                            };
+                            Some((v?, None))
+                        })
+                        .collect(),
                     status: MutationStatus::Definitely,
                 },
             )
@@ -362,8 +379,12 @@ where
                 self.place_info.body,
                 self.place_info.def_id,
             );
-            let mut arg_places = utils::arg_places(args);
-            arg_places.retain(|(_, place)| !async_hack.ignore_place(*place));
+            let mut arg_places = arg_places(self.place_info.tcx, args);
+            arg_places.retain(|(_, place)| {
+                place
+                    .place()
+                    .is_none_or(|place| !async_hack.ignore_place(*place))
+            });
 
             // let ret_is_unit = destination
             //     .ty(self.place_info.body.local_decls(), tcx)
@@ -378,4 +399,52 @@ where
             self.handle_call_with_combine_on_args(arg_places, location, *destination)
         }
     }
+}
+
+fn arg_places<'tcx>(
+    tcx: ty::TyCtxt<'tcx>,
+    args: &[Spanned<Operand<'tcx>>],
+) -> Vec<(usize, PlaceOrConst<'tcx>)> {
+    args.iter()
+        .enumerate()
+        .filter_map(
+            |(i, arg)| match PlaceOrConst::try_from_operand(tcx, &arg.node) {
+                Ok(place) => Some((i, place)),
+                Err(e) => {
+                    tcx.dcx().span_err(arg.span, e.to_string());
+                    None
+                }
+            },
+        )
+        .collect::<Vec<_>>()
+}
+
+struct PlaceAndConstCollector<'tcx> {
+    values: Vec<Result<PlaceOrConst<'tcx>, ConstConversionError<'tcx>>>,
+    tcx: ty::TyCtxt<'tcx>,
+}
+
+impl<'tcx> PlaceAndConstCollector<'tcx> {
+    fn new(tcx: ty::TyCtxt<'tcx>) -> Self {
+        Self {
+            values: Vec::new(),
+            tcx,
+        }
+    }
+}
+
+impl<'tcx> Visitor<'tcx> for PlaceAndConstCollector<'tcx> {
+    fn visit_place(&mut self, place: &mir::Place<'tcx>, _: mir::visit::PlaceContext, _: Location) {
+        self.values.push(Ok(place.into()));
+    }
+
+    fn visit_operand(&mut self, operand: &mir::Operand<'tcx>, _: Location) {
+        self.values
+            .push(PlaceOrConst::try_from_operand(self.tcx, operand));
+    }
+
+    // Should we reflect constants from the type system?
+    // fn visit_ty_const(&mut self, const_: ty::Const<'tcx>, _: Location) {
+    //     ???
+    // }
 }

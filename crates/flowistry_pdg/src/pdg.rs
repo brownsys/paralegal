@@ -360,7 +360,7 @@ impl<T> Allocative for SimpleSizedAllocativeWrapper<T> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy, Serialize, Deserialize)]
 pub enum Constant {
     Int(i64),
     Uint(u64),
@@ -381,5 +381,15 @@ impl std::fmt::Display for Constant {
             Self::String(s) => Debug::fmt(s, f),
             //Self::Unknown(u) => write!(f, "Unsupported constant: {u}"),
         }
+    }
+}
+
+impl Allocative for Constant {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        if let Self::String(s) = self {
+            allocative_visit_intern_t(*s, &mut visitor);
+        }
+        visitor.exit();
     }
 }

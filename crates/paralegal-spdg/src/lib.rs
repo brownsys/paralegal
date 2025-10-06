@@ -884,18 +884,36 @@ impl GlobalEdge {
 pub struct NodeInfo {
     /// Location of the node in the call stack
     pub at: CallString,
-    /// The debug print of the `mir::Place` that this node represents
-    pub description: String,
-    /// Span information for this node
-    pub span: Span,
-    /// The local variable this node references. This is an MIR implementation
-    /// detail and should not be relied upon.
-    pub local: u32,
+
+    pub kind: NodeKind,
 }
 
 impl Display for NodeInfo {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{} @ {}", self.description, self.at)
+        write!(f, "{} @ {}", self.kind, self.at)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Allocative, PartialEq, Eq, Hash)]
+pub enum NodeKind {
+    Place {
+        /// The debug print of the `mir::Place` that this node represents
+        description: String,
+        /// Span information for this node
+        span: Span,
+        /// The local variable this node references. This is an MIR implementation
+        /// detail and should not be relied upon.
+        local: u32,
+    },
+    Constant(Constant),
+}
+
+impl Display for NodeKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            NodeKind::Place { description, .. } => write!(f, "{}", description),
+            NodeKind::Constant(constant) => write!(f, "{}", constant),
+        }
     }
 }
 
@@ -1164,15 +1182,9 @@ impl Display for DisplayNode<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let weight = self.graph.graph.node_weight(self.node).unwrap();
         if self.detailed {
-            write!(
-                f,
-                "{{{}}} {} @ {}",
-                self.node.index(),
-                weight.description,
-                weight.at
-            )
+            write!(f, "{{{}}} {}", self.node.index(), weight)
         } else {
-            write!(f, "{{{}}} {}", self.node.index(), weight.description)
+            write!(f, "{{{}}} {}", self.node.index(), weight.kind)
         }
     }
 }

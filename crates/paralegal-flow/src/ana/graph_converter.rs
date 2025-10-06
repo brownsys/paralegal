@@ -7,7 +7,9 @@ use flowistry_pdg::{rustc_portable::Location, SourceUse};
 use flowistry_pdg_construction::{
     call_tree_visit::{VisitDriver, Visitor},
     determine_async,
-    graph::{DepEdge, DepEdgeKind, DepNode, OneHopLocation, PartialGraph},
+    graph::{
+        DepEdge, DepEdgeKind, DepNode, DepNodeKind, DepNodePlaceKind, OneHopLocation, PartialGraph,
+    },
     utils::{handle_shims, try_monomorphize, try_resolve_function, type_as_fn, ShimResult},
 };
 use paralegal_spdg::Node;
@@ -239,7 +241,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             at,
             description: format!("{place:?}"),
             span: src_loc_for_span(span, self.tcx()),
-            local: place.local.as_u32(),
+            local: Some(place.local.as_u32()),
         }))
     }
 
@@ -397,6 +399,12 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         let leaf_loc = weight.at.location;
         let function = vis.current_function();
         let function_id = function.def_id();
+        let at = &weight.at;
+
+        let DepNodeKind::Place(weight) = &weight.kind else {
+            // Constants can't have markers at the moment.
+            return;
+        };
 
         let body = self
             .generator
@@ -418,7 +426,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                 self.register_annotations_for_return(node, function_id);
             }
             RichLocation::Location(loc) => self.handle_node_annotations_for_regular_location(
-                local_node, node, weight, body, loc, vis,
+                local_node, node, weight, at, body, loc, vis,
             ),
             _ => (),
         }
@@ -439,7 +447,8 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         &mut self,
         local_node: Node,
         node: GNode,
-        weight: &DepNode<'tcx, OneHopLocation>,
+        weight: &DepNodePlaceKind<'tcx>,
+        at: &OneHopLocation,
         body: &mir::Body<'tcx>,
         loc: Location,
         vis: &VisitDriver<'tcx, '_, K>,
@@ -518,19 +527,19 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         for eref in graph.raw().edges_directed(local_node, petgraph::Incoming) {
             if eref.weight().kind == DepEdgeKind::Data {
                 has_no_data_edges = false;
-                let at = eref.weight().at.clone();
+                let this_at = eref.weight().at.clone();
                 #[cfg(debug_assertions)]
                 assert_edge_location_invariant(
                     self.tcx(),
-                    at.clone(),
+                    this_at.clone(),
                     body,
-                    weight.at.clone(),
+                    at.clone(),
                     |at| GlobalLocation {
                         function: function.def_id(),
                         location: at.location,
                     },
                 );
-                if weight.at == at && eref.weight().target_use.is_return() {
+                if at == &this_at && eref.weight().target_use.is_return() {
                     is_return_use = true;
                 }
             }
@@ -667,7 +676,14 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             function: def_id,
         }]);
         for (nidx, n) in pgraph.iter_nodes() {
-            if n.place.local.as_u32() == 1 && n.at.location == RichLocation::Start {
+            let DepNode {
+                kind: DepNodeKind::Place(n),
+                at,
+            } = n
+            else {
+                continue;
+            };
+            if n.place.local.as_u32() == 1 && at.location == RichLocation::Start {
                 let ridx = self.translate_node(nidx);
                 let Some(mir::ProjectionElem::Field(id, _)) = n.place.projection.first() else {
                     tcx.dcx().span_err(
@@ -736,9 +752,9 @@ fn globalize_node<'tcx, K: Clone>(
     let at = vis.globalize_location(&node.at);
     NodeInfo {
         at,
-        description: format!("{:?}", node.place),
+        description: node.display_place().to_string(),
         span: src_loc_for_span(node.span, tcx),
-        local: node.place.local.as_u32(),
+        local: node.place().map(|p| p.local.as_u32()),
     }
 }
 

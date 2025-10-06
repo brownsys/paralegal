@@ -5,7 +5,7 @@ use flowistry::mir::FlowistryInput;
 use log::trace;
 use petgraph::graph::{DiGraph, NodeIndex};
 
-use flowistry_pdg::{CallString, Constant, GlobalLocation};
+use flowistry_pdg::{CallString, GlobalLocation};
 
 use df::ResultsVisitor;
 use rustc_errors::DiagMessage;
@@ -25,8 +25,8 @@ use crate::{
     callback::DefaultCallback,
     calling_convention::PlaceTranslator,
     graph::{
-        DepEdge, DepGraph, DepNode, DepNodeKind, DepNodePlaceKind, Node, OneHopLocation,
-        PartialGraph, PlaceOrConst, SourceUse, TargetUse,
+        DepEdge, DepGraph, DepNode, DepNodeKind, Node, OneHopLocation, PartialGraph, PlaceOrConst,
+        SourceUse, TargetUse,
     },
     local_analysis::{CallHandling, InstructionState, LocalAnalysis},
     mutation::{ModularMutationVisitor, Mutation, Time},
@@ -320,9 +320,10 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
                 self.register_mutation(
                     results,
                     state,
-                    Input::Unresolved {
-                        place: vec![(place, None)],
-                    },
+                    &[Input::Unresolved {
+                        place: place.into(),
+                        use_: None,
+                    }],
                     Either::Left(place),
                     location,
                     TargetUse::Assign,
@@ -340,9 +341,11 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
                 self.register_mutation(
                     results,
                     state,
-                    Input::Unresolved {
-                        place: mutation.inputs,
-                    },
+                    &mutation
+                        .inputs
+                        .into_iter()
+                        .map(|(input, use_)| Input::Unresolved { place: input, use_ })
+                        .collect::<Box<_>>(),
                     Either::Left(mutation.mutated),
                     location,
                     mutation.mutation_reason,
@@ -382,9 +385,11 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
                 self.register_mutation(
                     results,
                     state,
-                    Input::Unresolved {
-                        place: mutation.inputs,
-                    },
+                    &mutation
+                        .inputs
+                        .into_iter()
+                        .map(|(input, use_)| Input::Unresolved { place: input, use_ })
+                        .collect::<Box<_>>(),
                     Either::Left(mutation.mutated),
                     location,
                     mutation.mutation_reason,
@@ -411,7 +416,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                 .inputs
                 .into_iter()
                 .map(|(place, o)| Input::Unresolved {
-                    place: results.analysis.normalize_place(&place).into(),
+                    place: place.map_place(|place| results.analysis.normalize_place(&place)),
                     use_: o,
                 })
                 .collect::<Box<_>>();

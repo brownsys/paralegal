@@ -202,7 +202,7 @@ impl<'a, Loc> DepNode<'a, Loc> {
         }
     }
 
-    fn display_place(&self) -> DisplayNodeKind<'a> {
+    pub fn display_place(&self) -> DisplayNodeKind<'a> {
         DisplayNodeKind(self.make_descriptor())
     }
 
@@ -390,22 +390,63 @@ impl<'tcx, T: Copy + Into<PlaceOrConst<'tcx>>> From<&'_ T> for PlaceOrConst<'tcx
 impl<'tcx> PlaceOrConst<'tcx> {
     pub fn try_from_operand(
         tcx: ty::TyCtxt<'tcx>,
-        operand: mir::Operand<'tcx>,
+        operand: &mir::Operand<'tcx>,
     ) -> Result<Self, ConstConversionError<'tcx>> {
         Ok(match operand {
-            mir::Operand::Copy(place) => Self::Place(place),
-            mir::Operand::Move(place) => Self::Place(place),
+            mir::Operand::Copy(place) => Self::Place(*place),
+            mir::Operand::Move(place) => Self::Place(*place),
             mir::Operand::Constant(constant) => {
                 Self::Const(constant_from_const(tcx, &constant.const_)?)
             }
         })
     }
+
+    pub fn place(&self) -> Option<&Place<'tcx>> {
+        match self {
+            Self::Place(place) => Some(place),
+            _ => None,
+        }
+    }
+
+    pub fn const_(&self) -> Option<&Constant> {
+        match self {
+            Self::Const(constant) => Some(constant),
+            _ => None,
+        }
+    }
+
+    pub fn try_from_const(
+        tcx: ty::TyCtxt<'tcx>,
+        c: &mir::Const<'tcx>,
+    ) -> Result<Self, ConstConversionError<'tcx>> {
+        constant_from_const(tcx, c).map(Self::Const)
+    }
+
+    pub fn map_place(self, f: impl FnOnce(Place<'tcx>) -> Place<'tcx>) -> Self {
+        match self {
+            Self::Place(place) => Self::Place(f(place)),
+            Self::Const(constant) => Self::Const(constant),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
-enum ConstConversionError<'tcx> {
+pub enum ConstConversionError<'tcx> {
     UnsupportedConstType(mir::Const<'tcx>),
     Integer128NotSupported { signed: bool },
+}
+
+impl std::fmt::Display for ConstConversionError<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConstConversionError::UnsupportedConstType(c) => {
+                write!(f, "Unsupported constant type: {:?}", c)
+            }
+            ConstConversionError::Integer128NotSupported { signed } => {
+                write!(f, "{}128 is not supported", if *signed { "i" } else { "u" })
+            }
+        }
+    }
 }
 
 pub fn constant_from_const<'tcx>(

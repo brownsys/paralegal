@@ -700,7 +700,7 @@ impl Debug for NodeRef<'_> {
         let weight = self.graph.ctrl.graph.node_weight(self.node).unwrap();
         f.debug_struct("NodeRef")
             .field("node", &self.node)
-            .field("description", &weight.description)
+            .field("description", &weight.kind)
             .field("at", &weight.at)
             .field("graph", &DisplayPath::from(&self.graph.ctrl.path))
             .finish()
