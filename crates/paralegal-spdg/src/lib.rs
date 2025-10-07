@@ -885,6 +885,7 @@ pub struct NodeInfo {
     /// Location of the node in the call stack
     pub at: CallString,
 
+    /// The kind of node this is
     pub kind: NodeKind,
 
     /// Span information for this node
@@ -897,8 +898,10 @@ impl Display for NodeInfo {
     }
 }
 
+/// Nodes can be places of constants
 #[derive(Clone, Debug, Serialize, Deserialize, Allocative, PartialEq, Eq, Hash)]
 pub enum NodeKind {
+    /// This node represents a virtual memory location, called a place.
     Place {
         /// The debug print of the `mir::Place` that this node represents
         description: String,
@@ -906,6 +909,7 @@ pub enum NodeKind {
         /// detail and should not be relied upon.
         local: u32,
     },
+    /// This node represents a constant value.
     Constant(Constant),
 }
 

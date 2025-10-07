@@ -359,10 +359,7 @@ fn transitive_control_flow() -> Result<()> {
                     ctx.influencers(access, EdgeSelection::Both),
                 ) {
                     let info = i.info(&ctx);
-                    ctx.node_note(
-                        i,
-                        format!("This is an influencer {} @ {}", info.description, info.at),
-                    );
+                    ctx.node_note(i, format!("This is an influencer {}", info));
                 }
             }
             if !ctx
@@ -383,13 +380,8 @@ fn transitive_control_flow() -> Result<()> {
 
             for check in delete_checks {
                 let info = check.info(&ctx);
-                let mut help = ctx.struct_node_help(
-                    check,
-                    format!(
-                        "This is an elibigle delete check {} @ {}",
-                        info.description, info.at
-                    ),
-                );
+                let mut help = ctx
+                    .struct_node_help(check, format!("This is an elibigle delete check {}", info));
 
                 let influencees: Vec<GlobalNode> =
                     ctx.influencees(check, EdgeSelection::Both).collect();

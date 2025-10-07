@@ -7,9 +7,7 @@ use flowistry_pdg::{rustc_portable::Location, SourceUse};
 use flowistry_pdg_construction::{
     call_tree_visit::{VisitDriver, Visitor},
     determine_async,
-    graph::{
-        DepEdge, DepEdgeKind, DepNode, DepNodeKind, DepNodePlaceKind, OneHopLocation, PartialGraph,
-    },
+    graph::{DepEdge, DepEdgeKind, DepNode, DepNodeKind, OneHopLocation, PartialGraph},
     utils::{handle_shims, try_monomorphize, try_resolve_function, type_as_fn, ShimResult},
 };
 use paralegal_spdg::Node;
@@ -401,7 +399,6 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         let leaf_loc = weight.at.location;
         let function = vis.current_function();
         let function_id = function.def_id();
-        let at = &weight.at;
 
         let DepNodeKind::Place(kind) = &weight.kind else {
             // Constants can't have markers at the moment.
@@ -454,7 +451,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         loc: Location,
         vis: &VisitDriver<'tcx, '_, K>,
     ) {
-        let DepNode { kind, at, span } = weight;
+        let DepNode { at, span, .. } = weight;
         let function = vis.current_function();
         let function_id = function.def_id();
         let crate::Either::Right(
@@ -817,7 +814,9 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssembler<
         let idx = self.add_node(k, vis, node);
         if !is_in_child {
             self.node_annotations(k, idx, node, vis);
-            self.handle_node_types(idx, &node.at, node.place, node.span, vis);
+            if let DepNodeKind::Place(p) = &node.kind {
+                self.handle_node_types(idx, &node.at, p.place, node.span, vis);
+            }
         }
     }
 

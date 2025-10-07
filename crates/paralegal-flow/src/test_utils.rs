@@ -663,7 +663,7 @@ impl Debug for NodeRefs<'_> {
         let mut list = f.debug_list();
         for &n in &self.nodes {
             let weight = self.graph.ctrl.graph.node_weight(n).unwrap();
-            list.entry(&format!("{n:?} {} @ {} ", weight.description, weight.at));
+            list.entry(&format!("{n:?} {}", weight));
         }
         list.finish()
     }
