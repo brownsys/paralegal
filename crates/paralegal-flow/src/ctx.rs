@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use flowistry_pdg_construction::body_cache::BodyCache;
+use flowistry_pdg_construction::source_access::BodyCache;
 use rustc_errors::DiagMessage;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;

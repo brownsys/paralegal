@@ -22,9 +22,9 @@ use crate::{
 use anyhow::Context;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    body_cache::{local_or_remote_paths, BodyCache},
     determine_async,
-    encoder::ParalegalDecoder,
+    source_access::ParalegalDecoder,
+    source_access::{local_or_remote_paths, BodyCache},
     utils::{handle_shims, is_virtual, try_monomorphize, try_resolve_function, ShimResult},
 };
 use paralegal_spdg::Identifier;

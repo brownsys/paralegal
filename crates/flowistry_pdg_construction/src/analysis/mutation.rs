@@ -15,7 +15,7 @@ use rustc_utils::{AdtDefExt, OperandExt, PlaceExt};
 use flowistry::mir::{placeinfo::PlaceInfo, utils::AsyncHack};
 
 use crate::{
-    graph::{ConstConversionError, PlaceOrConst},
+    constants::{ConstConversionError, PlaceOrConst},
     utils::ty_resolve,
 };
 
@@ -333,35 +333,34 @@ where
     fn visit_assign(&mut self, mutated: &Place<'tcx>, rvalue: &Rvalue<'tcx>, location: Location) {
         trace!("Checking {location:?}: {mutated:?} = {rvalue:?}");
 
-        if !self.handle_special_rvalues(mutated, rvalue, location) {
-            let mut collector = PlaceAndConstCollector::new(self.place_info.tcx);
-            collector.visit_rvalue(rvalue, location);
-            (self.f)(
-                location,
-                Mutation {
-                    mutated: *mutated,
-                    mutation_reason: TargetUse::Assign,
-                    inputs: collector
-                        .values
-                        .into_iter()
-                        .filter_map(|p| {
-                            let v = match p {
-                                Ok(v) => Some(v),
-                                Err(e) => {
-                                    self.place_info.tcx.dcx().span_err(
-                                        self.place_info.body.source_info(location).span,
-                                        e.to_string(),
-                                    );
-                                    None
-                                }
-                            };
-                            Some((v?, None))
-                        })
-                        .collect(),
-                    status: MutationStatus::Definitely,
-                },
-            )
+        if self.handle_special_rvalues(mutated, rvalue, location) {
+            return;
         }
+        let mut collector = PlaceAndConstCollector::new(self.place_info.tcx);
+        collector.visit_rvalue(rvalue, location);
+        let inputs = collector
+            .values
+            .into_iter()
+            .filter_map(|p| match p {
+                Ok(v) => Some((v, None)),
+                Err(e) => {
+                    self.place_info.tcx.dcx().span_err(
+                        self.place_info.body.source_info(location).span,
+                        e.to_string(),
+                    );
+                    None
+                }
+            })
+            .collect();
+        (self.f)(
+            location,
+            Mutation {
+                mutated: *mutated,
+                mutation_reason: TargetUse::Assign,
+                inputs,
+                status: MutationStatus::Definitely,
+            },
+        )
     }
 
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {

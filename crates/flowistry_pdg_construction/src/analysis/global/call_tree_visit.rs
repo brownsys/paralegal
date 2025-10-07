@@ -15,9 +15,11 @@ use std::{borrow::Cow, hash::Hash, rc::Rc};
 use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 use rustc_middle::{mir::Location, ty::Instance};
 
-use crate::{
-    graph::{DepEdge, DepNode, GraphConnectionPoint, Node, OneHopLocation, PartialGraph},
-    MemoPdgConstructor,
+use crate::MemoPdgConstructor;
+
+use super::{
+    graph_elems::{DepEdge, DepNode, OneHopLocation, PartialGraph},
+    partial_graph::{GraphConnectionPoint, Node},
 };
 
 pub struct VisitDriver<'tcx, 'c, K: Clone> {

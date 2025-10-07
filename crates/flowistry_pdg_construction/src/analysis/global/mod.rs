@@ -1,15 +1,12 @@
 use std::{borrow::Cow, fmt, hash::Hash, rc::Rc};
 
 use either::Either;
-use flowistry::mir::FlowistryInput;
 use log::trace;
-use petgraph::graph::{DiGraph, NodeIndex};
 
-use flowistry_pdg::{CallString, Constant, GlobalLocation};
+use flowistry_pdg::{Constant, GlobalLocation};
 
 use df::ResultsVisitor;
 use rustc_errors::DiagMessage;
-use rustc_hash::FxHashMap;
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_middle::{
@@ -18,22 +15,29 @@ use rustc_middle::{
 };
 use rustc_mir_dataflow::{self as df, Results};
 
-use crate::{
+use super::{
     async_support::*,
-    body_cache::{self, BodyCache, CachedBody},
-    call_tree_visit::{self, VisitDriver},
-    callback::DefaultCallback,
     calling_convention::PlaceTranslator,
-    graph::{
-        DepEdge, DepGraph, DepNode, DepNodeKind, Node, OneHopLocation, PartialGraph, PlaceOrConst,
-        SourceUse, TargetUse,
-    },
-    local_analysis::{CallHandling, InstructionState, LocalAnalysis},
+    local::{CallHandling, InstructionState, LocalAnalysis},
     mutation::{ModularMutationVisitor, Mutation, Time},
-    two_level_cache::TwoLevelCache,
-    utils::{manufacture_substs_for, try_resolve_function},
+};
+use crate::{
+    callback::DefaultCallback,
+    constants::PlaceOrConst,
+    source_access::{self, BodyCache, CachedBody},
+    utils::{manufacture_substs_for, try_resolve_function, TwoLevelCache},
     CallChangeCallback,
 };
+
+pub mod call_tree_visit;
+mod graph_elems;
+mod partial_graph;
+
+use call_tree_visit::VisitDriver;
+pub use graph_elems::{
+    DepEdge, DepEdgeKind, DepNode, DepNodeKind, OneHopLocation, SourceUse, TargetUse,
+};
+pub use partial_graph::{Node, PartialGraph};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ConstructionResult<T> {
@@ -79,7 +83,7 @@ pub struct MemoPdgConstructor<'tcx, K> {
     pub(crate) dump_mir: bool,
     pub(crate) async_info: Rc<AsyncInfo>,
     pub pdg_cache: PdgCache<'tcx, K>,
-    pub(crate) body_cache: Rc<body_cache::BodyCache<'tcx>>,
+    pub(crate) body_cache: Rc<source_access::BodyCache<'tcx>>,
     disable_cache: bool,
     relaxed: bool,
 }
@@ -90,7 +94,10 @@ impl<'tcx, K: Default> MemoPdgConstructor<'tcx, K> {
         Self::new_with_callbacks(tcx, DefaultCallback)
     }
     /// Initialize the constructor.
-    pub fn new_with_cache(tcx: TyCtxt<'tcx>, body_cache: Rc<body_cache::BodyCache<'tcx>>) -> Self {
+    pub fn new_with_cache(
+        tcx: TyCtxt<'tcx>,
+        body_cache: Rc<source_access::BodyCache<'tcx>>,
+    ) -> Self {
         Self {
             tcx,
             call_change_callback: Rc::new(DefaultCallback),
@@ -243,35 +250,6 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> MemoPdgConstructor<'tcx, K> {
             .borrow()
             .get(&instance)
             .is_some_and(|v| v.0)
-    }
-
-    /// Construct a final PDG for this function. Same as
-    /// [`Self::construct_root`] this instantiates all generics as `dyn`.
-    ///
-    /// Additionally if this is an `async fn` or `#[async_trait]` it will inline
-    /// the closure as though the function were called with `poll`.
-    pub fn construct_graph(&self, function: LocalDefId) -> DepGraph<'tcx> {
-        if let Some((generator, loc, _ty)) = determine_async(
-            self.tcx,
-            function.to_def_id(),
-            self.body_cache.try_get(function.to_def_id()).unwrap_or_else(|| panic!("INVARIANT VIOLATED: body for local function {function:?} cannot be loaded.")).body(),
-        ) {
-            // TODO remap arguments
-
-            // Note that this deliberately register this result in a separate
-            // cache. This is because when this async fn is called somewhere we
-            // don't want to use this "fake inlined" version.
-            self.construct_root(generator.def_id().expect_local())
-                .to_petgraph_with_extra_global_location(
-                    self,
-                    GlobalLocation {
-                        function: function.to_def_id(),
-                        location: flowistry_pdg::RichLocation::Location(loc),
-                    }
-                )
-        } else {
-            self.construct_root(function).to_petgraph(self)
-        }
     }
 }
 
@@ -666,93 +644,6 @@ enum Input<'tcx> {
     },
 }
 
-struct GraphAssembler<'tcx> {
-    graph: DiGraph<DepNode<'tcx, CallString>, DepEdge<CallString>>,
-    nodes: FxHashMap<DepNode<'tcx, CallString>, petgraph::graph::NodeIndex>,
-    control_inputs: Box<[(NodeIndex, DepEdge<CallString>)]>,
-}
-
-fn globalize_node<'tcx, K: Clone>(
-    vis: &mut VisitDriver<'tcx, '_, K>,
-    node: &DepNode<'tcx, OneHopLocation>,
-) -> DepNode<'tcx, CallString> {
-    node.map_at(|location| vis.globalize_location(location))
-}
-
-fn globalize_edge<K: Clone>(
-    vis: &mut VisitDriver<'_, '_, K>,
-    edge: &DepEdge<OneHopLocation>,
-) -> DepEdge<CallString> {
-    edge.map_at(|location| vis.globalize_location(location))
-}
-
-impl<'tcx> GraphAssembler<'tcx> {
-    fn new() -> Self {
-        Self {
-            graph: DiGraph::new(),
-            nodes: FxHashMap::default(),
-            control_inputs: Box::new([]),
-        }
-    }
-
-    fn add_node(&mut self, node: DepNode<'tcx, CallString>) -> petgraph::graph::NodeIndex {
-        *self
-            .nodes
-            .entry(node.clone())
-            .or_insert_with(|| self.graph.add_node(node))
-    }
-}
-
-impl<'tcx, K: Hash + Eq + Clone> call_tree_visit::Visitor<'tcx, K> for GraphAssembler<'tcx> {
-    fn visit_edge(
-        &mut self,
-        vis: &mut VisitDriver<'tcx, '_, K>,
-        src: Node,
-        dst: Node,
-        kind: &DepEdge<OneHopLocation>,
-    ) {
-        let g = vis.current_graph_as_rc();
-        let src = globalize_node(vis, g.node_props(src));
-        let src_idx = self.add_node(src);
-        let dst = globalize_node(vis, g.node_props(dst));
-        let dst_idx = self.add_node(dst);
-        let new_kind = globalize_edge(vis, kind);
-        self.graph.add_edge(src_idx, dst_idx, new_kind);
-    }
-
-    fn visit_partial_graph(
-        &mut self,
-        vis: &mut VisitDriver<'tcx, '_, K>,
-        graph: &PartialGraph<'tcx, K>,
-    ) {
-        vis.visit_partial_graph(self, graph);
-
-        // This loop connects the control inputs that
-        // are incoming to the function to those nodes in the graph who have no
-        // control inputs yet.
-        //
-        // We do this here instead of in "visit_node", because that gets called
-        // before the "visit_edge" function, meaning we can't yet see the
-        // potential control inputs of the node. We could have the visitor use
-        // an opposite ordering, but that is counterintuitive to other potential
-        // users of the visitor.
-        for (_, node) in graph.iter_nodes() {
-            let new_node = globalize_node(vis, node);
-            let node = self.add_node(new_node);
-
-            if !self
-                .graph
-                .edges_directed(node, petgraph::Direction::Incoming)
-                .any(|e| e.weight().is_control())
-            {
-                for (src, edge) in self.control_inputs.iter() {
-                    self.graph.add_edge(*src, node, edge.clone());
-                }
-            }
-        }
-    }
-}
-
 struct GraphSizeEstimator {
     nodes: usize,
     edges: usize,
@@ -760,6 +651,7 @@ struct GraphSizeEstimator {
     max_call_string: Box<[GlobalLocation]>,
 }
 
+#[allow(dead_code)]
 impl GraphSizeEstimator {
     fn new() -> Self {
         Self {
@@ -825,61 +717,5 @@ impl fmt::Display for HumanInt {
         }
 
         f.write_str(&as_str)
-    }
-}
-
-impl<'tcx, K: Clone + Hash + Eq> PartialGraph<'tcx, K> {
-    pub fn to_petgraph<'c>(&self, memo: &'c MemoPdgConstructor<'tcx, K>) -> DepGraph<'tcx> {
-        log::info!("Converting to petgraph starting from {:?}.", self.def_id);
-        let mut assembler = GraphAssembler::new();
-        let mut visitor = VisitDriver::new(
-            memo,
-            Instance::expect_resolve(
-                memo.tcx,
-                TypingEnv::post_analysis(memo.tcx, self.def_id)
-                    .with_post_analysis_normalized(memo.tcx),
-                self.def_id,
-                self.generics,
-                memo.tcx.def_span(self.def_id),
-            ),
-            self.k.clone(),
-        );
-        let mut size_estimator = GraphSizeEstimator::new();
-        visitor.start(&mut size_estimator);
-        log::info!("Estimating a size of {}", size_estimator.format_size());
-        visitor.start(&mut assembler);
-        DepGraph {
-            graph: assembler.graph,
-        }
-    }
-
-    pub fn to_petgraph_with_extra_global_location<'c>(
-        &self,
-        memo: &'c MemoPdgConstructor<'tcx, K>,
-        extra_global_location: GlobalLocation,
-    ) -> DepGraph<'tcx> {
-        log::info!("Converting to petgraph starting from {:?}.", self.def_id);
-        let mut assembler = GraphAssembler::new();
-        let mut visitor = VisitDriver::new(
-            memo,
-            Instance::expect_resolve(
-                memo.tcx,
-                TypingEnv::post_analysis(memo.tcx, self.def_id)
-                    .with_post_analysis_normalized(memo.tcx),
-                self.def_id,
-                self.generics,
-                memo.tcx.def_span(self.def_id),
-            ),
-            self.k.clone(),
-        );
-        let mut size_estimator = GraphSizeEstimator::new();
-        visitor.start(&mut size_estimator);
-        log::info!("Estimating a size of {}", size_estimator.format_size());
-        visitor.with_pushed_stack(extra_global_location, |visitor| {
-            visitor.start(&mut assembler);
-        });
-        DepGraph {
-            graph: assembler.graph,
-        }
     }
 }

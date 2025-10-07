@@ -10,7 +10,8 @@ use rustc_middle::{
 };
 use rustc_span::Span;
 
-use crate::{local_analysis::LocalAnalysis, utils::ArgSlice};
+use super::LocalAnalysis;
+use crate::utils::ArgSlice;
 
 pub(crate) type ApproximationHandler<'tcx, 'a, K> = fn(
     &LocalAnalysis<'tcx, 'a, K>,

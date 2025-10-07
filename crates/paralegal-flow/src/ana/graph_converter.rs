@@ -5,10 +5,9 @@ use crate::{
 };
 use flowistry_pdg::{rustc_portable::Location, SourceUse};
 use flowistry_pdg_construction::{
-    call_tree_visit::{VisitDriver, Visitor},
     determine_async,
-    graph::{DepEdge, DepEdgeKind, DepNode, DepNodeKind, OneHopLocation, PartialGraph},
     utils::{handle_shims, try_monomorphize, try_resolve_function, type_as_fn, ShimResult},
+    DepEdge, DepEdgeKind, DepNode, DepNodeKind, OneHopLocation, PartialGraph, VisitDriver, Visitor,
 };
 use paralegal_spdg::Node;
 

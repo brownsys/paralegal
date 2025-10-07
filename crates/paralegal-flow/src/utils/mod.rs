@@ -3,7 +3,7 @@
 extern crate smallvec;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg::RichLocation;
-use flowistry_pdg_construction::{body_cache::BodyCache, is_async_trait_fn, utils::type_as_fn};
+use flowistry_pdg_construction::{is_async_trait_fn, source_access::BodyCache, utils::type_as_fn};
 use thiserror::Error;
 
 use crate::{desc::Identifier, rustc_span::ErrorGuaranteed, Either, Symbol, TyCtxt};

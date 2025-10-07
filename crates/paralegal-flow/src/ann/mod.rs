@@ -1,7 +1,7 @@
 use std::fmt::{Display, Write};
 
 use either::Either;
-use flowistry_pdg_construction::{body_cache::intermediate_out_dir, encoder::ParalegalEncoder};
+use flowistry_pdg_construction::source_access::{intermediate_out_dir, ParalegalEncoder};
 use log::debug;
 use rustc_ast::Attribute;
 

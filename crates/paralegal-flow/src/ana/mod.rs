@@ -21,10 +21,10 @@ use anyhow::Result;
 use either::Either;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    body_cache::local_or_remote_paths,
-    calling_convention::CallingConvention,
+    source_access::local_or_remote_paths,
     utils::{is_async, type_as_fn, ArgSlice},
-    CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
+    CallChangeCallback, CallChanges, CallInfo, CallingConvention, InlineMissReason,
+    MemoPdgConstructor, SkipCall,
 };
 use inline_judge::{InlineJudgement, K};
 use itertools::Itertools;
@@ -366,10 +366,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 };
                 let rust_span = match i.location {
                     RichLocation::Location(loc) => {
-                        let expanded_span = match body.stmt_at(loc) {
-                            crate::Either::Right(term) => term.source_info.span,
-                            crate::Either::Left(stmt) => stmt.source_info.span,
-                        };
+                        let expanded_span = body.source_info(loc).span;
                         tcx.sess.source_map().stmt_span(expanded_span, body.span)
                     }
                     RichLocation::Start | RichLocation::End => tcx.def_span(i.function),

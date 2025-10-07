@@ -15,7 +15,7 @@
 
 use anyhow::Error;
 use clap::ValueEnum;
-use flowistry_pdg_construction::body_cache::std_crates;
+use flowistry_pdg_construction::source_access::std_crates;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};

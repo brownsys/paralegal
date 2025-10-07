@@ -24,18 +24,23 @@ use rustc_span::{source_map::Spanned, DesugaringKind, Span};
 use rustc_utils::{mir::control_dependencies::ControlDependencies, AdtDefExt, BodyExt, PlaceExt};
 
 use crate::{
-    approximation::ApproximationHandler,
-    async_support::{self, *},
-    body_cache::CachedBody,
-    calling_convention::*,
-    graph::{DepEdge, DepNode, OneHopLocation, PartialGraph, SourceUse, TargetUse},
-    mutation::{ModularMutationVisitor, Mutation, Time},
+    source_access::CachedBody,
     utils::{
         self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize, ShimResult,
         ShimType, TyAsFnResult,
     },
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
+
+mod approximation;
+
+use super::{
+    async_support::{self, *},
+    calling_convention::*,
+    global::{DepEdge, DepNode, OneHopLocation, PartialGraph, SourceUse, TargetUse},
+    mutation::{ModularMutationVisitor, Mutation, Time},
+};
+use approximation::ApproximationHandler;
 
 #[derive(PartialEq, Eq, Default, Clone, Debug)]
 pub(crate) struct InstructionState<'tcx> {
