@@ -5,7 +5,7 @@ use flowistry::mir::FlowistryInput;
 use log::trace;
 use petgraph::graph::{DiGraph, NodeIndex};
 
-use flowistry_pdg::{CallString, GlobalLocation};
+use flowistry_pdg::{CallString, Constant, GlobalLocation};
 
 use df::ResultsVisitor;
 use rustc_errors::DiagMessage;
@@ -336,21 +336,7 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
             return;
         }
         trace!("Handling terminator {:?} as not inlined", terminator.kind);
-        let mut arg_vis =
-            ModularMutationVisitor::new(&results.analysis.place_info, move |location, mutation| {
-                self.register_mutation(
-                    results,
-                    state,
-                    &mutation
-                        .inputs
-                        .into_iter()
-                        .map(|(input, use_)| Input::Unresolved { place: input, use_ })
-                        .collect::<Box<_>>(),
-                    Either::Left(mutation.mutated),
-                    location,
-                    mutation.mutation_reason,
-                )
-            });
+        let mut arg_vis = self.modular_mutation_visitor(results, state);
         arg_vis.set_time(Time::Before);
         arg_vis.visit_terminator(terminator, location);
     }
@@ -380,21 +366,7 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
         }
 
         trace!("Handling terminator {:?} as not inlined", terminator.kind);
-        let mut arg_vis =
-            ModularMutationVisitor::new(&results.analysis.place_info, move |location, mutation| {
-                self.register_mutation(
-                    results,
-                    state,
-                    &mutation
-                        .inputs
-                        .into_iter()
-                        .map(|(input, use_)| Input::Unresolved { place: input, use_ })
-                        .collect::<Box<_>>(),
-                    Either::Left(mutation.mutated),
-                    location,
-                    mutation.mutation_reason,
-                )
-            });
+        let mut arg_vis = self.modular_mutation_visitor(results, state);
         arg_vis.set_time(Time::After);
         arg_vis.visit_terminator(terminator, location);
     }
@@ -415,9 +387,16 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
             let inputs = mutation
                 .inputs
                 .into_iter()
-                .map(|(place, o)| Input::Unresolved {
-                    place: place.map_place(|place| results.analysis.normalize_place(&place)),
-                    use_: o,
+                .map(|(place, o)| match place {
+                    PlaceOrConst::Place(place) => Input::Unresolved {
+                        place: results.analysis.normalize_place(&place),
+                        use_: o,
+                    },
+                    PlaceOrConst::Const(const_) => Input::Const {
+                        const_,
+                        span: results.analysis.place_info.body.source_info(location).span,
+                        use_: o,
+                    },
                 })
                 .collect::<Box<_>>();
             self.register_mutation(
@@ -599,10 +578,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         let data_inputs = inputs
             .iter()
             .flat_map(|i| match i {
-                Input::Unresolved {
-                    place: PlaceOrConst::Place(place),
-                    use_,
-                } => Either::Right(
+                Input::Unresolved { place, use_ } => Either::Right(
                     constructor
                         .find_data_inputs(state, *place)
                         .into_iter()
@@ -616,13 +592,15 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                         .collect::<Vec<_>>()
                         .into_iter(),
                 ),
-                Input::Unresolved {
-                    place: PlaceOrConst::Const(value),
+                Input::Const {
+                    const_: value,
+                    span,
                     use_,
                 } => Either::Left(std::iter::once((
                     self.get_or_construct_node(value.into(), location.into(), || DepNode {
                         kind: DepNodeKind::Const(*value),
                         at: location.into(),
+                        span: *span,
                     }),
                     use_.map_or(SourceUse::Operand, SourceUse::Argument),
                 ))),
@@ -674,7 +652,12 @@ pub type PdgCache<'tcx, K> = Rc<TwoLevelCache<Instance<'tcx>, K, Option<PartialG
 #[derive(Debug)]
 enum Input<'tcx> {
     Unresolved {
-        place: PlaceOrConst<'tcx>,
+        place: Place<'tcx>,
+        use_: Option<u8>,
+    },
+    Const {
+        const_: Constant,
+        span: rustc_span::Span,
         use_: Option<u8>,
     },
     Resolved {

@@ -80,7 +80,6 @@ pub struct DepNodePlaceKind<'tcx> {
     pub(crate) place_pretty: Option<Intern<String>>,
     /// Does the PDG track subplaces of this place?
     pub is_split: bool,
-    pub span: Span,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -99,6 +98,7 @@ pub struct DepNode<'tcx, Loc> {
 
     /// Location of the place in the program.
     pub at: Loc,
+    pub span: Span,
 }
 
 impl<Loc: PartialEq> PartialEq for DepNode<'_, Loc> {
@@ -106,26 +106,28 @@ impl<Loc: PartialEq> PartialEq for DepNode<'_, Loc> {
         // Using an explicit match here with all fields, so that should new
         // fields be added we remember to check whether they need to be included
         // here.
-        let Self { at, kind } = self;
-        match (kind, &other.kind) {
+        let Self { at, kind, span } = self;
+        let eq = match (kind, &other.kind) {
             (
                 DepNodeKind::Place(DepNodePlaceKind {
                     place,
                     place_pretty: _,
-                    span,
                     is_split,
                 }),
                 DepNodeKind::Place(other_kind),
             ) => {
                 let eq = (place, at).eq(&(&other_kind.place, &other.at));
                 if eq {
-                    debug_assert_eq!(span, &other_kind.span);
                     debug_assert_eq!(is_split, &other_kind.is_split);
                 }
                 eq
             }
             (k1, k2) => at == &other.at && k1 == k2,
+        };
+        if eq {
+            debug_assert_eq!(span, &other.span);
         }
+        eq
     }
 }
 
@@ -170,10 +172,10 @@ impl<'tcx> DepNode<'tcx, OneHopLocation> {
             kind: DepNodeKind::Place(DepNodePlaceKind {
                 place,
                 place_pretty: place.to_string(tcx, body).map(Intern::new),
-                span,
                 is_split,
             }),
             at,
+            span,
         }
     }
 }
@@ -192,6 +194,7 @@ impl<'a, Loc> DepNode<'a, Loc> {
         DepNode {
             kind: self.kind.clone(),
             at: f(&self.at),
+            span: self.span,
         }
     }
 

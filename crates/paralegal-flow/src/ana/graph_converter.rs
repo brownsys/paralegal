@@ -239,9 +239,11 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     ) -> GNode {
         GNode(self.graph.add_node(NodeInfo {
             at,
-            description: format!("{place:?}"),
+            kind: NodeKind::Place {
+                description: format!("{place:?}"),
+                local: place.local.as_u32(),
+            },
             span: src_loc_for_span(span, self.tcx()),
-            local: Some(place.local.as_u32()),
         }))
     }
 
@@ -401,7 +403,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         let function_id = function.def_id();
         let at = &weight.at;
 
-        let DepNodeKind::Place(weight) = &weight.kind else {
+        let DepNodeKind::Place(kind) = &weight.kind else {
             // Constants can't have markers at the moment.
             return;
         };
@@ -415,18 +417,18 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
 
         match leaf_loc {
             RichLocation::Start
-                if matches!(body.local_kind(weight.place.local), mir::LocalKind::Arg) =>
+                if matches!(body.local_kind(kind.place.local), mir::LocalKind::Arg) =>
             {
-                let arg_num = weight.place.local.as_u32() - 1;
+                let arg_num = kind.place.local.as_u32() - 1;
                 self.known_def_ids.extend([function_id]);
                 self.register_annotations_for_argument(node, arg_num, function_id);
             }
-            RichLocation::End if weight.place.local == mir::RETURN_PLACE => {
+            RichLocation::End if kind.place.local == mir::RETURN_PLACE => {
                 self.known_def_ids.extend([function_id]);
                 self.register_annotations_for_return(node, function_id);
             }
             RichLocation::Location(loc) => self.handle_node_annotations_for_regular_location(
-                local_node, node, weight, at, body, loc, vis,
+                local_node, node, weight, body, loc, vis,
             ),
             _ => (),
         }
@@ -447,12 +449,12 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         &mut self,
         local_node: Node,
         node: GNode,
-        weight: &DepNodePlaceKind<'tcx>,
-        at: &OneHopLocation,
+        weight: &DepNode<'tcx, OneHopLocation>,
         body: &mir::Body<'tcx>,
         loc: Location,
         vis: &VisitDriver<'tcx, '_, K>,
     ) {
+        let DepNode { kind, at, span } = weight;
         let function = vis.current_function();
         let function_id = function.def_id();
         let crate::Either::Right(
@@ -482,7 +484,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             TypingEnv::post_analysis(self.tcx(), function_id),
             args,
         ) {
-            match handle_shims(inst, self.tcx(), param_env, weight.span) {
+            match handle_shims(inst, self.tcx(), param_env, *span) {
                 ShimResult::IsHandledShim { instance, .. } => instance,
                 ShimResult::IsNotShim => inst,
                 ShimResult::IsNonHandleableShim => {
@@ -564,9 +566,13 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     matches!(self.try_as_root(at), Some(l) if l.location == RichLocation::Start);
                 is_candidate
             })
+            .filter_map(|(n, i)| match i.kind {
+                NodeKind::Place { local, .. } => Some((n, local)),
+                _ => None,
+            })
             .collect();
 
-        g_nodes.sort_by_key(|(_, i)| i.local);
+        g_nodes.sort_by_key(|(_, i)| *i);
 
         g_nodes.into_iter().map(|(n, _)| n).collect()
     }
@@ -679,6 +685,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             let DepNode {
                 kind: DepNodeKind::Place(n),
                 at,
+                span,
             } = n
             else {
                 continue;
@@ -687,7 +694,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                 let ridx = self.translate_node(nidx);
                 let Some(mir::ProjectionElem::Field(id, _)) = n.place.projection.first() else {
                     tcx.dcx().span_err(
-                        n.span,
+                        *span,
                         format!("Expected field projection on async generator in {def_id:?}, found {:?}", n.place),
                     );
                     continue;
@@ -752,9 +759,14 @@ fn globalize_node<'tcx, K: Clone>(
     let at = vis.globalize_location(&node.at);
     NodeInfo {
         at,
-        description: node.display_place().to_string(),
         span: src_loc_for_span(node.span, tcx),
-        local: node.place().map(|p| p.local.as_u32()),
+        kind: match &node.kind {
+            DepNodeKind::Const(c) => NodeKind::Constant(*c),
+            DepNodeKind::Place(pkind) => NodeKind::Place {
+                description: format!("{:?}", pkind.place),
+                local: pkind.place.local.as_u32(),
+            },
+        },
     }
 }
 

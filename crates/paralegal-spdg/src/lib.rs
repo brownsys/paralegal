@@ -886,6 +886,9 @@ pub struct NodeInfo {
     pub at: CallString,
 
     pub kind: NodeKind,
+
+    /// Span information for this node
+    pub span: Span,
 }
 
 impl Display for NodeInfo {
@@ -899,8 +902,6 @@ pub enum NodeKind {
     Place {
         /// The debug print of the `mir::Place` that this node represents
         description: String,
-        /// Span information for this node
-        span: Span,
         /// The local variable this node references. This is an MIR implementation
         /// detail and should not be relied upon.
         local: u32,
