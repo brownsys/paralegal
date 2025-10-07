@@ -5,7 +5,6 @@
 //! [`analyze`](SPDGGenerator::analyze).
 
 use crate::{
-    ana::graph_converter::assemble_pdg,
     ann::{Annotation, MarkerAnnotation},
     args::Stub,
     desc::*,
@@ -46,6 +45,7 @@ mod inline_judge;
 use std::time::Duration;
 
 pub use self::inline_judge::InlineJudge;
+pub use graph_converter::assemble_pdg;
 
 /// Read-only database of information the analysis needs.
 ///
@@ -107,7 +107,12 @@ impl<'tcx> SPDGGenerator<'tcx> {
         );
         let local_def_id = target.def_id;
 
-        let pdg = assemble_pdg(self, known_def_ids, target);
+        let pdg = assemble_pdg(
+            &self.ctx,
+            &self.pdg_constructor,
+            known_def_ids,
+            target.def_id.to_def_id(),
+        );
 
         Ok((local_def_id.to_def_id(), pdg))
     }

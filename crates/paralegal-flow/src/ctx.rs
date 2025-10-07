@@ -23,6 +23,22 @@ impl<'tcx> Pctx<'tcx> {
         Self(Rc::new(payload))
     }
 
+    pub fn new_test(tcx: TyCtxt<'tcx>, opts: &'static crate::Args, load_markers: bool) -> Self {
+        let body_cache = Rc::new(BodyCache::new(tcx));
+        let marker_ctx = if load_markers {
+            MarkerDatabase::init(tcx, opts, body_cache.clone()).into()
+        } else {
+            MarkerDatabase::init_no_markers(tcx, opts, body_cache.clone()).into()
+        };
+        let payload = PctxPayload {
+            tcx,
+            body_cache,
+            opts,
+            marker_ctx,
+        };
+        Self(Rc::new(payload))
+    }
+
     pub fn tcx(&self) -> TyCtxt<'tcx> {
         self.0.tcx
     }

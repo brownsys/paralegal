@@ -1,4 +1,4 @@
-use super::{path_for_item, src_loc_for_span, SPDGGenerator};
+use super::{path_for_item, src_loc_for_span};
 use crate::{
     ann::MarkerAnnotation, desc::*, discover::FnToAnalyze, utils::*, HashMap, HashSet, MarkerCtx,
     Pctx,
@@ -7,7 +7,8 @@ use flowistry_pdg::{rustc_portable::Location, SourceUse};
 use flowistry_pdg_construction::{
     determine_async,
     utils::{handle_shims, try_monomorphize, try_resolve_function, type_as_fn, ShimResult},
-    DepEdge, DepEdgeKind, DepNode, DepNodeKind, OneHopLocation, PartialGraph, VisitDriver, Visitor,
+    DepEdge, DepEdgeKind, DepNode, DepNodeKind, MemoPdgConstructor, OneHopLocation, PartialGraph,
+    VisitDriver, Visitor,
 };
 use paralegal_spdg::Node;
 
@@ -71,7 +72,7 @@ fn assert_edge_location_invariant<'tcx, Loc: Eq + std::fmt::Display>(
 
 struct GraphAssembler<'tcx, 'a> {
     // read-only information
-    generator: &'a SPDGGenerator<'tcx>,
+    pctx: Pctx<'tcx>,
     is_async: bool,
 
     // Translation helpers
@@ -89,17 +90,17 @@ struct GraphAssembler<'tcx, 'a> {
 
 /// Create a global PDG (spanning the entire call tree) starting from the given
 /// target function.
-pub fn assemble_pdg<'a>(
-    generator: &'a SPDGGenerator<'_>,
-    known_def_ids: &'a mut FxHashSet<DefId>,
-    target: &'a FnToAnalyze,
+pub fn assemble_pdg<'tcx>(
+    pctx: &Pctx<'tcx>,
+    pdg_constructor: &MemoPdgConstructor<'tcx, u32>,
+    known_def_ids: &mut FxHashSet<DefId>,
+    target: DefId,
 ) -> SPDG {
-    let tcx = generator.tcx();
+    let tcx = pctx.tcx();
 
     // Information and body of the provided target function
-    let base_body_def_id = target.def_id.to_def_id();
-    let base_body = generator
-        .pdg_constructor
+    let base_body_def_id = target;
+    let base_body = pctx
         .body_cache()
         .try_get(base_body_def_id)
         .unwrap_or_else(|| {
@@ -113,12 +114,11 @@ pub fn assemble_pdg<'a>(
     // be a generator if the target is async.
     let possibly_generator_id =
         async_state.map_or(base_body_def_id, |(generator, ..)| generator.def_id());
-    let (possible_generator_instance, k) = generator
-        .pdg_constructor
-        .create_root_key(possibly_generator_id.expect_local());
+    let (possible_generator_instance, k) =
+        pdg_constructor.create_root_key(possibly_generator_id.expect_local());
 
-    let mut driver = VisitDriver::new(&generator.pdg_constructor, possible_generator_instance, k);
-    let mut assembler = GraphAssembler::new(generator, known_def_ids, target.def_id.to_def_id());
+    let mut driver = VisitDriver::new(&pdg_constructor, possible_generator_instance, k);
+    let mut assembler = GraphAssembler::new(pctx.clone(), known_def_ids, base_body_def_id);
 
     // If the top level function is async we start analysis from the generator
     // instead (because the async function itself is basically empty, it just
@@ -138,8 +138,7 @@ pub fn assemble_pdg<'a>(
         );
         // Using create_root_key might seem weird here but it currently does what
         // we need (resolve the instance)
-        let base_instance = generator
-            .pdg_constructor
+        let base_instance = pdg_constructor
             .create_root_key(base_body_def_id.expect_local())
             .0;
         // Because we actually started the analysis from the generator, we now
@@ -152,9 +151,9 @@ pub fn assemble_pdg<'a>(
     let arguments = assembler.determine_arguments();
     let graph = assembler.graph;
     SPDG {
-        name: Identifier::new(target.name()),
-        path: path_for_item(target.def_id.to_def_id(), tcx),
-        id: target.def_id.to_def_id(),
+        name: Identifier::new(tcx.opt_item_ident(base_body_def_id).unwrap().name),
+        path: path_for_item(base_body_def_id, tcx),
+        id: base_body_def_id,
         graph,
         markers: assembler
             .marker_assignments
@@ -173,23 +172,15 @@ pub fn assemble_pdg<'a>(
 }
 
 impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
-    fn new(
-        generator: &'a SPDGGenerator<'tcx>,
-        known_def_ids: &'a mut FxHashSet<DefId>,
-        def_id: DefId,
-    ) -> Self {
-        let is_async = entrypoint_is_async(
-            generator.pdg_constructor.body_cache(),
-            generator.tcx(),
-            def_id,
-        );
+    fn new(pctx: Pctx<'tcx>, known_def_ids: &'a mut FxHashSet<DefId>, def_id: DefId) -> Self {
+        let is_async = entrypoint_is_async(pctx.body_cache(), pctx.tcx(), def_id);
         Self {
             graph: SPDGImpl::new(),
+            pctx,
             nodes: Default::default(),
             marker_assignments: Default::default(),
             known_def_ids,
             types: Default::default(),
-            generator,
             is_async,
         }
     }
@@ -245,7 +236,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     }
 
     fn ctx(&self) -> &Pctx<'tcx> {
-        &self.generator.ctx
+        &self.pctx
     }
 
     fn tcx(&self) -> TyCtxt<'tcx> {
@@ -253,7 +244,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     }
 
     fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
-        self.generator.marker_ctx()
+        self.pctx.marker_ctx()
     }
 
     /// Fetch annotations item identified by this `id`.
@@ -326,12 +317,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         let resolution = vis.current_function();
 
         // Thread through each caller to recover generic arguments
-        let body = self
-            .generator
-            .pdg_constructor
-            .body_cache()
-            .get(function.def_id())
-            .body();
+        let body = self.pctx.body_cache().get(function.def_id()).body();
         let raw_ty = base_place.ty(body, tcx);
         let base_ty = try_monomorphize(
             resolution,
@@ -404,12 +390,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             return;
         };
 
-        let body = self
-            .generator
-            .pdg_constructor
-            .body_cache()
-            .get(function.def_id())
-            .body();
+        let body = self.pctx.body_cache().get(function.def_id()).body();
 
         match leaf_loc {
             RichLocation::Start
@@ -467,7 +448,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         let func =
             try_monomorphize(function, self.tcx(), param_env, func, term.source_info.span).unwrap();
         let Some(funcc) = func.constant() else {
-            self.generator.ctx.maybe_span_err(
+            self.pctx.maybe_span_err(
                 weight.span,
                 "SOUNDNESS: Cannot determine markers for function call",
             );
@@ -618,10 +599,9 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     ) {
         let def_id = instance.def_id();
         self.known_def_ids.extend([def_id]);
-        let tcx = self.generator.tcx();
+        let tcx = self.pctx.tcx();
         let base_body = self
-            .generator
-            .pdg_constructor
+            .pctx
             .body_cache()
             .try_get(def_id)
             .unwrap_or_else(|| {

@@ -786,6 +786,25 @@ impl<'tcx> MarkerDatabase<'tcx> {
             marker_statistics: RefCell::new(HashMap::default()),
         }
     }
+
+    pub fn init_no_markers(
+        tcx: TyCtxt<'tcx>,
+        opts: &'static crate::Args,
+        body_cache: Rc<BodyCache<'tcx>>,
+    ) -> Self {
+        Self {
+            tcx,
+            annotations: FxHashMap::default(),
+            external_annotations: HashMap::default(),
+            reachable_markers: Default::default(),
+            config: opts,
+            type_markers: Default::default(),
+            body_cache,
+            included_crates: Rc::new(|f| f == LOCAL_CRATE),
+            stubs: FxHashMap::default(),
+            marker_statistics: RefCell::new(HashMap::default()),
+        }
+    }
 }
 
 fn load_annotations(
@@ -813,7 +832,7 @@ fn load_annotations(
                         .map(move |(index, v)| (DefId { krate, index }, v)),
                 );
             }
-            panic!("No marker metadata fund for crate {krate}, tried paths {paths:?}");
+            panic!("No marker metadata found for crate {krate}, tried paths {paths:?}");
         })
         .collect()
 }
