@@ -1,8 +1,5 @@
 use super::{path_for_item, src_loc_for_span};
-use crate::{
-    ann::MarkerAnnotation, desc::*, discover::FnToAnalyze, utils::*, HashMap, HashSet, MarkerCtx,
-    Pctx,
-};
+use crate::{ann::MarkerAnnotation, desc::*, utils::*, HashMap, HashSet, MarkerCtx, Pctx};
 use flowistry_pdg::{rustc_portable::Location, SourceUse};
 use flowistry_pdg_construction::{
     determine_async,

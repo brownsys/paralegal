@@ -369,6 +369,7 @@ pub enum Constant {
     Bool(bool),
     String(Intern<String>),
     //Unknown(Intern<String>),
+    Zst(Intern<String>),
 }
 
 impl std::fmt::Display for Constant {
@@ -379,6 +380,7 @@ impl std::fmt::Display for Constant {
             Self::Int(i) => Display::fmt(i, f),
             Self::Uint(u) => Display::fmt(u, f),
             Self::String(s) => Debug::fmt(s, f),
+            Self::Zst(s) => f.write_str(s),
             //Self::Unknown(u) => write!(f, "Unsupported constant: {u}"),
         }
     }

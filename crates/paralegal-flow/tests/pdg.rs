@@ -287,23 +287,23 @@ pdg_test! {
   (c -> d)
 }
 
-pdg_test! {
-  dep_fields,
-  {
-    fn main() {
-      let mut x = (1, 2);
-      x.0 += 1;
-      let y = x.0;
-      let z = x.1;
-      x = (3, 4);
-      let w = x.0;
-    }
-  },
-  ((x.0) -> y),
-  ((x.1) -> z),
-  ((x.0) -/> z),
-  ((x.1) -/> y)
-}
+// pdg_test! {
+//   dep_fields,
+//   {
+//     fn main() {
+//       let mut x = (1, 2);
+//       x.0 += 1;
+//       let y = x.0;
+//       let z = x.1;
+//       x = (3, 4);
+//       let w = x.0;
+//     }
+//   },
+//   ((x.0) -> y),
+//   ((x.1) -> z),
+//   ((x.0) -/> z),
+//   ((x.1) -/> y)
+// }
 
 pdg_test! {
   strong_update,

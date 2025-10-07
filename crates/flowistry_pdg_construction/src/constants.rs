@@ -155,6 +155,7 @@ fn constant_from_const_value<'tcx>(
             }
             _ => (),
         },
+        (mir::ConstValue::ZeroSized, t) => return Ok(Constant::Zst(Intern::new(format!("{t:?}")))),
         _ => (),
     }
     Err(ConstConversionError::UnsupportedConstType(mir::Const::Val(
