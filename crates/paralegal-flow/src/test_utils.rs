@@ -24,10 +24,10 @@ use std::{
 use paralegal_spdg::{
     traverse::{generic_flows_to, generic_influencers, EdgeSelection},
     utils::{display_list, write_sep},
-    DefInfo, DisplayPath, EdgeInfo, Endpoint, Node, TypeId, SPDG,
+    DefInfo, DisplayPath, EdgeInfo, Endpoint, Node, NodeKind, TypeId, SPDG,
 };
 
-use flowistry_pdg::CallString;
+use flowistry_pdg::{CallString, Constant};
 use itertools::Itertools;
 use petgraph::visit::{Control, Data, DfsEvent, EdgeRef, FilterEdge, GraphBase, IntoEdges};
 use petgraph::visit::{IntoNeighbors, IntoNodeReferences};
@@ -543,6 +543,23 @@ impl<'g> CtrlRef<'g> {
             nodes: self.ctrl.arguments.to_vec(),
             graph: self,
         }
+    }
+
+    pub fn constants(&'g self) -> impl Iterator<Item = (NodeRef<'g>, Constant)> {
+        let spdg = self.spdg();
+        spdg.all_sources().filter_map(|node| {
+            let info = spdg.node_info(node);
+            match info.kind {
+                NodeKind::Constant(c) => Some((NodeRef { graph: self, node }, c)),
+                _ => None,
+            }
+        })
+    }
+
+    pub fn get_constant(&'g self, constant: Constant) -> Option<NodeRef<'g>> {
+        self.constants()
+            .find(|&(_, c)| c == constant)
+            .map(|(n, _)| n)
     }
 }
 

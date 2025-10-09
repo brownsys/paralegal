@@ -372,6 +372,24 @@ pub enum Constant {
     Zst(Intern<String>),
 }
 
+impl Constant {
+    pub fn int(i: impl Into<i64>) -> Self {
+        Self::Int(i.into())
+    }
+    pub fn uint(u: impl Into<u64>) -> Self {
+        Self::Uint(u.into())
+    }
+    pub fn bool(b: impl Into<bool>) -> Self {
+        Self::Bool(b.into())
+    }
+    pub fn string(s: impl AsRef<str>) -> Self {
+        Self::String(Intern::from_ref(s.as_ref()))
+    }
+    pub fn zst(s: impl AsRef<str>) -> Self {
+        Self::Zst(Intern::from_ref(s.as_ref()))
+    }
+}
+
 impl std::fmt::Display for Constant {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use std::fmt::{Debug, Display};

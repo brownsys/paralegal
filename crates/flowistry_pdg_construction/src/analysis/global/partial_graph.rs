@@ -103,8 +103,8 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
                 e,
                 &edge,
                 "Edge {} -> {} already exists in {:?}",
-                self.node_props(source).display_place(),
-                self.node_props(target).display_place(),
+                self.node_props(source), //.display_place(),
+                self.node_props(target), //.display_place(),
                 self.def_id
             );
         } else {

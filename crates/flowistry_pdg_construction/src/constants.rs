@@ -60,16 +60,9 @@ impl<'tcx> PlaceOrConst<'tcx> {
         span: rustc_span::Span,
         strict: bool,
     ) -> Option<Self> {
-        Self::try_from_operand(tcx, operand).map_err(|e| {
-            if !matches!(e, ConstConversionError::UnsupportedConstType(c) if is_ignored_const(tcx, &c)) {
-                let msg = format!("could not convert constant because: {e}");
-                if strict {
-                    tcx.dcx().span_err(span, msg);
-                } else {
-                    tcx.dcx().span_warn(span, msg);
-                }
-            }
-        }).ok()
+        Self::try_from_operand(tcx, operand)
+            .map_err(|e| e.handle_default_policy(tcx, span, strict))
+            .ok()
     }
 
     pub fn place(&self) -> Option<&Place<'tcx>> {
@@ -107,10 +100,29 @@ pub enum ConstConversionError<'tcx> {
     Integer128NotSupported { signed: bool },
 }
 
-fn is_ignored_const<'tcx>(tcx: ty::TyCtxt<'tcx>, c: &mir::Const<'tcx>) -> bool {
-    match c {
-        mir::Const::Unevaluated(c, _) => tcx.def_kind(c.def).is_fn_like(),
-        _ => false,
+impl<'tcx> ConstConversionError<'tcx> {
+    fn handle_default_policy(&self, tcx: ty::TyCtxt<'tcx>, span: rustc_span::Span, strict: bool) {
+        let emit = |msg| {
+            if strict {
+                tcx.dcx().span_err(span, msg);
+            } else {
+                tcx.dcx().span_warn(span, msg);
+            }
+        };
+        match self {
+            ConstConversionError::UnsupportedConstType(c) => match c {
+                mir::Const::Unevaluated(c, _) if tcx.def_kind(c.def).is_fn_like() => return,
+                mir::Const::Val(v, t) => match (v, t.kind()) {
+                    (_, ty::Ref(..)) => {
+                        return emit(format!("references are not supported: {t:?}"))
+                    }
+                    _ => (),
+                },
+                _ => (),
+            },
+            _ => (),
+        }
+        tcx.dcx().span_err(span, format!("{self}"));
     }
 }
 

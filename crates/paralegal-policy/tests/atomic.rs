@@ -575,7 +575,7 @@ fn commit_e5cca39440ad34ee6dc2ca0aebd16ceabb3abcd6() -> Result<()> {
                     if destroy {
                         // Note: the value index is updated before this action, in resource.apply_changes()
                         //store.remove_resource(&self.subject)?;
-                        store.add_resource_opts(&commit_resource, false, update_index, false )?;
+                        store.add_resource_opts(&commit_resource, false, update_index, false)?;
                         return Ok(());
                     }
                 }
