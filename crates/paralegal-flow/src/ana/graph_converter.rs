@@ -382,26 +382,21 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         let function = vis.current_function();
         let function_id = function.def_id();
 
-        let DepNodeKind::Place(kind) = &weight.kind else {
-            // Constants can't have markers at the moment.
-            return;
-        };
-
         let body = self.pctx.body_cache().get(function.def_id()).body();
 
-        match leaf_loc {
-            RichLocation::Start
-                if matches!(body.local_kind(kind.place.local), mir::LocalKind::Arg) =>
+        match (leaf_loc, weight.place()) {
+            (RichLocation::Start, Some(place))
+                if matches!(body.local_kind(place.local), mir::LocalKind::Arg) =>
             {
-                let arg_num = kind.place.local.as_u32() - 1;
+                let arg_num = place.local.as_u32() - 1;
                 self.known_def_ids.extend([function_id]);
                 self.register_annotations_for_argument(node, arg_num, function_id);
             }
-            RichLocation::End if kind.place.local == mir::RETURN_PLACE => {
+            (RichLocation::End, Some(place)) if place.local == mir::RETURN_PLACE => {
                 self.known_def_ids.extend([function_id]);
                 self.register_annotations_for_return(node, function_id);
             }
-            RichLocation::Location(loc) => self.handle_node_annotations_for_regular_location(
+            (RichLocation::Location(loc), _) => self.handle_node_annotations_for_regular_location(
                 local_node, node, weight, body, loc, vis,
             ),
             _ => (),
