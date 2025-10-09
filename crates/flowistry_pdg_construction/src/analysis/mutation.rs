@@ -14,10 +14,7 @@ use rustc_utils::{AdtDefExt, OperandExt, PlaceExt};
 
 use flowistry::mir::{placeinfo::PlaceInfo, utils::AsyncHack};
 
-use crate::{
-    constants::{ConstConversionError, PlaceOrConst},
-    utils::ty_resolve,
-};
+use crate::{constants::PlaceOrConst, utils::ty_resolve};
 
 /// Indicator of certainty about whether a place is being mutated.
 /// Used to determine whether an update should be strong or weak.
@@ -58,6 +55,7 @@ where
     f: F,
     place_info: &'a PlaceInfo<'tcx>,
     time: Time,
+    strict: bool,
 }
 
 /// A classification on when this visitor is executed. This is designed to allow
@@ -87,11 +85,12 @@ where
     F: FnMut(Location, Mutation<'tcx>),
 {
     /// Constructs a new visitor.
-    pub fn new(place_info: &'a PlaceInfo<'tcx>, f: F) -> Self {
+    pub fn new(place_info: &'a PlaceInfo<'tcx>, f: F, strict: bool) -> Self {
         ModularMutationVisitor {
             place_info,
             f,
             time: Time::Unspecified,
+            strict,
         }
     }
 
@@ -336,21 +335,13 @@ where
         if self.handle_special_rvalues(mutated, rvalue, location) {
             return;
         }
-        let mut collector = PlaceAndConstCollector::new(self.place_info.tcx);
+        let mut collector =
+            PlaceAndConstCollector::new(self.place_info.tcx, self.place_info.body, self.strict);
         collector.visit_rvalue(rvalue, location);
         let inputs = collector
             .values
             .into_iter()
-            .filter_map(|p| match p {
-                Ok(v) => Some((v, None)),
-                Err(e) => {
-                    self.place_info.tcx.dcx().span_err(
-                        self.place_info.body.source_info(location).span,
-                        e.to_string(),
-                    );
-                    None
-                }
-            })
+            .zip(std::iter::repeat(None))
             .collect();
         (self.f)(
             location,
@@ -378,7 +369,7 @@ where
                 self.place_info.body,
                 self.place_info.def_id,
             );
-            let mut arg_places = arg_places(self.place_info.tcx, args);
+            let mut arg_places = arg_places(self.place_info.tcx, args, self.strict);
             arg_places.retain(|(_, place)| {
                 place
                     .place()
@@ -403,43 +394,51 @@ where
 fn arg_places<'tcx>(
     tcx: ty::TyCtxt<'tcx>,
     args: &[Spanned<Operand<'tcx>>],
+    strict: bool,
 ) -> Vec<(usize, PlaceOrConst<'tcx>)> {
     args.iter()
         .enumerate()
-        .filter_map(
-            |(i, arg)| match PlaceOrConst::try_from_operand(tcx, &arg.node) {
-                Ok(place) => Some((i, place)),
-                Err(e) => {
-                    tcx.dcx().span_err(arg.span, e.to_string());
-                    None
-                }
-            },
-        )
+        .filter_map(|(i, arg)| {
+            Some((
+                i,
+                PlaceOrConst::from_operand_default_policy(tcx, &arg.node, arg.span, strict)?,
+            ))
+        })
         .collect::<Vec<_>>()
 }
 
-struct PlaceAndConstCollector<'tcx> {
-    values: Vec<Result<PlaceOrConst<'tcx>, ConstConversionError<'tcx>>>,
+struct PlaceAndConstCollector<'tcx, 'a> {
+    values: Vec<PlaceOrConst<'tcx>>,
     tcx: ty::TyCtxt<'tcx>,
+    body: &'a mir::Body<'tcx>,
+    strict: bool,
 }
 
-impl<'tcx> PlaceAndConstCollector<'tcx> {
-    fn new(tcx: ty::TyCtxt<'tcx>) -> Self {
+impl<'tcx, 'a> PlaceAndConstCollector<'tcx, 'a> {
+    fn new(tcx: ty::TyCtxt<'tcx>, body: &'a mir::Body<'tcx>, strict: bool) -> Self {
         Self {
             values: Vec::new(),
             tcx,
+            body,
+            strict,
         }
     }
 }
 
-impl<'tcx> Visitor<'tcx> for PlaceAndConstCollector<'tcx> {
+impl<'tcx, 'a> Visitor<'tcx> for PlaceAndConstCollector<'tcx, 'a> {
     fn visit_place(&mut self, place: &mir::Place<'tcx>, _: mir::visit::PlaceContext, _: Location) {
-        self.values.push(Ok(place.into()));
+        self.values.push(place.into());
     }
 
-    fn visit_operand(&mut self, operand: &mir::Operand<'tcx>, _: Location) {
-        self.values
-            .push(PlaceOrConst::try_from_operand(self.tcx, operand));
+    fn visit_operand(&mut self, operand: &mir::Operand<'tcx>, location: Location) {
+        if let Some(pc) = PlaceOrConst::from_operand_default_policy(
+            self.tcx,
+            operand,
+            self.body.source_info(location).span,
+            self.strict,
+        ) {
+            self.values.push(pc);
+        }
     }
 
     // Should we reflect constants from the type system?

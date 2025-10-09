@@ -80,6 +80,10 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
     pub(super) fn generic_args(&self) -> GenericArgsRef<'tcx> {
         self.root.args
     }
+    pub(super) fn strict(&self) -> bool {
+        self.memo.strict()
+    }
+
     fn dump_mir(&self) {
         use std::io::Write;
         let path = self.tcx().def_path_str(self.def_id) + ".mir";
@@ -716,6 +720,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
             move |location, mutation: Mutation<'tcx>| {
                 self.apply_mutation(state, location, mutation.mutated)
             },
+            self.strict(),
         )
     }
 

@@ -48,6 +48,30 @@ impl<'tcx> PlaceOrConst<'tcx> {
         })
     }
 
+    /// Same as try_from_operand, but ignores certain constants that aren't
+    /// convertible and reports errors for others directly as rustc errors.
+    ///
+    /// The span is for reporting error messages
+    ///
+    /// Returns None if the constant should be ignored.
+    pub fn from_operand_default_policy(
+        tcx: ty::TyCtxt<'tcx>,
+        operand: &mir::Operand<'tcx>,
+        span: rustc_span::Span,
+        strict: bool,
+    ) -> Option<Self> {
+        Self::try_from_operand(tcx, operand).map_err(|e| {
+            if !matches!(e, ConstConversionError::UnsupportedConstType(c) if is_ignored_const(tcx, &c)) {
+                let msg = format!("could not convert constant because: {e}");
+                if strict {
+                    tcx.dcx().span_err(span, msg);
+                } else {
+                    tcx.dcx().span_warn(span, msg);
+                }
+            }
+        }).ok()
+    }
+
     pub fn place(&self) -> Option<&Place<'tcx>> {
         match self {
             Self::Place(place) => Some(place),
@@ -83,6 +107,13 @@ pub enum ConstConversionError<'tcx> {
     Integer128NotSupported { signed: bool },
 }
 
+fn is_ignored_const<'tcx>(tcx: ty::TyCtxt<'tcx>, c: &mir::Const<'tcx>) -> bool {
+    match c {
+        mir::Const::Unevaluated(c, _) => tcx.def_kind(c.def).is_fn_like(),
+        _ => false,
+    }
+}
+
 impl std::fmt::Display for ConstConversionError<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -111,7 +142,7 @@ fn constant_from_const_value<'tcx>(
     ty: ty::Ty<'tcx>,
     ct: &mir::ConstValue<'tcx>,
 ) -> Result<Constant, ConstConversionError<'tcx>> {
-    // largely from rustc_middle/mir/pretty.rs.html#1952-1962
+    // largely from rustc_middle/mir/pretty.rs:1952-1962
     match (ct, ty.kind()) {
         (_, ty::Ref(_, inner_ty, _)) if matches!(inner_ty.kind(), ty::Str) => {
             if let Some(data) = ct.try_get_slice_bytes_for_diagnostics(tcx) {

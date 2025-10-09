@@ -178,6 +178,10 @@ impl<'tcx, K> MemoPdgConstructor<'tcx, K> {
             self.tcx.dcx().span_err(span, msg.into());
         }
     }
+
+    pub fn strict(&self) -> bool {
+        !self.relaxed
+    }
 }
 
 impl<'tcx, K: std::hash::Hash + Eq + Clone> MemoPdgConstructor<'tcx, K> {
@@ -265,7 +269,7 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
         statement: &'mir rustc_middle::mir::Statement<'tcx>,
         location: Location,
     ) {
-        let mut vis = self.modular_mutation_visitor(results, state);
+        let mut vis = self.modular_mutation_visitor(results, state, results.analysis.strict());
 
         vis.visit_statement(statement, location)
     }
@@ -314,7 +318,7 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
             return;
         }
         trace!("Handling terminator {:?} as not inlined", terminator.kind);
-        let mut arg_vis = self.modular_mutation_visitor(results, state);
+        let mut arg_vis = self.modular_mutation_visitor(results, state, results.analysis.strict());
         arg_vis.set_time(Time::Before);
         arg_vis.visit_terminator(terminator, location);
     }
@@ -344,7 +348,7 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
         }
 
         trace!("Handling terminator {:?} as not inlined", terminator.kind);
-        let mut arg_vis = self.modular_mutation_visitor(results, state);
+        let mut arg_vis = self.modular_mutation_visitor(results, state, results.analysis.strict());
         arg_vis.set_time(Time::After);
         arg_vis.visit_terminator(terminator, location);
     }
@@ -355,37 +359,42 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         &'a mut self,
         results: &'a LocalAnalysisResults<'tcx, 'mir, K>,
         state: &'a InstructionState<'tcx>,
+        strict: bool,
     ) -> ModularMutationVisitor<
         'a,
         'tcx,
         impl FnMut(Location, Mutation<'tcx>) + use<'a, 'tcx, 'mir, K>,
     > {
-        ModularMutationVisitor::new(&results.analysis.place_info, move |location, mutation| {
-            let place = results.analysis.normalize_place(&mutation.mutated);
-            let inputs = mutation
-                .inputs
-                .into_iter()
-                .map(|(place, o)| match place {
-                    PlaceOrConst::Place(place) => Input::Unresolved {
-                        place: results.analysis.normalize_place(&place),
-                        use_: o,
-                    },
-                    PlaceOrConst::Const(const_) => Input::Const {
-                        const_,
-                        span: results.analysis.place_info.body.source_info(location).span,
-                        use_: o,
-                    },
-                })
-                .collect::<Box<_>>();
-            self.register_mutation(
-                results,
-                state,
-                &inputs,
-                Either::Left(place),
-                location,
-                mutation.mutation_reason,
-            )
-        })
+        ModularMutationVisitor::new(
+            &results.analysis.place_info,
+            move |location, mutation| {
+                let place = results.analysis.normalize_place(&mutation.mutated);
+                let inputs = mutation
+                    .inputs
+                    .into_iter()
+                    .map(|(place, o)| match place {
+                        PlaceOrConst::Place(place) => Input::Unresolved {
+                            place: results.analysis.normalize_place(&place),
+                            use_: o,
+                        },
+                        PlaceOrConst::Const(const_) => Input::Const {
+                            const_,
+                            span: results.analysis.place_info.body.source_info(location).span,
+                            use_: o,
+                        },
+                    })
+                    .collect::<Box<_>>();
+                self.register_mutation(
+                    results,
+                    state,
+                    &inputs,
+                    Either::Left(place),
+                    location,
+                    mutation.mutation_reason,
+                )
+            },
+            strict,
+        )
     }
 
     /// returns whether we were able to successfully handle this as inline
@@ -406,6 +415,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
             return false;
         };
         let constructor = &results.analysis;
+        let strict = constructor.strict();
         let Some(handling) = constructor.determine_call_handling(
             location,
             Cow::Borrowed(func),
@@ -435,17 +445,14 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                     Box::new(AggregateKind::Tuple),
                     IndexVec::from_iter(args.iter().map(|op| op.node.clone())),
                 );
-                self.modular_mutation_visitor(results, state).visit_assign(
-                    destination,
-                    &rvalue,
-                    location,
-                );
+                self.modular_mutation_visitor(results, state, strict)
+                    .visit_assign(destination, &rvalue, location);
                 return false;
             }
             CallHandling::ApproxAsyncSM(how) => {
                 how(
                     constructor,
-                    &mut self.modular_mutation_visitor(results, state),
+                    &mut self.modular_mutation_visitor(results, state, strict),
                     args,
                     *destination,
                     location,
