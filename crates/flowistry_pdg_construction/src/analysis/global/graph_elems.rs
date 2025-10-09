@@ -78,12 +78,13 @@ pub struct DepNodePlaceKind<'tcx> {
     pub(crate) place_pretty: Option<Intern<String>>,
     /// Does the PDG track subplaces of this place?
     pub is_split: bool,
+    pub is_return: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DepNodeKind<'tcx> {
     Place(DepNodePlaceKind<'tcx>),
-    Const { value: Constant, is_arg: Option<u8> },
+    Const(Constant),
 }
 
 /// A node in the program dependency graph.
@@ -97,6 +98,7 @@ pub struct DepNode<'tcx, Loc> {
     /// Location of the place in the program.
     pub at: Loc,
     pub span: Span,
+    pub is_arg: Option<u8>,
 }
 
 impl<Loc: PartialEq> PartialEq for DepNode<'_, Loc> {
@@ -104,24 +106,33 @@ impl<Loc: PartialEq> PartialEq for DepNode<'_, Loc> {
         // Using an explicit match here with all fields, so that should new
         // fields be added we remember to check whether they need to be included
         // here.
-        let Self { at, kind, span } = self;
-        let eq = match (kind, &other.kind) {
-            (
-                DepNodeKind::Place(DepNodePlaceKind {
-                    place,
-                    place_pretty: _,
-                    is_split,
-                }),
-                DepNodeKind::Place(other_kind),
-            ) => {
-                let eq = (place, at).eq(&(&other_kind.place, &other.at));
-                if eq {
-                    debug_assert_eq!(is_split, &other_kind.is_split);
+        let Self {
+            at,
+            kind,
+            span,
+            is_arg,
+        } = self;
+        let base_cmp = (at, is_arg).eq(&(&other.at, &other.is_arg));
+        let eq = base_cmp
+            && match (kind, &other.kind) {
+                (
+                    DepNodeKind::Place(DepNodePlaceKind {
+                        place,
+                        place_pretty: _,
+                        is_split,
+                        is_return,
+                    }),
+                    DepNodeKind::Place(other_kind),
+                ) => {
+                    let eq = place == &other_kind.place;
+                    if eq {
+                        debug_assert_eq!(is_split, &other_kind.is_split);
+                        debug_assert_eq!(is_return, &other_kind.is_return);
+                    }
+                    eq
                 }
-                eq
-            }
-            (k1, k2) => at == &other.at && k1 == k2,
-        };
+                (k1, k2) => k1 == k2,
+            };
         if eq {
             debug_assert_eq!(span, &other.span);
         }
@@ -136,11 +147,17 @@ impl<Loc: Hash> Hash for DepNode<'_, Loc> {
         // Using an explicit match here with all fields, so that should new
         // fields be added we remember to check whether they need to be included
         // here.
-        let place_or_const = match &self.kind {
-            DepNodeKind::Const { value, is_arg } => Ok((value, is_arg)),
+        let Self {
+            kind,
+            at,
+            span: _,
+            is_arg,
+        } = self;
+        let place_or_const = match kind {
+            DepNodeKind::Const(value) => Ok(value),
             DepNodeKind::Place(p) => Err(p.place),
         };
-        (place_or_const, &self.at).hash(state)
+        (place_or_const, at, is_arg).hash(state)
     }
 }
 
@@ -156,6 +173,8 @@ impl<'tcx> DepNode<'tcx, OneHopLocation> {
         body: &Body<'tcx>,
         context: DefId,
         is_split: bool,
+        is_return: bool,
+        is_arg: Option<u8>,
     ) -> Self {
         let span = match at.location {
             RichLocation::Location(loc) => {
@@ -166,23 +185,27 @@ impl<'tcx> DepNode<'tcx, OneHopLocation> {
             }
             RichLocation::Start | RichLocation::End => tcx.def_span(context),
         };
+        assert!(
+            !(is_arg.is_some() && is_return),
+            "{is_arg:?} and {is_return}"
+        );
         DepNode {
             kind: DepNodeKind::Place(DepNodePlaceKind {
                 place,
                 place_pretty: place.to_string(tcx, body).map(Intern::new),
                 is_split,
+                is_return,
             }),
             at,
             span,
+            is_arg,
         }
     }
 
     pub fn make_key(&self) -> NodeKey<'tcx> {
         match &self.kind {
             DepNodeKind::Place(p) => NodeKey::for_place(p.place, self.at.clone()),
-            DepNodeKind::Const { value, is_arg } => {
-                NodeKey::for_const(*value, *is_arg, self.at.clone())
-            }
+            DepNodeKind::Const(value) => NodeKey::for_const(*value, self.is_arg, self.at.clone()),
         }
     }
 }
@@ -202,12 +225,13 @@ impl<'a, Loc> DepNode<'a, Loc> {
             kind: self.kind.clone(),
             at: f(&self.at),
             span: self.span,
+            is_arg: self.is_arg,
         }
     }
 
     pub fn place_or_const(&self) -> PlaceOrConst<'a> {
         match &self.kind {
-            DepNodeKind::Const { value, .. } => PlaceOrConst::Const(*value),
+            DepNodeKind::Const(value) => PlaceOrConst::Const(*value),
             DepNodeKind::Place(p) => PlaceOrConst::Place(p.place),
         }
     }
@@ -232,7 +256,7 @@ impl<Loc: fmt::Display> fmt::Display for DepNode<'_, Loc> {
                 Some(s) => s.fmt(f)?,
                 None => write!(f, "{:?}", p.place)?,
             },
-            DepNodeKind::Const { value, .. } => write!(f, "{value}")?,
+            DepNodeKind::Const(value) => write!(f, "{value}")?,
         }
         write!(f, " @ {}", self.at)
     }

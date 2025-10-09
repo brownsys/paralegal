@@ -484,37 +484,44 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         // Also yikes. This should have better detection of whether
         // a place is (part of) a function return
 
-        let mut is_return_use = false;
-        let mut has_no_data_edges = true;
+        let is_return_use =
+            matches!(weight, DepNode { kind: DepNodeKind::Place(p), .. } if p.is_return );
+        let has_no_data_edges = true;
 
-        for eref in graph.raw().edges_directed(local_node, petgraph::Outgoing) {
-            let SourceUse::Argument(arg) = eref.weight().source_use else {
-                continue;
-            };
+        if let Some(arg) = weight.is_arg {
             self.register_annotations_for_function(node, f, |ann| {
                 ann.refinement.on_argument().contains(arg as u32).unwrap()
             });
         }
-        for eref in graph.raw().edges_directed(local_node, petgraph::Incoming) {
-            if eref.weight().kind == DepEdgeKind::Data {
-                has_no_data_edges = false;
-                let this_at = eref.weight().at.clone();
-                #[cfg(debug_assertions)]
-                assert_edge_location_invariant(
-                    self.tcx(),
-                    this_at.clone(),
-                    body,
-                    at.clone(),
-                    |at| GlobalLocation {
-                        function: function.def_id(),
-                        location: at.location,
-                    },
-                );
-                if at == &this_at && eref.weight().target_use.is_return() {
-                    is_return_use = true;
-                }
-            }
-        }
+
+        // for eref in graph.raw().edges_directed(local_node, petgraph::Outgoing) {
+        //     let SourceUse::Argument(arg) = eref.weight().source_use else {
+        //         continue;
+        //     };
+        //     self.register_annotations_for_function(node, f, |ann| {
+        //         ann.refinement.on_argument().contains(arg as u32).unwrap()
+        //     });
+        // }
+        // for eref in graph.raw().edges_directed(local_node, petgraph::Incoming) {
+        //     if eref.weight().kind == DepEdgeKind::Data {
+        //         has_no_data_edges = false;
+        //         let this_at = eref.weight().at.clone();
+        //         #[cfg(debug_assertions)]
+        //         assert_edge_location_invariant(
+        //             self.tcx(),
+        //             this_at.clone(),
+        //             body,
+        //             at.clone(),
+        //             |at| GlobalLocation {
+        //                 function: function.def_id(),
+        //                 location: at.location,
+        //             },
+        //         );
+        //         if at == &this_at && eref.weight().target_use.is_return() {
+        //             is_return_use = true;
+        //         }
+        //     }
+        // }
         let needs_return_markers = has_no_data_edges | is_return_use;
 
         if needs_return_markers {
@@ -654,6 +661,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                 kind: DepNodeKind::Place(n),
                 at,
                 span,
+                ..
             } = n
             else {
                 continue;
@@ -729,7 +737,7 @@ fn globalize_node<'tcx, K: Clone>(
         at,
         span: src_loc_for_span(node.span, tcx),
         kind: match &node.kind {
-            DepNodeKind::Const { value, .. } => NodeKind::Constant(*value),
+            DepNodeKind::Const(value) => NodeKind::Constant(*value),
             DepNodeKind::Place(pkind) => NodeKind::Place {
                 description: format!("{:?}", pkind.place),
                 local: pkind.place.local.as_u32(),

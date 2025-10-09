@@ -589,12 +589,10 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                     self.get_or_construct_node(
                         &NodeKey::for_const(*value, *is_arg, location.into()),
                         || DepNode {
-                            kind: DepNodeKind::Const {
-                                value: *value,
-                                is_arg: *is_arg,
-                            },
+                            kind: DepNodeKind::Const(*value),
                             at: location.into(),
                             span: *span,
+                            is_arg: *is_arg,
                         },
                     ),
                     is_arg.map_or(SourceUse::Operand, SourceUse::Argument),

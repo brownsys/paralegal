@@ -1,5 +1,6 @@
 use std::{borrow::Cow, collections::HashSet, fmt::Display, hash::Hash, iter};
 
+use either::Either;
 use flowistry::mir::{placeinfo::PlaceInfo, FlowistryInput};
 use flowistry_pdg::RichLocation;
 use itertools::Itertools;
@@ -11,8 +12,9 @@ use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{
-        visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, Location, Operand, Place,
-        Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
+        visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, LocalKind, Location,
+        Operand, Place, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind,
+        RETURN_PLACE,
     },
     ty::{
         AdtKind, EarlyBinder, GenericArgKind, GenericArgsRef, Instance, Ty, TyCtxt, TyKind,
@@ -29,7 +31,8 @@ use crate::{
         self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize, ShimResult,
         ShimType, TyAsFnResult,
     },
-    CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
+    CallChangeCallback, CallChanges, CallInfo, DepNodeKind, InlineMissReason, MemoPdgConstructor,
+    SkipCall,
 };
 
 mod approximation;
@@ -71,7 +74,6 @@ pub(crate) struct LocalAnalysis<'tcx, 'a, K> {
     pub(crate) place_info: PlaceInfo<'tcx>,
     control_dependencies: ControlDependencies<BasicBlock>,
     pub(crate) body_assignments: utils::BodyAssignments,
-    start_loc: FxHashSet<RichLocation>,
     pub(crate) param_env: TypingEnv<'tcx>,
     k: K,
 }
@@ -160,9 +162,36 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
             "Place type is {:?}",
             place.ty(&self.mono_body, self.tcx()).ty,
         );
+        let location: OneHopLocation = location.into();
+        let (is_return, is_arg) = match location.location {
+            RichLocation::Start => (
+                false,
+                self.body_with_facts
+                    .body()
+                    .local_kind(place.local)
+                    .eq(&LocalKind::Arg)
+                    .then_some((place.local.as_u32() - 1) as u8),
+            ),
+            RichLocation::Location(loc) => {
+                let is_arg = if let Either::Right(Terminator {
+                    kind: TerminatorKind::Call { args, .. },
+                    ..
+                }) = self.body_with_facts.body().stmt_at(loc)
+                {
+                    args.iter()
+                        .enumerate()
+                        .find(|(_, arg)| arg.node.place() == Some(place))
+                        .map(|(i, _)| i as u8)
+                } else {
+                    None
+                };
+                (false, is_arg)
+            }
+            RichLocation::End => (true, None),
+        };
         DepNode::for_place(
             place,
-            location.into(),
+            location,
             self.tcx(),
             &self.mono_body,
             self.def_id,
@@ -171,6 +200,8 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                 self.def_id,
                 self.tcx(),
             ),
+            is_return,
+            is_arg,
         )
     }
 
@@ -269,7 +300,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                 let conflicts = state
                     .last_mutation
                     .iter()
-                    .map(|(k, locs)| (*k, locs))
+                    .map(|(k, locs)| (*k, Either::Left(locs)))
                     .filter(move |(place, _)| {
                         if place.is_indirect() && place.is_arg(&self.mono_body) {
                             // HACK: `places_conflict` seems to consider it a bug is `borrow_place`
@@ -287,7 +318,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                 // Special case: if the `alias` is an un-mutated argument, then include it as a conflict
                 // coming from the special start location.
                 let alias_last_mut = if alias.is_arg(&self.mono_body) {
-                    Some((alias, &self.start_loc))
+                    Some((alias, Either::Right([&RichLocation::Start])))
                 } else {
                     None
                 };
@@ -299,7 +330,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                     .flat_map(|(conflict, last_mut_locs)| {
                         //println!("Conflict {conflict:?} for place {input:?}");
                         // For each last mutated location:
-                        last_mut_locs.iter().map(move |last_mut_loc| {
+                        last_mut_locs.into_iter().map(move |last_mut_loc| {
                             // Return <CONFLICT> @ <LAST_MUT_LOC> as an input node.
                             self.make_dep_node(conflict, *last_mut_loc)
                         })
@@ -391,9 +422,6 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
         let place_info = PlaceInfo::build(tcx, def_id, body_with_facts);
         let control_dependencies = body.control_dependencies();
 
-        let mut start_loc = FxHashSet::default();
-        start_loc.insert(RichLocation::Start);
-
         let body_assignments = utils::find_body_assignments(&body);
 
         let slf = LocalAnalysis {
@@ -403,7 +431,6 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
             mono_body: body,
             place_info,
             control_dependencies,
-            start_loc,
             def_id,
             body_assignments,
             param_env,
@@ -757,10 +784,17 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
                 for location in locations {
                     let src = final_state.get_place_node(*place, location.into()).unwrap();
                     let eloc = RichLocation::End;
+                    let key = NodeKey::for_place(*place, eloc.into());
+                    let prior = final_state.get_node(&key);
+                    debug_assert!(
+                        prior.is_none()
+                            || prior.is_some_and(|p|
+                                matches!(&final_state.node_props(p).kind, DepNodeKind::Place(p) if p.is_return),
+                        ),
+                        "{}", final_state.node_props(prior.unwrap())
+                    );
                     let dst = final_state
-                        .get_or_construct_node(&NodeKey::for_place(*place, eloc.into()), || {
-                            self.make_dep_node(*place, eloc)
-                        });
+                        .get_or_construct_node(&key, || self.make_dep_node(*place, eloc));
                     let edge = DepEdge::data(
                         self.mono_body.terminator_loc(block).into(),
                         SourceUse::Operand,
