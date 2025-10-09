@@ -729,7 +729,7 @@ fn globalize_node<'tcx, K: Clone>(
         at,
         span: src_loc_for_span(node.span, tcx),
         kind: match &node.kind {
-            DepNodeKind::Const(c) => NodeKind::Constant(*c),
+            DepNodeKind::Const { value, .. } => NodeKind::Constant(*value),
             DepNodeKind::Place(pkind) => NodeKind::Place {
                 description: format!("{:?}", pkind.place),
                 local: pkind.place.local.as_u32(),

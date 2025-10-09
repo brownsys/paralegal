@@ -18,7 +18,7 @@ use rustc_span::Span;
 use rustc_utils::PlaceExt;
 
 pub use super::partial_graph::PartialGraph;
-use crate::constants::PlaceOrConst;
+use crate::{analysis::global::partial_graph::NodeKey, constants::PlaceOrConst};
 
 /// Usually a location in a MIR body but can also cross "one hop" into a called function.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -83,7 +83,7 @@ pub struct DepNodePlaceKind<'tcx> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DepNodeKind<'tcx> {
     Place(DepNodePlaceKind<'tcx>),
-    Const(Constant),
+    Const { value: Constant, is_arg: Option<u8> },
 }
 
 /// A node in the program dependency graph.
@@ -137,7 +137,7 @@ impl<Loc: Hash> Hash for DepNode<'_, Loc> {
         // fields be added we remember to check whether they need to be included
         // here.
         let place_or_const = match &self.kind {
-            DepNodeKind::Const(c) => Ok(c),
+            DepNodeKind::Const { value, is_arg } => Ok((value, is_arg)),
             DepNodeKind::Place(p) => Err(p.place),
         };
         (place_or_const, &self.at).hash(state)
@@ -176,6 +176,15 @@ impl<'tcx> DepNode<'tcx, OneHopLocation> {
             span,
         }
     }
+
+    pub fn make_key(&self) -> NodeKey<'tcx> {
+        match &self.kind {
+            DepNodeKind::Place(p) => NodeKey::for_place(p.place, self.at.clone()),
+            DepNodeKind::Const { value, is_arg } => {
+                NodeKey::for_const(*value, *is_arg, self.at.clone())
+            }
+        }
+    }
 }
 
 impl<'a, Loc> DepNode<'a, Loc> {
@@ -196,15 +205,15 @@ impl<'a, Loc> DepNode<'a, Loc> {
         }
     }
 
-    pub fn make_descriptor(&self) -> PlaceOrConst<'a> {
+    pub fn place_or_const(&self) -> PlaceOrConst<'a> {
         match &self.kind {
-            DepNodeKind::Const(c) => PlaceOrConst::Const(*c),
+            DepNodeKind::Const { value, .. } => PlaceOrConst::Const(*value),
             DepNodeKind::Place(p) => PlaceOrConst::Place(p.place),
         }
     }
 
     pub fn display_place(&self) -> DisplayNodeKind<'a> {
-        DisplayNodeKind(self.make_descriptor())
+        DisplayNodeKind(self.place_or_const())
     }
 
     pub fn place(&self) -> Option<Place<'a>> {
@@ -223,7 +232,7 @@ impl<Loc: fmt::Display> fmt::Display for DepNode<'_, Loc> {
                 Some(s) => s.fmt(f)?,
                 None => write!(f, "{:?}", p.place)?,
             },
-            DepNodeKind::Const(c) => write!(f, "{c}")?,
+            DepNodeKind::Const { value, .. } => write!(f, "{value}")?,
         }
         write!(f, " @ {}", self.at)
     }

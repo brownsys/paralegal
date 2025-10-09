@@ -1,3 +1,4 @@
+use flowistry_pdg::Constant;
 use petgraph::visit::IntoNodeReferences;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -9,13 +10,12 @@ use rustc_middle::{
 };
 
 use super::graph_elems::{DepEdge, DepNode, DepNodeKind, OneHopLocation};
-use crate::constants::PlaceOrConst;
 
 pub type Node = petgraph::graph::NodeIndex;
 
 #[derive(Debug, Clone)]
 pub struct PartialGraph<'tcx, K> {
-    node_mapping: FxHashMap<(PlaceOrConst<'tcx>, OneHopLocation), Node>,
+    node_mapping: FxHashMap<NodeKey<'tcx>, Node>,
     graph: petgraph::Graph<DepNode<'tcx, OneHopLocation>, DepEdge<OneHopLocation>>,
     pub(crate) def_id: DefId,
     arg_count: usize,
@@ -29,6 +29,40 @@ pub struct PartialGraph<'tcx, K> {
         K,
         Vec<GraphConnectionPoint<'tcx, OneHopLocation>>,
     )>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct NodeKey<'tcx> {
+    kind: NodeKeyKind<'tcx>,
+    at: OneHopLocation,
+}
+
+impl<'tcx> NodeKey<'tcx> {
+    pub fn for_place(place: Place<'tcx>, at: OneHopLocation) -> Self {
+        Self {
+            kind: NodeKeyKind::Place(place),
+            at,
+        }
+    }
+
+    pub fn for_const(constant: Constant, is_arg: Option<u8>, at: OneHopLocation) -> Self {
+        Self {
+            kind: NodeKeyKind::Const { constant, is_arg },
+            at,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum NodeKeyKind<'tcx> {
+    Const {
+        constant: Constant,
+        /// for constants we need to track which (if any) argument position they
+        /// are in a call, because the same constant (e.g. false), can be input
+        /// more than once in a function call.
+        is_arg: Option<u8>,
+    },
+    Place(Place<'tcx>),
 }
 
 pub type GraphConnectionPoint<'tcx, Loc> = (Node, DepEdge<Loc>);
@@ -64,29 +98,28 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
     }
 
     pub(crate) fn insert_node(&mut self, node: DepNode<'tcx, OneHopLocation>) -> Node {
-        self.get_or_construct_node(node.make_descriptor(), node.at.clone(), || node)
+        self.get_or_construct_node(&node.make_key(), || node)
     }
 
     pub fn get_place_node(&self, place: Place<'tcx>, at: OneHopLocation) -> Option<Node> {
-        self.get_node(place.into(), at)
+        self.get_node(&NodeKey::for_place(place, at))
     }
 
-    pub fn get_node(&self, place: PlaceOrConst<'tcx>, at: OneHopLocation) -> Option<Node> {
-        self.node_mapping.get(&(place, at)).copied()
+    pub fn get_node(&self, key: &NodeKey<'tcx>) -> Option<Node> {
+        self.node_mapping.get(key).copied()
     }
 
     pub(crate) fn get_or_construct_node(
         &mut self,
-        place: PlaceOrConst<'tcx>,
-        at: OneHopLocation,
+        key: &NodeKey<'tcx>,
         construct: impl FnOnce() -> DepNode<'tcx, OneHopLocation>,
     ) -> Node {
-        if let Some(node) = self.get_node(place, at.clone()) {
+        if let Some(node) = self.get_node(key) {
             node
         } else {
             let node = construct();
             let idx = self.graph.add_node(node);
-            self.node_mapping.insert((place, at), idx);
+            self.node_mapping.insert(key.clone(), idx);
             idx
         }
     }

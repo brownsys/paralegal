@@ -37,7 +37,7 @@ use call_tree_visit::VisitDriver;
 pub use graph_elems::{
     DepEdge, DepEdgeKind, DepNode, DepNodeKind, OneHopLocation, SourceUse, TargetUse,
 };
-pub use partial_graph::{Node, PartialGraph};
+pub use partial_graph::{Node, NodeKey, PartialGraph};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ConstructionResult<T> {
@@ -380,7 +380,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                         PlaceOrConst::Const(const_) => Input::Const {
                             const_,
                             span: results.analysis.place_info.body.source_info(location).span,
-                            use_: o,
+                            is_arg: o,
                         },
                     })
                     .collect::<Box<_>>();
@@ -494,8 +494,10 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
             let Some(child_place) = child_src.place() else {
                 continue;
             };
-            let child_node =
-                self.get_or_construct_node(child_place.into(), child_src.at.clone(), || child_src);
+            let child_node = self.get_or_construct_node(
+                &NodeKey::for_place(child_place, child_src.at.clone()),
+                || child_src,
+            );
             if let Some(translation) = translator.translate_to_parent(child_place) {
                 self.register_mutation(
                     results,
@@ -522,8 +524,10 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
             let Some(child_place) = child_dst.place() else {
                 continue;
             };
-            let child_node =
-                self.get_or_construct_node(child_place.into(), child_dst.at.clone(), || child_dst);
+            let child_node = self.get_or_construct_node(
+                &NodeKey::for_place(child_place, child_dst.at.clone()),
+                || child_dst,
+            );
             if let Some(parent_place) = translator.translate_to_parent(child_place) {
                 self.register_mutation(
                     results,
@@ -580,14 +584,20 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                 Input::Const {
                     const_: value,
                     span,
-                    use_,
+                    is_arg,
                 } => Either::Left(std::iter::once((
-                    self.get_or_construct_node(value.into(), location.into(), || DepNode {
-                        kind: DepNodeKind::Const(*value),
-                        at: location.into(),
-                        span: *span,
-                    }),
-                    use_.map_or(SourceUse::Operand, SourceUse::Argument),
+                    self.get_or_construct_node(
+                        &NodeKey::for_const(*value, *is_arg, location.into()),
+                        || DepNode {
+                            kind: DepNodeKind::Const {
+                                value: *value,
+                                is_arg: *is_arg,
+                            },
+                            at: location.into(),
+                            span: *span,
+                        },
+                    ),
+                    is_arg.map_or(SourceUse::Operand, SourceUse::Argument),
                 ))),
                 Input::Resolved { node_use, node } => {
                     Either::Left(std::iter::once((*node, *node_use)))
@@ -618,9 +628,10 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
 
         // Add control dependencies: ctrl_input -> output
         for (ctrl_input, loc, edge) in &ctrl_inputs {
-            let from = self.get_or_construct_node(ctrl_input.into(), loc.clone(), || {
-                constructor.make_dep_node(*ctrl_input, loc.location)
-            });
+            let from = self
+                .get_or_construct_node(&NodeKey::for_place(*ctrl_input, loc.clone()), || {
+                    constructor.make_dep_node(*ctrl_input, loc.location)
+                });
             for output in &outputs {
                 self.insert_edge(from, *output, edge.clone());
             }
@@ -643,7 +654,7 @@ enum Input<'tcx> {
     Const {
         const_: Constant,
         span: rustc_span::Span,
-        use_: Option<u8>,
+        is_arg: Option<u8>,
     },
     Resolved {
         node: Node,

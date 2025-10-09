@@ -37,7 +37,7 @@ mod approximation;
 use super::{
     async_support::{self, *},
     calling_convention::*,
-    global::{DepEdge, DepNode, OneHopLocation, PartialGraph, SourceUse, TargetUse},
+    global::{DepEdge, DepNode, NodeKey, OneHopLocation, PartialGraph, SourceUse, TargetUse},
     mutation::{ModularMutationVisitor, Mutation, Time},
 };
 use approximation::ApproximationHandler;
@@ -757,8 +757,8 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
                 for location in locations {
                     let src = final_state.get_place_node(*place, location.into()).unwrap();
                     let eloc = RichLocation::End;
-                    let dst =
-                        final_state.get_or_construct_node((*place).into(), eloc.into(), || {
+                    let dst = final_state
+                        .get_or_construct_node(&NodeKey::for_place(*place, eloc.into()), || {
                             self.make_dep_node(*place, eloc)
                         });
                     let edge = DepEdge::data(
