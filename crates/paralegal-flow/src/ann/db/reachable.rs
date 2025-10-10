@@ -9,6 +9,7 @@ use flowistry_pdg_construction::{
 };
 use paralegal_spdg::Identifier;
 
+use rustc_data_structures::fx::FxHashSet;
 use rustc_middle::{
     mir,
     ty::{self, TypingEnv},
@@ -106,43 +107,10 @@ impl<'tcx> MarkerCtx<'tcx> {
             self.borrow_function_marker_stat(res).is_async = Some(async_fn);
             return self.get_reachable_markers(async_fn).into();
         }
-        let expect_resolve = res.is_monomorphized();
-        let variable_markers = {
-            let mut stat = self.borrow_function_marker_stat(res);
-            mono_body
-                .local_decls
-                .iter_enumerated()
-                .flat_map(|(l, v)| {
-                    let markers = self.deep_type_markers(v.ty);
-                    if !markers.is_empty() {
-                        stat.markers_from_variables.push((
-                            l,
-                            v.ty,
-                            markers.iter().map(|v| v.1).collect(),
-                        ));
-                    }
-                    markers
-                })
-                .map(|m| m.1)
-                .collect::<Vec<_>>()
-        };
-
-        mono_body
-            .basic_blocks
-            .iter()
-            .flat_map(|bbdat| {
-                self.terminator_reachable_markers(
-                    res,
-                    &mono_body.local_decls,
-                    bbdat.terminator(),
-                    param_env,
-                    expect_resolve,
-                )
-            })
-            .chain(variable_markers)
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect()
+        let mut vis = BodyAnalyzer::new(self.clone(), res, &mono_body, param_env);
+        use mir::visit::Visitor;
+        vis.visit_body(&mono_body);
+        vis.found_markers.into_iter().collect()
     }
 
     /// Does this terminator carry a marker?
@@ -165,9 +133,9 @@ impl<'tcx> MarkerCtx<'tcx> {
         let mut res = if expect_resolve {
             let Some(instance) = try_resolve_function(self.tcx(), def_id, param_env, gargs) else {
                 self.span_err(
-                            terminator.source_info.span,
-                            format!("cannot determine reachable markers, failed to resolve {def_id:?} with {gargs:?}")
-                        );
+                    terminator.source_info.span,
+                    format!("cannot determine reachable markers, failed to resolve {def_id:?} with {gargs:?}")
+                );
                 return v.into_iter();
             };
             let new_instance = match handle_shims(
@@ -179,9 +147,9 @@ impl<'tcx> MarkerCtx<'tcx> {
                 ShimResult::IsHandledShim { instance, .. } => instance,
                 ShimResult::IsNonHandleableShim => {
                     self.span_err(
-                            terminator.source_info.span,
-                            format!("cannot determine reachable markers, failed to handle shim {def_id:?} with {gargs:?}")
-                        );
+                        terminator.source_info.span,
+                        format!("cannot determine reachable markers, failed to handle shim {def_id:?} with {gargs:?}")
+                    );
                     return v.into_iter();
                 }
                 ShimResult::IsNotShim => instance,
@@ -239,5 +207,61 @@ impl<'tcx> MarkerCtx<'tcx> {
                 .push((res, terminator.source_info.span));
         }
         v.into_iter()
+    }
+}
+
+struct BodyAnalyzer<'tcx, 'b> {
+    ctx: MarkerCtx<'tcx>,
+    res: MaybeMonomorphized<'tcx>,
+    mono_body: &'b mir::Body<'tcx>,
+    param_env: ty::TypingEnv<'tcx>,
+    found_markers: FxHashSet<Identifier>,
+}
+
+impl<'tcx, 'b> BodyAnalyzer<'tcx, 'b> {
+    fn expect_resolve(&self) -> bool {
+        self.res.is_monomorphized()
+    }
+
+    fn new(
+        ctx: MarkerCtx<'tcx>,
+        res: MaybeMonomorphized<'tcx>,
+        mono_body: &'b mir::Body<'tcx>,
+        param_env: ty::TypingEnv<'tcx>,
+    ) -> Self {
+        Self {
+            ctx,
+            res,
+            mono_body,
+            param_env,
+            found_markers: HashSet::default(),
+        }
+    }
+}
+
+impl<'tcx, 'b> mir::visit::Visitor<'tcx> for BodyAnalyzer<'tcx, 'b> {
+    fn visit_local_decl(&mut self, l: mir::Local, v: &mir::LocalDecl<'tcx>) {
+        let markers = self.ctx.deep_type_markers(v.ty);
+        if !markers.is_empty() {
+            self.ctx
+                .borrow_function_marker_stat(self.res)
+                .markers_from_variables
+                .push((l, v.ty, markers.iter().map(|v| v.1).collect()));
+        }
+        self.found_markers.extend(markers.iter().map(|v| v.1));
+        self.super_local_decl(l, v);
+    }
+
+    fn visit_terminator(&mut self, terminator: &mir::Terminator<'tcx>, location: mir::Location) {
+        let expect_resolve = self.expect_resolve();
+        let markers = self.ctx.terminator_reachable_markers(
+            self.res,
+            &self.mono_body.local_decls,
+            terminator,
+            self.param_env,
+            expect_resolve,
+        );
+        self.found_markers.extend(markers);
+        self.super_terminator(terminator, location);
     }
 }
