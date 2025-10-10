@@ -1,5 +1,6 @@
 use std::{borrow::Cow, collections::HashSet, fmt::Display, hash::Hash, iter};
 
+use either::Either;
 use flowistry::mir::{placeinfo::PlaceInfo, FlowistryInput};
 use flowistry_pdg::RichLocation;
 use itertools::Itertools;
@@ -11,8 +12,9 @@ use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{
-        visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, Location, Operand, Place,
-        Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind, RETURN_PLACE,
+        visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, LocalKind, Location,
+        Operand, Place, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind,
+        RETURN_PLACE,
     },
     ty::{
         AdtKind, EarlyBinder, GenericArgKind, GenericArgsRef, Instance, Ty, TyCtxt, TyKind,
@@ -24,18 +26,24 @@ use rustc_span::{source_map::Spanned, DesugaringKind, Span};
 use rustc_utils::{mir::control_dependencies::ControlDependencies, AdtDefExt, BodyExt, PlaceExt};
 
 use crate::{
-    approximation::ApproximationHandler,
-    async_support::{self, *},
-    body_cache::CachedBody,
-    calling_convention::*,
-    graph::{DepEdge, DepNode, OneHopLocation, PartialGraph, SourceUse, TargetUse},
-    mutation::{ModularMutationVisitor, Mutation, Time},
+    analysis::global::Use,
+    source_access::CachedBody,
     utils::{
         self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize, ShimResult,
         ShimType, TyAsFnResult,
     },
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
+
+mod approximation;
+
+use super::{
+    async_support::{self, *},
+    calling_convention::*,
+    global::{DepEdge, DepNode, NodeKey, OneHopLocation, PartialGraph},
+    mutation::{ModularMutationVisitor, Mutation, Time},
+};
+use approximation::ApproximationHandler;
 
 #[derive(PartialEq, Eq, Default, Clone, Debug)]
 pub(crate) struct InstructionState<'tcx> {
@@ -66,7 +74,6 @@ pub(crate) struct LocalAnalysis<'tcx, 'a, K> {
     pub(crate) place_info: PlaceInfo<'tcx>,
     control_dependencies: ControlDependencies<BasicBlock>,
     pub(crate) body_assignments: utils::BodyAssignments,
-    start_loc: FxHashSet<RichLocation>,
     pub(crate) param_env: TypingEnv<'tcx>,
     k: K,
 }
@@ -75,6 +82,10 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
     pub(super) fn generic_args(&self) -> GenericArgsRef<'tcx> {
         self.root.args
     }
+    pub(super) fn strict(&self) -> bool {
+        self.memo.strict()
+    }
+
     fn dump_mir(&self) {
         use std::io::Write;
         let path = self.tcx().def_path_str(self.def_id) + ".mir";
@@ -117,7 +128,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                         continue;
                     };
                     let at: OneHopLocation = ctrl_loc.into();
-                    let edge = DepEdge::control(at.clone(), SourceUse::Operand, TargetUse::Assign);
+                    let edge = DepEdge::control(at.clone());
                     out.push((ctrl_place, at, edge));
                 }
             }
@@ -137,6 +148,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
         &self,
         place: Place<'tcx>,
         location: impl Into<RichLocation>,
+        is_arg: Use,
     ) -> DepNode<'tcx, OneHopLocation> {
         let location = location.into();
         debug!(
@@ -151,9 +163,10 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
             "Place type is {:?}",
             place.ty(&self.mono_body, self.tcx()).ty,
         );
-        DepNode::new(
+        let location: OneHopLocation = location.into();
+        DepNode::for_place(
             place,
-            location.into(),
+            location,
             self.tcx(),
             &self.mono_body,
             self.def_id,
@@ -162,6 +175,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                 self.def_id,
                 self.tcx(),
             ),
+            is_arg,
         )
     }
 
@@ -242,7 +256,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
         &self,
         state: &InstructionState<'tcx>,
         input: Place<'tcx>,
-    ) -> Vec<DepNode<'tcx, OneHopLocation>> {
+    ) -> Vec<(Place<'tcx>, RichLocation)> {
         trace!("Finding inputs for place {input:?}");
         // Include all sources of indirection (each reference in the chain) as relevant places.
         let provenance = input
@@ -260,7 +274,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                 let conflicts = state
                     .last_mutation
                     .iter()
-                    .map(|(k, locs)| (*k, locs))
+                    .map(|(k, locs)| (*k, Either::Left(locs)))
                     .filter(move |(place, _)| {
                         if place.is_indirect() && place.is_arg(&self.mono_body) {
                             // HACK: `places_conflict` seems to consider it a bug is `borrow_place`
@@ -278,7 +292,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                 // Special case: if the `alias` is an un-mutated argument, then include it as a conflict
                 // coming from the special start location.
                 let alias_last_mut = if alias.is_arg(&self.mono_body) {
-                    Some((alias, &self.start_loc))
+                    Some((alias, Either::Right([&RichLocation::Start])))
                 } else {
                     None
                 };
@@ -290,9 +304,9 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                     .flat_map(|(conflict, last_mut_locs)| {
                         //println!("Conflict {conflict:?} for place {input:?}");
                         // For each last mutated location:
-                        last_mut_locs.iter().map(move |last_mut_loc| {
+                        last_mut_locs.into_iter().map(move |last_mut_loc| {
                             // Return <CONFLICT> @ <LAST_MUT_LOC> as an input node.
-                            self.make_dep_node(conflict, *last_mut_loc)
+                            (conflict, *last_mut_loc)
                         })
                     })
             })
@@ -303,7 +317,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
         &self,
         mutated: Place<'tcx>,
         location: Location,
-    ) -> Vec<(Place<'tcx>, DepNode<'tcx, OneHopLocation>)> {
+    ) -> Vec<(Place<'tcx>, Location)> {
         // **POINTER-SENSITIVITY:**
         // If `mutated` involves indirection via dereferences, then resolve it to the direct places it could point to.
         let aliases = self.aliases(mutated).collect_vec();
@@ -316,7 +330,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
             .iter()
             .map(|dst| {
                 // Create a destination node for (DST @ CURRENT_LOC).
-                (*dst, self.make_dep_node(*dst, location))
+                (*dst, location)
             })
             .collect()
     }
@@ -382,9 +396,6 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
         let place_info = PlaceInfo::build(tcx, def_id, body_with_facts);
         let control_dependencies = body.control_dependencies();
 
-        let mut start_loc = FxHashSet::default();
-        start_loc.insert(RichLocation::Start);
-
         let body_assignments = utils::find_body_assignments(&body);
 
         let slf = LocalAnalysis {
@@ -394,7 +405,6 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
             mono_body: body,
             place_info,
             control_dependencies,
-            start_loc,
             def_id,
             body_assignments,
             param_env,
@@ -690,8 +700,11 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
         // PRECISION TODO: for a given child place, we only want to connect
         // the *last* nodes in the child function to the parent, not *all* of them.
         trace!("CHILD -> PARENT EDGES:");
-        for (child_dst, _) in parentable_dsts {
-            if let Some(parent_place) = place_translator.translate_to_parent(child_dst.place) {
+        for child_dst in parentable_dsts {
+            if let Some(parent_place) = child_dst
+                .place()
+                .and_then(|p| place_translator.translate_to_parent(p))
+            {
                 self.apply_mutation(state, location, parent_place);
             }
         }
@@ -708,6 +721,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
             move |location, mutation: Mutation<'tcx>| {
                 self.apply_mutation(state, location, mutation.mutated)
             },
+            self.strict(),
         )
     }
 
@@ -734,24 +748,22 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
             analysis.seek_to_block_end(block);
             let return_state = analysis.get();
             for (place, locations) in &return_state.last_mutation {
-                let ret_kind = if place.local == RETURN_PLACE {
-                    TargetUse::Return
-                } else if let Some(num) = other_as_arg(*place, &self.mono_body) {
-                    TargetUse::MutArg(num)
-                } else {
-                    continue;
-                };
                 for location in locations {
-                    let src = final_state.get_node(*place, location.into()).unwrap();
+                    let use_ = if place.local == RETURN_PLACE {
+                        Use::Return
+                    } else if self.mono_body.local_kind(place.local) == LocalKind::Arg {
+                        Use::Other
+                    } else {
+                        continue;
+                    };
+                    let src = final_state.get_place_node(*place, location.into()).unwrap();
                     let eloc = RichLocation::End;
-                    let dst = final_state.get_or_construct_node(*place, eloc.into(), || {
-                        self.make_dep_node(*place, eloc)
-                    });
-                    let edge = DepEdge::data(
-                        self.mono_body.terminator_loc(block).into(),
-                        SourceUse::Operand,
-                        ret_kind,
-                    );
+                    let key = NodeKey::for_place(*place, eloc.into());
+                    let prior = final_state.get_node(&key);
+                    assert!(prior.is_none_or(|p| final_state.node_props(p).use_ == use_));
+                    let dst = final_state
+                        .get_or_construct_node(&key, || self.make_dep_node(*place, eloc, use_));
+                    let edge = DepEdge::data(self.mono_body.terminator_loc(block).into());
                     final_state.insert_edge(src, dst, edge);
                 }
             }
@@ -923,11 +935,6 @@ pub(crate) enum CallHandling<'tcx, 'a, K> {
         precise: bool,
     },
     ApproxAsyncSM(ApproximationHandler<'tcx, 'a, K>),
-}
-
-fn other_as_arg<'tcx>(place: Place<'tcx>, body: &Body<'tcx>) -> Option<u8> {
-    (body.local_kind(place.local) == rustc_middle::mir::LocalKind::Arg)
-        .then(|| place.local.as_u32() as u8 - 1)
 }
 
 /// This used to be implemented as `place_info.children(place).iter().any(|p| *p

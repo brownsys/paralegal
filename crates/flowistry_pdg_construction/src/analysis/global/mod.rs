@@ -1,15 +1,12 @@
 use std::{borrow::Cow, fmt, hash::Hash, rc::Rc};
 
 use either::Either;
-use flowistry::mir::FlowistryInput;
 use log::trace;
-use petgraph::graph::{DiGraph, NodeIndex};
 
-use flowistry_pdg::{CallString, GlobalLocation};
+use flowistry_pdg::{Constant, GlobalLocation};
 
 use df::ResultsVisitor;
 use rustc_errors::DiagMessage;
-use rustc_hash::FxHashMap;
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_index::IndexVec;
 use rustc_middle::{
@@ -18,19 +15,27 @@ use rustc_middle::{
 };
 use rustc_mir_dataflow::{self as df, Results};
 
-use crate::{
+use super::{
     async_support::*,
-    body_cache::{self, BodyCache, CachedBody},
-    call_tree_visit::{self, VisitDriver},
-    callback::DefaultCallback,
     calling_convention::PlaceTranslator,
-    graph::{DepEdge, DepGraph, DepNode, Node, OneHopLocation, PartialGraph, SourceUse, TargetUse},
-    local_analysis::{CallHandling, InstructionState, LocalAnalysis},
+    local::{CallHandling, InstructionState, LocalAnalysis},
     mutation::{ModularMutationVisitor, Mutation, Time},
-    two_level_cache::TwoLevelCache,
-    utils::{manufacture_substs_for, try_resolve_function},
+};
+use crate::{
+    callback::DefaultCallback,
+    constants::PlaceOrConst,
+    source_access::{self, BodyCache, CachedBody},
+    utils::{manufacture_substs_for, try_resolve_function, TwoLevelCache},
     CallChangeCallback,
 };
+
+pub mod call_tree_visit;
+mod graph_elems;
+mod partial_graph;
+
+use call_tree_visit::VisitDriver;
+pub use graph_elems::{DepEdge, DepEdgeKind, DepNode, DepNodeKind, OneHopLocation, Use};
+pub use partial_graph::{Node, NodeKey, PartialGraph};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ConstructionResult<T> {
@@ -76,7 +81,7 @@ pub struct MemoPdgConstructor<'tcx, K> {
     pub(crate) dump_mir: bool,
     pub(crate) async_info: Rc<AsyncInfo>,
     pub pdg_cache: PdgCache<'tcx, K>,
-    pub(crate) body_cache: Rc<body_cache::BodyCache<'tcx>>,
+    pub(crate) body_cache: Rc<source_access::BodyCache<'tcx>>,
     disable_cache: bool,
     relaxed: bool,
 }
@@ -87,7 +92,10 @@ impl<'tcx, K: Default> MemoPdgConstructor<'tcx, K> {
         Self::new_with_callbacks(tcx, DefaultCallback)
     }
     /// Initialize the constructor.
-    pub fn new_with_cache(tcx: TyCtxt<'tcx>, body_cache: Rc<body_cache::BodyCache<'tcx>>) -> Self {
+    pub fn new_with_cache(
+        tcx: TyCtxt<'tcx>,
+        body_cache: Rc<source_access::BodyCache<'tcx>>,
+    ) -> Self {
         Self {
             tcx,
             call_change_callback: Rc::new(DefaultCallback),
@@ -168,6 +176,10 @@ impl<'tcx, K> MemoPdgConstructor<'tcx, K> {
             self.tcx.dcx().span_err(span, msg.into());
         }
     }
+
+    pub fn strict(&self) -> bool {
+        !self.relaxed
+    }
 }
 
 impl<'tcx, K: std::hash::Hash + Eq + Clone> MemoPdgConstructor<'tcx, K> {
@@ -241,35 +253,6 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> MemoPdgConstructor<'tcx, K> {
             .get(&instance)
             .is_some_and(|v| v.0)
     }
-
-    /// Construct a final PDG for this function. Same as
-    /// [`Self::construct_root`] this instantiates all generics as `dyn`.
-    ///
-    /// Additionally if this is an `async fn` or `#[async_trait]` it will inline
-    /// the closure as though the function were called with `poll`.
-    pub fn construct_graph(&self, function: LocalDefId) -> DepGraph<'tcx> {
-        if let Some((generator, loc, _ty)) = determine_async(
-            self.tcx,
-            function.to_def_id(),
-            self.body_cache.try_get(function.to_def_id()).unwrap_or_else(|| panic!("INVARIANT VIOLATED: body for local function {function:?} cannot be loaded.")).body(),
-        ) {
-            // TODO remap arguments
-
-            // Note that this deliberately register this result in a separate
-            // cache. This is because when this async fn is called somewhere we
-            // don't want to use this "fake inlined" version.
-            self.construct_root(generator.def_id().expect_local())
-                .to_petgraph_with_extra_global_location(
-                    self,
-                    GlobalLocation {
-                        function: function.to_def_id(),
-                        location: flowistry_pdg::RichLocation::Location(loc),
-                    }
-                )
-        } else {
-            self.construct_root(function).to_petgraph(self)
-        }
-    }
 }
 
 type LocalAnalysisResults<'tcx, 'mir, K> = Results<'tcx, &'mir LocalAnalysis<'tcx, 'mir, K>>;
@@ -284,7 +267,7 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
         statement: &'mir rustc_middle::mir::Statement<'tcx>,
         location: Location,
     ) {
-        let mut vis = self.modular_mutation_visitor(results, state);
+        let mut vis = self.modular_mutation_visitor(results, state, results.analysis.strict());
 
         vis.visit_statement(statement, location)
     }
@@ -317,12 +300,10 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
                 self.register_mutation(
                     results,
                     state,
-                    Inputs::Unresolved {
-                        places: vec![(place, None)],
-                    },
+                    &[Input::Unresolved { place, use_: None }],
                     Either::Left(place),
                     location,
-                    TargetUse::Assign,
+                    Use::Other,
                 );
             }
             return;
@@ -332,19 +313,7 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
             return;
         }
         trace!("Handling terminator {:?} as not inlined", terminator.kind);
-        let mut arg_vis =
-            ModularMutationVisitor::new(&results.analysis.place_info, move |location, mutation| {
-                self.register_mutation(
-                    results,
-                    state,
-                    Inputs::Unresolved {
-                        places: mutation.inputs,
-                    },
-                    Either::Left(mutation.mutated),
-                    location,
-                    mutation.mutation_reason,
-                )
-            });
+        let mut arg_vis = self.modular_mutation_visitor(results, state, results.analysis.strict());
         arg_vis.set_time(Time::Before);
         arg_vis.visit_terminator(terminator, location);
     }
@@ -374,19 +343,7 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
         }
 
         trace!("Handling terminator {:?} as not inlined", terminator.kind);
-        let mut arg_vis =
-            ModularMutationVisitor::new(&results.analysis.place_info, move |location, mutation| {
-                self.register_mutation(
-                    results,
-                    state,
-                    Inputs::Unresolved {
-                        places: mutation.inputs,
-                    },
-                    Either::Left(mutation.mutated),
-                    location,
-                    mutation.mutation_reason,
-                )
-            });
+        let mut arg_vis = self.modular_mutation_visitor(results, state, results.analysis.strict());
         arg_vis.set_time(Time::After);
         arg_vis.visit_terminator(terminator, location);
     }
@@ -397,27 +354,42 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         &'a mut self,
         results: &'a LocalAnalysisResults<'tcx, 'mir, K>,
         state: &'a InstructionState<'tcx>,
+        strict: bool,
     ) -> ModularMutationVisitor<
         'a,
         'tcx,
         impl FnMut(Location, Mutation<'tcx>) + use<'a, 'tcx, 'mir, K>,
     > {
-        ModularMutationVisitor::new(&results.analysis.place_info, move |location, mutation| {
-            let place = results.analysis.normalize_place(&mutation.mutated);
-            let inputs = mutation
-                .inputs
-                .into_iter()
-                .map(|(place, o)| (results.analysis.normalize_place(&place), o))
-                .collect();
-            self.register_mutation(
-                results,
-                state,
-                Inputs::Unresolved { places: inputs },
-                Either::Left(place),
-                location,
-                mutation.mutation_reason,
-            )
-        })
+        ModularMutationVisitor::new(
+            &results.analysis.place_info,
+            move |location, mutation| {
+                let place = results.analysis.normalize_place(&mutation.mutated);
+                let inputs = mutation
+                    .inputs
+                    .into_iter()
+                    .map(|(place, o)| match place {
+                        PlaceOrConst::Place(place) => Input::Unresolved {
+                            place: results.analysis.normalize_place(&place),
+                            use_: o,
+                        },
+                        PlaceOrConst::Const(const_) => Input::Const {
+                            const_,
+                            span: results.analysis.place_info.body.source_info(location).span,
+                            is_arg: o,
+                        },
+                    })
+                    .collect::<Box<_>>();
+                self.register_mutation(
+                    results,
+                    state,
+                    &inputs,
+                    Either::Left(place),
+                    location,
+                    mutation.is_arg,
+                )
+            },
+            strict,
+        )
     }
 
     /// returns whether we were able to successfully handle this as inline
@@ -438,6 +410,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
             return false;
         };
         let constructor = &results.analysis;
+        let strict = constructor.strict();
         let Some(handling) = constructor.determine_call_handling(
             location,
             Cow::Borrowed(func),
@@ -467,17 +440,14 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                     Box::new(AggregateKind::Tuple),
                     IndexVec::from_iter(args.iter().map(|op| op.node.clone())),
                 );
-                self.modular_mutation_visitor(results, state).visit_assign(
-                    destination,
-                    &rvalue,
-                    location,
-                );
+                self.modular_mutation_visitor(results, state, strict)
+                    .visit_assign(destination, &rvalue, location);
                 return false;
             }
             CallHandling::ApproxAsyncSM(how) => {
                 how(
                     constructor,
-                    &mut self.modular_mutation_visitor(results, state),
+                    &mut self.modular_mutation_visitor(results, state, strict),
                     args,
                     *destination,
                     location,
@@ -488,7 +458,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         let ctrl_inputs = constructor
             .find_control_inputs(location)
             .into_iter()
-            .map(|(place, loc, edge)| (self.get_node(place, loc).unwrap(), edge))
+            .map(|(place, loc, edge)| (self.get_place_node(place, loc).unwrap(), edge))
             .collect();
         self.inlined_calls
             .push((location, child_instance, k, ctrl_inputs));
@@ -514,21 +484,26 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         // For each source node CHILD that is parentable to PLACE,
         // add an edge from PLACE -> CHILD.
         trace!("PARENT -> CHILD EDGES:");
-        for (child_src, _kind) in child_graph.parentable_srcs() {
+        for child_src in child_graph.parentable_srcs() {
             let child_src = child_src.map_at(|b| bool_to_loc(*b));
-            let child_place = child_src.place;
-            let child_node =
-                self.get_or_construct_node(child_place, child_src.at.clone(), || child_src);
+            let Some(child_place) = child_src.place() else {
+                continue;
+            };
+            let child_node = self.get_or_construct_node(
+                &NodeKey::for_place(child_place, child_src.at.clone()),
+                || child_src,
+            );
             if let Some(translation) = translator.translate_to_parent(child_place) {
                 self.register_mutation(
                     results,
                     state,
-                    Inputs::Unresolved {
-                        places: vec![(translation, None)],
-                    },
+                    &[Input::Unresolved {
+                        place: translation,
+                        use_: None,
+                    }],
                     Either::Right(child_node),
                     location,
-                    TargetUse::Assign,
+                    Use::Other,
                 );
             }
         }
@@ -539,22 +514,23 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         // PRECISION TODO: for a given child place, we only want to connect
         // the *last* nodes in the child function to the parent, not *all* of them.
         trace!("CHILD -> PARENT EDGES for {:?}:", child_graph.def_id);
-        for (child_dst, kind) in child_graph.parentable_dsts() {
+        for child_dst in child_graph.parentable_dsts() {
             let child_dst = child_dst.map_at(|b| bool_to_loc(*b));
-            let child_place = child_dst.place;
-            let child_node =
-                self.get_or_construct_node(child_place, child_dst.at.clone(), || child_dst);
+            let Some(child_place) = child_dst.place() else {
+                continue;
+            };
+            let child_node = self.get_or_construct_node(
+                &NodeKey::for_place(child_place, child_dst.at.clone()),
+                || child_dst,
+            );
             if let Some(parent_place) = translator.translate_to_parent(child_place) {
                 self.register_mutation(
                     results,
                     state,
-                    Inputs::Resolved {
-                        node: child_node,
-                        node_use: SourceUse::Operand,
-                    },
+                    &[Input::Resolved { node: child_node }],
                     Either::Left(parent_place),
                     location,
-                    kind.map_or(TargetUse::Return, TargetUse::MutArg),
+                    Use::Other,
                 );
             }
         }
@@ -566,10 +542,10 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         &mut self,
         results: &LocalAnalysisResults<'tcx, '_, K>,
         state: &InstructionState<'tcx>,
-        inputs: Inputs<'tcx>,
+        inputs: &[Input<'tcx>],
         mutated: Either<Place<'tcx>, Node>,
         location: Location,
-        target_use: TargetUse,
+        use_: Use,
     ) where
         K: Hash + Eq + Clone,
     {
@@ -580,24 +556,44 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
 
         trace!("  Found control inputs {ctrl_inputs:?}");
 
-        let data_inputs = match inputs {
-            Inputs::Unresolved { places } => places
-                .into_iter()
-                .flat_map(|(input, input_use)| {
+        let data_inputs = inputs
+            .iter()
+            .flat_map(|i| match i {
+                Input::Unresolved { place, use_ } => Either::Right(
                     constructor
-                        .find_data_inputs(state, input)
+                        .find_data_inputs(state, *place)
                         .into_iter()
-                        .zip(std::iter::repeat(input_use))
-                })
-                .map(|(input, input_use)| {
-                    (
-                        self.insert_node(input),
-                        input_use.map_or(SourceUse::Operand, SourceUse::Argument),
-                    )
-                })
-                .collect::<Vec<_>>(),
-            Inputs::Resolved { node_use, node } => vec![(node, node_use)],
-        };
+                        .map(|(place, at)| {
+                            self.get_or_construct_node(
+                                &NodeKey::for_place(place, at.into()),
+                                || {
+                                    constructor.make_dep_node(
+                                        place,
+                                        at,
+                                        use_.map_or(Use::Other, Use::Arg),
+                                    )
+                                },
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .into_iter(),
+                ),
+                Input::Const {
+                    const_: value,
+                    span,
+                    is_arg,
+                } => Either::Left(std::iter::once(self.get_or_construct_node(
+                    &NodeKey::for_const(*value, *is_arg, location.into()),
+                    || DepNode {
+                        kind: DepNodeKind::Const(*value),
+                        at: location.into(),
+                        span: *span,
+                        use_: is_arg.map_or(Use::Other, Use::Arg),
+                    },
+                ))),
+                Input::Resolved { node } => Either::Left(std::iter::once(*node)),
+            })
+            .collect::<Vec<_>>();
         trace!("  Data inputs: {data_inputs:?}");
 
         let outputs = match mutated {
@@ -606,14 +602,17 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                 .analysis
                 .find_outputs(place, location)
                 .into_iter()
-                .map(|t| self.insert_node(t.1))
+                .map(|(place, at)| {
+                    let key = NodeKey::for_place(place, at.into());
+                    self.get_or_construct_node(&key, || constructor.make_dep_node(place, at, use_))
+                })
                 .collect(),
         };
         trace!("  Outputs: {outputs:?}");
 
         // Add data dependencies: data_input -> output
-        for (data_input, source_use) in data_inputs {
-            let data_edge = DepEdge::data(location.into(), source_use, target_use);
+        for data_input in data_inputs {
+            let data_edge = DepEdge::data(location.into());
             for output in &outputs {
                 trace!("  Adding edge {data_input:?} -> {output:?}");
                 self.insert_edge(data_input, *output, data_edge.clone());
@@ -622,9 +621,10 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
 
         // Add control dependencies: ctrl_input -> output
         for (ctrl_input, loc, edge) in &ctrl_inputs {
-            let from = self.get_or_construct_node(*ctrl_input, loc.clone(), || {
-                constructor.make_dep_node(*ctrl_input, loc.location)
-            });
+            let from = self
+                .get_or_construct_node(&NodeKey::for_place(*ctrl_input, loc.clone()), || {
+                    constructor.make_dep_node(*ctrl_input, loc.location, Use::Other)
+                });
             for output in &outputs {
                 self.insert_edge(from, *output, edge.clone());
             }
@@ -639,101 +639,19 @@ pub type PdgCacheKey<'tcx, K> = (Instance<'tcx>, K);
 pub type PdgCache<'tcx, K> = Rc<TwoLevelCache<Instance<'tcx>, K, Option<PartialGraph<'tcx, K>>>>;
 
 #[derive(Debug)]
-enum Inputs<'tcx> {
+enum Input<'tcx> {
     Unresolved {
-        places: Vec<(Place<'tcx>, Option<u8>)>,
+        place: Place<'tcx>,
+        use_: Option<u8>,
+    },
+    Const {
+        const_: Constant,
+        span: rustc_span::Span,
+        is_arg: Option<u8>,
     },
     Resolved {
         node: Node,
-        node_use: SourceUse,
     },
-}
-
-struct GraphAssembler<'tcx> {
-    graph: DiGraph<DepNode<'tcx, CallString>, DepEdge<CallString>>,
-    nodes: FxHashMap<DepNode<'tcx, CallString>, petgraph::graph::NodeIndex>,
-    control_inputs: Box<[(NodeIndex, DepEdge<CallString>)]>,
-}
-
-fn globalize_node<'tcx, K: Clone>(
-    vis: &mut VisitDriver<'tcx, '_, K>,
-    node: &DepNode<'tcx, OneHopLocation>,
-) -> DepNode<'tcx, CallString> {
-    node.map_at(|location| vis.globalize_location(location))
-}
-
-fn globalize_edge<K: Clone>(
-    vis: &mut VisitDriver<'_, '_, K>,
-    edge: &DepEdge<OneHopLocation>,
-) -> DepEdge<CallString> {
-    edge.map_at(|location| vis.globalize_location(location))
-}
-
-impl<'tcx> GraphAssembler<'tcx> {
-    fn new() -> Self {
-        Self {
-            graph: DiGraph::new(),
-            nodes: FxHashMap::default(),
-            control_inputs: Box::new([]),
-        }
-    }
-
-    fn add_node(&mut self, node: DepNode<'tcx, CallString>) -> petgraph::graph::NodeIndex {
-        *self
-            .nodes
-            .entry(node.clone())
-            .or_insert_with(|| self.graph.add_node(node))
-    }
-}
-
-impl<'tcx, K: Hash + Eq + Clone> call_tree_visit::Visitor<'tcx, K> for GraphAssembler<'tcx> {
-    fn visit_edge(
-        &mut self,
-        vis: &mut VisitDriver<'tcx, '_, K>,
-        src: Node,
-        dst: Node,
-        kind: &DepEdge<OneHopLocation>,
-    ) {
-        let g = vis.current_graph_as_rc();
-        let src = globalize_node(vis, g.node_props(src));
-        let src_idx = self.add_node(src);
-        let dst = globalize_node(vis, g.node_props(dst));
-        let dst_idx = self.add_node(dst);
-        let new_kind = globalize_edge(vis, kind);
-        self.graph.add_edge(src_idx, dst_idx, new_kind);
-    }
-
-    fn visit_partial_graph(
-        &mut self,
-        vis: &mut VisitDriver<'tcx, '_, K>,
-        graph: &PartialGraph<'tcx, K>,
-    ) {
-        vis.visit_partial_graph(self, graph);
-
-        // This loop connects the control inputs that
-        // are incoming to the function to those nodes in the graph who have no
-        // control inputs yet.
-        //
-        // We do this here instead of in "visit_node", because that gets called
-        // before the "visit_edge" function, meaning we can't yet see the
-        // potential control inputs of the node. We could have the visitor use
-        // an opposite ordering, but that is counterintuitive to other potential
-        // users of the visitor.
-        for (_, node) in graph.iter_nodes() {
-            let new_node = globalize_node(vis, node);
-            let node = self.add_node(new_node);
-
-            if !self
-                .graph
-                .edges_directed(node, petgraph::Direction::Incoming)
-                .any(|e| e.weight().is_control())
-            {
-                for (src, edge) in self.control_inputs.iter() {
-                    self.graph.add_edge(*src, node, edge.clone());
-                }
-            }
-        }
-    }
 }
 
 struct GraphSizeEstimator {
@@ -743,6 +661,7 @@ struct GraphSizeEstimator {
     max_call_string: Box<[GlobalLocation]>,
 }
 
+#[allow(dead_code)]
 impl GraphSizeEstimator {
     fn new() -> Self {
         Self {
@@ -808,61 +727,5 @@ impl fmt::Display for HumanInt {
         }
 
         f.write_str(&as_str)
-    }
-}
-
-impl<'tcx, K: Clone + Hash + Eq> PartialGraph<'tcx, K> {
-    pub fn to_petgraph<'c>(&self, memo: &'c MemoPdgConstructor<'tcx, K>) -> DepGraph<'tcx> {
-        log::info!("Converting to petgraph starting from {:?}.", self.def_id);
-        let mut assembler = GraphAssembler::new();
-        let mut visitor = VisitDriver::new(
-            memo,
-            Instance::expect_resolve(
-                memo.tcx,
-                TypingEnv::post_analysis(memo.tcx, self.def_id)
-                    .with_post_analysis_normalized(memo.tcx),
-                self.def_id,
-                self.generics,
-                memo.tcx.def_span(self.def_id),
-            ),
-            self.k.clone(),
-        );
-        let mut size_estimator = GraphSizeEstimator::new();
-        visitor.start(&mut size_estimator);
-        log::info!("Estimating a size of {}", size_estimator.format_size());
-        visitor.start(&mut assembler);
-        DepGraph {
-            graph: assembler.graph,
-        }
-    }
-
-    pub fn to_petgraph_with_extra_global_location<'c>(
-        &self,
-        memo: &'c MemoPdgConstructor<'tcx, K>,
-        extra_global_location: GlobalLocation,
-    ) -> DepGraph<'tcx> {
-        log::info!("Converting to petgraph starting from {:?}.", self.def_id);
-        let mut assembler = GraphAssembler::new();
-        let mut visitor = VisitDriver::new(
-            memo,
-            Instance::expect_resolve(
-                memo.tcx,
-                TypingEnv::post_analysis(memo.tcx, self.def_id)
-                    .with_post_analysis_normalized(memo.tcx),
-                self.def_id,
-                self.generics,
-                memo.tcx.def_span(self.def_id),
-            ),
-            self.k.clone(),
-        );
-        let mut size_estimator = GraphSizeEstimator::new();
-        visitor.start(&mut size_estimator);
-        log::info!("Estimating a size of {}", size_estimator.format_size());
-        visitor.with_pushed_stack(extra_global_location, |visitor| {
-            visitor.start(&mut assembler);
-        });
-        DepGraph {
-            graph: assembler.graph,
-        }
     }
 }

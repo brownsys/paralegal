@@ -22,6 +22,9 @@ use rustc_span::{source_map::Spanned, ErrorGuaranteed, Span};
 use rustc_type_ir::{fold::TypeFoldable, AliasTyKind, PredicatePolarity, RegionKind};
 use rustc_utils::{BodyExt, PlaceExt};
 
+mod two_level_cache;
+pub use two_level_cache::TwoLevelCache;
+
 pub struct Print<F: Fn(&mut Formatter<'_>) -> std::fmt::Result>(pub F);
 
 impl<F: Fn(&mut Formatter<'_>) -> std::fmt::Result> std::fmt::Display for Print<F> {

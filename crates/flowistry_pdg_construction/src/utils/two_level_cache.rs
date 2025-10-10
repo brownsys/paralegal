@@ -18,6 +18,12 @@ impl<K1: Eq + Hash + Clone, K2: Eq + Hash + Clone, Out> TwoLevelCache<K1, K2, Ou
     pub fn len(&self) -> usize {
         self.0.borrow().values().map(|(_, m)| m.len()).sum()
     }
+
+    pub fn is_empty(&self) -> bool {
+        let r = self.0.borrow();
+        r.is_empty() || r.values().all(|(_, m)| m.is_empty())
+    }
+
     /// Returns the cached value for the given key, or runs `compute` if
     /// the value is not in cache.
     ///

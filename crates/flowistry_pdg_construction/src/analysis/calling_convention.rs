@@ -10,11 +10,8 @@ use rustc_middle::{
 };
 use rustc_span::source_map::Spanned;
 
-use crate::{
-    async_support::AsyncInfo,
-    local_analysis::CallKind,
-    utils::{self, ShimType},
-};
+use super::{async_support::AsyncInfo, local::CallKind};
+use crate::utils::{self, ShimType};
 
 /// Describes how the formal parameters of a given function call relate to the
 /// actual parameters.

@@ -78,10 +78,7 @@ fn notification_deletion() -> Result<()> {
                     for src in sources {
                         note.with_node_note(
                             src,
-                            format!(
-                                "This is a source for that type {}",
-                                src.info(&ctx).description
-                            ),
+                            format!("This is a source for that type {}", src.info(&ctx)),
                         );
                     }
                     for snk in &delete_sinks {

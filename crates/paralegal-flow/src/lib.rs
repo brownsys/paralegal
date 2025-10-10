@@ -50,7 +50,9 @@ use ann::dump_markers;
 use args::{ClapArgs, Debugger, LogLevelConfig};
 use desc::utils::write_sep;
 
-use flowistry_pdg_construction::body_cache::{dump_mir_and_borrowck_facts, intermediate_out_dir};
+use flowistry_pdg_construction::source_access::{
+    dump_mir_and_borrowck_facts, intermediate_out_dir,
+};
 use log::Level;
 use paralegal_spdg::{AnalyzerStats, ProgramDescription, STAT_FILE_EXT};
 use rustc_middle::ty::TyCtxt;
@@ -600,7 +602,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                 }
 
                 compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
-                if opts.verbosity() >= Level::Debug {
+                if cfg!(debug_assertions) || opts.verbosity() >= Level::Debug {
                     compiler_args.push("-Ztrack-diagnostics".to_string());
                 }
 

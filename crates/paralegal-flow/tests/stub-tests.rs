@@ -11,6 +11,9 @@ extern crate lazy_static;
 use paralegal_flow::{define_flow_test_template, test_utils::*};
 use paralegal_spdg::Identifier;
 
+extern crate either;
+extern crate rustc_middle;
+
 const TEST_CRATE_NAME: &str = "tests/stub-tests";
 
 lazy_static! {

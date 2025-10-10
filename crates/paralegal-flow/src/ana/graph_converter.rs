@@ -1,14 +1,11 @@
-use super::{path_for_item, src_loc_for_span, SPDGGenerator};
-use crate::{
-    ann::MarkerAnnotation, desc::*, discover::FnToAnalyze, utils::*, HashMap, HashSet, MarkerCtx,
-    Pctx,
-};
-use flowistry_pdg::{rustc_portable::Location, SourceUse};
+use super::{path_for_item, src_loc_for_span};
+use crate::{ann::MarkerAnnotation, desc::*, utils::*, HashMap, HashSet, MarkerCtx, Pctx};
+use flowistry_pdg::rustc_portable::Location;
 use flowistry_pdg_construction::{
-    call_tree_visit::{VisitDriver, Visitor},
     determine_async,
-    graph::{DepEdge, DepEdgeKind, DepNode, OneHopLocation, PartialGraph},
     utils::{handle_shims, try_monomorphize, try_resolve_function, type_as_fn, ShimResult},
+    DepEdge, DepEdgeKind, DepNode, DepNodeKind, MemoPdgConstructor, OneHopLocation, PartialGraph,
+    Use, VisitDriver, Visitor,
 };
 use paralegal_spdg::Node;
 
@@ -30,49 +27,9 @@ fn dep_edge_kind_to_edge_kind(kind: DepEdgeKind) -> EdgeKind {
     }
 }
 
-#[cfg(debug_assertions)]
-fn assert_edge_location_invariant<'tcx, Loc: Eq + std::fmt::Display>(
-    tcx: TyCtxt<'tcx>,
-    at: Loc,
-    body: &mir::Body<'tcx>,
-    location: Loc,
-    leaf: impl Fn(&Loc) -> GlobalLocation,
-) {
-    // Normal case. The edge is introduced where the operation happens
-    if location == at {
-        return;
-    }
-    // Control flow case. The edge is introduced at the `switchInt`
-    if let RichLocation::Location(loc) = leaf(&at).location {
-        if leaf(&at).function == leaf(&location).function
-            && matches!(
-                body.stmt_at(loc),
-                Either::Right(mir::Terminator {
-                    kind: mir::TerminatorKind::SwitchInt { .. },
-                    ..
-                })
-            )
-        {
-            return;
-        }
-    }
-    let mut msg = tcx.dcx().struct_span_fatal(
-        (body, leaf(&at).location).span(tcx),
-        format!(
-            "This operation is performed in a different location: {}",
-            at
-        ),
-    );
-    msg.span_note(
-        (body, leaf(&location).location).span(tcx),
-        format!("Expected to originate here: {}", at),
-    );
-    msg.emit()
-}
-
 struct GraphAssembler<'tcx, 'a> {
     // read-only information
-    generator: &'a SPDGGenerator<'tcx>,
+    pctx: Pctx<'tcx>,
     is_async: bool,
 
     // Translation helpers
@@ -90,17 +47,17 @@ struct GraphAssembler<'tcx, 'a> {
 
 /// Create a global PDG (spanning the entire call tree) starting from the given
 /// target function.
-pub fn assemble_pdg<'a>(
-    generator: &'a SPDGGenerator<'_>,
-    known_def_ids: &'a mut FxHashSet<DefId>,
-    target: &'a FnToAnalyze,
+pub fn assemble_pdg<'tcx>(
+    pctx: &Pctx<'tcx>,
+    pdg_constructor: &MemoPdgConstructor<'tcx, u32>,
+    known_def_ids: &mut FxHashSet<DefId>,
+    target: DefId,
 ) -> SPDG {
-    let tcx = generator.tcx();
+    let tcx = pctx.tcx();
 
     // Information and body of the provided target function
-    let base_body_def_id = target.def_id.to_def_id();
-    let base_body = generator
-        .pdg_constructor
+    let base_body_def_id = target;
+    let base_body = pctx
         .body_cache()
         .try_get(base_body_def_id)
         .unwrap_or_else(|| {
@@ -114,12 +71,11 @@ pub fn assemble_pdg<'a>(
     // be a generator if the target is async.
     let possibly_generator_id =
         async_state.map_or(base_body_def_id, |(generator, ..)| generator.def_id());
-    let (possible_generator_instance, k) = generator
-        .pdg_constructor
-        .create_root_key(possibly_generator_id.expect_local());
+    let (possible_generator_instance, k) =
+        pdg_constructor.create_root_key(possibly_generator_id.expect_local());
 
-    let mut driver = VisitDriver::new(&generator.pdg_constructor, possible_generator_instance, k);
-    let mut assembler = GraphAssembler::new(generator, known_def_ids, target.def_id.to_def_id());
+    let mut driver = VisitDriver::new(pdg_constructor, possible_generator_instance, k);
+    let mut assembler = GraphAssembler::new(pctx.clone(), known_def_ids, base_body_def_id);
 
     // If the top level function is async we start analysis from the generator
     // instead (because the async function itself is basically empty, it just
@@ -139,8 +95,7 @@ pub fn assemble_pdg<'a>(
         );
         // Using create_root_key might seem weird here but it currently does what
         // we need (resolve the instance)
-        let base_instance = generator
-            .pdg_constructor
+        let base_instance = pdg_constructor
             .create_root_key(base_body_def_id.expect_local())
             .0;
         // Because we actually started the analysis from the generator, we now
@@ -153,9 +108,9 @@ pub fn assemble_pdg<'a>(
     let arguments = assembler.determine_arguments();
     let graph = assembler.graph;
     SPDG {
-        name: Identifier::new(target.name()),
-        path: path_for_item(target.def_id.to_def_id(), tcx),
-        id: target.def_id.to_def_id(),
+        name: Identifier::new(tcx.opt_item_ident(base_body_def_id).unwrap().name),
+        path: path_for_item(base_body_def_id, tcx),
+        id: base_body_def_id,
         graph,
         markers: assembler
             .marker_assignments
@@ -174,23 +129,15 @@ pub fn assemble_pdg<'a>(
 }
 
 impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
-    fn new(
-        generator: &'a SPDGGenerator<'tcx>,
-        known_def_ids: &'a mut FxHashSet<DefId>,
-        def_id: DefId,
-    ) -> Self {
-        let is_async = entrypoint_is_async(
-            generator.pdg_constructor.body_cache(),
-            generator.tcx(),
-            def_id,
-        );
+    fn new(pctx: Pctx<'tcx>, known_def_ids: &'a mut FxHashSet<DefId>, def_id: DefId) -> Self {
+        let is_async = entrypoint_is_async(pctx.body_cache(), pctx.tcx(), def_id);
         Self {
             graph: SPDGImpl::new(),
+            pctx,
             nodes: Default::default(),
             marker_assignments: Default::default(),
             known_def_ids,
             types: Default::default(),
-            generator,
             is_async,
         }
     }
@@ -234,17 +181,21 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         place: mir::Place,
         at: CallString,
         span: rustc_span::Span,
+        is_arg: Option<u8>,
     ) -> GNode {
         GNode(self.graph.add_node(NodeInfo {
             at,
-            description: format!("{place:?}"),
+            kind: NodeKind::Place {
+                description: format!("{place:?}"),
+                local: place.local.as_u32(),
+            },
             span: src_loc_for_span(span, self.tcx()),
-            local: place.local.as_u32(),
+            is_arg,
         }))
     }
 
     fn ctx(&self) -> &Pctx<'tcx> {
-        &self.generator.ctx
+        &self.pctx
     }
 
     fn tcx(&self) -> TyCtxt<'tcx> {
@@ -252,7 +203,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     }
 
     fn marker_ctx(&self) -> &MarkerCtx<'tcx> {
-        self.generator.marker_ctx()
+        self.pctx.marker_ctx()
     }
 
     /// Fetch annotations item identified by this `id`.
@@ -325,12 +276,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         let resolution = vis.current_function();
 
         // Thread through each caller to recover generic arguments
-        let body = self
-            .generator
-            .pdg_constructor
-            .body_cache()
-            .get(function.def_id())
-            .body();
+        let body = self.pctx.body_cache().get(function.def_id()).body();
         let raw_ty = base_place.ty(body, tcx);
         let base_ty = try_monomorphize(
             resolution,
@@ -389,7 +335,6 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     /// Discover and register directly applied markers on this node.
     fn node_annotations<K: Clone>(
         &mut self,
-        local_node: Node,
         node: GNode,
         weight: &DepNode<'tcx, OneHopLocation>,
         vis: &VisitDriver<'tcx, '_, K>,
@@ -398,28 +343,23 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         let function = vis.current_function();
         let function_id = function.def_id();
 
-        let body = self
-            .generator
-            .pdg_constructor
-            .body_cache()
-            .get(function.def_id())
-            .body();
+        let body = self.pctx.body_cache().get(function.def_id()).body();
 
-        match leaf_loc {
-            RichLocation::Start
-                if matches!(body.local_kind(weight.place.local), mir::LocalKind::Arg) =>
+        match (leaf_loc, weight.place()) {
+            (RichLocation::Start, Some(place))
+                if matches!(body.local_kind(place.local), mir::LocalKind::Arg) =>
             {
-                let arg_num = weight.place.local.as_u32() - 1;
+                let arg_num = place.local.as_u32() - 1;
                 self.known_def_ids.extend([function_id]);
                 self.register_annotations_for_argument(node, arg_num, function_id);
             }
-            RichLocation::End if weight.place.local == mir::RETURN_PLACE => {
+            (RichLocation::End, Some(place)) if place.local == mir::RETURN_PLACE => {
                 self.known_def_ids.extend([function_id]);
                 self.register_annotations_for_return(node, function_id);
             }
-            RichLocation::Location(loc) => self.handle_node_annotations_for_regular_location(
-                local_node, node, weight, body, loc, vis,
-            ),
+            (RichLocation::Location(loc), _) => {
+                self.handle_node_annotations_for_regular_location(node, weight, body, loc, vis)
+            }
             _ => (),
         }
     }
@@ -437,7 +377,6 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     /// Helper for `node_annotations` to handle the case where the node is at a `RichLocation::Location`.
     fn handle_node_annotations_for_regular_location<K: Clone>(
         &mut self,
-        local_node: Node,
         node: GNode,
         weight: &DepNode<'tcx, OneHopLocation>,
         body: &mir::Body<'tcx>,
@@ -460,7 +399,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         let func =
             try_monomorphize(function, self.tcx(), param_env, func, term.source_info.span).unwrap();
         let Some(funcc) = func.constant() else {
-            self.generator.ctx.maybe_span_err(
+            self.pctx.maybe_span_err(
                 weight.span,
                 "SOUNDNESS: Cannot determine markers for function call",
             );
@@ -492,53 +431,16 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
 
         self.known_def_ids.extend(Some(f));
 
-        let graph = vis.current_graph();
-
-        // Question: Could a function with no input produce an
-        // output that has aliases? E.g. could some place, where the
-        // local portion isn't the local from the destination of
-        // this function call be affected/modified by this call? If
-        // so, that location would also need to have this marker
-        // attached
-        //
-        // Also yikes. This should have better detection of whether
-        // a place is (part of) a function return
-
-        let mut is_return_use = false;
-        let mut has_no_data_edges = true;
-
-        for eref in graph.raw().edges_directed(local_node, petgraph::Outgoing) {
-            let SourceUse::Argument(arg) = eref.weight().source_use else {
-                continue;
-            };
-            self.register_annotations_for_function(node, f, |ann| {
-                ann.refinement.on_argument().contains(arg as u32).unwrap()
-            });
-        }
-        for eref in graph.raw().edges_directed(local_node, petgraph::Incoming) {
-            if eref.weight().kind == DepEdgeKind::Data {
-                has_no_data_edges = false;
-                let at = eref.weight().at.clone();
-                #[cfg(debug_assertions)]
-                assert_edge_location_invariant(
-                    self.tcx(),
-                    at.clone(),
-                    body,
-                    weight.at.clone(),
-                    |at| GlobalLocation {
-                        function: function.def_id(),
-                        location: at.location,
-                    },
-                );
-                if weight.at == at && eref.weight().target_use.is_return() {
-                    is_return_use = true;
-                }
+        match weight.use_ {
+            Use::Arg(arg) => {
+                self.register_annotations_for_function(node, f, |ann| {
+                    ann.refinement.on_argument().contains(arg as u32).unwrap()
+                });
             }
-        }
-        let needs_return_markers = has_no_data_edges | is_return_use;
-
-        if needs_return_markers {
-            self.register_annotations_for_function(node, f, |ann| ann.refinement.on_return());
+            Use::Return => {
+                self.register_annotations_for_function(node, f, |ann| ann.refinement.on_return());
+            }
+            Use::Other => (),
         }
     }
 
@@ -555,9 +457,13 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     matches!(self.try_as_root(at), Some(l) if l.location == RichLocation::Start);
                 is_candidate
             })
+            .filter_map(|(n, i)| match i.kind {
+                NodeKind::Place { local, .. } => Some((n, local)),
+                _ => None,
+            })
             .collect();
 
-        g_nodes.sort_by_key(|(_, i)| i.local);
+        g_nodes.sort_by_key(|(_, i)| *i);
 
         g_nodes.into_iter().map(|(n, _)| n).collect()
     }
@@ -607,10 +513,9 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     ) {
         let def_id = instance.def_id();
         self.known_def_ids.extend([def_id]);
-        let tcx = self.generator.tcx();
+        let tcx = self.pctx.tcx();
         let base_body = self
-            .generator
-            .pdg_constructor
+            .pctx
             .body_cache()
             .try_get(def_id)
             .unwrap_or_else(|| {
@@ -627,6 +532,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     arg.into(),
                     driver.globalize_location(&RichLocation::Start.into()),
                     base_body.local_decls[arg].source_info.span,
+                    Some((arg.as_u32() - 1) as u8),
                 )
             })
             .collect::<Vec<_>>();
@@ -634,6 +540,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             mir::RETURN_PLACE.into(),
             driver.globalize_location(&RichLocation::End.into()),
             base_body.local_decls[mir::RETURN_PLACE].source_info.span,
+            None,
         );
 
         let mono_ty = |local| {
@@ -667,11 +574,20 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             function: def_id,
         }]);
         for (nidx, n) in pgraph.iter_nodes() {
-            if n.place.local.as_u32() == 1 && n.at.location == RichLocation::Start {
+            let DepNode {
+                kind: DepNodeKind::Place(n),
+                at,
+                span,
+                ..
+            } = n
+            else {
+                continue;
+            };
+            if n.place.local.as_u32() == 1 && at.location == RichLocation::Start {
                 let ridx = self.translate_node(nidx);
                 let Some(mir::ProjectionElem::Field(id, _)) = n.place.projection.first() else {
                     tcx.dcx().span_err(
-                        n.span,
+                        *span,
                         format!("Expected field projection on async generator in {def_id:?}, found {:?}", n.place),
                     );
                     continue;
@@ -684,8 +600,6 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     EdgeInfo {
                         kind: EdgeKind::Data,
                         at: transition_at,
-                        source_use: SourceUse::Argument(id.as_u32() as u8),
-                        target_use: TargetUse::Assign,
                     },
                 );
             } else if n.place.local == mir::RETURN_PLACE {
@@ -696,8 +610,6 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     EdgeInfo {
                         kind: EdgeKind::Data,
                         at: transition_at,
-                        source_use: SourceUse::Operand,
-                        target_use: TargetUse::Return,
                     },
                 );
             }
@@ -736,9 +648,15 @@ fn globalize_node<'tcx, K: Clone>(
     let at = vis.globalize_location(&node.at);
     NodeInfo {
         at,
-        description: format!("{:?}", node.place),
         span: src_loc_for_span(node.span, tcx),
-        local: node.place.local.as_u32(),
+        kind: match &node.kind {
+            DepNodeKind::Const(value) => NodeKind::Constant(*value),
+            DepNodeKind::Place(pkind) => NodeKind::Place {
+                description: format!("{:?}", pkind.place),
+                local: pkind.place.local.as_u32(),
+            },
+        },
+        is_arg: node.use_.as_arg(),
     }
 }
 
@@ -750,8 +668,6 @@ fn globalize_edge<K: Clone>(
     EdgeInfo {
         kind: dep_edge_kind_to_edge_kind(edge.kind),
         at,
-        source_use: edge.source_use,
-        target_use: edge.target_use,
     }
 }
 
@@ -788,8 +704,10 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssembler<
         let is_in_child = node.at.in_child.is_some();
         let idx = self.add_node(k, vis, node);
         if !is_in_child {
-            self.node_annotations(k, idx, node, vis);
-            self.handle_node_types(idx, &node.at, node.place, node.span, vis);
+            self.node_annotations(idx, node, vis);
+            if let DepNodeKind::Place(p) = &node.kind {
+                self.handle_node_types(idx, &node.at, p.place, node.span, vis);
+            }
         }
     }
 
@@ -837,8 +755,6 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssembler<
             EdgeInfo {
                 kind: dep_edge_kind_to_edge_kind(edge.kind),
                 at: edge.at,
-                source_use: edge.source_use,
-                target_use: edge.target_use,
             },
         );
     }

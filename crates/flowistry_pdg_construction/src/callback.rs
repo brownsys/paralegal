@@ -8,7 +8,8 @@ use rustc_middle::{
 };
 use rustc_span::Span;
 
-use crate::{calling_convention::CallingConvention, utils::ArgSlice};
+use crate::analysis::CallingConvention;
+use crate::utils::ArgSlice;
 
 pub trait CallChangeCallback<'tcx, K> {
     fn on_inline(&self, info: CallInfo<'tcx, '_, K>) -> CallChanges<'tcx, K>;
