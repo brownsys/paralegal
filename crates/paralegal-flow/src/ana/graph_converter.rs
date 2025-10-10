@@ -74,7 +74,7 @@ pub fn assemble_pdg<'tcx>(
     let (possible_generator_instance, k) =
         pdg_constructor.create_root_key(possibly_generator_id.expect_local());
 
-    let mut driver = VisitDriver::new(&pdg_constructor, possible_generator_instance, k);
+    let mut driver = VisitDriver::new(pdg_constructor, possible_generator_instance, k);
     let mut assembler = GraphAssembler::new(pctx.clone(), known_def_ids, base_body_def_id);
 
     // If the top level function is async we start analysis from the generator

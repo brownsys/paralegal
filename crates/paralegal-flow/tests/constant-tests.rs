@@ -99,7 +99,7 @@ fn flow() {
         if let Some(c) = c {
             assert!(c.flows_to_data(&targets));
         } else {
-            assert!(false, "Could not find constant");
+            panic!("Could not find constant");
         }
     });
 }
@@ -121,7 +121,7 @@ fn flow_with_intermediate() {
         if let Some(c) = c {
             assert!(c.flows_to_data(&targets));
         } else {
-            assert!(false, "Could not find constant");
+            panic!("Could not find constant");
         }
     });
 }

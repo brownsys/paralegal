@@ -8,16 +8,11 @@
 #[macro_use]
 extern crate lazy_static;
 
-use flowistry_pdg_construction::source_access::BodyCache;
-use paralegal_flow::{
-    define_flow_test_template, test_utils::*, utils::resolve::expect_resolve_string_to_def_id,
-};
+use paralegal_flow::{define_flow_test_template, test_utils::*};
 use paralegal_spdg::Identifier;
-use rustc_utils::test_utils::CompileBuilder;
 
-extern crate rustc_middle;
-use rustc_middle::{mir, ty};
 extern crate either;
+extern crate rustc_middle;
 
 const TEST_CRATE_NAME: &str = "tests/stub-tests";
 

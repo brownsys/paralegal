@@ -424,7 +424,7 @@ impl<'tcx, 'a> PlaceAndConstCollector<'tcx, 'a> {
     }
 }
 
-impl<'tcx, 'a> Visitor<'tcx> for PlaceAndConstCollector<'tcx, 'a> {
+impl<'tcx> Visitor<'tcx> for PlaceAndConstCollector<'tcx, '_> {
     fn visit_place(&mut self, place: &mir::Place<'tcx>, _: mir::visit::PlaceContext, _: Location) {
         self.values.push(place.into());
     }

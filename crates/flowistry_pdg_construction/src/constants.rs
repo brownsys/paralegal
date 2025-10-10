@@ -20,7 +20,7 @@ impl<'tcx> From<Place<'tcx>> for PlaceOrConst<'tcx> {
     }
 }
 
-impl<'tcx> From<Constant> for PlaceOrConst<'tcx> {
+impl From<Constant> for PlaceOrConst<'_> {
     fn from(value: Constant) -> Self {
         Self::Const(value)
     }
@@ -107,18 +107,16 @@ impl<'tcx> ConstConversionError<'tcx> {
                 tcx.dcx().span_warn(span, msg);
             }
         };
-        match self {
-            ConstConversionError::UnsupportedConstType(c) => match c {
+        if let ConstConversionError::UnsupportedConstType(c) = self {
+            match c {
                 mir::Const::Unevaluated(c, _) if tcx.def_kind(c.def).is_fn_like() => return,
-                mir::Const::Val(v, t) => match (v, t.kind()) {
-                    (_, ty::Ref(..)) => {
-                        return emit(format!("references are not supported: {t:?}"))
+                mir::Const::Val(v, t) => {
+                    if let (_, ty::Ref(..)) = (v, t.kind()) {
+                        return emit(format!("references are not supported: {t:?}"));
                     }
-                    _ => (),
-                },
+                }
                 _ => (),
-            },
-            _ => (),
+            }
         }
         tcx.dcx().span_err(span, format!("{self}"));
     }
@@ -143,7 +141,7 @@ pub fn constant_from_const<'tcx>(
 ) -> Result<Constant, ConstConversionError<'tcx>> {
     match c {
         mir::Const::Val(val, ty) => constant_from_const_value(tcx, *ty, val),
-        _ => Err(ConstConversionError::UnsupportedConstType(c.clone())),
+        _ => Err(ConstConversionError::UnsupportedConstType(*c)),
     }
 }
 
@@ -160,7 +158,6 @@ fn constant_from_const_value<'tcx>(
                     String::from_utf8_lossy(data).as_ref(),
                 )));
             }
-            ()
         }
         (mir::ConstValue::Scalar(mir::interpret::Scalar::Int(int)), tyk) => match tyk {
             ty::Bool => return Ok(Constant::Bool(int.try_to_bool().unwrap())),
@@ -176,7 +173,7 @@ fn constant_from_const_value<'tcx>(
                     ty::IntTy::I16 => int.to_u16() as i64,
                     ty::IntTy::I32 => int.to_u32() as i64,
                     ty::IntTy::I64 => int.to_u64() as i64,
-                    ty::IntTy::Isize => int.to_target_isize(tcx) as i64,
+                    ty::IntTy::Isize => int.to_target_isize(tcx),
                     ty::IntTy::I128 => {
                         return Err(ConstConversionError::Integer128NotSupported { signed: true })
                     }
@@ -187,8 +184,8 @@ fn constant_from_const_value<'tcx>(
                     ty::UintTy::U8 => int.to_u8() as u64,
                     ty::UintTy::U16 => int.to_u16() as u64,
                     ty::UintTy::U32 => int.to_u32() as u64,
-                    ty::UintTy::U64 => int.to_u64() as u64,
-                    ty::UintTy::Usize => int.to_target_usize(tcx) as u64,
+                    ty::UintTy::U64 => int.to_u64(),
+                    ty::UintTy::Usize => int.to_target_usize(tcx),
                     ty::UintTy::U128 => {
                         return Err(ConstConversionError::Integer128NotSupported { signed: false })
                     }
@@ -200,7 +197,6 @@ fn constant_from_const_value<'tcx>(
         _ => (),
     }
     Err(ConstConversionError::UnsupportedConstType(mir::Const::Val(
-        ct.clone(),
-        ty,
+        *ct, ty,
     )))
 }

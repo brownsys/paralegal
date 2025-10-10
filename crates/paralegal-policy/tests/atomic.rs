@@ -183,7 +183,7 @@ fn atomic_policy(ctx: Arc<RootContext>) -> Result<()> {
             .collect::<Box<[_]>>();
 
         for (store, check) in checks.iter() {
-            if let Some(_) = check {
+            if check.is_some() {
             } else {
                 ctx.node_error(*store, "This store is not protected");
             }

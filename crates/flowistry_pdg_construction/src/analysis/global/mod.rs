@@ -300,10 +300,7 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
                 self.register_mutation(
                     results,
                     state,
-                    &[Input::Unresolved {
-                        place: place.into(),
-                        use_: None,
-                    }],
+                    &[Input::Unresolved { place, use_: None }],
                     Either::Left(place),
                     location,
                     Use::Other,
@@ -501,7 +498,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                     results,
                     state,
                     &[Input::Unresolved {
-                        place: translation.into(),
+                        place: translation,
                         use_: None,
                     }],
                     Either::Right(child_node),

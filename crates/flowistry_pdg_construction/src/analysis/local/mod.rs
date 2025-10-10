@@ -32,8 +32,7 @@ use crate::{
         self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize, ShimResult,
         ShimType, TyAsFnResult,
     },
-    CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor,
-    SkipCall,
+    CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
 
 mod approximation;

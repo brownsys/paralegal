@@ -171,7 +171,7 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
                     true
                 })
             })
-            .filter(move |a| as_arg(&a, self.arg_count).is_some())
+            .filter(move |a| as_arg(a, self.arg_count).is_some())
             .collect()
     }
 
@@ -185,7 +185,7 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
                 assert!(n.at.in_child.is_none());
                 n.map_at(|_| false)
             })
-            .filter(move |a| as_arg(&a, self.arg_count).is_some())
+            .filter(move |a| as_arg(a, self.arg_count).is_some())
             .collect()
     }
 
