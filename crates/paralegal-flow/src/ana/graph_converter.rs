@@ -27,46 +27,6 @@ fn dep_edge_kind_to_edge_kind(kind: DepEdgeKind) -> EdgeKind {
     }
 }
 
-#[cfg(debug_assertions)]
-fn assert_edge_location_invariant<'tcx, Loc: Eq + std::fmt::Display>(
-    tcx: TyCtxt<'tcx>,
-    at: Loc,
-    body: &mir::Body<'tcx>,
-    location: Loc,
-    leaf: impl Fn(&Loc) -> GlobalLocation,
-) {
-    // Normal case. The edge is introduced where the operation happens
-    if location == at {
-        return;
-    }
-    // Control flow case. The edge is introduced at the `switchInt`
-    if let RichLocation::Location(loc) = leaf(&at).location {
-        if leaf(&at).function == leaf(&location).function
-            && matches!(
-                body.stmt_at(loc),
-                Either::Right(mir::Terminator {
-                    kind: mir::TerminatorKind::SwitchInt { .. },
-                    ..
-                })
-            )
-        {
-            return;
-        }
-    }
-    let mut msg = tcx.dcx().struct_span_fatal(
-        (body, leaf(&at).location).span(tcx),
-        format!(
-            "This operation is performed in a different location: {}",
-            at
-        ),
-    );
-    msg.span_note(
-        (body, leaf(&location).location).span(tcx),
-        format!("Expected to originate here: {}", at),
-    );
-    msg.emit()
-}
-
 struct GraphAssembler<'tcx, 'a> {
     // read-only information
     pctx: Pctx<'tcx>,
@@ -375,7 +335,6 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     /// Discover and register directly applied markers on this node.
     fn node_annotations<K: Clone>(
         &mut self,
-        local_node: Node,
         node: GNode,
         weight: &DepNode<'tcx, OneHopLocation>,
         vis: &VisitDriver<'tcx, '_, K>,
@@ -398,9 +357,9 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                 self.known_def_ids.extend([function_id]);
                 self.register_annotations_for_return(node, function_id);
             }
-            (RichLocation::Location(loc), _) => self.handle_node_annotations_for_regular_location(
-                local_node, node, weight, body, loc, vis,
-            ),
+            (RichLocation::Location(loc), _) => {
+                self.handle_node_annotations_for_regular_location(node, weight, body, loc, vis)
+            }
             _ => (),
         }
     }
@@ -418,14 +377,12 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     /// Helper for `node_annotations` to handle the case where the node is at a `RichLocation::Location`.
     fn handle_node_annotations_for_regular_location<K: Clone>(
         &mut self,
-        local_node: Node,
         node: GNode,
         weight: &DepNode<'tcx, OneHopLocation>,
         body: &mir::Body<'tcx>,
         loc: Location,
         vis: &VisitDriver<'tcx, '_, K>,
     ) {
-        let DepNode { at, span, .. } = weight;
         let function = vis.current_function();
         let function_id = function.def_id();
         let crate::Either::Right(
@@ -455,7 +412,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             TypingEnv::post_analysis(self.tcx(), function_id),
             args,
         ) {
-            match handle_shims(inst, self.tcx(), param_env, *span) {
+            match handle_shims(inst, self.tcx(), param_env, weight.span) {
                 ShimResult::IsHandledShim { instance, .. } => instance,
                 ShimResult::IsNotShim => inst,
                 ShimResult::IsNonHandleableShim => {
@@ -474,16 +431,6 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
 
         self.known_def_ids.extend(Some(f));
 
-        // Question: Could a function with no input produce an
-        // output that has aliases? E.g. could some place, where the
-        // local portion isn't the local from the destination of
-        // this function call be affected/modified by this call? If
-        // so, that location would also need to have this marker
-        // attached
-        //
-        // Also yikes. This should have better detection of whether
-        // a place is (part of) a function return
-
         match weight.use_ {
             Use::Arg(arg) => {
                 self.register_annotations_for_function(node, f, |ann| {
@@ -495,35 +442,6 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             }
             Use::Other => (),
         }
-
-        // for eref in graph.raw().edges_directed(local_node, petgraph::Outgoing) {
-        //     let SourceUse::Argument(arg) = eref.weight().source_use else {
-        //         continue;
-        //     };
-        //     self.register_annotations_for_function(node, f, |ann| {
-        //         ann.refinement.on_argument().contains(arg as u32).unwrap()
-        //     });
-        // }
-        // for eref in graph.raw().edges_directed(local_node, petgraph::Incoming) {
-        //     if eref.weight().kind == DepEdgeKind::Data {
-        //         has_no_data_edges = false;
-        //         let this_at = eref.weight().at.clone();
-        //         #[cfg(debug_assertions)]
-        //         assert_edge_location_invariant(
-        //             self.tcx(),
-        //             this_at.clone(),
-        //             body,
-        //             at.clone(),
-        //             |at| GlobalLocation {
-        //                 function: function.def_id(),
-        //                 location: at.location,
-        //             },
-        //         );
-        //         if at == &this_at && eref.weight().target_use.is_return() {
-        //             is_return_use = true;
-        //         }
-        //     }
-        // }
     }
 
     /// Determine the set if nodes corresponding to the inputs to the
@@ -786,7 +704,7 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssembler<
         let is_in_child = node.at.in_child.is_some();
         let idx = self.add_node(k, vis, node);
         if !is_in_child {
-            self.node_annotations(k, idx, node, vis);
+            self.node_annotations(idx, node, vis);
             if let DepNodeKind::Place(p) = &node.kind {
                 self.handle_node_types(idx, &node.at, p.place, node.span, vis);
             }

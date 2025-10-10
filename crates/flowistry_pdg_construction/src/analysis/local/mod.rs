@@ -32,7 +32,7 @@ use crate::{
         self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize, ShimResult,
         ShimType, TyAsFnResult,
     },
-    CallChangeCallback, CallChanges, CallInfo, DepNodeKind, InlineMissReason, MemoPdgConstructor,
+    CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor,
     SkipCall,
 };
 
@@ -701,7 +701,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
         // PRECISION TODO: for a given child place, we only want to connect
         // the *last* nodes in the child function to the parent, not *all* of them.
         trace!("CHILD -> PARENT EDGES:");
-        for (child_dst, _) in parentable_dsts {
+        for child_dst in parentable_dsts {
             if let Some(parent_place) = child_dst
                 .place()
                 .and_then(|p| place_translator.translate_to_parent(p))
@@ -936,11 +936,6 @@ pub(crate) enum CallHandling<'tcx, 'a, K> {
         precise: bool,
     },
     ApproxAsyncSM(ApproximationHandler<'tcx, 'a, K>),
-}
-
-fn other_as_arg<'tcx>(place: Place<'tcx>, body: &Body<'tcx>) -> Option<u8> {
-    (body.local_kind(place.local) == rustc_middle::mir::LocalKind::Arg)
-        .then(|| place.local.as_u32() as u8 - 1)
 }
 
 /// This used to be implemented as `place_info.children(place).iter().any(|p| *p

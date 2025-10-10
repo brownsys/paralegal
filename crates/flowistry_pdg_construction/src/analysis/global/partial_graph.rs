@@ -97,10 +97,6 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
         self.def_id
     }
 
-    pub(crate) fn insert_node(&mut self, node: DepNode<'tcx, OneHopLocation>) -> Node {
-        self.get_or_construct_node(&node.make_key(), || node)
-    }
-
     pub fn get_place_node(&self, place: Place<'tcx>, at: OneHopLocation) -> Option<Node> {
         self.get_node(&NodeKey::for_place(place, at))
     }
@@ -165,7 +161,7 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
     }
 
     /// Returns the set of source places that the parent can access (write to)
-    pub(crate) fn parentable_srcs<'a>(&'a self) -> FxHashSet<(DepNode<'tcx, bool>, Option<u8>)> {
+    pub(crate) fn parentable_srcs<'a>(&'a self) -> FxHashSet<DepNode<'tcx, bool>> {
         self.iter_edges()
             .filter(|&(n, _, _)| self.node_props(n).at.location.is_start())
             .map(|(n, _, _)| {
@@ -175,16 +171,13 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
                     true
                 })
             })
-            .filter_map(move |a| {
-                let as_arg = as_arg(&a, self.arg_count)?;
-                Some((a, as_arg))
-            })
+            .filter(move |a| as_arg(&a, self.arg_count).is_some())
             .collect()
     }
 
     /// Returns the set of destination places that the parent can access (read
     /// from)
-    pub(crate) fn parentable_dsts<'a>(&'a self) -> FxHashSet<(DepNode<'tcx, bool>, Option<u8>)> {
+    pub(crate) fn parentable_dsts<'a>(&'a self) -> FxHashSet<DepNode<'tcx, bool>> {
         self.iter_nodes()
             .map(|(_, n)| n)
             .filter(|n| n.at.location.is_end())
@@ -192,10 +185,7 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
                 assert!(n.at.in_child.is_none());
                 n.map_at(|_| false)
             })
-            .filter_map(move |a| {
-                let arg = as_arg(&a, self.arg_count)?;
-                Some((a, arg))
-            })
+            .filter(move |a| as_arg(&a, self.arg_count).is_some())
             .collect()
     }
 

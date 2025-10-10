@@ -487,7 +487,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         // For each source node CHILD that is parentable to PLACE,
         // add an edge from PLACE -> CHILD.
         trace!("PARENT -> CHILD EDGES:");
-        for (child_src, _kind) in child_graph.parentable_srcs() {
+        for child_src in child_graph.parentable_srcs() {
             let child_src = child_src.map_at(|b| bool_to_loc(*b));
             let Some(child_place) = child_src.place() else {
                 continue;
@@ -517,7 +517,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         // PRECISION TODO: for a given child place, we only want to connect
         // the *last* nodes in the child function to the parent, not *all* of them.
         trace!("CHILD -> PARENT EDGES for {:?}:", child_graph.def_id);
-        for (child_dst, kind) in child_graph.parentable_dsts() {
+        for child_dst in child_graph.parentable_dsts() {
             let child_dst = child_dst.map_at(|b| bool_to_loc(*b));
             let Some(child_place) = child_dst.place() else {
                 continue;
@@ -591,7 +591,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                         kind: DepNodeKind::Const(*value),
                         at: location.into(),
                         span: *span,
-                        use_,
+                        use_: is_arg.map_or(Use::Other, Use::Arg),
                     },
                 ))),
                 Input::Resolved { node } => Either::Left(std::iter::once(*node)),
