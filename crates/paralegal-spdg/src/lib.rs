@@ -890,6 +890,9 @@ pub struct NodeInfo {
 
     /// Span information for this node
     pub span: Span,
+
+    /// Whether this node is an argument to a function call, and if so which
+    pub is_arg: Option<u8>,
 }
 
 impl Display for NodeInfo {
@@ -929,11 +932,6 @@ pub struct EdgeInfo {
     pub kind: EdgeKind,
     /// Where in the program this edge arises from
     pub at: CallString,
-
-    /// Why the source of this edge is read
-    pub source_use: SourceUse,
-    /// Why the target of this edge is written
-    pub target_use: TargetUse,
 }
 
 impl Display for EdgeInfo {

@@ -281,41 +281,6 @@ impl fmt::Display for CallString {
     }
 }
 
-/// Additional information about the source of data.
-///
-/// If the operation is a function call this contains the argument index
-#[derive(
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Clone,
-    Copy,
-    Debug,
-    Serialize,
-    Deserialize,
-    strum::EnumIs,
-    Allocative,
-)]
-pub enum SourceUse {
-    Operand,
-    Argument(u8),
-}
-
-/// Additional information about this mutation.
-#[derive(
-    PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize, strum::EnumIs, Allocative,
-)]
-pub enum TargetUse {
-    /// A function returned, assigning to it's return destination
-    Return,
-    /// This mutation is a non-function assign
-    Assign,
-    /// A mutable argument was modified by a function call
-    MutArg(u8),
-}
-
 /// A function that is fit to be handed to `#[allocative(visit = "...")]` for a
 /// map where the key does not implement [`Allocative`], but also has no
 /// attached heap data.

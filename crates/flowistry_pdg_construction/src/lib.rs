@@ -31,7 +31,7 @@ pub use analysis::async_support::{determine_async, is_async_trait_fn, match_asyn
 pub use analysis::global::call_tree_visit::{VisitDriver, Visitor};
 pub use analysis::global::{
     DepEdge, DepEdgeKind, DepNode, DepNodeKind, MemoPdgConstructor, Node, OneHopLocation,
-    PartialGraph,
+    PartialGraph, Use,
 };
 pub use analysis::CallingConvention;
 pub use callback::{

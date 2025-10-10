@@ -26,6 +26,7 @@ use rustc_span::{source_map::Spanned, DesugaringKind, Span};
 use rustc_utils::{mir::control_dependencies::ControlDependencies, AdtDefExt, BodyExt, PlaceExt};
 
 use crate::{
+    analysis::global::Use,
     source_access::CachedBody,
     utils::{
         self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize, ShimResult,
@@ -40,7 +41,7 @@ mod approximation;
 use super::{
     async_support::{self, *},
     calling_convention::*,
-    global::{DepEdge, DepNode, NodeKey, OneHopLocation, PartialGraph, SourceUse, TargetUse},
+    global::{DepEdge, DepNode, NodeKey, OneHopLocation, PartialGraph},
     mutation::{ModularMutationVisitor, Mutation, Time},
 };
 use approximation::ApproximationHandler;
@@ -128,7 +129,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                         continue;
                     };
                     let at: OneHopLocation = ctrl_loc.into();
-                    let edge = DepEdge::control(at.clone(), SourceUse::Operand, TargetUse::Assign);
+                    let edge = DepEdge::control(at.clone());
                     out.push((ctrl_place, at, edge));
                 }
             }
@@ -148,6 +149,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
         &self,
         place: Place<'tcx>,
         location: impl Into<RichLocation>,
+        is_arg: Use,
     ) -> DepNode<'tcx, OneHopLocation> {
         let location = location.into();
         debug!(
@@ -163,32 +165,6 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
             place.ty(&self.mono_body, self.tcx()).ty,
         );
         let location: OneHopLocation = location.into();
-        let (is_return, is_arg) = match location.location {
-            RichLocation::Start => (
-                false,
-                self.body_with_facts
-                    .body()
-                    .local_kind(place.local)
-                    .eq(&LocalKind::Arg)
-                    .then_some((place.local.as_u32() - 1) as u8),
-            ),
-            RichLocation::Location(loc) => {
-                let is_arg = if let Either::Right(Terminator {
-                    kind: TerminatorKind::Call { args, .. },
-                    ..
-                }) = self.body_with_facts.body().stmt_at(loc)
-                {
-                    args.iter()
-                        .enumerate()
-                        .find(|(_, arg)| arg.node.place() == Some(place))
-                        .map(|(i, _)| i as u8)
-                } else {
-                    None
-                };
-                (false, is_arg)
-            }
-            RichLocation::End => (true, None),
-        };
         DepNode::for_place(
             place,
             location,
@@ -200,7 +176,6 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                 self.def_id,
                 self.tcx(),
             ),
-            is_return,
             is_arg,
         )
     }
@@ -282,7 +257,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
         &self,
         state: &InstructionState<'tcx>,
         input: Place<'tcx>,
-    ) -> Vec<DepNode<'tcx, OneHopLocation>> {
+    ) -> Vec<(Place<'tcx>, RichLocation)> {
         trace!("Finding inputs for place {input:?}");
         // Include all sources of indirection (each reference in the chain) as relevant places.
         let provenance = input
@@ -332,7 +307,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                         // For each last mutated location:
                         last_mut_locs.into_iter().map(move |last_mut_loc| {
                             // Return <CONFLICT> @ <LAST_MUT_LOC> as an input node.
-                            self.make_dep_node(conflict, *last_mut_loc)
+                            (conflict, *last_mut_loc)
                         })
                     })
             })
@@ -343,7 +318,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
         &self,
         mutated: Place<'tcx>,
         location: Location,
-    ) -> Vec<(Place<'tcx>, DepNode<'tcx, OneHopLocation>)> {
+    ) -> Vec<(Place<'tcx>, Location)> {
         // **POINTER-SENSITIVITY:**
         // If `mutated` involves indirection via dereferences, then resolve it to the direct places it could point to.
         let aliases = self.aliases(mutated).collect_vec();
@@ -356,7 +331,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
             .iter()
             .map(|dst| {
                 // Create a destination node for (DST @ CURRENT_LOC).
-                (*dst, self.make_dep_node(*dst, location))
+                (*dst, location)
             })
             .collect()
     }
@@ -774,32 +749,16 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
             analysis.seek_to_block_end(block);
             let return_state = analysis.get();
             for (place, locations) in &return_state.last_mutation {
-                let ret_kind = if place.local == RETURN_PLACE {
-                    TargetUse::Return
-                } else if let Some(num) = other_as_arg(*place, &self.mono_body) {
-                    TargetUse::MutArg(num)
-                } else {
-                    continue;
-                };
                 for location in locations {
                     let src = final_state.get_place_node(*place, location.into()).unwrap();
                     let eloc = RichLocation::End;
                     let key = NodeKey::for_place(*place, eloc.into());
                     let prior = final_state.get_node(&key);
-                    debug_assert!(
-                        prior.is_none()
-                            || prior.is_some_and(|p|
-                                matches!(&final_state.node_props(p).kind, DepNodeKind::Place(p) if p.is_return),
-                        ),
-                        "{}", final_state.node_props(prior.unwrap())
-                    );
-                    let dst = final_state
-                        .get_or_construct_node(&key, || self.make_dep_node(*place, eloc));
-                    let edge = DepEdge::data(
-                        self.mono_body.terminator_loc(block).into(),
-                        SourceUse::Operand,
-                        ret_kind,
-                    );
+                    assert!(prior.is_none_or(|p| final_state.node_props(p).use_ == Use::Return));
+                    let dst = final_state.get_or_construct_node(&key, || {
+                        self.make_dep_node(*place, eloc, Use::Return)
+                    });
+                    let edge = DepEdge::data(self.mono_body.terminator_loc(block).into());
                     final_state.insert_edge(src, dst, edge);
                 }
             }

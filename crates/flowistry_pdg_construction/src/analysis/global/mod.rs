@@ -34,9 +34,7 @@ mod graph_elems;
 mod partial_graph;
 
 use call_tree_visit::VisitDriver;
-pub use graph_elems::{
-    DepEdge, DepEdgeKind, DepNode, DepNodeKind, OneHopLocation, SourceUse, TargetUse,
-};
+pub use graph_elems::{DepEdge, DepEdgeKind, DepNode, DepNodeKind, OneHopLocation, Use};
 pub use partial_graph::{Node, NodeKey, PartialGraph};
 
 #[derive(Debug, Clone, Copy)]
@@ -308,7 +306,7 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
                     }],
                     Either::Left(place),
                     location,
-                    TargetUse::Assign,
+                    Use::Other,
                 );
             }
             return;
@@ -390,7 +388,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                     &inputs,
                     Either::Left(place),
                     location,
-                    mutation.mutation_reason,
+                    mutation.is_arg,
                 )
             },
             strict,
@@ -508,7 +506,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                     }],
                     Either::Right(child_node),
                     location,
-                    TargetUse::Assign,
+                    Use::Other,
                 );
             }
         }
@@ -532,13 +530,10 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                 self.register_mutation(
                     results,
                     state,
-                    &[Input::Resolved {
-                        node: child_node,
-                        node_use: SourceUse::Operand,
-                    }],
+                    &[Input::Resolved { node: child_node }],
                     Either::Left(parent_place),
                     location,
-                    kind.map_or(TargetUse::Return, TargetUse::MutArg),
+                    Use::Other,
                 );
             }
         }
@@ -553,7 +548,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         inputs: &[Input<'tcx>],
         mutated: Either<Place<'tcx>, Node>,
         location: Location,
-        target_use: TargetUse,
+        use_: Use,
     ) where
         K: Hash + Eq + Clone,
     {
@@ -571,11 +566,16 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                     constructor
                         .find_data_inputs(state, *place)
                         .into_iter()
-                        .zip(std::iter::repeat(*use_))
-                        .map(|(input, input_use)| {
-                            (
-                                self.insert_node(input),
-                                input_use.map_or(SourceUse::Operand, SourceUse::Argument),
+                        .map(|(place, at)| {
+                            self.get_or_construct_node(
+                                &NodeKey::for_place(place, at.into()),
+                                || {
+                                    constructor.make_dep_node(
+                                        place,
+                                        at,
+                                        use_.map_or(Use::Other, Use::Arg),
+                                    )
+                                },
                             )
                         })
                         .collect::<Vec<_>>()
@@ -585,21 +585,16 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                     const_: value,
                     span,
                     is_arg,
-                } => Either::Left(std::iter::once((
-                    self.get_or_construct_node(
-                        &NodeKey::for_const(*value, *is_arg, location.into()),
-                        || DepNode {
-                            kind: DepNodeKind::Const(*value),
-                            at: location.into(),
-                            span: *span,
-                            is_arg: *is_arg,
-                        },
-                    ),
-                    is_arg.map_or(SourceUse::Operand, SourceUse::Argument),
+                } => Either::Left(std::iter::once(self.get_or_construct_node(
+                    &NodeKey::for_const(*value, *is_arg, location.into()),
+                    || DepNode {
+                        kind: DepNodeKind::Const(*value),
+                        at: location.into(),
+                        span: *span,
+                        use_,
+                    },
                 ))),
-                Input::Resolved { node_use, node } => {
-                    Either::Left(std::iter::once((*node, *node_use)))
-                }
+                Input::Resolved { node } => Either::Left(std::iter::once(*node)),
             })
             .collect::<Vec<_>>();
         trace!("  Data inputs: {data_inputs:?}");
@@ -610,14 +605,17 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                 .analysis
                 .find_outputs(place, location)
                 .into_iter()
-                .map(|t| self.insert_node(t.1))
+                .map(|(place, at)| {
+                    let key = NodeKey::for_place(place, at.into());
+                    self.get_or_construct_node(&key, || constructor.make_dep_node(place, at, use_))
+                })
                 .collect(),
         };
         trace!("  Outputs: {outputs:?}");
 
         // Add data dependencies: data_input -> output
-        for (data_input, source_use) in data_inputs {
-            let data_edge = DepEdge::data(location.into(), source_use, target_use);
+        for data_input in data_inputs {
+            let data_edge = DepEdge::data(location.into());
             for output in &outputs {
                 trace!("  Adding edge {data_input:?} -> {output:?}");
                 self.insert_edge(data_input, *output, data_edge.clone());
@@ -628,7 +626,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         for (ctrl_input, loc, edge) in &ctrl_inputs {
             let from = self
                 .get_or_construct_node(&NodeKey::for_place(*ctrl_input, loc.clone()), || {
-                    constructor.make_dep_node(*ctrl_input, loc.location)
+                    constructor.make_dep_node(*ctrl_input, loc.location, Use::Other)
                 });
             for output in &outputs {
                 self.insert_edge(from, *output, edge.clone());
@@ -656,7 +654,6 @@ enum Input<'tcx> {
     },
     Resolved {
         node: Node,
-        node_use: SourceUse,
     },
 }
 

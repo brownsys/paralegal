@@ -8,7 +8,6 @@ use std::{
 use internment::Intern;
 
 use flowistry_pdg::{Constant, RichLocation};
-pub use flowistry_pdg::{SourceUse, TargetUse};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{Body, Location, Place},
@@ -78,7 +77,6 @@ pub struct DepNodePlaceKind<'tcx> {
     pub(crate) place_pretty: Option<Intern<String>>,
     /// Does the PDG track subplaces of this place?
     pub is_split: bool,
-    pub is_return: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -98,7 +96,23 @@ pub struct DepNode<'tcx, Loc> {
     /// Location of the place in the program.
     pub at: Loc,
     pub span: Span,
-    pub is_arg: Option<u8>,
+    pub use_: Use,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Copy, Hash)]
+pub enum Use {
+    Arg(u8),
+    Return,
+    Other,
+}
+
+impl Use {
+    pub fn as_arg(&self) -> Option<u8> {
+        match self {
+            Use::Arg(arg) => Some(*arg),
+            _ => None,
+        }
+    }
 }
 
 impl<Loc: PartialEq> PartialEq for DepNode<'_, Loc> {
@@ -110,9 +124,9 @@ impl<Loc: PartialEq> PartialEq for DepNode<'_, Loc> {
             at,
             kind,
             span,
-            is_arg,
+            use_: is_arg,
         } = self;
-        let base_cmp = (at, is_arg).eq(&(&other.at, &other.is_arg));
+        let base_cmp = (at, is_arg).eq(&(&other.at, &other.use_));
         let eq = base_cmp
             && match (kind, &other.kind) {
                 (
@@ -120,14 +134,12 @@ impl<Loc: PartialEq> PartialEq for DepNode<'_, Loc> {
                         place,
                         place_pretty: _,
                         is_split,
-                        is_return,
                     }),
                     DepNodeKind::Place(other_kind),
                 ) => {
                     let eq = place == &other_kind.place;
                     if eq {
                         debug_assert_eq!(is_split, &other_kind.is_split);
-                        debug_assert_eq!(is_return, &other_kind.is_return);
                     }
                     eq
                 }
@@ -151,7 +163,7 @@ impl<Loc: Hash> Hash for DepNode<'_, Loc> {
             kind,
             at,
             span: _,
-            is_arg,
+            use_: is_arg,
         } = self;
         let place_or_const = match kind {
             DepNodeKind::Const(value) => Ok(value),
@@ -173,8 +185,7 @@ impl<'tcx> DepNode<'tcx, OneHopLocation> {
         body: &Body<'tcx>,
         context: DefId,
         is_split: bool,
-        is_return: bool,
-        is_arg: Option<u8>,
+        is_arg: Use,
     ) -> Self {
         let span = match at.location {
             RichLocation::Location(loc) => {
@@ -185,27 +196,24 @@ impl<'tcx> DepNode<'tcx, OneHopLocation> {
             }
             RichLocation::Start | RichLocation::End => tcx.def_span(context),
         };
-        assert!(
-            !(is_arg.is_some() && is_return),
-            "{is_arg:?} and {is_return}"
-        );
         DepNode {
             kind: DepNodeKind::Place(DepNodePlaceKind {
                 place,
                 place_pretty: place.to_string(tcx, body).map(Intern::new),
                 is_split,
-                is_return,
             }),
             at,
             span,
-            is_arg,
+            use_: is_arg,
         }
     }
 
     pub fn make_key(&self) -> NodeKey<'tcx> {
         match &self.kind {
             DepNodeKind::Place(p) => NodeKey::for_place(p.place, self.at.clone()),
-            DepNodeKind::Const(value) => NodeKey::for_const(*value, self.is_arg, self.at.clone()),
+            DepNodeKind::Const(value) => {
+                NodeKey::for_const(*value, self.use_.as_arg(), self.at.clone())
+            }
         }
     }
 }
@@ -225,7 +233,7 @@ impl<'a, Loc> DepNode<'a, Loc> {
             kind: self.kind.clone(),
             at: f(&self.at),
             span: self.span,
-            is_arg: self.is_arg,
+            use_: self.use_,
         }
     }
 
@@ -301,30 +309,22 @@ pub struct DepEdge<Loc> {
 
     /// The location of the operation.
     pub at: Loc,
-
-    pub source_use: SourceUse,
-
-    pub target_use: TargetUse,
 }
 
 impl<Loc> DepEdge<Loc> {
     /// Constructs a data edge.
-    pub fn data(at: Loc, source_use: SourceUse, target_use: TargetUse) -> Self {
+    pub fn data(at: Loc) -> Self {
         DepEdge {
             kind: DepEdgeKind::Data,
             at,
-            source_use,
-            target_use,
         }
     }
 
     /// Constructs a control edge.
-    pub fn control(at: Loc, source_use: SourceUse, target_use: TargetUse) -> Self {
+    pub fn control(at: Loc) -> Self {
         DepEdge {
             kind: DepEdgeKind::Control,
             at,
-            source_use,
-            target_use,
         }
     }
 
@@ -341,8 +341,6 @@ impl<Loc> DepEdge<Loc> {
         DepEdge {
             kind: self.kind,
             at: f(&self.at),
-            source_use: self.source_use,
-            target_use: self.target_use,
         }
     }
 }

@@ -1,6 +1,6 @@
 //! Identifies the mutated places in a MIR instruction via modular approximation based on types.
 
-use flowistry_pdg::{rustc_portable::Place, TargetUse};
+use flowistry_pdg::rustc_portable::Place;
 use itertools::Itertools;
 use log::trace;
 use rustc_middle::{
@@ -14,7 +14,7 @@ use rustc_utils::{AdtDefExt, OperandExt, PlaceExt};
 
 use flowistry::mir::{placeinfo::PlaceInfo, utils::AsyncHack};
 
-use crate::{constants::PlaceOrConst, utils::ty_resolve};
+use crate::{constants::PlaceOrConst, utils::ty_resolve, Use};
 
 /// Indicator of certainty about whether a place is being mutated.
 /// Used to determine whether an update should be strong or weak.
@@ -33,15 +33,14 @@ pub struct Mutation<'tcx> {
     /// The place that is being mutated.
     pub mutated: Place<'tcx>,
 
-    /// Simplified reason why this mutation occurred.
-    pub mutation_reason: TargetUse,
-
     /// The set of inputs to the mutating operation.
     pub inputs: Vec<(PlaceOrConst<'tcx>, Option<u8>)>,
 
     #[allow(dead_code)]
     /// The certainty of whether the mutation is happening.
     pub status: MutationStatus,
+
+    pub is_arg: Use,
 }
 
 /// MIR visitor that invokes a callback for every [`Mutation`] in the visited object.
@@ -166,12 +165,12 @@ where
                             location,
                             Mutation {
                                 mutated,
-                                mutation_reason: TargetUse::Assign,
                                 inputs: input
                                     .map(|i| (i.into(), None))
                                     .into_iter()
                                     .collect::<Vec<_>>(),
                                 status: MutationStatus::Definitely,
+                                is_arg: Use::Other,
                             },
                         ),
                     }
@@ -212,9 +211,9 @@ where
                         location,
                         Mutation {
                             mutated: *mutated,
-                            mutation_reason: TargetUse::Assign,
                             inputs: vec![(place.into(), None)],
                             status: MutationStatus::Definitely,
+                            is_arg: Use::Other,
                         },
                     )
                 }
@@ -225,9 +224,9 @@ where
                         location,
                         Mutation {
                             mutated: mutated_field,
-                            mutation_reason: TargetUse::Assign,
                             inputs: vec![(input_field.into(), None)],
                             status: MutationStatus::Definitely,
+                            is_arg: Use::Other,
                         },
                     )
                 }
@@ -245,9 +244,9 @@ where
                     location,
                     Mutation {
                         mutated: *mutated,
-                        mutation_reason: TargetUse::Assign,
                         inputs,
                         status: MutationStatus::Definitely,
+                        is_arg: Use::Other,
                     },
                 );
                 true
@@ -272,7 +271,7 @@ where
 
         if matches!(self.time, Time::Unspecified | Time::Before) {
             // Make sure we combine all inputs in the arguments.
-            for (_, arg) in arg_places.iter().copied() {
+            for (i, arg) in arg_places.iter().copied() {
                 let PlaceOrConst::Place(arg) = arg else {
                     continue;
                 };
@@ -286,15 +285,15 @@ where
                     location,
                     Mutation {
                         mutated: arg,
-                        mutation_reason: TargetUse::Assign,
                         inputs,
                         status: MutationStatus::Definitely,
+                        is_arg: Use::Arg(i as u8),
                     },
                 );
             }
         }
         if matches!(self.time, Time::Unspecified | Time::After) {
-            for (num, arg) in arg_places.iter().copied() {
+            for (_, arg) in arg_places.iter().copied() {
                 let PlaceOrConst::Place(arg) = arg else {
                     continue;
                 };
@@ -304,9 +303,9 @@ where
                             location,
                             Mutation {
                                 mutated: *arg_mut,
-                                mutation_reason: TargetUse::MutArg(num as u8),
                                 inputs: arg_place_inputs.clone(),
                                 status: MutationStatus::Possibly,
+                                is_arg: Use::Other,
                             },
                         )
                     }
@@ -317,8 +316,8 @@ where
                 Mutation {
                     mutated: destination,
                     inputs: arg_place_inputs,
-                    mutation_reason: TargetUse::Return,
                     status: MutationStatus::Definitely,
+                    is_arg: Use::Return,
                 },
             );
         }
@@ -347,9 +346,9 @@ where
             location,
             Mutation {
                 mutated: *mutated,
-                mutation_reason: TargetUse::Assign,
                 inputs,
                 status: MutationStatus::Definitely,
+                is_arg: Use::Other,
             },
         )
     }

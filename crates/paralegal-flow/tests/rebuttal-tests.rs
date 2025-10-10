@@ -100,11 +100,7 @@ const EXISTENTIAL_MISS: &str = stringify!(
 
 #[test]
 fn plume_policy_exists_quantifier() {
-    let test_builder = |code| {
-        let mut builder = InlineTestBuilder::new(code);
-        builder.with_extra_args(["--relaxed".to_string()]);
-        builder
-    };
+    let test_builder = |code| InlineTestBuilder::new(code);
     let policy = |expect_success, msg| {
         move |ctrl: CtrlRef<'_>| {
             let result = policy(ctrl, |srcs, snks| srcs.flows_to_data(snks));
@@ -125,11 +121,7 @@ fn plume_policy_exists_quantifier() {
 
 #[test]
 fn plume_policy_forall_quantifier() {
-    let test_builder = |code| {
-        let mut builder = InlineTestBuilder::new(code);
-        builder.with_extra_args(["--relaxed".to_string()]);
-        builder
-    };
+    let test_builder = |code| InlineTestBuilder::new(code);
     let policy = |expect_success, msg| {
         move |ctrl: CtrlRef<'_>| {
             let result = policy(ctrl, |srcs, snks| {
@@ -137,7 +129,7 @@ fn plume_policy_forall_quantifier() {
             });
             if expect_success {
                 if let Err(e) = result {
-                    panic!("Failed {e} in '{msg}' configuration")
+                    panic!("{e} in '{msg}' configuration")
                 }
             } else {
                 assert!(result.is_err(), "Expected fail {msg}");

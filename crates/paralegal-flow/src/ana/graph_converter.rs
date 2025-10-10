@@ -1,11 +1,11 @@
 use super::{path_for_item, src_loc_for_span};
 use crate::{ann::MarkerAnnotation, desc::*, utils::*, HashMap, HashSet, MarkerCtx, Pctx};
-use flowistry_pdg::{rustc_portable::Location, SourceUse};
+use flowistry_pdg::rustc_portable::Location;
 use flowistry_pdg_construction::{
     determine_async,
     utils::{handle_shims, try_monomorphize, try_resolve_function, type_as_fn, ShimResult},
     DepEdge, DepEdgeKind, DepNode, DepNodeKind, MemoPdgConstructor, OneHopLocation, PartialGraph,
-    VisitDriver, Visitor,
+    Use, VisitDriver, Visitor,
 };
 use paralegal_spdg::Node;
 
@@ -221,6 +221,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         place: mir::Place,
         at: CallString,
         span: rustc_span::Span,
+        is_arg: Option<u8>,
     ) -> GNode {
         GNode(self.graph.add_node(NodeInfo {
             at,
@@ -229,6 +230,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                 local: place.local.as_u32(),
             },
             span: src_loc_for_span(span, self.tcx()),
+            is_arg,
         }))
     }
 
@@ -484,14 +486,16 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         // Also yikes. This should have better detection of whether
         // a place is (part of) a function return
 
-        let is_return_use =
-            matches!(weight, DepNode { kind: DepNodeKind::Place(p), .. } if p.is_return );
-        let has_no_data_edges = true;
-
-        if let Some(arg) = weight.is_arg {
-            self.register_annotations_for_function(node, f, |ann| {
-                ann.refinement.on_argument().contains(arg as u32).unwrap()
-            });
+        match weight.use_ {
+            Use::Arg(arg) => {
+                self.register_annotations_for_function(node, f, |ann| {
+                    ann.refinement.on_argument().contains(arg as u32).unwrap()
+                });
+            }
+            Use::Return => {
+                self.register_annotations_for_function(node, f, |ann| ann.refinement.on_return());
+            }
+            Use::Other => (),
         }
 
         // for eref in graph.raw().edges_directed(local_node, petgraph::Outgoing) {
@@ -522,11 +526,6 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         //         }
         //     }
         // }
-        let needs_return_markers = has_no_data_edges | is_return_use;
-
-        if needs_return_markers {
-            self.register_annotations_for_function(node, f, |ann| ann.refinement.on_return());
-        }
     }
 
     /// Determine the set if nodes corresponding to the inputs to the
@@ -617,6 +616,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     arg.into(),
                     driver.globalize_location(&RichLocation::Start.into()),
                     base_body.local_decls[arg].source_info.span,
+                    Some((arg.as_u32() - 1) as u8),
                 )
             })
             .collect::<Vec<_>>();
@@ -624,6 +624,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             mir::RETURN_PLACE.into(),
             driver.globalize_location(&RichLocation::End.into()),
             base_body.local_decls[mir::RETURN_PLACE].source_info.span,
+            None,
         );
 
         let mono_ty = |local| {
@@ -683,8 +684,6 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     EdgeInfo {
                         kind: EdgeKind::Data,
                         at: transition_at,
-                        source_use: SourceUse::Argument(id.as_u32() as u8),
-                        target_use: TargetUse::Assign,
                     },
                 );
             } else if n.place.local == mir::RETURN_PLACE {
@@ -695,8 +694,6 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     EdgeInfo {
                         kind: EdgeKind::Data,
                         at: transition_at,
-                        source_use: SourceUse::Operand,
-                        target_use: TargetUse::Return,
                     },
                 );
             }
@@ -743,6 +740,7 @@ fn globalize_node<'tcx, K: Clone>(
                 local: pkind.place.local.as_u32(),
             },
         },
+        is_arg: node.use_.as_arg(),
     }
 }
 
@@ -754,8 +752,6 @@ fn globalize_edge<K: Clone>(
     EdgeInfo {
         kind: dep_edge_kind_to_edge_kind(edge.kind),
         at,
-        source_use: edge.source_use,
-        target_use: edge.target_use,
     }
 }
 
@@ -843,8 +839,6 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssembler<
             EdgeInfo {
                 kind: dep_edge_kind_to_edge_kind(edge.kind),
                 at: edge.at,
-                source_use: edge.source_use,
-                target_use: edge.target_use,
             },
         );
     }

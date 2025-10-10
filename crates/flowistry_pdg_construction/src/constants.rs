@@ -8,8 +8,6 @@ use rustc_middle::{
     ty::{self},
 };
 
-pub use flowistry_pdg::{SourceUse, TargetUse};
-
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum PlaceOrConst<'tcx> {
     Place(Place<'tcx>),

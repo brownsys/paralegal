@@ -619,9 +619,9 @@ impl<'g> CallStringRef<'g> {
         let graph = &self.ctrl.ctrl.graph;
         // Alternative??
         let mut nodes: Vec<_> = graph
-            .edge_references()
+            .node_references()
             .filter(|e| e.weight().at == self.call_site)
-            .map(|e| (e.weight().source_use, e.source()))
+            .filter_map(|e| Some((e.weight().is_arg?, e.id())))
             .collect();
         nodes.sort();
         nodes.dedup();
