@@ -750,14 +750,20 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
             let return_state = analysis.get();
             for (place, locations) in &return_state.last_mutation {
                 for location in locations {
+                    let use_ = if place.local == RETURN_PLACE {
+                        Use::Return
+                    } else if self.mono_body.local_kind(place.local) == LocalKind::Arg {
+                        Use::Other
+                    } else {
+                        continue;
+                    };
                     let src = final_state.get_place_node(*place, location.into()).unwrap();
                     let eloc = RichLocation::End;
                     let key = NodeKey::for_place(*place, eloc.into());
                     let prior = final_state.get_node(&key);
-                    assert!(prior.is_none_or(|p| final_state.node_props(p).use_ == Use::Return));
-                    let dst = final_state.get_or_construct_node(&key, || {
-                        self.make_dep_node(*place, eloc, Use::Return)
-                    });
+                    assert!(prior.is_none_or(|p| final_state.node_props(p).use_ == use_));
+                    let dst = final_state
+                        .get_or_construct_node(&key, || self.make_dep_node(*place, eloc, use_));
                     let edge = DepEdge::data(self.mono_body.terminator_loc(block).into());
                     final_state.insert_edge(src, dst, edge);
                 }

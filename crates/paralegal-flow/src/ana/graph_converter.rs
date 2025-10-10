@@ -474,8 +474,6 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
 
         self.known_def_ids.extend(Some(f));
 
-        let graph = vis.current_graph();
-
         // Question: Could a function with no input produce an
         // output that has aliases? E.g. could some place, where the
         // local portion isn't the local from the destination of
