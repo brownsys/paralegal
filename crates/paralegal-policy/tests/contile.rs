@@ -26,10 +26,7 @@ fn policy(ctx: Arc<RootContext>) -> Result<()> {
                             ctx.struct_node_error(sink, "this call sends personal data to the adm");
                         msg.with_node_help(src, "personal data originates here");
                         for n in path.iter() {
-                            msg.with_node_note(
-                                *n,
-                                format!("Passes through this {}", n.info(&ctx).description),
-                            );
+                            msg.with_node_note(*n, format!("Passes through this {}", n.info(&ctx)));
                         }
                         msg.emit();
                         failures += 1;
@@ -54,10 +51,7 @@ fn policy(ctx: Arc<RootContext>) -> Result<()> {
                         );
                         msg.with_node_note(*personal, "personal data originates here");
                         for p in path.iter() {
-                            msg.with_node_note(
-                                *p,
-                                format!("Passes through this {}", p.info(&ctx).description),
-                            );
+                            msg.with_node_note(*p, format!("Passes through this {}", p.info(&ctx)));
                         }
                         msg.emit();
                         failures += 1;

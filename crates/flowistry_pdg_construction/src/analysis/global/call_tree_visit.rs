@@ -15,9 +15,11 @@ use std::{borrow::Cow, hash::Hash, rc::Rc};
 use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 use rustc_middle::{mir::Location, ty::Instance};
 
-use crate::{
-    graph::{DepEdge, DepNode, GraphConnectionPoint, Node, OneHopLocation, PartialGraph},
-    MemoPdgConstructor,
+use crate::{analysis::global::partial_graph::NodeKey, DepNodeKind, MemoPdgConstructor};
+
+use super::{
+    graph_elems::{DepEdge, DepNode, OneHopLocation, PartialGraph},
+    partial_graph::{GraphConnectionPoint, Node},
 };
 
 pub struct VisitDriver<'tcx, 'c, K: Clone> {
@@ -171,6 +173,9 @@ impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
             let parent = self.graph_stack[self.graph_stack.len() - 2].1.clone();
             let cloc = self.call_stack().last().unwrap().location;
             for (node, info) in parent.iter_nodes() {
+                let DepNodeKind::Place(pkind) = &info.kind else {
+                    continue;
+                };
                 if info.at.in_child.is_some_and(|(d, _)| d == graph.def_id)
                     && info.at.location == cloc
                 {
@@ -179,15 +184,15 @@ impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
                         self,
                         node,
                         graph
-                            .get_node(
-                                info.place,
+                            .get_node(&NodeKey::for_place(
+                                pkind.place,
                                 if is_at_start {
                                     RichLocation::Start
                                 } else {
                                     RichLocation::End
                                 }
                                 .into(),
-                            )
+                            ))
                             .unwrap(),
                         is_at_start,
                     );

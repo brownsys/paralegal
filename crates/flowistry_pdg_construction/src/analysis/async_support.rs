@@ -15,7 +15,8 @@ use rustc_span::{source_map::Spanned, Span};
 
 use crate::utils::{is_async, ArgSlice, TyAsFnResult};
 
-use super::{local_analysis::LocalAnalysis, utils};
+use super::local::LocalAnalysis;
+use crate::utils;
 
 /// Describe in which way a function is `async`.
 ///

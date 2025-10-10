@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use flowistry_pdg_construction::body_cache::BodyCache;
+use flowistry_pdg_construction::source_access::BodyCache;
 use rustc_errors::DiagMessage;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
@@ -14,6 +14,22 @@ impl<'tcx> Pctx<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args) -> Self {
         let body_cache = Rc::new(BodyCache::new(tcx));
         let marker_ctx = MarkerDatabase::init(tcx, opts, body_cache.clone()).into();
+        let payload = PctxPayload {
+            tcx,
+            body_cache,
+            opts,
+            marker_ctx,
+        };
+        Self(Rc::new(payload))
+    }
+
+    pub fn new_test(tcx: TyCtxt<'tcx>, opts: &'static crate::Args, load_markers: bool) -> Self {
+        let body_cache = Rc::new(BodyCache::new(tcx));
+        let marker_ctx = if load_markers {
+            MarkerDatabase::init(tcx, opts, body_cache.clone()).into()
+        } else {
+            MarkerDatabase::init_no_markers(tcx, opts, body_cache.clone()).into()
+        };
         let payload = PctxPayload {
             tcx,
             body_cache,

@@ -5,7 +5,6 @@
 //! [`analyze`](SPDGGenerator::analyze).
 
 use crate::{
-    ana::graph_converter::assemble_pdg,
     ann::{Annotation, MarkerAnnotation},
     args::Stub,
     desc::*,
@@ -21,10 +20,10 @@ use anyhow::Result;
 use either::Either;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    body_cache::local_or_remote_paths,
-    calling_convention::CallingConvention,
+    source_access::local_or_remote_paths,
     utils::{is_async, type_as_fn, ArgSlice},
-    CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
+    CallChangeCallback, CallChanges, CallInfo, CallingConvention, InlineMissReason,
+    MemoPdgConstructor, SkipCall,
 };
 use inline_judge::{InlineJudgement, K};
 use itertools::Itertools;
@@ -46,6 +45,7 @@ mod inline_judge;
 use std::time::Duration;
 
 pub use self::inline_judge::InlineJudge;
+pub use graph_converter::assemble_pdg;
 
 /// Read-only database of information the analysis needs.
 ///
@@ -107,7 +107,12 @@ impl<'tcx> SPDGGenerator<'tcx> {
         );
         let local_def_id = target.def_id;
 
-        let pdg = assemble_pdg(self, known_def_ids, target);
+        let pdg = assemble_pdg(
+            &self.ctx,
+            &self.pdg_constructor,
+            known_def_ids,
+            target.def_id.to_def_id(),
+        );
 
         Ok((local_def_id.to_def_id(), pdg))
     }
@@ -366,10 +371,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 };
                 let rust_span = match i.location {
                     RichLocation::Location(loc) => {
-                        let expanded_span = match body.stmt_at(loc) {
-                            crate::Either::Right(term) => term.source_info.span,
-                            crate::Either::Left(stmt) => stmt.source_info.span,
-                        };
+                        let expanded_span = body.source_info(loc).span;
                         tcx.sess.source_map().stmt_span(expanded_span, body.span)
                     }
                     RichLocation::Start | RichLocation::End => tcx.def_span(i.function),

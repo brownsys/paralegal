@@ -1,22 +1,20 @@
 //! Identifies the mutated places in a MIR instruction via modular approximation based on types.
 
-use flowistry_pdg::{rustc_portable::Place, TargetUse};
+use flowistry_pdg::rustc_portable::Place;
 use itertools::Itertools;
 use log::trace;
 use rustc_middle::{
-    mir::{visit::Visitor, *},
-    ty::{AdtKind, CoroutineArgsExt, TyKind},
+    mir::{self, visit::Visitor, *},
+    ty::{self, AdtKind, CoroutineArgsExt, TyKind},
 };
+use rustc_span::source_map::Spanned;
 use rustc_target::abi::FieldIdx;
 
-use rustc_utils::{mir::place::PlaceCollector, AdtDefExt, OperandExt, PlaceExt};
+use rustc_utils::{AdtDefExt, OperandExt, PlaceExt};
 
-use flowistry::mir::{
-    placeinfo::PlaceInfo,
-    utils::{self, AsyncHack},
-};
+use flowistry::mir::{placeinfo::PlaceInfo, utils::AsyncHack};
 
-use crate::utils::ty_resolve;
+use crate::{constants::PlaceOrConst, utils::ty_resolve, Use};
 
 /// Indicator of certainty about whether a place is being mutated.
 /// Used to determine whether an update should be strong or weak.
@@ -35,15 +33,14 @@ pub struct Mutation<'tcx> {
     /// The place that is being mutated.
     pub mutated: Place<'tcx>,
 
-    /// Simplified reason why this mutation occurred.
-    pub mutation_reason: TargetUse,
-
     /// The set of inputs to the mutating operation.
-    pub inputs: Vec<(Place<'tcx>, Option<u8>)>,
+    pub inputs: Vec<(PlaceOrConst<'tcx>, Option<u8>)>,
 
     #[allow(dead_code)]
     /// The certainty of whether the mutation is happening.
     pub status: MutationStatus,
+
+    pub is_arg: Use,
 }
 
 /// MIR visitor that invokes a callback for every [`Mutation`] in the visited object.
@@ -57,6 +54,7 @@ where
     f: F,
     place_info: &'a PlaceInfo<'tcx>,
     time: Time,
+    strict: bool,
 }
 
 /// A classification on when this visitor is executed. This is designed to allow
@@ -86,11 +84,12 @@ where
     F: FnMut(Location, Mutation<'tcx>),
 {
     /// Constructs a new visitor.
-    pub fn new(place_info: &'a PlaceInfo<'tcx>, f: F) -> Self {
+    pub fn new(place_info: &'a PlaceInfo<'tcx>, f: F, strict: bool) -> Self {
         ModularMutationVisitor {
             place_info,
             f,
             time: Time::Unspecified,
+            strict,
         }
     }
 
@@ -166,9 +165,12 @@ where
                             location,
                             Mutation {
                                 mutated,
-                                mutation_reason: TargetUse::Assign,
-                                inputs: input.map(|i| (i, None)).into_iter().collect::<Vec<_>>(),
+                                inputs: input
+                                    .map(|i| (i.into(), None))
+                                    .into_iter()
+                                    .collect::<Vec<_>>(),
                                 status: MutationStatus::Definitely,
+                                is_arg: Use::Other,
                             },
                         ),
                     }
@@ -209,9 +211,9 @@ where
                         location,
                         Mutation {
                             mutated: *mutated,
-                            mutation_reason: TargetUse::Assign,
-                            inputs: vec![(*place, None)],
+                            inputs: vec![(place.into(), None)],
                             status: MutationStatus::Definitely,
+                            is_arg: Use::Other,
                         },
                     )
                 }
@@ -222,9 +224,9 @@ where
                         location,
                         Mutation {
                             mutated: mutated_field,
-                            mutation_reason: TargetUse::Assign,
-                            inputs: vec![(input_field, None)],
+                            inputs: vec![(input_field.into(), None)],
                             status: MutationStatus::Definitely,
+                            is_arg: Use::Other,
                         },
                     )
                 }
@@ -236,15 +238,15 @@ where
             Rvalue::Ref(_, _, place) => {
                 let inputs = place
                     .refs_in_projection(self.place_info.body, self.place_info.tcx)
-                    .map(|(place_ref, _)| (Place::from_ref(place_ref, tcx), None))
+                    .map(|(place_ref, _)| (Place::from_ref(place_ref, tcx).into(), None))
                     .collect::<Vec<_>>();
                 (self.f)(
                     location,
                     Mutation {
                         mutated: *mutated,
-                        mutation_reason: TargetUse::Assign,
                         inputs,
                         status: MutationStatus::Definitely,
+                        is_arg: Use::Other,
                     },
                 );
                 true
@@ -255,55 +257,9 @@ where
     }
 
     #[allow(dead_code)]
-    fn handle_call_with_combine_on_return(
-        &mut self,
-        arg_places: Vec<(usize, Place<'tcx>)>,
-        location: Location,
-        destination: Place<'tcx>,
-    ) {
-        // Make sure we combine all inputs in the arguments.
-        let inputs = arg_places
-            .iter()
-            .copied()
-            .flat_map(|(num, arg)| {
-                self.place_info
-                    .reachable_values(arg, Mutability::Not)
-                    .iter()
-                    .map(move |v| (*v, Some(num as u8)))
-            })
-            .collect::<Vec<_>>();
-
-        for (num, arg) in arg_places.iter().copied() {
-            for arg_mut in self.place_info.reachable_values(arg, Mutability::Mut) {
-                if *arg_mut != arg {
-                    (self.f)(
-                        location,
-                        Mutation {
-                            mutated: *arg_mut,
-                            mutation_reason: TargetUse::MutArg(num as u8),
-                            inputs: inputs.clone(),
-                            status: MutationStatus::Possibly,
-                        },
-                    )
-                }
-            }
-        }
-
-        (self.f)(
-            location,
-            Mutation {
-                mutated: destination,
-                inputs,
-                mutation_reason: TargetUse::Return,
-                status: MutationStatus::Definitely,
-            },
-        );
-    }
-
-    #[allow(dead_code)]
     fn handle_call_with_combine_on_args(
         &mut self,
-        arg_places: Vec<(usize, Place<'tcx>)>,
+        arg_places: Vec<(usize, PlaceOrConst<'tcx>)>,
         location: Location,
         destination: Place<'tcx>,
     ) {
@@ -315,35 +271,41 @@ where
 
         if matches!(self.time, Time::Unspecified | Time::Before) {
             // Make sure we combine all inputs in the arguments.
-            for (_, arg) in arg_places.iter().copied() {
+            for (i, arg) in arg_places.iter().copied() {
+                let PlaceOrConst::Place(arg) = arg else {
+                    continue;
+                };
                 let inputs = self
                     .place_info
                     .reachable_values(arg, Mutability::Not)
                     .iter()
-                    .map(|v| (*v, None))
+                    .map(|v| (v.into(), None))
                     .collect();
                 (self.f)(
                     location,
                     Mutation {
                         mutated: arg,
-                        mutation_reason: TargetUse::Assign,
                         inputs,
                         status: MutationStatus::Definitely,
+                        is_arg: Use::Arg(i as u8),
                     },
                 );
             }
         }
         if matches!(self.time, Time::Unspecified | Time::After) {
-            for (num, arg) in arg_places.iter().copied() {
+            for (_, arg) in arg_places.iter().copied() {
+                let PlaceOrConst::Place(arg) = arg else {
+                    continue;
+                };
                 for arg_mut in self.place_info.reachable_values(arg, Mutability::Mut) {
                     if *arg_mut != arg {
                         (self.f)(
                             location,
                             Mutation {
                                 mutated: *arg_mut,
-                                mutation_reason: TargetUse::MutArg(num as u8),
                                 inputs: arg_place_inputs.clone(),
                                 status: MutationStatus::Possibly,
+                                is_arg: Use::Other,
                             },
                         )
                     }
@@ -354,8 +316,8 @@ where
                 Mutation {
                     mutated: destination,
                     inputs: arg_place_inputs,
-                    mutation_reason: TargetUse::Return,
                     status: MutationStatus::Definitely,
+                    is_arg: Use::Return,
                 },
             );
         }
@@ -369,19 +331,26 @@ where
     fn visit_assign(&mut self, mutated: &Place<'tcx>, rvalue: &Rvalue<'tcx>, location: Location) {
         trace!("Checking {location:?}: {mutated:?} = {rvalue:?}");
 
-        if !self.handle_special_rvalues(mutated, rvalue, location) {
-            let mut collector = PlaceCollector::default();
-            collector.visit_rvalue(rvalue, location);
-            (self.f)(
-                location,
-                Mutation {
-                    mutated: *mutated,
-                    mutation_reason: TargetUse::Assign,
-                    inputs: collector.0.into_iter().map(|p| (p, None)).collect(),
-                    status: MutationStatus::Definitely,
-                },
-            )
+        if self.handle_special_rvalues(mutated, rvalue, location) {
+            return;
         }
+        let mut collector =
+            PlaceAndConstCollector::new(self.place_info.tcx, self.place_info.body, self.strict);
+        collector.visit_rvalue(rvalue, location);
+        let inputs = collector
+            .values
+            .into_iter()
+            .zip(std::iter::repeat(None))
+            .collect();
+        (self.f)(
+            location,
+            Mutation {
+                mutated: *mutated,
+                inputs,
+                status: MutationStatus::Definitely,
+                is_arg: Use::Other,
+            },
+        )
     }
 
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
@@ -399,8 +368,12 @@ where
                 self.place_info.body,
                 self.place_info.def_id,
             );
-            let mut arg_places = utils::arg_places(args);
-            arg_places.retain(|(_, place)| !async_hack.ignore_place(*place));
+            let mut arg_places = arg_places(self.place_info.tcx, args, self.strict);
+            arg_places.retain(|(_, place)| {
+                place
+                    .place()
+                    .is_none_or(|place| !async_hack.ignore_place(*place))
+            });
 
             // let ret_is_unit = destination
             //     .ty(self.place_info.body.local_decls(), tcx)
@@ -415,4 +388,60 @@ where
             self.handle_call_with_combine_on_args(arg_places, location, *destination)
         }
     }
+}
+
+fn arg_places<'tcx>(
+    tcx: ty::TyCtxt<'tcx>,
+    args: &[Spanned<Operand<'tcx>>],
+    strict: bool,
+) -> Vec<(usize, PlaceOrConst<'tcx>)> {
+    args.iter()
+        .enumerate()
+        .filter_map(|(i, arg)| {
+            Some((
+                i,
+                PlaceOrConst::from_operand_default_policy(tcx, &arg.node, arg.span, strict)?,
+            ))
+        })
+        .collect::<Vec<_>>()
+}
+
+struct PlaceAndConstCollector<'tcx, 'a> {
+    values: Vec<PlaceOrConst<'tcx>>,
+    tcx: ty::TyCtxt<'tcx>,
+    body: &'a mir::Body<'tcx>,
+    strict: bool,
+}
+
+impl<'tcx, 'a> PlaceAndConstCollector<'tcx, 'a> {
+    fn new(tcx: ty::TyCtxt<'tcx>, body: &'a mir::Body<'tcx>, strict: bool) -> Self {
+        Self {
+            values: Vec::new(),
+            tcx,
+            body,
+            strict,
+        }
+    }
+}
+
+impl<'tcx> Visitor<'tcx> for PlaceAndConstCollector<'tcx, '_> {
+    fn visit_place(&mut self, place: &mir::Place<'tcx>, _: mir::visit::PlaceContext, _: Location) {
+        self.values.push(place.into());
+    }
+
+    fn visit_operand(&mut self, operand: &mir::Operand<'tcx>, location: Location) {
+        if let Some(pc) = PlaceOrConst::from_operand_default_policy(
+            self.tcx,
+            operand,
+            self.body.source_info(location).span,
+            self.strict,
+        ) {
+            self.values.push(pc);
+        }
+    }
+
+    // Should we reflect constants from the type system?
+    // fn visit_ty_const(&mut self, const_: ty::Const<'tcx>, _: Location) {
+    //     ???
+    // }
 }

@@ -884,18 +884,44 @@ impl GlobalEdge {
 pub struct NodeInfo {
     /// Location of the node in the call stack
     pub at: CallString,
-    /// The debug print of the `mir::Place` that this node represents
-    pub description: String,
+
+    /// The kind of node this is
+    pub kind: NodeKind,
+
     /// Span information for this node
     pub span: Span,
-    /// The local variable this node references. This is an MIR implementation
-    /// detail and should not be relied upon.
-    pub local: u32,
+
+    /// Whether this node is an argument to a function call, and if so which
+    pub is_arg: Option<u8>,
 }
 
 impl Display for NodeInfo {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{} @ {}", self.description, self.at)
+        write!(f, "{} @ {}", self.kind, self.at)
+    }
+}
+
+/// Nodes can be places of constants
+#[derive(Clone, Debug, Serialize, Deserialize, Allocative, PartialEq, Eq, Hash)]
+pub enum NodeKind {
+    /// This node represents a virtual memory location, called a place.
+    Place {
+        /// The debug print of the `mir::Place` that this node represents
+        description: String,
+        /// The local variable this node references. This is an MIR implementation
+        /// detail and should not be relied upon.
+        local: u32,
+    },
+    /// This node represents a constant value.
+    Constant(Constant),
+}
+
+impl Display for NodeKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            NodeKind::Place { description, .. } => write!(f, "{}", description),
+            NodeKind::Constant(constant) => write!(f, "{}", constant),
+        }
     }
 }
 
@@ -906,11 +932,6 @@ pub struct EdgeInfo {
     pub kind: EdgeKind,
     /// Where in the program this edge arises from
     pub at: CallString,
-
-    /// Why the source of this edge is read
-    pub source_use: SourceUse,
-    /// Why the target of this edge is written
-    pub target_use: TargetUse,
 }
 
 impl Display for EdgeInfo {
@@ -1164,15 +1185,9 @@ impl Display for DisplayNode<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let weight = self.graph.graph.node_weight(self.node).unwrap();
         if self.detailed {
-            write!(
-                f,
-                "{{{}}} {} @ {}",
-                self.node.index(),
-                weight.description,
-                weight.at
-            )
+            write!(f, "{{{}}} {}", self.node.index(), weight)
         } else {
-            write!(f, "{{{}}} {}", self.node.index(), weight.description)
+            write!(f, "{{{}}} {}", self.node.index(), weight.kind)
         }
     }
 }

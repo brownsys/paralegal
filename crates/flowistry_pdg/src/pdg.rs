@@ -281,41 +281,6 @@ impl fmt::Display for CallString {
     }
 }
 
-/// Additional information about the source of data.
-///
-/// If the operation is a function call this contains the argument index
-#[derive(
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Clone,
-    Copy,
-    Debug,
-    Serialize,
-    Deserialize,
-    strum::EnumIs,
-    Allocative,
-)]
-pub enum SourceUse {
-    Operand,
-    Argument(u8),
-}
-
-/// Additional information about this mutation.
-#[derive(
-    PartialEq, Eq, Hash, Clone, Copy, Debug, Serialize, Deserialize, strum::EnumIs, Allocative,
-)]
-pub enum TargetUse {
-    /// A function returned, assigning to it's return destination
-    Return,
-    /// This mutation is a non-function assign
-    Assign,
-    /// A mutable argument was modified by a function call
-    MutArg(u8),
-}
-
 /// A function that is fit to be handed to `#[allocative(visit = "...")]` for a
 /// map where the key does not implement [`Allocative`], but also has no
 /// attached heap data.
@@ -357,5 +322,59 @@ pub struct SimpleSizedAllocativeWrapper<T>(T);
 impl<T> Allocative for SimpleSizedAllocativeWrapper<T> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         visitor.visit_simple_sized::<T>();
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy, Serialize, Deserialize)]
+pub enum Constant {
+    Int(i64),
+    Uint(u64),
+    // Placeholder. Floats in the rust compiler are a bit weird so I'll skip them for now.
+    //Float(f64),
+    Bool(bool),
+    String(Intern<String>),
+    //Unknown(Intern<String>),
+    Zst(Intern<String>),
+}
+
+impl Constant {
+    pub fn int(i: impl Into<i64>) -> Self {
+        Self::Int(i.into())
+    }
+    pub fn uint(u: impl Into<u64>) -> Self {
+        Self::Uint(u.into())
+    }
+    pub fn bool(b: impl Into<bool>) -> Self {
+        Self::Bool(b.into())
+    }
+    pub fn string(s: impl AsRef<str>) -> Self {
+        Self::String(Intern::from_ref(s.as_ref()))
+    }
+    pub fn zst(s: impl AsRef<str>) -> Self {
+        Self::Zst(Intern::from_ref(s.as_ref()))
+    }
+}
+
+impl std::fmt::Display for Constant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use std::fmt::{Debug, Display};
+        match self {
+            Self::Bool(b) => Display::fmt(b, f),
+            Self::Int(i) => Display::fmt(i, f),
+            Self::Uint(u) => Display::fmt(u, f),
+            Self::String(s) => Debug::fmt(s, f),
+            Self::Zst(s) => f.write_str(s),
+            //Self::Unknown(u) => write!(f, "Unsupported constant: {u}"),
+        }
+    }
+}
+
+impl Allocative for Constant {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+        let mut visitor = visitor.enter_self_sized::<Self>();
+        if let Self::String(s) = self {
+            allocative_visit_intern_t(*s, &mut visitor);
+        }
+        visitor.exit();
     }
 }

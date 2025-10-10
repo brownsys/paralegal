@@ -24,10 +24,10 @@ use std::{
 use paralegal_spdg::{
     traverse::{generic_flows_to, generic_influencers, EdgeSelection},
     utils::{display_list, write_sep},
-    DefInfo, DisplayPath, EdgeInfo, Endpoint, Node, TypeId, SPDG,
+    DefInfo, DisplayPath, EdgeInfo, Endpoint, Node, NodeKind, TypeId, SPDG,
 };
 
-use flowistry_pdg::CallString;
+use flowistry_pdg::{CallString, Constant};
 use itertools::Itertools;
 use petgraph::visit::{Control, Data, DfsEvent, EdgeRef, FilterEdge, GraphBase, IntoEdges};
 use petgraph::visit::{IntoNeighbors, IntoNodeReferences};
@@ -544,6 +544,23 @@ impl<'g> CtrlRef<'g> {
             graph: self,
         }
     }
+
+    pub fn constants(&'g self) -> impl Iterator<Item = (NodeRef<'g>, Constant)> {
+        let spdg = self.spdg();
+        spdg.all_sources().filter_map(|node| {
+            let info = spdg.node_info(node);
+            match info.kind {
+                NodeKind::Constant(c) => Some((NodeRef { graph: self, node }, c)),
+                _ => None,
+            }
+        })
+    }
+
+    pub fn get_constant(&'g self, constant: Constant) -> Option<NodeRef<'g>> {
+        self.constants()
+            .find(|&(_, c)| c == constant)
+            .map(|(n, _)| n)
+    }
 }
 
 impl<'g> HasGraph<'g> for &FnRef<'g> {
@@ -602,9 +619,9 @@ impl<'g> CallStringRef<'g> {
         let graph = &self.ctrl.ctrl.graph;
         // Alternative??
         let mut nodes: Vec<_> = graph
-            .edge_references()
+            .node_references()
             .filter(|e| e.weight().at == self.call_site)
-            .map(|e| (e.weight().source_use, e.source()))
+            .filter_map(|e| Some((e.weight().is_arg?, e.id())))
             .collect();
         nodes.sort();
         nodes.dedup();
@@ -663,7 +680,7 @@ impl Debug for NodeRefs<'_> {
         let mut list = f.debug_list();
         for &n in &self.nodes {
             let weight = self.graph.ctrl.graph.node_weight(n).unwrap();
-            list.entry(&format!("{n:?} {} @ {} ", weight.description, weight.at));
+            list.entry(&format!("{n:?} {}", weight));
         }
         list.finish()
     }
@@ -700,7 +717,7 @@ impl Debug for NodeRef<'_> {
         let weight = self.graph.ctrl.graph.node_weight(self.node).unwrap();
         f.debug_struct("NodeRef")
             .field("node", &self.node)
-            .field("description", &weight.description)
+            .field("description", &weight.kind)
             .field("at", &weight.at)
             .field("graph", &DisplayPath::from(&self.graph.ctrl.path))
             .finish()

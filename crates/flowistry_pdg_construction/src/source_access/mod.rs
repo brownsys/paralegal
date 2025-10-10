@@ -27,7 +27,11 @@ use rustc_middle::{
 use rustc_type_ir::RegionVid;
 use rustc_utils::cache::Cache;
 
-use crate::encoder::{decode_from_file, encode_to_file};
+mod encoder;
+
+use encoder::{decode_from_file, encode_to_file};
+
+pub use encoder::{ParalegalDecoder, ParalegalEncoder};
 
 /// A mir [`Body`] and all the additional borrow checking facts that our
 /// points-to analysis needs.

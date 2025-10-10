@@ -151,18 +151,6 @@ fn atomic_policy(ctx: Arc<RootContext>) -> Result<()> {
             .filter(|n| n.has_marker(&ctx, marker!(new_resource)))
             .collect::<Box<[_]>>();
 
-        for r in new_resources.iter() {
-            let rs_info = r.info(&ctx);
-            let msg = ctx.struct_node_help(
-                *r,
-                format!(
-                    "This is a 'new_resource' {} @ {}",
-                    rs_info.description, rs_info.at
-                ),
-            );
-            msg.emit();
-        }
-
         // All checks that flow from the commit but not from a new_resource
         let valid_checks = ctx
             .influencees(&commit, EdgeSelection::Data)
@@ -173,31 +161,6 @@ fn atomic_policy(ctx: Arc<RootContext>) -> Result<()> {
                         .is_none()
             })
             .collect::<Box<[_]>>();
-
-        for check in ctx
-            .influencees(&commit, EdgeSelection::Data)
-            .filter(|n| n.has_marker(&ctx, check_rights))
-        {
-            let check_info = check.info(&ctx);
-            let mut msg = ctx.struct_node_help(
-                check,
-                format!(
-                    "this would be a valid check {} @ {}",
-                    check_info.description, check_info.at
-                ),
-            );
-            if let Some((from, _)) = ctx.any_flows(&new_resources, &[check], EdgeSelection::Data) {
-                let new_resource_info = from.info(&ctx);
-                msg.with_node_note(
-                    from,
-                    format!(
-                        "Influenced by this 'new_resource' {} @ {}",
-                        new_resource_info.description, new_resource_info.at
-                    ),
-                );
-            }
-            msg.emit()
-        }
 
         if valid_checks.is_empty() {
             ctx.warning("No valid checks");
@@ -220,20 +183,7 @@ fn atomic_policy(ctx: Arc<RootContext>) -> Result<()> {
             .collect::<Box<[_]>>();
 
         for (store, check) in checks.iter() {
-            if let Some((check, store_cs)) = check {
-                let mut msg =
-                    ctx.struct_node_note(*store, "This value is properly checked before storage");
-                let check_info = check.info(&ctx);
-                msg.with_node_note(
-                    *check,
-                    format!(
-                        "Blessed by this check input {} @ {}",
-                        check_info.description, check_info.at,
-                    ),
-                );
-                msg.with_node_note(*store_cs, "At this store call site");
-
-                msg.emit();
+            if check.is_some() {
             } else {
                 ctx.node_error(*store, "This store is not protected");
             }
@@ -357,26 +307,14 @@ fn isolation() -> Result<()> {
         for sink in ctx.marked_nodes(Identifier::new_intern("target")) {
             let sink_info = sink.info(&ctx);
             if let Some((from, _)) = ctx.any_flows(&sources, &[sink], EdgeSelection::Data) {
-                let mut msg = ctx.struct_node_note(
-                    sink,
-                    format!(
-                        "Sink {} @ {} is reached",
-                        sink_info.description, sink_info.at
-                    ),
-                );
+                let mut msg = ctx.struct_node_note(sink, format!("Sink {} is reached", sink_info));
                 let src_info = from.info(&ctx);
-                msg.with_node_note(
-                    from,
-                    format!("By this source {} @ {}", src_info.description, src_info.at),
-                );
+                msg.with_node_note(from, format!("By this source {}", src_info));
                 msg.emit();
             } else {
                 ctx.node_error(
                     sink,
-                    format!(
-                        "Sink {} @ {} is not reached by a source",
-                        sink_info.description, sink_info.at
-                    ),
+                    format!("Sink {} is not reached by a source", sink_info),
                 );
             }
         }
@@ -434,26 +372,14 @@ fn isolation_2() -> Result<()> {
         for sink in ctx.marked_nodes(Identifier::new_intern("target")) {
             let sink_info = sink.info(&ctx);
             if let Some((from, _)) = ctx.any_flows(&sources, &[sink], EdgeSelection::Data) {
-                let mut msg = ctx.struct_node_note(
-                    sink,
-                    format!(
-                        "Sink {} @ {} is reached",
-                        sink_info.description, sink_info.at
-                    ),
-                );
+                let mut msg = ctx.struct_node_note(sink, format!("Sink {} is reached", sink_info));
                 let src_info = from.info(&ctx);
-                msg.with_node_note(
-                    from,
-                    format!("By this source {} @ {}", src_info.description, src_info.at),
-                );
+                msg.with_node_note(from, format!("By this source {} ", src_info));
                 msg.emit();
             } else {
                 ctx.node_error(
                     sink,
-                    format!(
-                        "Sink {} @ {} is not reached by a source",
-                        sink_info.description, sink_info.at
-                    ),
+                    format!("Sink {} is not reached by a source", sink_info),
                 );
             }
         }
@@ -649,7 +575,7 @@ fn commit_e5cca39440ad34ee6dc2ca0aebd16ceabb3abcd6() -> Result<()> {
                     if destroy {
                         // Note: the value index is updated before this action, in resource.apply_changes()
                         //store.remove_resource(&self.subject)?;
-                        store.add_resource_opts(&commit_resource, false, update_index, false )?;
+                        store.add_resource_opts(&commit_resource, false, update_index, false)?;
                         return Ok(());
                     }
                 }
