@@ -265,7 +265,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 
     pub fn functions_seen(&self) -> Vec<MaybeMonomorphized<'tcx>> {
-        let cache = self.0.reachable_markers.borrow();
+        let cache = self.0.call_tree_analysis.borrow();
         cache.keys().copied().collect::<Vec<_>>()
     }
 
@@ -343,7 +343,7 @@ pub struct MarkerDatabase<'tcx> {
     annotations: FxHashMap<DefId, Vec<Annotation>>,
     external_annotations: ExternalMarkers,
     /// Cache whether markers are reachable transitively.
-    reachable_markers: Cache<MaybeMonomorphized<'tcx>, Box<[Identifier]>>,
+    call_tree_analysis: Cache<MaybeMonomorphized<'tcx>, InferenceResult<'tcx>>,
     /// Configuration options
     config: &'static Args,
     type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,
@@ -351,6 +351,35 @@ pub struct MarkerDatabase<'tcx> {
     included_crates: Rc<dyn Fn(CrateNum) -> bool>,
     stubs: FxHashMap<DefId, &'static Stub>,
     marker_statistics: RefCell<HashMap<MaybeMonomorphized<'tcx>, FunctionMarkerStat<'tcx>>>,
+    empty_inference_result: InferenceResult<'tcx>,
+}
+
+#[derive(Clone, Debug)]
+pub struct InferenceResult<'tcx> {
+    pub reachable_markers: Box<[Identifier]>,
+    pub side_effects: Option<SideEffectReason<'tcx>>,
+}
+
+impl<'tcx> InferenceResult<'tcx> {
+    pub fn empty_with_effect(effect: SideEffectReason<'tcx>) -> Self {
+        Self {
+            reachable_markers: Box::new([]),
+            side_effects: Some(effect),
+        }
+    }
+
+    pub fn pure_marked(markers: impl IntoIterator<Item = Identifier>) -> Self {
+        Self {
+            reachable_markers: markers.into_iter().collect(),
+            side_effects: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum SideEffectReason<'tcx> {
+    Function(DefId),
+    HiddenFunction(Ty<'tcx>, Span),
 }
 
 pub struct FunctionMarkerStat<'tcx> {
@@ -429,13 +458,17 @@ impl<'tcx> MarkerDatabase<'tcx> {
                 args.anactrl().included_crates(tcx).chain([LOCAL_CRATE]),
             ),
             external_annotations: resolve_external_markers(args, tcx),
-            reachable_markers: Default::default(),
+            call_tree_analysis: Default::default(),
             config: args,
             type_markers: Default::default(),
             body_cache,
             included_crates,
             stubs,
             marker_statistics: RefCell::new(HashMap::default()),
+            empty_inference_result: InferenceResult {
+                reachable_markers: Box::new([]),
+                side_effects: None,
+            },
         }
     }
 
@@ -448,13 +481,17 @@ impl<'tcx> MarkerDatabase<'tcx> {
             tcx,
             annotations: FxHashMap::default(),
             external_annotations: HashMap::default(),
-            reachable_markers: Default::default(),
+            call_tree_analysis: Default::default(),
             config: opts,
             type_markers: Default::default(),
             body_cache,
             included_crates: Rc::new(|f| f == LOCAL_CRATE),
             stubs: FxHashMap::default(),
             marker_statistics: RefCell::new(HashMap::default()),
+            empty_inference_result: InferenceResult {
+                reachable_markers: Box::new([]),
+                side_effects: None,
+            },
         }
     }
 }
