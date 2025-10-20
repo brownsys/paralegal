@@ -50,7 +50,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                 &[]
             };
         }
-        if !(self.0.included_crates)(def_id.krate) {
+        if !self.crate_is_included(def_id.krate) {
             trace!("  Is excluded");
             return &[];
         }

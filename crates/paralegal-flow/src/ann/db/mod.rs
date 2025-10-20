@@ -148,6 +148,9 @@ impl<'tcx> MarkerCtx<'tcx> {
         if let Some(m) = marker_if_unloadable(self.tcx(), def_id, self.auto_markers()) {
             return std::slice::from_ref(m);
         }
+        if !self.crate_is_included(def_id.krate) {
+            return &[];
+        }
         self.db().side_effect_heuristics_results.get(&def_id, |_| {
             let body = self.db().body_cache.get(def_id).body();
             side_effect_detection::analyze_body(body, &self.db().auto_markers, self.tcx())
@@ -334,6 +337,10 @@ impl<'tcx> MarkerCtx<'tcx> {
             &marker_stats_as_json(self.tcx(), self.0.marker_statistics.borrow().values()),
         )
         .unwrap()
+    }
+
+    pub fn crate_is_included(&self, krate: CrateNum) -> bool {
+        (self.0.included_crates)(krate)
     }
 }
 
