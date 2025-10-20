@@ -3,7 +3,7 @@
 #[macro_use]
 extern crate lazy_static;
 
-use paralegal_flow::{define_flow_test_template, inline_test, test_utils::*};
+use paralegal_flow::{ann::db::AutoMarkers, define_flow_test_template, inline_test, test_utils::*};
 use paralegal_spdg::{Identifier, InstructionKind};
 
 const TEST_CRATE_NAME: &str = "tests/marker-tests";
@@ -250,5 +250,80 @@ fn no_overtaint_from_sibling_markers() {
         }
         assert!(!src.flows_to_data(&reached));
         assert!(src.flows_to_data(&reached_2));
+    });
+}
+
+#[test]
+fn side_effect_tcp() {
+    inline_test! {
+        use std::io::prelude::*;
+        use std::net::TcpStream;
+
+        fn main() -> std::io::Result<()> {
+            let mut stream = TcpStream::connect("127.0.0.1:34254")?;
+
+            stream.write(&[1])?;
+            stream.read(&mut [0; 128])?;
+            Ok(())
+        }
+    }
+    .with_extra_args(["--side-effect-markers".to_string()])
+    .check_ctrl(|ctrl| {
+        let auto_markers = AutoMarkers::new();
+        let defined = ctrl.markers();
+        let auto = auto_markers.all();
+        let contained = dbg!(auto
+            .iter()
+            .filter(|m| defined.contains(m))
+            .collect::<Vec<_>>());
+        assert!(!contained.is_empty());
+    });
+}
+
+#[test]
+fn side_effect_pure() {
+    inline_test! {
+        fn main() -> std::io::Result<()> {
+            let x = 2;
+            let y = 3 + x;
+            Ok(())
+        }
+    }
+    .with_extra_args(["--side-effect-markers".to_string()])
+    .check_ctrl(|ctrl| {
+        let auto_markers = AutoMarkers::new();
+        let defined = ctrl.markers();
+        let auto = auto_markers.all();
+        let contained = dbg!(auto
+            .iter()
+            .filter(|m| defined.contains(m))
+            .collect::<Vec<_>>());
+        assert!(contained.is_empty());
+    });
+}
+
+#[test]
+fn side_effect_extern() {
+    inline_test! {
+        extern "C" {
+            fn plus(a: i32, b: i32) -> i32;
+        }
+
+        fn main() -> std::io::Result<()> {
+            let x = 2;
+            let y = plus(3, x);
+            Ok(())
+        }
+    }
+    .with_extra_args(["--side-effect-markers".to_string()])
+    .check_ctrl(|ctrl| {
+        let auto_markers = AutoMarkers::new();
+        let defined = dbg!(ctrl.markers());
+        let auto = auto_markers.all();
+        let contained = dbg!(auto
+            .iter()
+            .filter(|m| defined.contains(m))
+            .collect::<Vec<_>>());
+        assert!(!contained.is_empty());
     });
 }

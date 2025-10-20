@@ -355,15 +355,15 @@ pub struct MarkerDatabase<'tcx> {
 }
 
 pub struct AutoMarkers {
-    side_effect_unknown_virtual: Identifier,
-    side_effect_foreign: Identifier,
-    side_effect_unknown_fn_ptr: Identifier,
-    side_effect_raw_ptr: Identifier,
-    side_effect_transmute: Identifier,
+    pub side_effect_unknown_virtual: Identifier,
+    pub side_effect_foreign: Identifier,
+    pub side_effect_unknown_fn_ptr: Identifier,
+    pub side_effect_raw_ptr: Identifier,
+    pub side_effect_transmute: Identifier,
 }
 
 impl AutoMarkers {
-    fn new() -> Self {
+    pub fn new() -> Self {
         AutoMarkers {
             side_effect_unknown_virtual: Identifier::new_intern("auto:side-effect:unknown:virtual"),
             side_effect_foreign: Identifier::new_intern("auto:side-effect:foreign"),
@@ -371,6 +371,16 @@ impl AutoMarkers {
             side_effect_raw_ptr: Identifier::new_intern("auto:side-effect:raw-ptr"),
             side_effect_transmute: Identifier::new_intern("auto:side-effect:transmute"),
         }
+    }
+
+    pub fn all(&self) -> [Identifier; 5] {
+        [
+            self.side_effect_unknown_virtual,
+            self.side_effect_foreign,
+            self.side_effect_unknown_fn_ptr,
+            self.side_effect_raw_ptr,
+            self.side_effect_transmute,
+        ]
     }
 }
 

@@ -300,6 +300,17 @@ pub trait HasGraph<'g>: Sized + Copy {
         )
     }
 
+    fn markers(self) -> HashSet<Identifier> {
+        let graph = self.graph();
+        graph
+            .desc
+            .controllers
+            .values()
+            .flat_map(|c| c.markers.values())
+            .flat_map(|b| b.iter().cloned())
+            .collect()
+    }
+
     fn marked_types(&self, marker: Identifier) -> Vec<TypeId> {
         self.graph()
             .desc
