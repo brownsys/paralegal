@@ -458,11 +458,19 @@ pub struct MarkerControl {
     /// `dump_serialized_flow_graph`.
     #[clap(long, env)]
     external_annotations: Option<std::path::PathBuf>,
+
+    /// Whether to automatically mark possibly side-effecting functions.
+    #[clap(long, env)]
+    side_effect_markers: bool,
 }
 
 impl MarkerControl {
     pub fn external_annotations(&self) -> Option<&std::path::Path> {
         self.external_annotations.as_deref()
+    }
+
+    pub fn mark_side_effects(&self) -> bool {
+        self.side_effect_markers
     }
 }
 

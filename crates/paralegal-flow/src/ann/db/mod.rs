@@ -351,6 +351,27 @@ pub struct MarkerDatabase<'tcx> {
     included_crates: Rc<dyn Fn(CrateNum) -> bool>,
     stubs: FxHashMap<DefId, &'static Stub>,
     marker_statistics: RefCell<HashMap<MaybeMonomorphized<'tcx>, FunctionMarkerStat<'tcx>>>,
+    auto_markers: AutoMarkers,
+}
+
+pub struct AutoMarkers {
+    side_effect_unknown_virtual: Identifier,
+    side_effect_foreign: Identifier,
+    side_effect_unknown_fn_ptr: Identifier,
+    side_effect_raw_ptr: Identifier,
+    side_effect_transmute: Identifier,
+}
+
+impl AutoMarkers {
+    fn new() -> Self {
+        AutoMarkers {
+            side_effect_unknown_virtual: Identifier::new_intern("auto:side-effect:unknown:virtual"),
+            side_effect_foreign: Identifier::new_intern("auto:side-effect:foreign"),
+            side_effect_unknown_fn_ptr: Identifier::new_intern("auto:side-effect:unknown:fn-ptr"),
+            side_effect_raw_ptr: Identifier::new_intern("auto:side-effect:raw-ptr"),
+            side_effect_transmute: Identifier::new_intern("auto:side-effect:transmute"),
+        }
+    }
 }
 
 pub struct FunctionMarkerStat<'tcx> {
@@ -436,6 +457,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
             included_crates,
             stubs,
             marker_statistics: RefCell::new(HashMap::default()),
+            auto_markers: AutoMarkers::new(),
         }
     }
 
@@ -455,6 +477,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
             included_crates: Rc::new(|f| f == LOCAL_CRATE),
             stubs: FxHashMap::default(),
             marker_statistics: RefCell::new(HashMap::default()),
+            auto_markers: AutoMarkers::new(),
         }
     }
 }

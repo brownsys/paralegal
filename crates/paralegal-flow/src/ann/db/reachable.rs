@@ -31,17 +31,27 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn get_reachable_markers(&self, res: impl Into<MaybeMonomorphized<'tcx>>) -> &[Identifier] {
         let res = res.into();
         let def_id = res.def_id();
+        let mark_side_effects = self.db().config.marker_control().mark_side_effects();
+        let auto_markers = &self.db().auto_markers;
         if self.is_marked(def_id) {
             trace!("  Is marked");
             return &[];
         }
         if is_virtual(self.tcx(), def_id) {
             trace!("  Is virtual");
-            return &[];
+            return if mark_side_effects {
+                std::slice::from_ref(&auto_markers.side_effect_unknown_virtual)
+            } else {
+                &[]
+            };
         }
         if self.tcx().is_foreign_item(def_id) {
             trace!("  Is foreign");
-            return &[];
+            return if mark_side_effects {
+                std::slice::from_ref(&auto_markers.side_effect_foreign)
+            } else {
+                &[]
+            };
         }
         if !(self.0.included_crates)(def_id.krate) {
             trace!("  Is excluded");
@@ -128,6 +138,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             terminator.kind
         );
         let Some((def_id, gargs)) = func_of_term(self.tcx(), terminator) else {
+            v.push(self.db().auto_markers.side_effect_unknown_fn_ptr);
             return v.into_iter();
         };
         let mut res = if expect_resolve {
@@ -264,4 +275,71 @@ impl<'tcx, 'b> mir::visit::Visitor<'tcx> for BodyAnalyzer<'tcx, 'b> {
         self.found_markers.extend(markers);
         self.super_terminator(terminator, location);
     }
+
+    fn visit_projection(
+        &mut self,
+        place_ref: mir::PlaceRef<'tcx>,
+        context: mir::visit::PlaceContext,
+        location: mir::Location,
+    ) {
+        if self.ctx.db().config.marker_control().mark_side_effects()
+            && matches!(
+                (place_ref.projection.last(), context),
+                (
+                    Some(mir::ProjectionElem::Deref),
+                    mir::visit::PlaceContext::MutatingUse(_)
+                )
+            )
+        {
+            let ty = place_ref.ty(self.mono_body, self.ctx.tcx()).ty;
+
+            if ty.is_mutable_ptr() && ty.is_unsafe_ptr() {
+                self.found_markers
+                    .insert(self.ctx.db().auto_markers.side_effect_raw_ptr);
+            }
+        }
+        self.super_projection(place_ref, context, location);
+    }
+
+    fn visit_rvalue(&mut self, rvalue: &mir::Rvalue<'tcx>, location: mir::Location) {
+        if self.ctx.db().config.marker_control().mark_side_effects() {
+            if let mir::Rvalue::Cast(mir::CastKind::Transmute, _, to) = rvalue {
+                if contains_mut_ref(*to, self.ctx.tcx()) {
+                    self.found_markers
+                        .insert(self.ctx.db().auto_markers.side_effect_transmute);
+                }
+            }
+        }
+        self.super_rvalue(rvalue, location);
+    }
+}
+
+fn contains_mut_ref<'tcx>(ty: ty::Ty<'tcx>, tcx: ty::TyCtxt<'tcx>) -> bool {
+    use ty::{TypeSuperVisitable, TypeVisitable};
+    struct ContainsMutRefVisitor<'tcx> {
+        tcx: ty::TyCtxt<'tcx>,
+        has_mut_ref: bool,
+    }
+
+    impl<'tcx> ty::TypeVisitor<ty::TyCtxt<'tcx>> for ContainsMutRefVisitor<'tcx> {
+        fn visit_ty(&mut self, t: ty::Ty<'tcx>) {
+            if let ty::TyKind::Adt(adt_def, substs) = t.kind() {
+                for field in adt_def.all_fields() {
+                    field.ty(self.tcx, substs).visit_with(self);
+                }
+            }
+
+            if let Some(mir::Mutability::Mut) = t.ref_mutability() {
+                self.has_mut_ref = true;
+            }
+            t.super_visit_with(self)
+        }
+    }
+
+    let mut visitor = ContainsMutRefVisitor {
+        tcx,
+        has_mut_ref: false,
+    };
+    ty.visit_with(&mut visitor);
+    visitor.has_mut_ref
 }
