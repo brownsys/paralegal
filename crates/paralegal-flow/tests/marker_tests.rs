@@ -320,6 +320,9 @@ fn side_effect_extern() {
         let auto_markers = AutoMarkers::new();
         let defined = dbg!(ctrl.markers());
         let auto = auto_markers.all();
+        for i in ctrl.functions("plus") {
+            dbg!(ctrl.info_for(i.ident));
+        }
         let contained = dbg!(auto
             .iter()
             .filter(|m| defined.contains(m))

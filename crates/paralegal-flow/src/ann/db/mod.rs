@@ -16,8 +16,8 @@ use crate::{
     },
     args::{Args, Stub},
     utils::{
-        resolve::expect_resolve_string_to_def_id, ContiguousIntCache, FunctionKind, InstanceExt,
-        IntoDefId,
+        is_function_like, resolve::expect_resolve_string_to_def_id, ContiguousIntCache,
+        FunctionKind, InstanceExt, IntoDefId,
     },
     Either, HashMap,
 };
@@ -123,25 +123,26 @@ impl<'tcx> MarkerCtx<'tcx> {
             .chain(self.external_markers(def_id))
             .copied()
             .chain({
-                let sig = self.tcx().fn_sig(def_id);
-                let arg_len = sig.skip_binder().inputs().skip_binder().len() as u32;
-                self.side_effect_markers(def_id)
-                    .iter()
-                    .map(move |m| MarkerAnnotation {
-                        marker: *m,
-                        refinement: MarkerRefinement {
-                            on_argument: (0..arg_len).into(),
-                            on_return: true,
-                        },
-                    })
+                // To avoid calling "fn_sig" for constructors and other non-functions
+                let (markers, arg_len) = if is_function_like(self.tcx(), def_id) {
+                    let sig = self.tcx().fn_sig(def_id);
+                    let arg_len = sig.skip_binder().inputs().skip_binder().len() as u32;
+                    (self.side_effect_markers(def_id), arg_len)
+                } else {
+                    (&[] as _, 0)
+                };
+                markers.iter().map(move |m| MarkerAnnotation {
+                    marker: *m,
+                    refinement: MarkerRefinement {
+                        on_argument: (0..arg_len).into(),
+                        on_return: true,
+                    },
+                })
             })
     }
 
     pub fn side_effect_markers(&self, def_id: DefId) -> &[Identifier] {
-        if !matches!(
-            self.tcx().def_kind(def_id),
-            DefKind::Fn | DefKind::AssocFn | DefKind::Closure,
-        ) {
+        if !is_function_like(self.tcx(), def_id) {
             return &[];
         }
         if let Some(m) = marker_if_unloadable(self.tcx(), def_id, self.auto_markers()) {

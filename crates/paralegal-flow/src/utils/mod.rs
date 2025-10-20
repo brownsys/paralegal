@@ -102,6 +102,13 @@ pub fn get_parent(tcx: TyCtxt, did: DefId) -> Option<DefId> {
     Some(id)
 }
 
+pub fn is_function_like(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    matches!(
+        tcx.def_kind(did),
+        DefKind::Fn | DefKind::AssocFn | DefKind::Closure
+    )
+}
+
 pub fn entrypoint_is_async<'tcx>(
     body_cache: &BodyCache<'tcx>,
     tcx: TyCtxt<'tcx>,
