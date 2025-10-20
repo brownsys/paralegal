@@ -26,7 +26,7 @@ use rustc_middle::{
 use rustc_span::{symbol::Ident, Span as RustSpan, Span};
 use rustc_target::spec::abi::Abi;
 
-use std::cmp::Ordering;
+use std::{cell::RefCell, cmp::Ordering, pin::Pin};
 
 mod print;
 pub mod resolve;
@@ -763,6 +763,44 @@ pub fn type_for_constructor(tcx: TyCtxt, def_id: DefId) -> DefId {
         DefKind::Struct => parent,
         other => {
             panic!("Expected a variant or struct, got {other:?}");
+        }
+    }
+}
+
+#[derive(Default)]
+/// A lazily filled contiguous cache of values indexed by integers.
+pub struct ContiguousIntCache<T>(RefCell<Vec<Pin<Box<T>>>>);
+
+impl<T> ContiguousIntCache<T> {
+    pub fn new() -> Self {
+        Self(RefCell::new(Vec::new()))
+    }
+
+    /// Returns a reference corresponding to the given index key. Note that, if
+    /// the index is not yet found in the cache, it and all values with lower
+    /// indices are created and inserted. As such the initialization function
+    /// `f` is called for each missing index and must support creating all of
+    /// these values.
+    pub fn get_or_insert<'s>(&'s self, index: usize, f: impl Fn(usize) -> T) -> &'s T {
+        {
+            let mut m = self.0.borrow_mut();
+            let mut i = m.len();
+            if index >= m.len() {
+                m.resize_with(index + 1, || {
+                    let v = Box::pin(f(i));
+                    i += 1;
+                    v
+                });
+            }
+        }
+        unsafe { std::mem::transmute::<&'_ T, &'s T>(&*self.0.borrow()[index]) }
+    }
+
+    pub fn try_get<'s>(&'s self, index: usize) -> Option<&'s T> {
+        unsafe {
+            std::mem::transmute::<Option<&'_ T>, Option<&'s T>>(
+                self.0.borrow().get(index).map(|v| &**v),
+            )
         }
     }
 }

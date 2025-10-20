@@ -1,4 +1,5 @@
 use crate::{
+    ann::db::AutoMarkers,
     utils::{func_of_term, type_for_constructor},
     HashSet,
 };
@@ -10,6 +11,7 @@ use flowistry_pdg_construction::{
 use paralegal_spdg::Identifier;
 
 use rustc_data_structures::fx::FxHashSet;
+use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir,
     ty::{self, TypingEnv},
@@ -28,6 +30,9 @@ impl<'tcx> MarkerCtx<'tcx> {
         !self.get_reachable_markers(res).is_empty()
     }
 
+    // XXX: This code duplicates the auto-marker assignment logic from
+    // GraphAssembler::handle_node_annotations_for_regular_location, but really
+    // there should be only one source of truth.
     pub fn get_reachable_markers(&self, res: impl Into<MaybeMonomorphized<'tcx>>) -> &[Identifier] {
         let res = res.into();
         let def_id = res.def_id();
@@ -37,18 +42,10 @@ impl<'tcx> MarkerCtx<'tcx> {
             trace!("  Is marked");
             return &[];
         }
-        if is_virtual(self.tcx(), def_id) {
-            trace!("  Is virtual");
+        if let Some(marker) = marker_if_unloadable(self.tcx(), def_id, auto_markers) {
+            trace!("  Is unloadable");
             return if mark_side_effects {
-                std::slice::from_ref(&auto_markers.side_effect_unknown_virtual)
-            } else {
-                &[]
-            };
-        }
-        if self.tcx().is_foreign_item(def_id) {
-            trace!("  Is foreign");
-            return if mark_side_effects {
-                std::slice::from_ref(&auto_markers.side_effect_foreign)
+                std::slice::from_ref(&marker)
             } else {
                 &[]
             };
@@ -123,6 +120,9 @@ impl<'tcx> MarkerCtx<'tcx> {
         vis.found_markers.into_iter().collect()
     }
 
+    // XXX: This code duplicates the auto-marker assignment logic from
+    // GraphAssembler::handle_node_annotations_for_regular_location, but really
+    // there should be only one source of truth.
     /// Does this terminator carry a marker?
     fn terminator_reachable_markers(
         &self,
@@ -275,71 +275,20 @@ impl<'tcx, 'b> mir::visit::Visitor<'tcx> for BodyAnalyzer<'tcx, 'b> {
         self.found_markers.extend(markers);
         self.super_terminator(terminator, location);
     }
-
-    fn visit_projection(
-        &mut self,
-        place_ref: mir::PlaceRef<'tcx>,
-        context: mir::visit::PlaceContext,
-        location: mir::Location,
-    ) {
-        if self.ctx.db().config.marker_control().mark_side_effects()
-            && matches!(
-                (place_ref.projection.last(), context),
-                (
-                    Some(mir::ProjectionElem::Deref),
-                    mir::visit::PlaceContext::MutatingUse(_)
-                )
-            )
-        {
-            let ty = place_ref.ty(self.mono_body, self.ctx.tcx()).ty;
-
-            if ty.is_mutable_ptr() && ty.is_unsafe_ptr() {
-                self.found_markers
-                    .insert(self.ctx.db().auto_markers.side_effect_raw_ptr);
-            }
-        }
-        self.super_projection(place_ref, context, location);
-    }
-
-    fn visit_rvalue(&mut self, rvalue: &mir::Rvalue<'tcx>, location: mir::Location) {
-        if self.ctx.db().config.marker_control().mark_side_effects() {
-            if let mir::Rvalue::Cast(mir::CastKind::Transmute, _, to) = rvalue {
-                if contains_mut_ref(*to, self.ctx.tcx()) {
-                    self.found_markers
-                        .insert(self.ctx.db().auto_markers.side_effect_transmute);
-                }
-            }
-        }
-        self.super_rvalue(rvalue, location);
-    }
 }
 
-fn contains_mut_ref<'tcx>(ty: ty::Ty<'tcx>, tcx: ty::TyCtxt<'tcx>) -> bool {
-    use ty::{TypeSuperVisitable, TypeVisitable};
-    struct ContainsMutRefVisitor<'tcx> {
-        tcx: ty::TyCtxt<'tcx>,
-        has_mut_ref: bool,
+pub fn marker_if_unloadable<'a>(
+    tcx: ty::TyCtxt<'_>,
+    def_id: DefId,
+    auto_markers: &'a AutoMarkers,
+) -> Option<&'a Identifier> {
+    if is_virtual(tcx, def_id) {
+        trace!("  Is virtual");
+        return Some(&auto_markers.side_effect_unknown_virtual);
     }
-
-    impl<'tcx> ty::TypeVisitor<ty::TyCtxt<'tcx>> for ContainsMutRefVisitor<'tcx> {
-        fn visit_ty(&mut self, t: ty::Ty<'tcx>) {
-            if let ty::TyKind::Adt(adt_def, substs) = t.kind() {
-                for field in adt_def.all_fields() {
-                    field.ty(self.tcx, substs).visit_with(self);
-                }
-            }
-
-            if let Some(mir::Mutability::Mut) = t.ref_mutability() {
-                self.has_mut_ref = true;
-            }
-            t.super_visit_with(self)
-        }
+    if tcx.is_foreign_item(def_id) {
+        trace!("  Is foreign");
+        return Some(&auto_markers.side_effect_foreign);
     }
-
-    let mut visitor = ContainsMutRefVisitor {
-        tcx,
-        has_mut_ref: false,
-    };
-    ty.visit_with(&mut visitor);
-    visitor.has_mut_ref
+    None
 }

@@ -15,7 +15,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn all_type_markers<'a>(
         &'a self,
         ty: ty::Ty<'tcx>,
-    ) -> impl Iterator<Item = (&'a MarkerAnnotation, (ty::Ty<'tcx>, DefId))> {
+    ) -> impl Iterator<Item = (MarkerAnnotation, (ty::Ty<'tcx>, DefId))> + use<'a, 'tcx> {
         ty.walk().filter_map(|g| g.as_type()).flat_map(move |typ| {
             typ.defid().into_iter().flat_map(move |did| {
                 self.combined_markers(did)

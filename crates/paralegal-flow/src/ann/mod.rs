@@ -20,6 +20,7 @@ use paralegal_spdg::{
 
 pub mod db;
 pub mod parse;
+pub mod side_effect_detection;
 
 use parse::*;
 
@@ -81,7 +82,7 @@ pub struct ExceptionAnnotation {
 
 /// A marker annotation and its refinements.
 #[derive(
-    PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize, Encodable, Decodable,
+    PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize, Encodable, Decodable, Copy,
 )]
 pub struct MarkerAnnotation {
     /// The (unchanged) name of the marker as provided by the user
@@ -98,7 +99,7 @@ fn const_false() -> bool {
 /// `on_argument == vec![]` and `on_return == false`, which is also what is
 /// returned from [`Self::empty`].
 #[derive(
-    PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Deserialize, Serialize, Encodable, Decodable,
+    PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Deserialize, Serialize, Encodable, Decodable, Copy,
 )]
 pub struct MarkerRefinement {
     #[serde(default, with = "tiny_bitset_pretty")]

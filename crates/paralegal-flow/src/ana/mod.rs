@@ -514,7 +514,6 @@ fn def_info_for_item(id: DefId, markers: &MarkerCtx, tcx: TyCtxt) -> DefInfo {
         src_info: src_loc_for_span(tcx.def_span(id), tcx),
         markers: markers
             .combined_markers(id)
-            .cloned()
             .map(|ann| paralegal_spdg::MarkerAnnotation {
                 marker: ann.marker,
                 on_return: ann.refinement.on_return(),

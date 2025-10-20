@@ -1,5 +1,10 @@
 use super::{path_for_item, src_loc_for_span};
-use crate::{ann::MarkerAnnotation, desc::*, utils::*, HashMap, HashSet, MarkerCtx, Pctx};
+use crate::{
+    ann::{db::AutoMarkers, side_effect_detection, MarkerAnnotation},
+    desc::*,
+    utils::*,
+    HashMap, HashSet, MarkerCtx, Pctx,
+};
 use flowistry_pdg::rustc_portable::Location;
 use flowistry_pdg_construction::{
     determine_async,
@@ -374,6 +379,14 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         self.register_annotations_for_function(node, function_id, |ann| ann.refinement.on_return());
     }
 
+    fn auto_markers(&self) -> &AutoMarkers {
+        self.pctx.marker_ctx().auto_markers()
+    }
+
+    // XXX: This code duplicates the auto-marker assignment logic from
+    // MarkerCtx::terminator_reachable_markers and
+    // MarkerCtx::get_reachable_markers but really there should be only one
+    // source of truth.
     /// Helper for `node_annotations` to handle the case where the node is at a `RichLocation::Location`.
     fn handle_node_annotations_for_regular_location<K: Clone>(
         &mut self,
@@ -385,14 +398,25 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     ) {
         let function = vis.current_function();
         let function_id = function.def_id();
-        let crate::Either::Right(
-            term @ mir::Terminator {
-                kind: mir::TerminatorKind::Call { func, .. },
-                ..
-            },
-        ) = body.stmt_at(loc)
-        else {
-            return;
+        let (term, func) = match body.stmt_at(loc) {
+            crate::Either::Right(
+                term @ mir::Terminator {
+                    kind: mir::TerminatorKind::Call { func, .. },
+                    ..
+                },
+            ) => (term, func),
+            crate::Either::Left(stmt) => {
+                use mir::visit::Visitor;
+                let mut ana =
+                    side_effect_detection::BodyAnalyzer::new(body, self.auto_markers(), self.tcx());
+                ana.visit_statement(stmt, loc);
+                let found = ana.into_found_markers();
+                if !found.is_empty() {
+                    self.register_markers(node, found);
+                }
+                return;
+            }
+            _ => return,
         };
         debug!("Assigning markers to {:?}", term.kind);
         let param_env = TypingEnv::post_analysis(self.tcx(), function.def_id());
@@ -403,6 +427,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                 weight.span,
                 "SOUNDNESS: Cannot determine markers for function call",
             );
+            self.register_markers(node, [self.auto_markers().side_effect_unknown_fn_ptr]);
             return;
         };
         let (inst, args) = type_as_fn(self.tcx(), ty_of_const(funcc)).unwrap();
@@ -420,12 +445,14 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                         weight.span,
                         "SOUNDNESS: Cannot determine markers for shim usage",
                     );
+                    self.register_markers(node, [self.auto_markers().side_effect_unknown]);
                     return;
                 }
             }
             .def_id()
         } else {
             debug!("Could not resolve {inst:?} properly during marker assignment");
+            self.register_markers(node, [self.auto_markers().side_effect_unknown]);
             inst
         };
 

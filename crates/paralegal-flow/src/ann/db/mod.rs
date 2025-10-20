@@ -11,15 +11,21 @@
 //! All interactions happen through the central database object: [`MarkerCtx`].
 
 use crate::{
-    ann::{Annotation, MarkerAnnotation},
+    ann::{
+        db::reachable::marker_if_unloadable, side_effect_detection, Annotation, MarkerAnnotation,
+    },
     args::{Args, Stub},
-    utils::{resolve::expect_resolve_string_to_def_id, FunctionKind, InstanceExt, IntoDefId},
+    utils::{
+        resolve::expect_resolve_string_to_def_id, ContiguousIntCache, FunctionKind, InstanceExt,
+        IntoDefId,
+    },
     Either, HashMap,
 };
+use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::source_access::{
     local_or_remote_paths, BodyCache, ParalegalDecoder,
 };
-use paralegal_spdg::Identifier;
+use paralegal_spdg::{Identifier, TinyBitSet};
 
 use rustc_data_structures::fx::FxHashMap;
 use rustc_errors::DiagMessage;
@@ -107,11 +113,46 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// All markers reachable for this item (local and external).
     ///
     /// Queries are cached/precomputed so calling this repeatedly is cheap.
-    pub fn combined_markers(&self, def_id: DefId) -> impl Iterator<Item = &MarkerAnnotation> {
+    pub fn combined_markers<'s>(
+        &'s self,
+        def_id: DefId,
+    ) -> impl Iterator<Item = MarkerAnnotation> + use<'s> {
         self.source_annotations(def_id)
             .iter()
             .filter_map(Annotation::as_marker)
-            .chain(self.external_markers(def_id).iter())
+            .chain(self.external_markers(def_id))
+            .copied()
+            .chain({
+                let sig = self.tcx().fn_sig(def_id);
+                let arg_len = sig.skip_binder().inputs().skip_binder().len() as u32;
+                self.side_effect_markers(def_id)
+                    .iter()
+                    .map(move |m| MarkerAnnotation {
+                        marker: *m,
+                        refinement: MarkerRefinement {
+                            on_argument: (0..arg_len).into(),
+                            on_return: true,
+                        },
+                    })
+            })
+    }
+
+    pub fn side_effect_markers(&self, def_id: DefId) -> &[Identifier] {
+        if !matches!(
+            self.tcx().def_kind(def_id),
+            DefKind::Fn | DefKind::AssocFn | DefKind::Closure,
+        ) {
+            return &[];
+        }
+        if let Some(m) = marker_if_unloadable(self.tcx(), def_id, self.auto_markers()) {
+            return std::slice::from_ref(m);
+        }
+        self.db().side_effect_heuristics_results.get(&def_id, |_| {
+            let body = self.db().body_cache.get(def_id).body();
+            side_effect_detection::analyze_body(body, &self.db().auto_markers, self.tcx())
+                .into_iter()
+                .collect()
+        })
     }
 
     /// For async handling. If this id corresponds to an async closure we try to
@@ -203,6 +244,10 @@ impl<'tcx> MarkerCtx<'tcx> {
         }
     }
 
+    pub fn auto_markers(&self) -> &AutoMarkers {
+        &self.0.auto_markers
+    }
+
     #[allow(unused)]
     fn err(&self, msg: impl Into<DiagMessage>) {
         if self.0.config.relaxed() {
@@ -217,7 +262,8 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn all_function_markers<'a>(
         &'a self,
         function: MaybeMonomorphized<'tcx>,
-    ) -> impl Iterator<Item = (&'a MarkerAnnotation, Option<(ty::Ty<'tcx>, DefId)>)> {
+    ) -> impl Iterator<Item = (MarkerAnnotation, Option<(ty::Ty<'tcx>, DefId)>)> + use<'a, 'tcx>
+    {
         // Markers not coming from types, hence the "None"
         let direct_markers = self
             .combined_markers(function.def_id())
@@ -352,6 +398,7 @@ pub struct MarkerDatabase<'tcx> {
     stubs: FxHashMap<DefId, &'static Stub>,
     marker_statistics: RefCell<HashMap<MaybeMonomorphized<'tcx>, FunctionMarkerStat<'tcx>>>,
     auto_markers: AutoMarkers,
+    side_effect_heuristics_results: Cache<DefId, Box<[Identifier]>>,
 }
 
 pub struct AutoMarkers {
@@ -360,6 +407,7 @@ pub struct AutoMarkers {
     pub side_effect_unknown_fn_ptr: Identifier,
     pub side_effect_raw_ptr: Identifier,
     pub side_effect_transmute: Identifier,
+    pub side_effect_unknown: Identifier,
 }
 
 impl AutoMarkers {
@@ -370,16 +418,18 @@ impl AutoMarkers {
             side_effect_unknown_fn_ptr: Identifier::new_intern("auto:side-effect:unknown:fn-ptr"),
             side_effect_raw_ptr: Identifier::new_intern("auto:side-effect:raw-ptr"),
             side_effect_transmute: Identifier::new_intern("auto:side-effect:transmute"),
+            side_effect_unknown: Identifier::new_intern("auto:side-effect:unknown"),
         }
     }
 
-    pub fn all(&self) -> [Identifier; 5] {
+    pub fn all(&self) -> [Identifier; 6] {
         [
             self.side_effect_unknown_virtual,
             self.side_effect_foreign,
             self.side_effect_unknown_fn_ptr,
             self.side_effect_raw_ptr,
             self.side_effect_transmute,
+            self.side_effect_unknown,
         ]
     }
 }
@@ -454,23 +504,19 @@ impl<'tcx> MarkerDatabase<'tcx> {
             .collect();
         let included_crates = Rc::new(args.anactrl().inclusion_predicate(tcx));
         Self {
-            tcx,
             annotations: load_annotations(
                 tcx,
                 args.anactrl().included_crates(tcx).chain([LOCAL_CRATE]),
             ),
             external_annotations: resolve_external_markers(args, tcx),
-            reachable_markers: Default::default(),
-            config: args,
-            type_markers: Default::default(),
-            body_cache,
             included_crates,
             stubs,
-            marker_statistics: RefCell::new(HashMap::default()),
-            auto_markers: AutoMarkers::new(),
+            ..Self::init_no_markers(tcx, args, body_cache)
         }
     }
 
+    /// Initialize a new context without loading any annotations or external
+    /// markers and only selecting the local crate for analysis.
     pub fn init_no_markers(
         tcx: TyCtxt<'tcx>,
         opts: &'static crate::Args,
@@ -488,6 +534,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
             stubs: FxHashMap::default(),
             marker_statistics: RefCell::new(HashMap::default()),
             auto_markers: AutoMarkers::new(),
+            side_effect_heuristics_results: Default::default(),
         }
     }
 }

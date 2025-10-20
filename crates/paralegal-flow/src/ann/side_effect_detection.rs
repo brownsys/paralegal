@@ -1,6 +1,12 @@
+use std::collections::HashSet;
 
+use paralegal_spdg::Identifier;
+use rustc_data_structures::fx::FxHashSet;
+use rustc_middle::{mir, ty};
 
-const ALLOWED_INTRINSICS: &str = [
+use crate::ann::db::AutoMarkers;
+
+const ALLOWED_INTRINSICS: &[&str] = &[
     // Prefetching.
     "prefetch_read_data",
     "prefetch_write_data",
@@ -140,7 +146,7 @@ const ALLOWED_INTRINSICS: &str = [
     "transmute",
 ];
 
-const ALLOWED_FUNCTIONS: &[&str] = [
+const ALLOWED_FUNCTIONS: &[&str] = &[
     // Panicking infrastructure.
     "core::panicking::assert_failed",
     "core::panicking::const_panic_fmt",
@@ -191,3 +197,109 @@ const TRUSTED_MODULES: &[&str] = &[
     "std::collections::hash::map",
     "alloc::collections::btree",
 ];
+
+pub fn analyze_body<'tcx, 'b>(
+    body: &'b mir::Body<'tcx>,
+    auto_markers: &'b AutoMarkers,
+    tcx: ty::TyCtxt<'tcx>,
+) -> FxHashSet<Identifier> {
+    use mir::visit::Visitor;
+    let mut analyzer = BodyAnalyzer::new(body, auto_markers, tcx);
+    analyzer.visit_body(body);
+    analyzer.found_markers
+}
+
+pub struct BodyAnalyzer<'tcx, 'b> {
+    body: &'b mir::Body<'tcx>,
+    found_markers: FxHashSet<Identifier>,
+    auto_markers: &'b AutoMarkers,
+    tcx: ty::TyCtxt<'tcx>,
+}
+
+impl<'tcx, 'b> BodyAnalyzer<'tcx, 'b> {
+    pub fn new(
+        body: &'b mir::Body<'tcx>,
+        auto_markers: &'b AutoMarkers,
+        tcx: ty::TyCtxt<'tcx>,
+    ) -> Self {
+        Self {
+            body,
+            found_markers: HashSet::default(),
+            auto_markers,
+            tcx,
+        }
+    }
+
+    pub fn found_markers(&self) -> &FxHashSet<Identifier> {
+        &self.found_markers
+    }
+
+    pub fn into_found_markers(self) -> FxHashSet<Identifier> {
+        self.found_markers
+    }
+}
+
+impl<'tcx, 'b> mir::visit::Visitor<'tcx> for BodyAnalyzer<'tcx, 'b> {
+    fn visit_projection(
+        &mut self,
+        place_ref: mir::PlaceRef<'tcx>,
+        context: mir::visit::PlaceContext,
+        location: mir::Location,
+    ) {
+        if matches!(
+            (place_ref.projection.last(), context),
+            (
+                Some(mir::ProjectionElem::Deref),
+                mir::visit::PlaceContext::MutatingUse(_)
+            )
+        ) {
+            let ty = place_ref.ty(self.body, self.tcx).ty;
+
+            if ty.is_mutable_ptr() && ty.is_unsafe_ptr() {
+                self.found_markers
+                    .insert(self.auto_markers.side_effect_raw_ptr);
+            }
+        }
+        self.super_projection(place_ref, context, location);
+    }
+
+    fn visit_rvalue(&mut self, rvalue: &mir::Rvalue<'tcx>, location: mir::Location) {
+        if let mir::Rvalue::Cast(mir::CastKind::Transmute, _, to) = rvalue {
+            if contains_mut_ref(*to, self.tcx) {
+                self.found_markers
+                    .insert(self.auto_markers.side_effect_transmute);
+            }
+        }
+        self.super_rvalue(rvalue, location);
+    }
+}
+
+fn contains_mut_ref<'tcx>(ty: ty::Ty<'tcx>, tcx: ty::TyCtxt<'tcx>) -> bool {
+    use ty::{TypeSuperVisitable, TypeVisitable};
+    struct ContainsMutRefVisitor<'tcx> {
+        tcx: ty::TyCtxt<'tcx>,
+        has_mut_ref: bool,
+    }
+
+    impl<'tcx> ty::TypeVisitor<ty::TyCtxt<'tcx>> for ContainsMutRefVisitor<'tcx> {
+        fn visit_ty(&mut self, t: ty::Ty<'tcx>) {
+            if let ty::TyKind::Adt(adt_def, substs) = t.kind() {
+                for field in adt_def.all_fields() {
+                    field.ty(self.tcx, substs).visit_with(self);
+                }
+            }
+
+            if let Some(mir::Mutability::Mut) = t.ref_mutability() {
+                self.has_mut_ref = true;
+            }
+            t.super_visit_with(self)
+        }
+    }
+
+    let mut visitor = ContainsMutRefVisitor {
+        tcx,
+        has_mut_ref: false,
+    };
+    ty.visit_with(&mut visitor);
+    visitor.has_mut_ref
+}
