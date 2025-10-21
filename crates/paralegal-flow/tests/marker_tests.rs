@@ -436,3 +436,16 @@ fn side_effect_tcp_flow() {
         assert!(!source2.flows_to_data(&side_effecting));
     });
 }
+
+#[test]
+fn side_effect_vec() {
+    inline_test! {
+        fn main() {
+            let mut v = vec![0];
+            v.push(1);
+            v.pop();
+        }
+    }
+    .with_extra_args(["--side-effect-markers"])
+    .check_ctrl(|ctrl| ctrl.assert_purity(true));
+}
