@@ -330,3 +330,109 @@ fn side_effect_extern() {
         assert!(!contained.is_empty());
     });
 }
+
+#[test]
+fn side_effect_extern_flow() {
+    inline_test! {
+        extern "C" {
+            fn plus(a: i32, b: i32) -> i32;
+        }
+
+        #[paralegal_flow::marker(source, return)]
+        fn source() -> i32 {
+            42
+        }
+
+        #[paralegal_flow::marker(source2, return)]
+        fn source2() -> i32 {
+            43
+        }
+
+        fn main() -> std::io::Result<()> {
+            let x = source2();
+            let z = source();
+            let y = plus(z, 3);
+            let result = y + x;
+            Ok(())
+        }
+    }
+    .with_extra_args(["--side-effect-markers".to_string()])
+    .check_ctrl(|ctrl| {
+        let auto_markers = AutoMarkers::new();
+        let defined = dbg!(ctrl.markers());
+        let auto = auto_markers.all();
+        let contained = dbg!(auto
+            .iter()
+            .filter(|m| defined.contains(m))
+            .collect::<Vec<_>>());
+        assert!(!contained.is_empty());
+
+        let source1 = ctrl.marked("source");
+        let source2 = ctrl.marked("source2");
+        let side_effecting: NodeRefs = auto_markers
+            .all()
+            .iter()
+            .flat_map(|m| ctrl.marked(*m))
+            .collect();
+        assert!(!source1.is_empty());
+        assert!(!source2.is_empty());
+        assert!(!side_effecting.is_empty());
+
+        assert!(source1.flows_to_data(&side_effecting));
+        assert!(!source2.flows_to_data(&side_effecting));
+    });
+}
+
+#[test]
+fn side_effect_tcp_flow() {
+    inline_test! {
+        use std::io::prelude::*;
+        use std::net::TcpStream;
+
+        #[paralegal_flow::marker(source, return)]
+        fn source() -> u8 {
+            42
+        }
+
+        #[paralegal_flow::marker(source2, return)]
+        fn source2() -> u8 {
+            43
+        }
+
+        fn main() -> std::io::Result<()> {
+            let mut stream = TcpStream::connect("127.0.0.1:34254")?;
+            let y = source2();
+            stream.write(&[source()])?;
+            let mut buf = [0; 128];
+            stream.read(&mut buf)?;
+            let _ = y + buf[0];
+            Ok(())
+        }
+
+    }
+    .with_extra_args(["--side-effect-markers".to_string()])
+    .check_ctrl(|ctrl| {
+        let auto_markers = AutoMarkers::new();
+        let defined = dbg!(ctrl.markers());
+        let auto = auto_markers.all();
+        let contained = dbg!(auto
+            .iter()
+            .filter(|m| defined.contains(m))
+            .collect::<Vec<_>>());
+        assert!(!contained.is_empty());
+
+        let source1 = ctrl.marked("source");
+        let source2 = ctrl.marked("source2");
+        let side_effecting: NodeRefs = auto_markers
+            .all()
+            .iter()
+            .flat_map(|m| ctrl.marked(*m))
+            .collect();
+        assert!(!source1.is_empty());
+        assert!(!source2.is_empty());
+        assert!(!side_effecting.is_empty());
+
+        assert!(source1.flows_to_data(&side_effecting));
+        assert!(!source2.flows_to_data(&side_effecting));
+    });
+}

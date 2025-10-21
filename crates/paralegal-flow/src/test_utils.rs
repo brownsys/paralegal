@@ -697,6 +697,53 @@ impl Debug for NodeRefs<'_> {
     }
 }
 
+pub struct NodeRefsIter<'g> {
+    nodes: std::vec::IntoIter<Node>,
+    graph: &'g CtrlRef<'g>,
+}
+
+impl<'g> Iterator for NodeRefsIter<'g> {
+    type Item = NodeRef<'g>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.nodes.next().map(|node| NodeRef {
+            node,
+            graph: self.graph,
+        })
+    }
+}
+
+impl<'g> IntoIterator for NodeRefs<'g> {
+    type Item = NodeRef<'g>;
+    type IntoIter = NodeRefsIter<'g>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        NodeRefsIter {
+            nodes: self.nodes.into_iter(),
+            graph: self.graph,
+        }
+    }
+}
+
+impl<'g> FromIterator<NodeRef<'g>> for NodeRefs<'g> {
+    fn from_iter<T: IntoIterator<Item = NodeRef<'g>>>(iter: T) -> Self {
+        let mut i = iter.into_iter();
+        let one = i
+            .next()
+            .expect("Cannot build node refs from empty iterator");
+        Self {
+            nodes: [one.node]
+                .into_iter()
+                .chain(i.map(|n| {
+                    assert!(n.graph.id() == one.graph.id());
+                    n.node
+                }))
+                .collect(),
+            graph: one.graph,
+        }
+    }
+}
+
 impl<'g> NodeRefs<'g> {
     pub fn nth(&self, i: usize) -> Option<NodeRef<'g>> {
         Some(NodeRef {
