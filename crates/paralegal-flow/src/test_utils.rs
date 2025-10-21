@@ -9,7 +9,7 @@ use rustc_errors::FatalError;
 use rustc_middle::ty::TyCtxt;
 
 use crate::{
-    ann::dump_markers,
+    ann::{db::AutoMarkers, dump_markers},
     desc::{Identifier, ProgramDescription},
     utils::Print,
     Callbacks, HashSet, EXTRA_RUSTC_ARGS,
@@ -186,7 +186,7 @@ macro_rules! define_flow_test_template {
 /// Start with [`InlineTestBuilder::new`], compile and run the test case with
 /// [`InlineTestBuilder::check`].
 pub struct InlineTestBuilder {
-    ctrl_name: String,
+    ctrl_name: Option<String>,
     input: String,
     extra_args: Vec<String>,
 }
@@ -194,7 +194,7 @@ pub struct InlineTestBuilder {
 #[macro_export]
 macro_rules! inline_test {
     ($($t:tt)*) => {
-        InlineTestBuilder::new(stringify!($($t)*))
+        $crate::test_utils::InlineTestBuilder::new(stringify!($($t)*))
     };
 }
 
@@ -211,7 +211,7 @@ impl InlineTestBuilder {
     pub fn new(input: impl Into<String>) -> Self {
         Self {
             input: input.into(),
-            ctrl_name: "crate::main".into(),
+            ctrl_name: Some("crate::main".into()),
             extra_args: Default::default(),
         }
     }
@@ -219,12 +219,13 @@ impl InlineTestBuilder {
     /// Chose a function as analysis entrypoint. Overwrites any previous choice
     /// without warning.
     pub fn with_entrypoint(&mut self, name: impl Into<String>) -> &mut Self {
-        self.ctrl_name = name.into();
+        self.ctrl_name = Some(name.into());
         self
     }
 
-    pub fn with_extra_args(&mut self, args: impl IntoIterator<Item = String>) -> &mut Self {
-        self.extra_args.extend(args);
+    pub fn with_extra_args<S: ToString>(&mut self, args: impl IntoIterator<Item = S>) -> &mut Self {
+        self.extra_args
+            .extend(args.into_iter().map(|s| s.to_string()));
         self
     }
 
@@ -234,12 +235,17 @@ impl InlineTestBuilder {
         assert!(res.is_err(), "the compiler existed successfully");
     }
 
+    pub fn without_entrypoint(&mut self) -> &mut Self {
+        self.ctrl_name = None;
+        self
+    }
+
     /// Compile the code, select the [`CtrlRef`] corresponding to the configured
     /// entrypoint and hand it to the `check` function which should contain the
     /// test predicate.
     pub fn check_ctrl(&self, check: impl FnOnce(CtrlRef) + Send) {
         self.run(|graph| {
-            let cref = graph.ctrl(&self.ctrl_name);
+            let cref = graph.ctrl(&self.ctrl_name.as_ref().unwrap());
             check(cref);
         })
         .unwrap()
@@ -261,10 +267,11 @@ impl InlineTestBuilder {
             args: crate::ClapArgs,
         }
 
-        let args = ["".into(), "--analyze".into(), self.ctrl_name.to_string()]
-            .into_iter()
-            .chain(self.extra_args.iter().cloned())
-            .collect::<Vec<_>>();
+        let mut args = vec!["".to_string()];
+        if let Some(e) = &self.ctrl_name {
+            args.extend(["--analyze".to_string(), e.clone()])
+        }
+        args.extend(self.extra_args.iter().cloned());
 
         let args = crate::Args::try_from(TopLevelArgs::parse_from(args).args).unwrap();
 
@@ -571,6 +578,17 @@ impl<'g> CtrlRef<'g> {
         self.constants()
             .find(|&(_, c)| c == constant)
             .map(|(n, _)| n)
+    }
+
+    pub fn assert_purity(&self, pure: bool) {
+        let auto_markers = AutoMarkers::new();
+        let defined = self.markers();
+        let auto = auto_markers.all();
+        let contained = dbg!(auto
+            .iter()
+            .filter(|m| defined.contains(m))
+            .collect::<Vec<_>>());
+        assert!(!pure ^ contained.is_empty(), "Found {:?}", contained);
     }
 }
 
