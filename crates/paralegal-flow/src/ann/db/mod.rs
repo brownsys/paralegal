@@ -124,7 +124,9 @@ impl<'tcx> MarkerCtx<'tcx> {
             .copied()
             .chain({
                 // To avoid calling "fn_sig" for constructors and other non-functions
-                let (markers, arg_len) = if is_function_like(self.tcx(), def_id) {
+                let (markers, arg_len) = if self.0.config.marker_control().mark_side_effects()
+                    && is_function_like(self.tcx(), def_id)
+                {
                     let sig = self.tcx().fn_sig(def_id);
                     let arg_len = sig.skip_binder().inputs().skip_binder().len() as u32;
                     (self.side_effect_markers(def_id), arg_len)
