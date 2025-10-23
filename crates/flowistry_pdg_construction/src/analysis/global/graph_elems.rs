@@ -101,13 +101,13 @@ pub struct DepNode<'tcx, Loc> {
 
 #[derive(Clone, Debug, PartialEq, Eq, Copy, Hash)]
 pub enum Use {
-    Arg(u8),
+    Arg(u16),
     Return,
     Other,
 }
 
 impl Use {
-    pub fn as_arg(&self) -> Option<u8> {
+    pub fn as_arg(&self) -> Option<u16> {
         match self {
             Use::Arg(arg) => Some(*arg),
             _ => None,

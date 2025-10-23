@@ -1,6 +1,6 @@
 use super::{path_for_item, src_loc_for_span};
 use crate::{
-    ann::{db::AutoMarkers, side_effect_detection, MarkerAnnotation},
+    ann::{db::AutoMarkers, side_effect_detection},
     desc::*,
     utils::*,
     HashMap, HashSet, MarkerCtx, Pctx,
@@ -186,7 +186,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         place: mir::Place,
         at: CallString,
         span: rustc_span::Span,
-        is_arg: Option<u8>,
+        is_arg: Option<u16>,
     ) -> GNode {
         GNode(self.graph.add_node(NodeInfo {
             at,
@@ -211,35 +211,35 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         self.pctx.marker_ctx()
     }
 
-    /// Fetch annotations item identified by this `id`.
-    ///
-    /// The callback is used to filter out annotations where the "refinement"
-    /// doesn't match. The idea is that the caller of this function knows
-    /// whether they are looking for annotations on an argument or return of a
-    /// function identified by this `id` or on a type and the callback should be
-    /// used to enforce this.
-    fn register_annotations_for_function(
-        &mut self,
-        node: GNode,
-        function: DefId,
-        mut filter: impl FnMut(&MarkerAnnotation) -> bool,
-    ) {
-        let parent = get_parent(self.tcx(), function);
-        let marker_ctx = self.marker_ctx().clone();
-        self.register_markers(
-            node,
-            marker_ctx
-                .combined_markers(function)
-                .chain(
-                    parent
-                        .into_iter()
-                        .flat_map(|parent| marker_ctx.combined_markers(parent)),
-                )
-                .filter(|ann| filter(ann))
-                .map(|ann| ann.marker),
-        );
-        self.known_def_ids.extend(parent);
-    }
+    // /// Fetch annotations item identified by this `id`.
+    // ///
+    // /// The callback is used to filter out annotations where the "refinement"
+    // /// doesn't match. The idea is that the caller of this function knows
+    // /// whether they are looking for annotations on an argument or return of a
+    // /// function identified by this `id` or on a type and the callback should be
+    // /// used to enforce this.
+    // fn register_annotations_for_function(
+    //     &mut self,
+    //     node: GNode,
+    //     function: DefId,
+    //     mut filter: impl FnMut(&MarkerAnnotation) -> bool,
+    // ) {
+    //     let parent = get_parent(self.tcx(), function);
+    //     let marker_ctx = self.marker_ctx().clone();
+    //     self.register_markers(
+    //         node,
+    //         marker_ctx
+    //             .combined_markers(function)
+    //             .chain(
+    //                 parent
+    //                     .into_iter()
+    //                     .flat_map(|parent| marker_ctx.combined_markers(parent)),
+    //             )
+    //             .filter(|ann| filter(ann))
+    //             .map(|ann| ann.marker),
+    //     );
+    //     self.known_def_ids.extend(parent);
+    // }
 
     /// Check if this node is of a marked type and register that type.
     fn handle_node_types<K: Clone>(
@@ -350,33 +350,26 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
 
         let body = self.pctx.body_cache().get(function.def_id()).body();
 
-        match (leaf_loc, weight.place()) {
+        let ctx = self.marker_ctx().clone();
+        let markers = match (leaf_loc, weight.place()) {
             (RichLocation::Start, Some(place))
                 if matches!(body.local_kind(place.local), mir::LocalKind::Arg) =>
             {
                 let arg_num = place.local.as_u32() - 1;
                 self.known_def_ids.extend([function_id]);
-                self.register_annotations_for_argument(node, arg_num, function_id);
+                ctx.markers_on_argument(function_id, arg_num as u16)
             }
             (RichLocation::End, Some(place)) if place.local == mir::RETURN_PLACE => {
                 self.known_def_ids.extend([function_id]);
-                self.register_annotations_for_return(node, function_id);
+                ctx.markers_on_return(function_id)
             }
             (RichLocation::Location(loc), _) => {
-                self.handle_node_annotations_for_regular_location(node, weight, body, loc, vis)
+                self.handle_node_annotations_for_regular_location(node, weight, body, loc, vis);
+                &[]
             }
-            _ => (),
-        }
-    }
-
-    fn register_annotations_for_argument(&mut self, node: GNode, arg_num: u32, function_id: DefId) {
-        self.register_annotations_for_function(node, function_id, |ann| {
-            ann.refinement.on_argument().contains(arg_num).unwrap()
-        });
-    }
-
-    fn register_annotations_for_return(&mut self, node: GNode, function_id: DefId) {
-        self.register_annotations_for_function(node, function_id, |ann| ann.refinement.on_return());
+            _ => &[],
+        };
+        self.register_markers(node, markers.iter().copied());
     }
 
     fn auto_markers(&self) -> &AutoMarkers {
@@ -458,17 +451,14 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
 
         self.known_def_ids.extend(Some(f));
 
-        match weight.use_ {
-            Use::Arg(arg) => {
-                self.register_annotations_for_function(node, f, |ann| {
-                    ann.refinement.on_argument().contains(arg as u32).unwrap()
-                });
-            }
-            Use::Return => {
-                self.register_annotations_for_function(node, f, |ann| ann.refinement.on_return());
-            }
-            Use::Other => (),
-        }
+        self.known_def_ids.extend(get_parent(self.tcx(), f));
+        let ctx = self.marker_ctx().clone();
+        let markers = match weight.use_ {
+            Use::Arg(arg) => ctx.markers_on_argument(f, arg),
+            Use::Return => ctx.markers_on_return(f),
+            Use::Other => &[],
+        };
+        self.register_markers(node, markers.iter().copied());
     }
 
     /// Determine the set if nodes corresponding to the inputs to the
@@ -559,7 +549,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     arg.into(),
                     driver.globalize_location(&RichLocation::Start.into()),
                     base_body.local_decls[arg].source_info.span,
-                    Some((arg.as_u32() - 1) as u8),
+                    Some((arg.as_u32() - 1) as u16),
                 )
             })
             .collect::<Vec<_>>();
@@ -584,13 +574,19 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             )
         };
 
+        let ctx = self.marker_ctx().clone();
         // Register the new nodes and add potential markers
         for (arg_num, a) in args_as_nodes.iter().enumerate() {
-            self.register_annotations_for_argument(*a, arg_num as u32, def_id);
+            self.register_markers(
+                *a,
+                ctx.markers_on_argument(def_id, arg_num as u16)
+                    .iter()
+                    .copied(),
+            );
             let local = mir::Local::from_usize(arg_num + 1);
             self.handle_node_types_helper(*a, mono_ty(local), &[]);
         }
-        self.register_annotations_for_return(return_node, def_id);
+        self.register_markers(return_node, ctx.markers_on_return(def_id).iter().copied());
         let local = mir::RETURN_PLACE;
         self.handle_node_types_helper(return_node, mono_ty(local), &[]);
 

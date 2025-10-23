@@ -642,12 +642,12 @@ pub type PdgCache<'tcx, K> = Rc<TwoLevelCache<Instance<'tcx>, K, Option<PartialG
 enum Input<'tcx> {
     Unresolved {
         place: Place<'tcx>,
-        use_: Option<u8>,
+        use_: Option<u16>,
     },
     Const {
         const_: Constant,
         span: rustc_span::Span,
-        is_arg: Option<u8>,
+        is_arg: Option<u16>,
     },
     Resolved {
         node: Node,

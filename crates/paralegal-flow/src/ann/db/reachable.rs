@@ -65,16 +65,13 @@ impl<'tcx> MarkerCtx<'tcx> {
         res: impl Into<MaybeMonomorphized<'tcx>>,
     ) -> impl Iterator<Item = Identifier> + '_ {
         let res = res.into();
-        let mut direct_markers = self
-            .combined_markers(res.def_id())
-            .map(|m| m.marker)
-            .peekable();
+        let mut direct_markers = self.all_markers_associated_with(res.def_id()).peekable();
         let is_self_marked = direct_markers.peek().is_some();
         if is_self_marked {
             let mut stat = self.borrow_function_marker_stat(res);
             if stat.markers_on_self.is_empty() {
                 stat.markers_on_self
-                    .extend(self.combined_markers(res.def_id()).map(|m| m.marker));
+                    .extend(self.all_markers_associated_with(res.def_id()));
             }
         }
         let non_direct = (!is_self_marked).then(|| self.get_reachable_markers(res));
@@ -89,10 +86,7 @@ impl<'tcx> MarkerCtx<'tcx> {
 
         if self.tcx().is_constructor(res.def_id()) {
             let parent = type_for_constructor(self.tcx(), res.def_id());
-            return self
-                .combined_markers(parent)
-                .map(|m| m.marker)
-                .collect::<Box<_>>();
+            return self.all_markers_associated_with(parent).collect::<Box<_>>();
         }
         let body = self.db().body_cache.get(res.def_id());
         let param_env = TypingEnv::post_analysis(self.tcx(), res.def_id())

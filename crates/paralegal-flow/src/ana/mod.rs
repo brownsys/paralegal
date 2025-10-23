@@ -17,7 +17,6 @@ use crate::{
 use std::{fs::File, io::BufReader, rc::Rc, time::Instant};
 
 use anyhow::Result;
-use either::Either;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
     source_access::local_or_remote_paths,
@@ -289,10 +288,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         // and whatever teardown rustc wants to do is finished we set
         // "self_time" and increment "total_time". See lib.rs for that.
         let stats = AnalyzerStats {
-            marker_annotation_count: mctx
-                .all_annotations()
-                .filter_map(|m| m.1.either(Annotation::as_marker, Some))
-                .count() as u32,
+            marker_annotation_count: mctx.marker_count() as u32,
             rustc_time: self.stats.get_timed(TimedStat::Rustc),
             pdg_functions,
             pdg_locs,
@@ -399,15 +395,14 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 |id, _| (*id, vec![], vec![]),
                 |mut desc, _, ann| {
                     match ann {
-                        Either::Right(MarkerAnnotation { refinement, marker })
-                        | Either::Left(Annotation::Marker(MarkerAnnotation {
+                        | Annotation::Marker(MarkerAnnotation {
                             refinement,
                             marker,
-                        })) => {
+                        }) => {
                             assert!(refinement.on_self(), "Cannot refine a marker on a type (tried assigning refinement {refinement} to {:?})", desc.0);
-                            desc.2.push(*marker)
+                            desc.2.push(marker)
                         }
-                        Either::Left(Annotation::OType(id)) => desc.1.push(*id),
+                        Annotation::OType(id) => desc.1.push(id),
                         _ => panic!("Unexpected type of annotation {ann:?}"),
                     }
                     desc
@@ -513,7 +508,7 @@ fn def_info_for_item(id: DefId, markers: &MarkerCtx, tcx: TyCtxt) -> DefInfo {
         kind,
         src_info: src_loc_for_span(tcx.def_span(id), tcx),
         markers: markers
-            .combined_markers(id)
+            .all_markers_on_item(id)
             .map(|ann| paralegal_spdg::MarkerAnnotation {
                 marker: ann.marker,
                 on_return: ann.refinement.on_return(),

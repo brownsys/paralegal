@@ -34,7 +34,7 @@ pub struct Mutation<'tcx> {
     pub mutated: Place<'tcx>,
 
     /// The set of inputs to the mutating operation.
-    pub inputs: Vec<(PlaceOrConst<'tcx>, Option<u8>)>,
+    pub inputs: Vec<(PlaceOrConst<'tcx>, Option<u16>)>,
 
     #[allow(dead_code)]
     /// The certainty of whether the mutation is happening.
@@ -266,7 +266,7 @@ where
         let arg_place_inputs = arg_places
             .iter()
             .copied()
-            .map(|(i, arg)| (arg, Some(i as u8)))
+            .map(|(i, arg)| (arg, Some(i as u16)))
             .collect::<Vec<_>>();
 
         if matches!(self.time, Time::Unspecified | Time::Before) {
@@ -287,7 +287,7 @@ where
                         mutated: arg,
                         inputs,
                         status: MutationStatus::Definitely,
-                        is_arg: Use::Arg(i as u8),
+                        is_arg: Use::Arg(i as u16),
                     },
                 );
             }
