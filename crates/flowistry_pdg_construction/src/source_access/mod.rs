@@ -9,7 +9,7 @@ use log::debug;
 use flowistry::mir::FlowistryInput;
 
 use polonius_engine::FactTypes;
-use rustc_borrowck::consumers::{ConsumerOptions, RustcFacts};
+use rustc_borrowck::consumers::{BodyWithBorrowckFacts, ConsumerOptions, RustcFacts};
 use rustc_data_structures::{steal::Steal, sync::RwLock};
 use rustc_hash::FxHashMap;
 use rustc_hir::{
@@ -66,30 +66,37 @@ impl<'tcx> CachedBody<'tcx> {
     fn retrieve(tcx: TyCtxt<'tcx>, local_def_id: LocalDefId) -> Self {
         Self::try_retrieve(tcx, local_def_id).expect("Reading stolen body")
     }
+
     fn try_retrieve(tcx: TyCtxt<'tcx>, local_def_id: LocalDefId) -> Option<Self> {
         if is_stolen(tcx.mir_promoted(local_def_id).0) {
             return None;
         }
-        let mut body_with_facts = rustc_borrowck::consumers::get_body_with_borrowck_facts(
+        let body_with_facts = rustc_borrowck::consumers::get_body_with_borrowck_facts(
             tcx,
             local_def_id,
             ConsumerOptions::PoloniusInputFacts,
         );
 
-        clean_undecodable_data_from_body(&mut body_with_facts.body);
+        Some(Self::from_body(&body_with_facts))
+    }
 
-        Some(Self {
-            body: body_with_facts.body,
+    fn from_body(body_with_facts: &BodyWithBorrowckFacts<'tcx>) -> Self {
+        let mut body = body_with_facts.body.clone();
+        clean_undecodable_data_from_body(&mut body);
+
+        Self {
+            body: body,
             input_facts: FlowistryFacts {
                 subset_base: body_with_facts
                     .input_facts
+                    .as_ref()
                     .expect("polonius input must exist")
                     .subset_base
                     .iter()
                     .map(|&(v1, v2, _)| (v1.into(), v2.into()))
                     .collect(),
             },
-        })
+        }
     }
 }
 
@@ -152,8 +159,12 @@ impl<'tcx> BodyCache<'tcx> {
     }
 
     pub fn get(&self, key: DefId) -> &'tcx CachedBody<'tcx> {
-        self.try_get(key)
-            .unwrap_or_else(|| panic!("INVARIANT VIOLATION: {key:?} is not loadable"))
+        self.try_get(key).unwrap_or_else(|| {
+            panic!(
+                "INVARIANT VIOLATION: {} is not loadable",
+                self.tcx.def_path_str(key)
+            )
+        })
     }
 
     /// Serve the body from the cache or read it from the disk.
@@ -254,6 +265,13 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
 /// Ensure this gets called early in the compiler before the unoptimized mir
 /// bodies are stolen.
 pub fn dump_mir_and_borrowck_facts<'tcx>(tcx: TyCtxt<'tcx>) -> (Duration, Duration) {
+    dump_mir_and_borrowck_facts_with_cache(tcx, |_| None)
+}
+
+pub fn dump_mir_and_borrowck_facts_with_cache<'a, 'tcx: 'a>(
+    tcx: TyCtxt<'tcx>,
+    cache: impl Fn(LocalDefId) -> Option<&'a BodyWithBorrowckFacts<'tcx>>,
+) -> (Duration, Duration) {
     let mut vis = DumpingVisitor {
         tcx,
         targets: vec![],
@@ -265,7 +283,9 @@ pub fn dump_mir_and_borrowck_facts<'tcx>(tcx: TyCtxt<'tcx>) -> (Duration, Durati
         .targets
         .iter()
         .filter_map(|local_def_id| {
-            let to_write = CachedBody::try_retrieve(tcx, *local_def_id);
+            let to_write = cache(*local_def_id)
+                .map(CachedBody::from_body)
+                .or_else(|| CachedBody::try_retrieve(tcx, *local_def_id));
 
             if to_write.is_none() {
                 log::error!("Body for {local_def_id:?} was stolen");

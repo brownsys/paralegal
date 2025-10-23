@@ -103,6 +103,7 @@ impl TryFrom<ClapArgs> for Args {
             Some(target) if !target.is_empty() => LogLevelConfig::Targeted(target),
             _ => LogLevelConfig::Disabled,
         };
+        anactrl.include_std |= marker_control.side_effect_markers;
         let verbosity = if trace {
             log::LevelFilter::Trace
         } else if debug {
@@ -460,6 +461,8 @@ pub struct MarkerControl {
     external_annotations: Option<std::path::PathBuf>,
 
     /// Whether to automatically mark possibly side-effecting functions.
+    ///
+    /// Implies `--include-std`.
     #[clap(long, env)]
     side_effect_markers: bool,
 }
@@ -505,6 +508,9 @@ struct ClapAnalysisCtrl {
     /// 0, if it is enabled it defaults to no limit.
     #[clap(long, conflicts_with = "no_interprocedural_analysis")]
     k_depth: Option<u32>,
+    /// Recompile the standard library and make the code available for analysis.
+    #[clap(long, env)]
+    include_std: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -521,6 +527,7 @@ pub struct AnalysisCtrl {
     #[serde(skip)]
     included_crate_cache: OnceLock<FxHashSet<CrateNum>>,
     no_pdg_cache: bool,
+    include_std: bool,
 }
 
 impl Default for AnalysisCtrl {
@@ -531,6 +538,7 @@ impl Default for AnalysisCtrl {
             include: Default::default(),
             no_pdg_cache: false,
             included_crate_cache: OnceLock::new(),
+            include_std: false,
         }
     }
 }
@@ -545,6 +553,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             no_interprocedural_analysis,
             no_adaptive_approximation,
             k_depth,
+            include_std,
         } = value;
 
         let inlining_depth = if no_interprocedural_analysis {
@@ -561,6 +570,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             include,
             no_pdg_cache,
             included_crate_cache: OnceLock::new(),
+            include_std,
         })
     }
 }
@@ -602,7 +612,11 @@ impl AnalysisCtrl {
         self.included_crate_cache
             .get_or_init(|| {
                 if self.include.is_empty() {
-                    let std_crates = std_crates(tcx).collect::<FxHashSet<_>>();
+                    let std_crates = if self.include_std {
+                        Default::default()
+                    } else {
+                        std_crates(tcx).collect::<FxHashSet<_>>()
+                    };
                     tcx.crates(())
                         .iter()
                         .copied()
@@ -648,6 +662,10 @@ impl AnalysisCtrl {
 
     pub fn pdg_cache(&self) -> bool {
         !self.no_pdg_cache
+    }
+
+    pub fn include_std(&self) -> bool {
+        self.include_std
     }
 }
 

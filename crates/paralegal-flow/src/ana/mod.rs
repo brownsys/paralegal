@@ -314,7 +314,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 let paths = local_or_remote_paths(c, self.ctx.tcx(), INTERMEDIATE_STAT_EXT);
 
                 let path = paths.iter().find(|p| p.exists()).unwrap_or_else(|| {
-                    panic!("No stats path found for included crate {c:?}, searched {paths:?}")
+                    panic!(
+                        "No stats path found for included crate {}, searched {paths:?}",
+                        self.tcx().crate_name(c)
+                    )
                 });
                 let rdr = BufReader::new(File::open(path).unwrap());
                 serde_json::from_reader(rdr).unwrap()

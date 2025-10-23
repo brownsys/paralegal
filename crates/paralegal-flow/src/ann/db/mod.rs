@@ -35,7 +35,6 @@ use rustc_middle::{
     ty::{self, GenericArgsRef, Instance, Ty, TyCtxt},
 };
 use rustc_serialize::Decodable;
-
 use rustc_span::Span;
 use rustc_utils::cache::Cache;
 
