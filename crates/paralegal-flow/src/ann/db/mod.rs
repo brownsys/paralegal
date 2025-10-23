@@ -126,10 +126,13 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// if markers are reachable from the body of this function (if it is one).
     pub fn is_marked<D: IntoDefId + Copy>(&self, did: D) -> bool {
         let defid = did.into_def_id(self.tcx());
-        self.0
-            .markers
-            .get(&defid)
-            .is_some_and(|markers| !markers.is_empty())
+        let check = |defid| {
+            self.0
+                .markers
+                .get(&defid)
+                .is_some_and(|markers| !markers.is_empty())
+        };
+        self.relevant_def_ids(defid).any(check)
     }
 
     pub fn all_markers_associated_with<'a>(
@@ -152,6 +155,10 @@ impl<'tcx> MarkerCtx<'tcx> {
         let parent_maybe = matches!(tcx.def_kind(start), DefKind::AssocFn | DefKind::AssocTy)
             .then(|| tcx.associated_item(start).trait_item_def_id)
             .flatten();
+        debug!("Checking item: {}", self.tcx().def_path_str(start));
+        if let Some(parent) = parent_maybe {
+            debug!("  and parent: {}", self.tcx().def_path_str(parent));
+        }
         [start].into_iter().chain(parent_maybe)
     }
 
@@ -160,6 +167,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         def_id: DefId,
         selector: MarkerSelector,
     ) -> impl Iterator<Item = Identifier> + use<'a, 'tcx> {
+        debug!("Getting markers with selector {selector:?}");
         let get = move |def_id| {
             self.0
                 .markers

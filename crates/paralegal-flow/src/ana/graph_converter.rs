@@ -409,7 +409,11 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             }
             _ => return,
         };
-        debug!("Assigning markers to {:?}", term.kind);
+        debug!(
+            "Assigning markers to {:?} in {:?}",
+            weight.place(),
+            term.kind
+        );
         let param_env = TypingEnv::post_analysis(self.tcx(), function.def_id());
         let func =
             try_monomorphize(function, self.tcx(), param_env, func, term.source_info.span).unwrap();

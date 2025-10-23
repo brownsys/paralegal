@@ -55,6 +55,41 @@ fn use_wrapper() {
 }
 
 #[test]
+fn marker_on_trait_parent() {
+    InlineTestBuilder::new(stringify!(
+        trait Test {
+            #[paralegal_flow::marker(me, arguments = [0])]
+            fn test(self) {}
+        }
+
+        impl Test for () {
+            fn test(self) {}
+        }
+
+        #[paralegal_flow::marker(source, return)]
+        fn source() -> () {
+            ()
+        }
+
+        #[paralegal_flow::analyze]
+        fn main() {
+            let x = source();
+            x.test();
+        }
+    ))
+    .check_ctrl(|ctrl| {
+        dbg!(ctrl.markers());
+        dbg!(&ctrl.spdg().markers);
+        let src = ctrl.marked("source");
+        assert!(!src.is_empty());
+        let hello_target = ctrl.marked("me");
+        assert!(!hello_target.is_empty());
+
+        assert!(src.flows_to_data(&hello_target));
+    });
+}
+
+#[test]
 fn named_refinement() {
     InlineTestBuilder::new(stringify!(
         #[paralegal_flow::marker(me, arguments = [hello, 2])]

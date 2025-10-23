@@ -663,7 +663,10 @@ impl<'tcx> CallChangeCallback<'tcx, K> for MyCallback<'tcx> {
         let changes = CallChanges::default();
 
         let judgement = self.judge.should_inline(&info);
-        debug!("Judgement for {:?}: {judgement}", info.callee.def_id(),);
+        debug!(
+            "Judgement for {}: {judgement}",
+            self.tcx.def_path_str(info.callee.def_id())
+        );
 
         let skip = match judgement {
             InlineJudgement::AbstractViaType(_) => SkipCall::Skip,
