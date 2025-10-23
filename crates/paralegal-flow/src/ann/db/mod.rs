@@ -155,10 +155,6 @@ impl<'tcx> MarkerCtx<'tcx> {
         let parent_maybe = matches!(tcx.def_kind(start), DefKind::AssocFn | DefKind::AssocTy)
             .then(|| tcx.associated_item(start).trait_item_def_id)
             .flatten();
-        debug!("Checking item: {}", self.tcx().def_path_str(start));
-        if let Some(parent) = parent_maybe {
-            debug!("  and parent: {}", self.tcx().def_path_str(parent));
-        }
         [start].into_iter().chain(parent_maybe)
     }
 
@@ -167,7 +163,6 @@ impl<'tcx> MarkerCtx<'tcx> {
         def_id: DefId,
         selector: MarkerSelector,
     ) -> impl Iterator<Item = Identifier> + use<'a, 'tcx> {
-        debug!("Getting markers with selector {selector:?}");
         let get = move |def_id| {
             self.0
                 .markers
@@ -175,7 +170,12 @@ impl<'tcx> MarkerCtx<'tcx> {
                 .into_iter()
                 .flat_map(move |markers| markers.for_selector(selector))
         };
-        self.relevant_def_ids(def_id).flat_map(get)
+        // This one we only get for the item directly, not the async parent or a
+        // trait we implement (which is what "relevant_def_ids" retrieves)
+        let side_effect_markers = self.side_effect_markers(def_id);
+        self.relevant_def_ids(def_id)
+            .flat_map(get)
+            .chain(side_effect_markers.iter().copied())
     }
 
     pub fn markers_on_self<'a>(

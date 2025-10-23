@@ -293,12 +293,12 @@ fn no_overtaint_from_sibling_markers() {
 #[test]
 fn async_fn_marker() {
     inline_test! {
-        #[paralegal_marker::marker(find_me, return )]
+        #[paralegal_flow::marker(find_me, return )]
         async fn async_fn_marker() -> i32 {
             42
         }
 
-        #[paralegal_marker::marker(find_me_also, arguments = [0])]
+        #[paralegal_flow::marker(find_me_also, arguments = [0])]
         async fn async_fn_marker_2(arg: i32) {
             assert_eq!(arg, 42);
         }
