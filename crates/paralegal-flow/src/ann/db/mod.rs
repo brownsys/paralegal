@@ -88,6 +88,9 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 
     pub fn side_effect_markers(&self, def_id: DefId) -> &[Identifier] {
+        if !self.0.config.marker_control().mark_side_effects() {
+            return &[];
+        }
         if !is_function_like(self.tcx(), def_id) {
             return &[];
         }
