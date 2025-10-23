@@ -178,6 +178,8 @@ impl<'tcx> MarkerCtx<'tcx> {
             .chain(side_effect_markers.iter().copied())
     }
 
+    /// Retrieves all markers attached to this item without refinement. This
+    /// only has an effect on types.
     pub fn markers_on_self<'a>(
         &'a self,
         defid: DefId,
@@ -189,6 +191,10 @@ impl<'tcx> MarkerCtx<'tcx> {
         self.0.markers.values().map(|markers| markers.len()).sum()
     }
 
+    /// Retrieves all markers attached to the "arg"'th argument of this function.
+    ///
+    /// If the function is known to perform side effects, side effect markers
+    /// are also included.
     pub fn markers_on_argument<'a>(
         &'a self,
         defid: DefId,
@@ -197,6 +203,10 @@ impl<'tcx> MarkerCtx<'tcx> {
         self.for_selector(defid, MarkerSelector::Argument(arg))
     }
 
+    /// Retrieves all markers attached to the return value of this function.
+    ///
+    /// If the function is known to perform side effects, side effect markers
+    /// are also included.
     pub fn markers_on_return<'a>(
         &'a self,
         defid: DefId,
