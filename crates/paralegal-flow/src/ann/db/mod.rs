@@ -124,6 +124,8 @@ impl<'tcx> MarkerCtx<'tcx> {
     ///
     /// This is in contrast to [`Self::marker_is_reachable`] which also reports
     /// if markers are reachable from the body of this function (if it is one).
+    ///
+    /// This also does not include automatically assigned side-effect markers.
     pub fn is_marked<D: IntoDefId + Copy>(&self, did: D) -> bool {
         let defid = did.into_def_id(self.tcx());
         let check = |defid| {
