@@ -60,10 +60,10 @@ impl<'tcx> MarkerCtx<'tcx> {
             .map_or(&[], Box::as_ref)
     }
 
-    fn get_reachable_and_self_markers(
-        &self,
-        res: impl Into<MaybeMonomorphized<'tcx>>,
-    ) -> impl Iterator<Item = Identifier> + '_ {
+    fn get_reachable_and_self_markers<'a, M: Into<MaybeMonomorphized<'tcx>>>(
+        &'a self,
+        res: M,
+    ) -> impl Iterator<Item = Identifier> + use<'a, 'tcx, M> {
         let res = res.into();
         let mut direct_markers = self.all_markers_associated_with(res.def_id()).peekable();
         let is_self_marked = direct_markers.peek().is_some();

@@ -328,7 +328,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         &'a self,
         typ: mir::tcx::PlaceTy<'tcx>,
         deep: bool,
-    ) -> impl Iterator<Item = TypeId> + 'a {
+    ) -> impl Iterator<Item = TypeId> + use<'a, 'tcx> {
         if deep {
             Either::Left(self.marker_ctx().deep_type_markers(typ.ty).iter().copied())
         } else {
@@ -351,25 +351,23 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         let body = self.pctx.body_cache().get(function.def_id()).body();
 
         let ctx = self.marker_ctx().clone();
-        let markers = match (leaf_loc, weight.place()) {
+        match (leaf_loc, weight.place()) {
             (RichLocation::Start, Some(place))
                 if matches!(body.local_kind(place.local), mir::LocalKind::Arg) =>
             {
                 let arg_num = place.local.as_u32() - 1;
                 self.known_def_ids.extend([function_id]);
-                ctx.markers_on_argument(function_id, arg_num as u16)
+                self.register_markers(node, ctx.markers_on_argument(function_id, arg_num as u16))
             }
             (RichLocation::End, Some(place)) if place.local == mir::RETURN_PLACE => {
                 self.known_def_ids.extend([function_id]);
-                ctx.markers_on_return(function_id)
+                self.register_markers(node, ctx.markers_on_return(function_id))
             }
             (RichLocation::Location(loc), _) => {
                 self.handle_node_annotations_for_regular_location(node, weight, body, loc, vis);
-                &[]
             }
-            _ => &[],
-        };
-        self.register_markers(node, markers.iter().copied());
+            _ => (),
+        }
     }
 
     fn auto_markers(&self) -> &AutoMarkers {
@@ -453,12 +451,11 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
 
         self.known_def_ids.extend(get_parent(self.tcx(), f));
         let ctx = self.marker_ctx().clone();
-        let markers = match weight.use_ {
-            Use::Arg(arg) => ctx.markers_on_argument(f, arg),
-            Use::Return => ctx.markers_on_return(f),
-            Use::Other => &[],
-        };
-        self.register_markers(node, markers.iter().copied());
+        match weight.use_ {
+            Use::Arg(arg) => self.register_markers(node, ctx.markers_on_argument(f, arg)),
+            Use::Return => self.register_markers(node, ctx.markers_on_return(f)),
+            Use::Other => (),
+        }
     }
 
     /// Determine the set if nodes corresponding to the inputs to the
@@ -577,16 +574,11 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         let ctx = self.marker_ctx().clone();
         // Register the new nodes and add potential markers
         for (arg_num, a) in args_as_nodes.iter().enumerate() {
-            self.register_markers(
-                *a,
-                ctx.markers_on_argument(def_id, arg_num as u16)
-                    .iter()
-                    .copied(),
-            );
+            self.register_markers(*a, ctx.markers_on_argument(def_id, arg_num as u16));
             let local = mir::Local::from_usize(arg_num + 1);
             self.handle_node_types_helper(*a, mono_ty(local), &[]);
         }
-        self.register_markers(return_node, ctx.markers_on_return(def_id).iter().copied());
+        self.register_markers(return_node, ctx.markers_on_return(def_id));
         let local = mir::RETURN_PLACE;
         self.handle_node_types_helper(return_node, mono_ty(local), &[]);
 

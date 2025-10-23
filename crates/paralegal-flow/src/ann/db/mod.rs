@@ -87,40 +87,6 @@ impl<'tcx> MarkerCtx<'tcx> {
         &self.0
     }
 
-    // /// All markers reachable for this item (local and external).
-    // ///
-    // /// Queries are cached/precomputed so calling this repeatedly is cheap.
-    // fn known_markers<'s>(
-    //     &'s self,
-    //     def_id: DefId,
-    //     selector: MarkerSelector,
-    // ) -> impl Iterator<Item = MarkerAnnotation> + use<'s> {
-    //     self.source_annotations(def_id)
-    //         .iter()
-    //         .filter_map(Annotation::as_marker)
-    //         .chain(self.external_markers(def_id))
-    //         .copied()
-    //         .chain({
-    //             // To avoid calling "fn_sig" for constructors and other non-functions
-    //             let (markers, arg_len) = if self.0.config.marker_control().mark_side_effects()
-    //                 && is_function_like(self.tcx(), def_id)
-    //             {
-    //                 let sig = self.tcx().fn_sig(def_id);
-    //                 let arg_len = sig.skip_binder().inputs().skip_binder().len() as u32;
-    //                 (self.side_effect_markers(def_id), arg_len)
-    //             } else {
-    //                 (&[] as _, 0)
-    //             };
-    //             markers.iter().map(move |m| MarkerAnnotation {
-    //                 marker: *m,
-    //                 refinement: MarkerRefinement {
-    //                     on_argument: (0..arg_len).into(),
-    //                     on_return: true,
-    //                 },
-    //             })
-    //         })
-    // }
-
     pub fn side_effect_markers(&self, def_id: DefId) -> &[Identifier] {
         if !is_function_like(self.tcx(), def_id) {
             return &[];
@@ -169,48 +135,66 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn all_markers_associated_with<'a>(
         &'a self,
         defid: DefId,
-    ) -> impl Iterator<Item = Identifier> + use<'a> {
-        self.0
-            .markers
-            .get(&defid)
-            .into_iter()
-            .flat_map(|markers| markers.values())
-            .flat_map(|v| v.iter().copied())
+    ) -> impl Iterator<Item = Identifier> + use<'a, 'tcx> {
+        let get = |defid| {
+            self.0
+                .markers
+                .get(&defid)
+                .into_iter()
+                .flat_map(|markers| markers.all())
+        };
+        self.relevant_def_ids(defid).flat_map(get)
     }
 
-    pub fn markers_on_self(&self, defid: DefId) -> &[Identifier] {
-        (|| self.0.markers.get(&defid)?.get(&MarkerSelector::Item))().map_or(&[], Vec::as_slice)
+    fn relevant_def_ids<'a>(&'a self, start: DefId) -> impl Iterator<Item = DefId> + use<'a> {
+        let start = self.defid_rewrite(start);
+        let tcx = self.tcx();
+        let parent_maybe = matches!(tcx.def_kind(start), DefKind::AssocFn | DefKind::AssocTy)
+            .then(|| tcx.associated_item(start).trait_item_def_id)
+            .flatten();
+        [start].into_iter().chain(parent_maybe)
+    }
+
+    fn for_selector<'a>(
+        &'a self,
+        def_id: DefId,
+        selector: MarkerSelector,
+    ) -> impl Iterator<Item = Identifier> + use<'a, 'tcx> {
+        let get = move |def_id| {
+            self.0
+                .markers
+                .get(&def_id)
+                .into_iter()
+                .flat_map(move |markers| markers.for_selector(selector))
+        };
+        self.relevant_def_ids(def_id).flat_map(get)
+    }
+
+    pub fn markers_on_self<'a>(
+        &'a self,
+        defid: DefId,
+    ) -> impl Iterator<Item = Identifier> + use<'a, 'tcx> {
+        self.for_selector(defid, MarkerSelector::Item)
     }
 
     pub fn marker_count(&self) -> usize {
         self.0.markers.values().map(|markers| markers.len()).sum()
     }
 
-    pub fn markers_on_argument(&self, defid: DefId, arg: u16) -> &[Identifier] {
-        (|| {
-            self.0
-                .markers
-                .get(&defid)?
-                .get(&MarkerSelector::Argument(arg))
-        })()
-        .map_or(&[], Vec::as_slice)
+    pub fn markers_on_argument<'a>(
+        &'a self,
+        defid: DefId,
+        arg: u16,
+    ) -> impl Iterator<Item = Identifier> + use<'a, 'tcx> {
+        self.for_selector(defid, MarkerSelector::Argument(arg))
     }
 
-    pub fn markers_on_return(&self, defid: DefId) -> &[Identifier] {
-        (|| self.0.markers.get(&defid)?.get(&MarkerSelector::Return))().map_or(&[], Vec::as_slice)
+    pub fn markers_on_return<'a>(
+        &'a self,
+        defid: DefId,
+    ) -> impl Iterator<Item = Identifier> + use<'a, 'tcx> {
+        self.for_selector(defid, MarkerSelector::Return)
     }
-
-    // /// Return a complete set of local annotations that were discovered.
-    // ///
-    // /// Crucially this is a "readout" from the marker cache, which means only
-    // /// items reachable from the `paralegal_flow::analyze` will end up in this collection.
-    // pub fn source_annotations_found(&self) -> Vec<(DefId, &[Annotation])> {
-    //     self.db()
-    //         .annotations
-    //         .iter()
-    //         .map(|(k, v)| (*k, v.as_slice()))
-    //         .collect()
-    // }
 
     /// Are there markers reachable from this (function)?
     ///
@@ -260,44 +244,6 @@ impl<'tcx> MarkerCtx<'tcx> {
         }
     }
 
-    // /// All markers placed on this function, directly or through the type plus
-    // /// the type that was marked (if any).
-    // pub fn all_function_markers<'a>(
-    //     &'a self,
-    //     function: MaybeMonomorphized<'tcx>,
-    // ) -> impl Iterator<Item = (MarkerAnnotation, Option<(ty::Ty<'tcx>, DefId)>)> + use<'a, 'tcx>
-    // {
-    //     // Markers not coming from types, hence the "None"
-    //     let direct_markers = self
-    //         .combined_markers(function.def_id())
-    //         .zip(std::iter::repeat(None));
-    //     let get_type_markers = || {
-    //         // TODO check soundness, especially for the closures
-    //         let sig = match function {
-    //             MaybeMonomorphized::Monomorphized(instance) => instance.sig(self.tcx()).ok(),
-    //             MaybeMonomorphized::Plain(defid) => {
-    //                 match FunctionKind::for_def_id(self.tcx(), defid).ok()? {
-    //                     FunctionKind::Closure | FunctionKind::Generator => None,
-    //                     _ => Some(self.tcx().fn_sig(defid).skip_binder().skip_binder()),
-    //                 }
-    //             }
-    //         }?;
-    //         let output = sig.output();
-    //         // XXX I'm not entirely sure this is how we should do
-    //         // this. For now I'm calling this "okay" because it's
-    //         // basically the old behavior
-    //         if output.is_closure() || output.is_coroutine() {
-    //             return None;
-    //         }
-    //         Some(
-    //             self.all_type_markers(output)
-    //                 .map(|(marker, typeinfo)| (marker, Some(typeinfo))),
-    //         )
-    //     };
-
-    //     direct_markers.chain(get_type_markers().into_iter().flatten())
-    // }
-
     /// Iterate over all discovered annotations, whether local or external
     pub fn all_annotations<'a>(&'a self) -> impl Iterator<Item = (DefId, Annotation)> + use<'a> {
         self.0
@@ -313,7 +259,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                 self.0
                     .markers
                     .iter()
-                    .flat_map(|(k, vs)| std::iter::repeat(*k).zip(recreate_refinements(vs.iter())))
+                    .flat_map(|(k, vs)| std::iter::repeat(*k).zip(vs.recreate_refinements()))
                     .map(|(def_id, refinement)| (def_id, Annotation::Marker(refinement))),
             )
     }
@@ -326,7 +272,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             .markers
             .get(&def_id)
             .into_iter()
-            .flat_map(|i| recreate_refinements(i))
+            .flat_map(|i| i.recreate_refinements())
     }
 
     pub fn functions_seen(&self) -> Vec<MaybeMonomorphized<'tcx>> {
@@ -417,7 +363,7 @@ pub struct MarkerDatabase<'tcx> {
     /// Cache for parsed local annotations. They are created with
     /// [`MarkerCtx::retrieve_local_annotations_for`].
     other_annotations: FxHashMap<DefId, Vec<Either<TypeId, ExceptionAnnotation>>>,
-    markers: FxHashMap<DefId, HashMap<MarkerSelector, Vec<Identifier>>>,
+    markers: FxHashMap<DefId, ItemMarkers>,
     /// Cache whether markers are reachable transitively.
     reachable_markers: Cache<MaybeMonomorphized<'tcx>, Box<[Identifier]>>,
     /// Configuration options
@@ -429,6 +375,72 @@ pub struct MarkerDatabase<'tcx> {
     marker_statistics: RefCell<HashMap<MaybeMonomorphized<'tcx>, FunctionMarkerStat<'tcx>>>,
     auto_markers: AutoMarkers,
     side_effect_heuristics_results: Cache<DefId, Box<[Identifier]>>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ItemMarkers {
+    markers: HashMap<MarkerSelector, Vec<Identifier>>,
+}
+
+impl ItemMarkers {
+    fn all<'a>(&'a self) -> impl Iterator<Item = Identifier> + use<'a> {
+        self.markers.values().flatten().copied()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.markers.is_empty()
+    }
+
+    fn for_selector<'a>(
+        &'a self,
+        selector: MarkerSelector,
+    ) -> impl Iterator<Item = Identifier> + use<'a> {
+        self.markers
+            .get(&selector)
+            .map_or(&[] as &[_], |markers| markers.as_slice())
+            .iter()
+            .copied()
+    }
+
+    fn len(&self) -> usize {
+        self.markers.len()
+    }
+
+    fn recreate_refinements<'a>(&self) -> impl Iterator<Item = super::MarkerAnnotation> + use<'a> {
+        self.markers
+            .iter()
+            .flat_map(|(selector, markers)| {
+                markers.into_iter().map(move |marker| (*marker, selector))
+            })
+            .into_grouping_map()
+            .fold(
+                MarkerRefinement {
+                    on_return: false,
+                    on_argument: Default::default(),
+                },
+                |mut acc, _, selector| {
+                    match selector {
+                        MarkerSelector::Argument(a) => acc.on_argument.set(*a as u32),
+                        MarkerSelector::Return => acc.on_return = true,
+                        _ => (),
+                    }
+                    acc
+                },
+            )
+            .into_iter()
+            .map(|(marker, refinement)| super::MarkerAnnotation { marker, refinement })
+    }
+
+    fn from_annotations(i: impl IntoIterator<Item = super::MarkerAnnotation>) -> Self {
+        Self {
+            markers: i
+                .into_iter()
+                .flat_map(|super::MarkerAnnotation { marker, refinement }| {
+                    refinement_to_selectors(refinement).map(move |selector| (selector, marker))
+                })
+                .into_group_map(),
+        }
+    }
 }
 
 pub struct AutoMarkers {
@@ -539,11 +551,10 @@ impl<'tcx> MarkerDatabase<'tcx> {
         );
         let external_markers = resolve_external_markers(args, tcx);
         let mut other_annotations: FxHashMap<_, Vec<_>> = FxHashMap::default();
-        let mut markers: FxHashMap<DefId, HashMap<MarkerSelector, Vec<Identifier>>> =
-            external_markers
-                .into_iter()
-                .map(|(item, anns)| (item, annotations_to_grouped_map(anns)))
-                .collect();
+        let mut markers: FxHashMap<DefId, ItemMarkers> = external_markers
+            .into_iter()
+            .map(|(item, anns)| (item, ItemMarkers::from_annotations(anns)))
+            .collect();
         for (item, anns) in local_annotations {
             for ann in anns {
                 match ann {
@@ -552,6 +563,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
                             markers
                                 .entry(item)
                                 .or_default()
+                                .markers
                                 .entry(s)
                                 .or_default()
                                 .push(r.marker);
@@ -612,41 +624,6 @@ fn refinement_to_selectors(refinement: MarkerRefinement) -> impl Iterator<Item =
         .map(|i| MarkerSelector::Argument(i as u16))
         .chain(refinement.on_return.then_some(MarkerSelector::Return))
         .chain(refinement.on_self().then_some(MarkerSelector::Item))
-}
-
-fn annotations_to_grouped_map(
-    i: impl IntoIterator<Item = super::MarkerAnnotation>,
-) -> HashMap<MarkerSelector, Vec<Identifier>> {
-    i.into_iter()
-        .flat_map(|super::MarkerAnnotation { marker, refinement }| {
-            refinement_to_selectors(refinement).map(move |selector| (selector, marker))
-        })
-        .into_group_map()
-}
-
-fn recreate_refinements<'a, I: IntoIterator<Item = (&'a MarkerSelector, &'a Vec<Identifier>)>>(
-    selectors: I,
-) -> impl Iterator<Item = super::MarkerAnnotation> + use<'a, I> {
-    selectors
-        .into_iter()
-        .flat_map(|(selector, markers)| markers.into_iter().map(move |marker| (*marker, selector)))
-        .into_grouping_map()
-        .fold(
-            MarkerRefinement {
-                on_return: false,
-                on_argument: Default::default(),
-            },
-            |mut acc, _, selector| {
-                match selector {
-                    MarkerSelector::Argument(a) => acc.on_argument.set(*a as u32),
-                    MarkerSelector::Return => acc.on_return = true,
-                    _ => (),
-                }
-                acc
-            },
-        )
-        .into_iter()
-        .map(|(marker, refinement)| super::MarkerAnnotation { marker, refinement })
 }
 
 fn load_annotations(

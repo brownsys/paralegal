@@ -155,6 +155,8 @@ fn named_refinement_on_self() {
         //         markers.contains(&Identifier::new_intern("me"))
         //     })
         // }));
+        dbg!(ctrl.markers());
+        dbg!(&ctrl.spdg().markers);
         let src = ctrl.marked("source");
         assert!(!src.is_empty());
         let hello_target = ctrl.marked("me");
@@ -250,6 +252,34 @@ fn no_overtaint_from_sibling_markers() {
         }
         assert!(!src.flows_to_data(&reached));
         assert!(src.flows_to_data(&reached_2));
+    });
+}
+
+#[test]
+fn async_fn_marker() {
+    inline_test! {
+        #[paralegal_marker::marker(find_me, return )]
+        async fn async_fn_marker() -> i32 {
+            42
+        }
+
+        #[paralegal_marker::marker(find_me_also, arguments = [0])]
+        async fn async_fn_marker_2(arg: i32) {
+            assert_eq!(arg, 42);
+        }
+
+        async fn main() {
+            async_fn_marker_2(
+                async_fn_marker().await
+            ).await;
+        }
+    }
+    .check_ctrl(|ctrl| {
+        let source = ctrl.marked("find_me");
+        let sink = ctrl.marked("find_me_also");
+        assert!(!source.is_empty());
+        assert!(!sink.is_empty());
+        assert!(source.flows_to_data(&sink));
     });
 }
 

@@ -18,19 +18,16 @@ impl<'tcx> MarkerCtx<'tcx> {
         ty: ty::Ty<'tcx>,
     ) -> impl Iterator<Item = (Identifier, (ty::Ty<'tcx>, DefId))> + use<'a, 'tcx> {
         ty.walk().filter_map(|g| g.as_type()).flat_map(move |typ| {
-            typ.defid().into_iter().flat_map(move |did| {
-                self.markers_on_self(did)
-                    .iter()
-                    .copied()
-                    .zip(std::iter::repeat((typ, did)))
-            })
+            typ.defid()
+                .into_iter()
+                .flat_map(move |did| self.markers_on_self(did).zip(std::iter::repeat((typ, did))))
         })
     }
 
     pub fn shallow_type_markers<'a>(
         &'a self,
         key: ty::Ty<'tcx>,
-    ) -> impl Iterator<Item = TypeMarkerElem> + 'a {
+    ) -> impl Iterator<Item = TypeMarkerElem> + use<'a, 'tcx> {
         use ty::*;
         let def_id = match key.kind() {
             Adt(def, _) => Some(def.did()),
@@ -38,12 +35,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             _ => None,
         };
         def_id
-            .map(|def_id| {
-                self.markers_on_self(def_id)
-                    .iter()
-                    .copied()
-                    .map(move |m| (def_id, m))
-            })
+            .map(|def_id| self.markers_on_self(def_id).map(move |m| (def_id, m)))
             .into_iter()
             .flatten()
     }
@@ -128,6 +120,6 @@ impl<'tcx> MarkerCtx<'tcx> {
 
     pub fn type_has_surface_markers(&self, ty: ty::Ty) -> Option<DefId> {
         let def_id = ty.defid()?;
-        (!self.markers_on_self(def_id).is_empty()).then_some(def_id)
+        (!self.markers_on_self(def_id).next().is_none()).then_some(def_id)
     }
 }
