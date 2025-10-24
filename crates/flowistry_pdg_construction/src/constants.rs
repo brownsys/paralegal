@@ -36,12 +36,14 @@ impl<'tcx> PlaceOrConst<'tcx> {
     pub fn try_from_operand(
         tcx: ty::TyCtxt<'tcx>,
         operand: &mir::Operand<'tcx>,
+        ty_env: ty::TypingEnv<'tcx>,
+        span: rustc_span::Span,
     ) -> Result<Self, ConstConversionError<'tcx>> {
         Ok(match operand {
             mir::Operand::Copy(place) => Self::Place(*place),
             mir::Operand::Move(place) => Self::Place(*place),
             mir::Operand::Constant(constant) => {
-                Self::Const(constant_from_const(tcx, &constant.const_)?)
+                Self::Const(constant_from_const(tcx, &constant.const_, ty_env, span)?)
             }
         })
     }
@@ -55,10 +57,11 @@ impl<'tcx> PlaceOrConst<'tcx> {
     pub fn from_operand_default_policy(
         tcx: ty::TyCtxt<'tcx>,
         operand: &mir::Operand<'tcx>,
+        ty_env: ty::TypingEnv<'tcx>,
         span: rustc_span::Span,
         strict: bool,
     ) -> Option<Self> {
-        Self::try_from_operand(tcx, operand)
+        Self::try_from_operand(tcx, operand, ty_env, span)
             .map_err(|e| e.handle_default_policy(tcx, span, strict))
             .ok()
     }
@@ -80,8 +83,10 @@ impl<'tcx> PlaceOrConst<'tcx> {
     pub fn try_from_const(
         tcx: ty::TyCtxt<'tcx>,
         c: &mir::Const<'tcx>,
+        ty_env: ty::TypingEnv<'tcx>,
+        span: rustc_span::Span,
     ) -> Result<Self, ConstConversionError<'tcx>> {
-        constant_from_const(tcx, c).map(Self::Const)
+        constant_from_const(tcx, c, ty_env, span).map(Self::Const)
     }
 
     pub fn map_place(self, f: impl FnOnce(Place<'tcx>) -> Place<'tcx>) -> Self {
@@ -96,6 +101,7 @@ impl<'tcx> PlaceOrConst<'tcx> {
 pub enum ConstConversionError<'tcx> {
     UnsupportedConstType(mir::Const<'tcx>),
     Integer128NotSupported { signed: bool },
+    EvalFailed(mir::Const<'tcx>),
 }
 
 impl<'tcx> ConstConversionError<'tcx> {
@@ -109,7 +115,13 @@ impl<'tcx> ConstConversionError<'tcx> {
         };
         if let ConstConversionError::UnsupportedConstType(c) = self {
             match c {
-                mir::Const::Unevaluated(c, _) if tcx.def_kind(c.def).is_fn_like() => return,
+                mir::Const::Unevaluated(c, _) => {
+                    tcx.dcx().span_warn(
+                        span,
+                        format!("Unevaluated constants are not supported {c:?}"),
+                    );
+                    return;
+                }
                 mir::Const::Val(v, t) => {
                     if let (_, ty::Ref(..)) = (v, t.kind()) {
                         return emit(format!("references are not supported: {t:?}"));
@@ -131,6 +143,9 @@ impl std::fmt::Display for ConstConversionError<'_> {
             ConstConversionError::Integer128NotSupported { signed } => {
                 write!(f, "{}128 is not supported", if *signed { "i" } else { "u" })
             }
+            ConstConversionError::EvalFailed(c) => {
+                write!(f, "Evaluation failed for constant: {:?}", c)
+            }
         }
     }
 }
@@ -138,10 +153,16 @@ impl std::fmt::Display for ConstConversionError<'_> {
 pub fn constant_from_const<'tcx>(
     tcx: ty::TyCtxt<'tcx>,
     c: &mir::Const<'tcx>,
+    ty_env: ty::TypingEnv<'tcx>,
+    span: rustc_span::Span,
 ) -> Result<Constant, ConstConversionError<'tcx>> {
-    match c {
-        mir::Const::Val(val, ty) => constant_from_const_value(tcx, *ty, val),
-        _ => Err(ConstConversionError::UnsupportedConstType(*c)),
+    if matches!(c, mir::Const::Unevaluated(..)) {
+        return Err(ConstConversionError::UnsupportedConstType(c.clone()));
+    };
+    if let Ok(const_val) = c.eval(tcx, ty_env, span) {
+        constant_from_const_value(tcx, c.ty(), &const_val)
+    } else {
+        Err(ConstConversionError::EvalFailed(c.clone()))
     }
 }
 

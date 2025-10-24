@@ -362,6 +362,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
     > {
         ModularMutationVisitor::new(
             &results.analysis.place_info,
+            results.analysis.param_env,
             move |location, mutation| {
                 let place = results.analysis.normalize_place(&mutation.mutated);
                 let inputs = mutation
@@ -455,10 +456,12 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                 return false;
             }
         };
+        // XXX: We ignore constants here, but maybe they should actually be
+        // propagated up and into the PDG.
         let ctrl_inputs = constructor
             .find_control_inputs(location)
             .into_iter()
-            .map(|(place, loc, edge)| (self.get_place_node(place, loc).unwrap(), edge))
+            .filter_map(|(place, loc, edge)| Some((self.get_place_node(place, loc)?, edge)))
             .collect();
         self.inlined_calls
             .push((location, child_instance, k, ctrl_inputs));

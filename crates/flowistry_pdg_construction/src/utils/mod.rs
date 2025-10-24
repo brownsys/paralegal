@@ -155,7 +155,10 @@ pub fn retype_place<'tcx>(
     body: &Body<'tcx>,
     def_id: DefId,
 ) -> Place<'tcx> {
-    trace!("Retyping {orig:?} in context of {def_id:?}");
+    trace!(
+        "Retyping {orig:?} in context of {}",
+        tcx.def_path_str(def_id)
+    );
 
     let mut new_projection = Vec::new();
     let mut ty = PlaceTy::from_ty(body.local_decls()[orig.local].ty);

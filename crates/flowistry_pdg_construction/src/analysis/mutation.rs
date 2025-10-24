@@ -53,6 +53,7 @@ where
 {
     f: F,
     place_info: &'a PlaceInfo<'tcx>,
+    ty_env: ty::TypingEnv<'tcx>,
     time: Time,
     strict: bool,
 }
@@ -84,9 +85,15 @@ where
     F: FnMut(Location, Mutation<'tcx>),
 {
     /// Constructs a new visitor.
-    pub fn new(place_info: &'a PlaceInfo<'tcx>, f: F, strict: bool) -> Self {
+    pub fn new(
+        place_info: &'a PlaceInfo<'tcx>,
+        ty_env: ty::TypingEnv<'tcx>,
+        f: F,
+        strict: bool,
+    ) -> Self {
         ModularMutationVisitor {
             place_info,
+            ty_env,
             f,
             time: Time::Unspecified,
             strict,
@@ -334,8 +341,12 @@ where
         if self.handle_special_rvalues(mutated, rvalue, location) {
             return;
         }
-        let mut collector =
-            PlaceAndConstCollector::new(self.place_info.tcx, self.place_info.body, self.strict);
+        let mut collector = PlaceAndConstCollector::new(
+            self.place_info.tcx,
+            self.place_info.body,
+            self.ty_env,
+            self.strict,
+        );
         collector.visit_rvalue(rvalue, location);
         let inputs = collector
             .values
@@ -368,7 +379,7 @@ where
                 self.place_info.body,
                 self.place_info.def_id,
             );
-            let mut arg_places = arg_places(self.place_info.tcx, args, self.strict);
+            let mut arg_places = arg_places(self.place_info.tcx, args, self.ty_env, self.strict);
             arg_places.retain(|(_, place)| {
                 place
                     .place()
@@ -393,6 +404,7 @@ where
 fn arg_places<'tcx>(
     tcx: ty::TyCtxt<'tcx>,
     args: &[Spanned<Operand<'tcx>>],
+    ty_env: ty::TypingEnv<'tcx>,
     strict: bool,
 ) -> Vec<(usize, PlaceOrConst<'tcx>)> {
     args.iter()
@@ -400,7 +412,9 @@ fn arg_places<'tcx>(
         .filter_map(|(i, arg)| {
             Some((
                 i,
-                PlaceOrConst::from_operand_default_policy(tcx, &arg.node, arg.span, strict)?,
+                PlaceOrConst::from_operand_default_policy(
+                    tcx, &arg.node, ty_env, arg.span, strict,
+                )?,
             ))
         })
         .collect::<Vec<_>>()
@@ -410,15 +424,22 @@ struct PlaceAndConstCollector<'tcx, 'a> {
     values: Vec<PlaceOrConst<'tcx>>,
     tcx: ty::TyCtxt<'tcx>,
     body: &'a mir::Body<'tcx>,
+    ty_env: ty::TypingEnv<'tcx>,
     strict: bool,
 }
 
 impl<'tcx, 'a> PlaceAndConstCollector<'tcx, 'a> {
-    fn new(tcx: ty::TyCtxt<'tcx>, body: &'a mir::Body<'tcx>, strict: bool) -> Self {
+    fn new(
+        tcx: ty::TyCtxt<'tcx>,
+        body: &'a mir::Body<'tcx>,
+        ty_env: ty::TypingEnv<'tcx>,
+        strict: bool,
+    ) -> Self {
         Self {
             values: Vec::new(),
             tcx,
             body,
+            ty_env,
             strict,
         }
     }
@@ -433,6 +454,7 @@ impl<'tcx> Visitor<'tcx> for PlaceAndConstCollector<'tcx, '_> {
         if let Some(pc) = PlaceOrConst::from_operand_default_policy(
             self.tcx,
             operand,
+            self.ty_env,
             self.body.source_info(location).span,
             self.strict,
         ) {
