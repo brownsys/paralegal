@@ -9,6 +9,7 @@ mod fn_ptr;
 // mod foreign;
 mod lam;
 mod leaky;
+mod misc;
 mod raw_ptr;
 mod recursive;
 mod r#static;

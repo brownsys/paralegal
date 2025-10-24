@@ -50,27 +50,3 @@ fn typed_input_zst(w: MarkedZST) {
 }
 
 fn main() {}
-
-use std::io::prelude::*;
-use std::net::TcpStream;
-
-#[paralegal::marker(source, return)]
-fn tcp_source() -> u8 {
-    42
-}
-
-#[paralegal::marker(source2, return)]
-fn tcp_source2() -> u8 {
-    43
-}
-
-#[paralegal::analyze]
-fn side_effect_tcp_flow_in_separate_crate() -> std::io::Result<()> {
-    let mut stream = TcpStream::connect("127.0.0.1:34254")?;
-    let y = tcp_source2();
-    stream.write(&[tcp_source()])?;
-    let mut buf = [0; 128];
-    stream.read(&mut buf)?;
-    let _ = y + buf[0];
-    Ok(())
-}
