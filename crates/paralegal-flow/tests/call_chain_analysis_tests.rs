@@ -6,7 +6,7 @@ extern crate lazy_static;
 extern crate rustc_span;
 
 use flowistry_pdg::GlobalLocation;
-use paralegal_flow::{define_flow_test_template, test_utils::*};
+use paralegal_flow::{define_flow_test_template, inline_test, test_utils::*};
 use paralegal_spdg::utils::display_list;
 use rustc_span::Symbol;
 
@@ -369,4 +369,187 @@ fn recursion_breaking_with_k_depth_mutual() {
             }
         })
         .unwrap();
+}
+
+#[test]
+fn field_propagation_on_socket_addr() {
+    inline_test! {
+        use std::mem;
+        // Moved definitions from libc
+        mod c {
+            pub type sa_family_t = u16;
+            pub type in_port_t = u16;
+            pub type in_addr_t = u32;
+            pub type socklen_t = u32;
+            pub type c_char = i8;
+            pub type c_int = i32;
+            pub const AF_INET6: c_int = 10;
+            pub const AF_INET: c_int = 2;
+            pub struct in_addr {
+                pub s_addr: in_addr_t,
+            }
+            #[repr(C)]
+            pub struct sockaddr_in {
+                pub sin_family: sa_family_t,
+                pub sin_port: in_port_t,
+                pub sin_addr: in_addr,
+                pub sin_zero: [u8; 8],
+            }
+            #[repr(C, align(4))]
+            pub struct in6_addr {
+                pub s6_addr: [u8; 16],
+            }
+            #[repr(C)]
+            pub struct sockaddr_in6 {
+                pub sin6_family: sa_family_t,
+                pub sin6_port: in_port_t,
+                pub sin6_flowinfo: u32,
+                pub sin6_addr: in6_addr,
+                pub sin6_scope_id: u32,
+            }
+            #[repr(C)]
+            pub struct sockaddr {
+                pub sa_family: sa_family_t,
+                pub sa_data: [c_char; 14],
+            }
+        }
+        pub enum SocketAddr {
+            /// An IPv4 socket address.
+            V4(SocketAddrV4),
+            /// An IPv6 socket address.
+            V6(SocketAddrV6),
+        }
+        #[derive(Clone, Copy)]
+        pub struct SocketAddrV4 {
+            ip: Ipv4Addr,
+            port: u16,
+        }
+        #[derive(Clone, Copy)]
+        pub struct Ipv4Addr {
+            octets: [u8; 4],
+        }
+
+        impl Ipv4Addr {
+            pub const fn octets(&self) -> [u8; 4] {
+                self.octets
+            }
+        }
+        #[derive(Clone, Copy)]
+        pub struct Ipv6Addr {
+            octets: [u8; 16],
+        }
+        impl Ipv6Addr {
+            pub const fn octets(&self) -> [u8; 16] {
+                self.octets
+            }
+        }
+        impl SocketAddrV4 {
+            pub const fn ip(&self) -> &Ipv4Addr {
+                &self.ip
+            }
+            pub const fn port(&self) -> u16 {
+                self.port
+            }
+        }
+        #[derive(Clone, Copy)]
+        pub struct SocketAddrV6 {
+            ip: Ipv6Addr,
+            port: u16,
+            flowinfo: u32,
+            scope_id: u32,
+        }
+        impl SocketAddrV6 {
+            pub const fn ip(&self) -> &Ipv6Addr {
+                &self.ip
+            }
+            pub const fn port(&self) -> u16 {
+                self.port
+            }
+            pub const fn flowinfo(&self) -> u32 {
+                self.flowinfo
+            }
+            pub const fn scope_id(&self) -> u32 {
+                self.scope_id
+            }
+        }
+        impl IntoInner<c::sockaddr_in> for SocketAddrV4 {
+            fn into_inner(self) -> c::sockaddr_in {
+                c::sockaddr_in {
+                    sin_family: c::AF_INET as c::sa_family_t,
+                    sin_port: self.port().to_be(),
+                    sin_addr: self.ip().into_inner(),
+                    ..unsafe { mem::zeroed() }
+                }
+            }
+        }
+
+        impl IntoInner<c::sockaddr_in6> for SocketAddrV6 {
+            fn into_inner(self) -> c::sockaddr_in6 {
+                c::sockaddr_in6 {
+                    sin6_family: c::AF_INET6 as c::sa_family_t,
+                    sin6_port: self.port().to_be(),
+                    sin6_addr: self.ip().into_inner(),
+                    sin6_flowinfo: self.flowinfo(),
+                    sin6_scope_id: self.scope_id(),
+                    ..unsafe { mem::zeroed() }
+                }
+            }
+        }
+        impl IntoInner<c::in6_addr> for Ipv6Addr {
+            fn into_inner(self) -> c::in6_addr {
+                c::in6_addr { s6_addr: self.octets() }
+            }
+        }
+        impl IntoInner<c::in_addr> for Ipv4Addr {
+            #[inline]
+            fn into_inner(self) -> c::in_addr {
+                // `s_addr` is stored as BE on all machines and the array is in BE order.
+                // So the native endian conversion method is used so that it's never swapped.
+                c::in_addr { s_addr: u32::from_ne_bytes(self.octets()) }
+            }
+        }
+        pub trait IntoInner<Inner> {
+            fn into_inner(self) -> Inner;
+        }
+
+        pub trait FromInner<Inner> {
+            fn from_inner(inner: Inner) -> Self;
+        }
+
+        #[repr(C)]
+        pub(crate) union SocketAddrCRepr {
+            v4: c::sockaddr_in,
+            v6: c::sockaddr_in6,
+        }
+
+        impl SocketAddrCRepr {
+            pub fn as_ptr(&self) -> *const c::sockaddr {
+                self as *const _ as *const c::sockaddr
+            }
+        }
+
+        impl<'a> IntoInner<(SocketAddrCRepr, c::socklen_t)> for &'a SocketAddr {
+            fn into_inner(self) -> (SocketAddrCRepr, c::socklen_t) {
+                match *self {
+                    SocketAddr::V4(ref a) => {
+                        let sockaddr = SocketAddrCRepr { v4: a.into_inner() };
+                        (sockaddr, mem::size_of::<c::sockaddr_in>() as c::socklen_t)
+                    }
+                    SocketAddr::V6(ref a) => {
+                        let sockaddr = SocketAddrCRepr { v6: a.into_inner() };
+                        (sockaddr, mem::size_of::<c::sockaddr_in6>() as c::socklen_t)
+                    }
+                }
+            }
+        }
+
+        fn main() {
+            let addr = SocketAddr::V4(SocketAddrV4 {
+                ip: Ipv4Addr { octets: [127, 0, 0, 1] },
+                port: 0,
+            });
+            let _ = (&addr).into_inner();
+        }
+    }
+    .check_ctrl(|_| ());
 }
