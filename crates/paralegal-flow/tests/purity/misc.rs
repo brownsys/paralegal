@@ -18,7 +18,11 @@ define_test!(side_effect_tcp: ctrl -> {
     ctrl.assert_purity(false);
 });
 
-define_test!(side_effect_pure: ctrl -> {
+define_test!(side_effect_empty: ctrl -> {
+    ctrl.assert_purity(true);
+});
+
+define_test!(side_effect_add: ctrl -> {
     ctrl.assert_purity(true);
 });
 

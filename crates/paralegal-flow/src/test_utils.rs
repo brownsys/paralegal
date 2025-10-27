@@ -457,6 +457,14 @@ impl<'g> HasGraph<'g> for &CtrlRef<'g> {
     fn graph(self) -> &'g PreFrg {
         self.graph.graph()
     }
+
+    fn markers(self) -> HashSet<Identifier> {
+        self.ctrl
+            .markers
+            .values()
+            .flat_map(|b| b.iter().cloned())
+            .collect()
+    }
 }
 
 impl<'g> CtrlRef<'g> {

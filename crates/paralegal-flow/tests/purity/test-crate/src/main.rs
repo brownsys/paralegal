@@ -60,7 +60,12 @@ fn side_effect_extern() -> std::io::Result<()> {
 }
 
 #[paralegal::analyze]
-fn side_effect_pure() -> std::io::Result<()> {
+fn side_effect_empty() -> std::io::Result<()> {
+    Ok(())
+}
+
+#[paralegal::analyze]
+fn side_effect_add() -> std::io::Result<()> {
     let x = 2;
     let y = 3 + x;
     Ok(())
