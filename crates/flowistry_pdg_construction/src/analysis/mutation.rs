@@ -1,5 +1,6 @@
 //! Identifies the mutated places in a MIR instruction via modular approximation based on types.
 
+use either::Either;
 use flowistry_pdg::rustc_portable::Place;
 use itertools::Itertools;
 use log::trace;
@@ -118,22 +119,33 @@ where
             // In the case of _1 = aggregate { field1: op1, field2: op2, ... },
             // then destructure this into a series of mutations like
             // _1.field1 = op1, _1.field2 = op2, and so on.
-            Rvalue::Aggregate(agg_kind, ops) => {
+            Rvalue::Aggregate(agg_kind, original_ops) => {
+                let mut ops = Either::Left(original_ops.iter_enumerated());
                 let (mutated, tys) = match &**agg_kind {
-                    AggregateKind::Adt(def_id, idx, substs, _, _) => {
+                    AggregateKind::Adt(def_id, idx, substs, _, active) => {
                         let adt_def = tcx.adt_def(*def_id);
                         let variant = adt_def.variant(*idx);
-                        let mutated = match adt_def.adt_kind() {
+                        let kind = adt_def.adt_kind();
+                        let mutated = match kind {
                             AdtKind::Enum => mutated.project_deeper(
                                 &[ProjectionElem::Downcast(Some(variant.name), *idx)],
                                 tcx,
                             ),
                             AdtKind::Struct | AdtKind::Union => *mutated,
                         };
-                        let fields = variant.fields.iter();
-                        let tys = fields
-                            .map(|field| field.ty(tcx, substs))
-                            .collect::<Vec<_>>();
+                        let tys = if matches!(kind, AdtKind::Union) {
+                            let active_idx = active.unwrap();
+                            ops = Either::Right(
+                                [(active_idx, &original_ops[FieldIdx::from_usize(0)])].into_iter(),
+                            );
+                            vec![variant.fields[active_idx].ty(tcx, substs)]
+                        } else {
+                            variant
+                                .fields
+                                .iter()
+                                .map(|field| field.ty(tcx, substs))
+                                .collect::<Vec<_>>()
+                        };
                         (mutated, tys)
                     }
                     AggregateKind::Tuple => {
@@ -150,15 +162,15 @@ where
                 if tys.is_empty() {
                     return false;
                 }
-                let fields =
-                    tys.into_iter()
-                        .enumerate()
-                        .zip(ops.iter())
-                        .map(|((i, ty), input_op)| {
-                            let field = PlaceElem::Field(FieldIdx::from_usize(i), ty);
-                            let input_place = input_op.as_place();
-                            (mutated.project_deeper(&[field], tcx), input_place)
-                        });
+                #[cfg(debug_assertions)]
+                let ops = ops.into_iter().collect::<Vec<_>>();
+                #[cfg(debug_assertions)]
+                assert_eq!(tys.len(), ops.len());
+                let fields = tys.into_iter().zip(ops).map(|(ty, (i, input_op))| {
+                    let field = PlaceElem::Field(i, ty);
+                    let input_place = input_op.as_place();
+                    (mutated.project_deeper(&[field], tcx), input_place)
+                });
                 for (mutated, input) in fields {
                     match input {
                         // If we have an aggregate of aggregates, then recursively destructure sub-aggregates
