@@ -18,24 +18,9 @@ define_test!(side_effect_tcp: ctrl -> {
     ctrl.assert_purity(false);
 });
 
-#[test]
-fn side_effect_pure() {
-    inline_test! {
-        fn main() -> std::io::Result<()> {
-        }
-    }
-    .with_extra_args(["--side-effect-markers".to_string()])
-    .check_ctrl(|ctrl| {
-        let auto_markers = AutoMarkers::new();
-        let defined = ctrl.markers();
-        let auto = auto_markers.all();
-        let contained = dbg!(auto
-            .iter()
-            .filter(|m| defined.contains(m))
-            .collect::<Vec<_>>());
-        assert!(contained.is_empty());
-    });
-}
+define_test!(side_effect_pure: ctrl -> {
+    ctrl.assert_purity(true);
+});
 
 define_test!(side_effect_extern: ctrl -> {
     ctrl.assert_purity(false);
