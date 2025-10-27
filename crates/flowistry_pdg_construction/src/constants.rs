@@ -123,8 +123,8 @@ impl<'tcx> ConstConversionError<'tcx> {
                     return;
                 }
                 mir::Const::Val(v, t) => {
-                    if let (_, ty::Ref(..)) = (v, t.kind()) {
-                        return emit(format!("references are not supported: {t:?}"));
+                    if let (_, ty::Ref(..) | ty::RawPtr(..)) = (v, t.kind()) {
+                        return emit(format!("references and pointers are not supported: {t:?}"));
                     }
                 }
                 _ => (),
@@ -211,6 +211,9 @@ fn constant_from_const_value<'tcx>(
                         return Err(ConstConversionError::Integer128NotSupported { signed: false })
                     }
                 }))
+            }
+            ty::Char => {
+                return Ok(Constant::Char(int.to_u32() as u8 as char));
             }
             _ => (),
         },
