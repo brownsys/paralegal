@@ -8,7 +8,7 @@ use rustc_middle::{mir, ty};
 
 use either::Either;
 
-use crate::{ann::db::AutoMarkers, utils::resolve};
+use crate::{ann::db::AutoMarkers, utils::resolve, Pctx};
 
 const ALLOWED_INTRINSICS: &[&str] = &[
     // Prefetching.
@@ -237,19 +237,28 @@ fn flatten_child_items<'tcx>(
 }
 
 fn allowed_precheck(def_id: DefId, tcx: ty::TyCtxt<'_>) -> bool {
+    let resolve = |name| match resolve::resolve_string_to_def_id(tcx, name) {
+        Ok(resolve::Res::Def(_, did)) => Some(did),
+        Ok(other) => {
+            tcx.dcx().err(format!(
+                "Expected to resolve to a definition, got {:?}",
+                other
+            ));
+            None
+        }
+        Err(e) => {
+            // We allow this case so that we can add functions from external crates to the allowlist
+            if !matches!(e, resolve::ResolutionError::CouldNotResolveCrate(_)) {
+                tcx.dcx().err(format!("Error resolving {name}: {:?}", e));
+            }
+            None
+        }
+    };
     RESOLVED_ALLOWED_ITEMS
         .get_or_init(|| {
-            let mut set = flatten_child_items(
-                tcx,
-                TRUSTED_MODULES
-                    .iter()
-                    .filter_map(|name| resolve::expect_resolve_string_to_def_id(tcx, name, false)),
-            );
-            set.extend(
-                ALLOWED_FUNCTIONS
-                    .iter()
-                    .filter_map(|name| resolve::expect_resolve_string_to_def_id(tcx, name, false)),
-            );
+            let mut set =
+                flatten_child_items(tcx, TRUSTED_MODULES.iter().filter_map(|name| resolve(name)));
+            set.extend(ALLOWED_FUNCTIONS.iter().filter_map(|name| resolve(name)));
             set
         })
         .contains(&def_id)
@@ -258,7 +267,7 @@ fn allowed_precheck(def_id: DefId, tcx: ty::TyCtxt<'_>) -> bool {
 pub fn analyze_body<'tcx, 'b>(
     def_id: DefId,
     body: &'b mir::Body<'tcx>,
-    auto_markers: &'b AutoMarkers,
+    auto_markers: &AutoMarkers,
     tcx: ty::TyCtxt<'tcx>,
 ) -> FxHashSet<Identifier> {
     if allowed_precheck(def_id, tcx) {
@@ -274,8 +283,8 @@ pub fn analyze_body<'tcx, 'b>(
 pub fn analyze_statement<'tcx, 'b>(
     def_id: DefId,
     body: &'b mir::Body<'tcx>,
-    location: mir::Location,
-    auto_markers: &'b AutoMarkers,
+    location: mir::Location, // we take location here so we can guarantee that the statement is within the body
+    auto_markers: &AutoMarkers,
     tcx: ty::TyCtxt<'tcx>,
 ) -> FxHashSet<Identifier> {
     if allowed_precheck(def_id, tcx) {

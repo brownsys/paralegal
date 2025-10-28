@@ -34,6 +34,7 @@ pub enum ResolutionError {
     UnconvertibleRes(def::Res),
     CouldNotResolveCrate(Symbol),
     UnsupportedType(Ty),
+    ParseError(String),
 }
 
 pub type Result<T> = std::result::Result<T, ResolutionError>;
@@ -111,26 +112,7 @@ pub fn expect_resolve_string_to_def_id(tcx: TyCtxt, path: &str, relaxed: bool) -
             tcx.dcx().err(err);
         }
     };
-    let mut hasher = StableHasher::new();
-    path.hash(&mut hasher);
-    let mut parser = new_parser_from_source_str(
-        &tcx.sess.psess,
-        rustc_span::FileName::Anon(hasher.finish()),
-        path.to_string(),
-    )
-    .unwrap();
-    let qpath = parser.parse_expr().map_err(|e| e.emit()).ok()?;
-    if parser.token.kind != TokenKind::Eof {
-        report_err(tcx, format!("Tokens left over after parsing path {path}"));
-        return None;
-    }
-
-    let ExprKind::Path(slf, rest) = &qpath.kind else {
-        report_err(tcx, format!("Expected path expression, got {path}"));
-        return None;
-    };
-
-    let res = def_path_res(tcx, slf.as_deref(), &rest.segments)
+    let res = resolve_string_to_def_id(tcx, path)
         .map_err(|e| report_err(tcx, format!("Could not resolve {path}: {e:?}")))
         .ok()?;
     match res {
@@ -141,6 +123,34 @@ pub fn expect_resolve_string_to_def_id(tcx: TyCtxt, path: &str, relaxed: bool) -
             None
         }
     }
+}
+
+pub fn resolve_string_to_def_id(tcx: TyCtxt, path: &str) -> Result<Res> {
+    let mut hasher = StableHasher::new();
+    path.hash(&mut hasher);
+    let mut parser = new_parser_from_source_str(
+        &tcx.sess.psess,
+        rustc_span::FileName::Anon(hasher.finish()),
+        path.to_string(),
+    )
+    .unwrap();
+    let qpath = parser.parse_expr().map_err(|e| {
+        e.emit();
+        ResolutionError::ParseError("failed to parse expression".to_string())
+    })?;
+    if parser.token.kind != TokenKind::Eof {
+        return Err(ResolutionError::ParseError(format!(
+            "Tokens left over after parsing path {path}"
+        )));
+    }
+
+    let ExprKind::Path(slf, rest) = &qpath.kind else {
+        return Err(ResolutionError::ParseError(format!(
+            "Expected path expression, got {path}"
+        )));
+    };
+
+    def_path_res(tcx, slf.as_deref(), &rest.segments)
 }
 
 fn item_child_by_name(tcx: TyCtxt<'_>, def_id: DefId, name: Symbol) -> Option<Result<Res>> {
