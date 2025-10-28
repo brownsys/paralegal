@@ -1,5 +1,5 @@
 [package]
-name = "purity-tests"
+name = "purity-tests-leaky"
 version = "0.1.0"
 edition = "2021"
 

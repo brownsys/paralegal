@@ -441,6 +441,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                     Box::new(AggregateKind::Tuple),
                     IndexVec::from_iter(args.iter().map(|op| op.node.clone())),
                 );
+
                 self.modular_mutation_visitor(results, state, strict)
                     .visit_assign(destination, &rvalue, location);
                 return false;

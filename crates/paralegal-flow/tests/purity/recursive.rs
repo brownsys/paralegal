@@ -6,7 +6,7 @@ fn self_recursive_pure() {
     inline_test! {
         fn main(a: usize) {
             if a > 0 {
-                pure(a - 1);
+                main(a - 1);
             }
         }
     }
@@ -19,7 +19,7 @@ fn self_recursive_impure() {
     inline_test! {
         fn main(a: usize) {
             if a > 0 {
-                impure(a - 1);
+                main(a - 1);
             }
             println!("{}", a);
         }

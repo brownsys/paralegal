@@ -27,7 +27,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "purity-tests"
+name = "purity-tests-static"
 version = "0.1.0"
 dependencies = [
  "paralegal",

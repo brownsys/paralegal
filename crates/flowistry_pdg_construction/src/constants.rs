@@ -110,16 +110,13 @@ impl<'tcx> ConstConversionError<'tcx> {
             if strict {
                 tcx.dcx().span_err(span, msg);
             } else {
-                tcx.dcx().span_warn(span, msg);
+                //tcx.dcx().span_warn(span, msg);
             }
         };
         if let ConstConversionError::UnsupportedConstType(c) = self {
             match c {
                 mir::Const::Unevaluated(c, _) => {
-                    tcx.dcx().span_warn(
-                        span,
-                        format!("Unevaluated constants are not supported {c:?}"),
-                    );
+                    emit(format!("Unevaluated constants are not supported {c:?}"));
                     return;
                 }
                 mir::Const::Val(v, t) => {

@@ -1,6 +1,6 @@
 use paralegal_flow::{ann::db::AutoMarkers, define_flow_test_template, test_utils::*};
 
-const TEST_CRATE_NAME: &str = "tests/purity/test-crate-misc";
+const TEST_CRATE_NAME: &str = "tests/purity/test-crate-external-libs";
 const EXTRA_ARGS: [&str; 1] = ["--side-effect-markers"];
 
 lazy_static! {
@@ -79,6 +79,10 @@ define_test!(side_effect_tcp_flow: ctrl -> {
 });
 
 define_test!(side_effect_vec: ctrl -> {
+    ctrl.assert_purity(true);
+});
+
+define_test!(date_format: ctrl -> {
     ctrl.assert_purity(true);
 });
 
