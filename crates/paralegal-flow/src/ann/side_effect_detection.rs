@@ -1,10 +1,14 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::OnceLock};
 
 use paralegal_spdg::Identifier;
+
 use rustc_data_structures::fx::FxHashSet;
+use rustc_hir::def_id::DefId;
 use rustc_middle::{mir, ty};
 
-use crate::ann::db::AutoMarkers;
+use either::Either;
+
+use crate::{ann::db::AutoMarkers, utils::resolve};
 
 const ALLOWED_INTRINSICS: &[&str] = &[
     // Prefetching.
@@ -198,18 +202,101 @@ const TRUSTED_MODULES: &[&str] = &[
     "alloc::collections::btree",
 ];
 
+static RESOLVED_ALLOWED_ITEMS: OnceLock<FxHashSet<DefId>> = OnceLock::new();
+
+fn flatten_child_items<'tcx>(
+    tcx: ty::TyCtxt<'tcx>,
+    modules: impl IntoIterator<Item = DefId>,
+) -> FxHashSet<DefId> {
+    use rustc_hir::def::DefKind;
+    let mut queue: Vec<_> = modules.into_iter().collect();
+    let mut seen = FxHashSet::default();
+    seen.extend(queue.iter().cloned());
+    let mut result = FxHashSet::default();
+
+    while let Some(module) = queue.pop() {
+        for c in tcx.module_children(module) {
+            let Some(id) = c.res.opt_def_id() else {
+                continue;
+            };
+
+            match tcx.def_kind(id) {
+                DefKind::Mod if !seen.contains(&id) => {
+                    seen.insert(id);
+                    queue.push(id);
+                }
+                DefKind::Fn | DefKind::AssocFn | DefKind::Closure => {
+                    result.insert(id);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    result
+}
+
+fn allowed_precheck(def_id: DefId, tcx: ty::TyCtxt<'_>) -> bool {
+    RESOLVED_ALLOWED_ITEMS
+        .get_or_init(|| {
+            let mut set = flatten_child_items(
+                tcx,
+                TRUSTED_MODULES
+                    .iter()
+                    .filter_map(|name| resolve::expect_resolve_string_to_def_id(tcx, name, false)),
+            );
+            set.extend(
+                ALLOWED_FUNCTIONS
+                    .iter()
+                    .filter_map(|name| resolve::expect_resolve_string_to_def_id(tcx, name, false)),
+            );
+            set
+        })
+        .contains(&def_id)
+}
+
 pub fn analyze_body<'tcx, 'b>(
+    def_id: DefId,
     body: &'b mir::Body<'tcx>,
     auto_markers: &'b AutoMarkers,
     tcx: ty::TyCtxt<'tcx>,
 ) -> FxHashSet<Identifier> {
+    if allowed_precheck(def_id, tcx) {
+        return FxHashSet::default();
+    }
+
     use mir::visit::Visitor;
     let mut analyzer = BodyAnalyzer::new(body, auto_markers, tcx);
     analyzer.visit_body(body);
     analyzer.found_markers
 }
 
-pub struct BodyAnalyzer<'tcx, 'b> {
+pub fn analyze_statement<'tcx, 'b>(
+    def_id: DefId,
+    body: &'b mir::Body<'tcx>,
+    location: mir::Location,
+    auto_markers: &'b AutoMarkers,
+    tcx: ty::TyCtxt<'tcx>,
+) -> FxHashSet<Identifier> {
+    if allowed_precheck(def_id, tcx) {
+        return FxHashSet::default();
+    }
+
+    use mir::visit::Visitor;
+
+    let mut analyzer = BodyAnalyzer::new(body, auto_markers, tcx);
+    match body.stmt_at(location) {
+        Either::Left(statement) => {
+            analyzer.visit_statement(statement, location);
+        }
+        Either::Right(terminator) => {
+            analyzer.visit_terminator(terminator, location);
+        }
+    }
+    analyzer.found_markers
+}
+
+struct BodyAnalyzer<'tcx, 'b> {
     body: &'b mir::Body<'tcx>,
     found_markers: FxHashSet<Identifier>,
     auto_markers: &'b AutoMarkers,
@@ -217,7 +304,7 @@ pub struct BodyAnalyzer<'tcx, 'b> {
 }
 
 impl<'tcx, 'b> BodyAnalyzer<'tcx, 'b> {
-    pub fn new(
+    fn new(
         body: &'b mir::Body<'tcx>,
         auto_markers: &'b AutoMarkers,
         tcx: ty::TyCtxt<'tcx>,
@@ -228,14 +315,6 @@ impl<'tcx, 'b> BodyAnalyzer<'tcx, 'b> {
             auto_markers,
             tcx,
         }
-    }
-
-    pub fn found_markers(&self) -> &FxHashSet<Identifier> {
-        &self.found_markers
-    }
-
-    pub fn into_found_markers(self) -> FxHashSet<Identifier> {
-        self.found_markers
     }
 }
 

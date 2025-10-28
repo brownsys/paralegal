@@ -396,12 +396,14 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     ..
                 },
             ) => (term, func),
-            crate::Either::Left(stmt) => {
-                use mir::visit::Visitor;
-                let mut ana =
-                    side_effect_detection::BodyAnalyzer::new(body, self.auto_markers(), self.tcx());
-                ana.visit_statement(stmt, loc);
-                let found = ana.into_found_markers();
+            crate::Either::Left(_) => {
+                let found = side_effect_detection::analyze_statement(
+                    function_id,
+                    body,
+                    loc,
+                    self.auto_markers(),
+                    self.tcx(),
+                );
                 if !found.is_empty() {
                     self.register_markers(node, found);
                 }

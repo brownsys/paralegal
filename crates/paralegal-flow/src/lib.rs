@@ -46,7 +46,6 @@ extern crate rustc_span;
 extern crate rustc_target;
 extern crate rustc_type_ir;
 
-use flowistry_pdg::rustc_proxies::LocalDefId;
 use flowistry_pdg_construction::source_access::{
     dump_mir_and_borrowck_facts_with_cache, intermediate_out_dir,
 };

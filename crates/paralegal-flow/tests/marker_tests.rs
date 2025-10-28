@@ -3,7 +3,7 @@
 #[macro_use]
 extern crate lazy_static;
 
-use paralegal_flow::{ann::db::AutoMarkers, define_flow_test_template, inline_test, test_utils::*};
+use paralegal_flow::{define_flow_test_template, inline_test, test_utils::*};
 use paralegal_spdg::{Identifier, InstructionKind};
 
 const TEST_CRATE_NAME: &str = "tests/marker-tests";
