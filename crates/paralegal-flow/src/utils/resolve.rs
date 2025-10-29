@@ -233,11 +233,17 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
     match &t.kind {
         TyKind::Path(qslf, pth) => {
             let adt = def_path_res(tcx, qslf.as_deref(), pth.segments.as_slice())?;
-            Ok(ty::Ty::new_adt(
-                tcx,
-                tcx.adt_def(adt.def_id()),
-                ty::List::empty(),
-            ))
+            Ok(match adt {
+                Res::Def(_, did) => ty::Ty::new_adt(tcx, tcx.adt_def(did), ty::List::empty()),
+                Res::PrimTy(t) => match t {
+                    PrimTy::Bool => tcx.types.bool,
+                    PrimTy::Char => tcx.types.char,
+                    PrimTy::Str => tcx.types.str_,
+                    PrimTy::Int(i) => ty::Ty::new_int(tcx, ty::int_ty(i)),
+                    PrimTy::Uint(u) => ty::Ty::new_uint(tcx, ty::uint_ty(u)),
+                    PrimTy::Float(f) => ty::Ty::new_float(tcx, ty::float_ty(f)),
+                },
+            })
         }
         _ => Err(ResolutionError::UnsupportedType(t.clone())),
     }
@@ -326,7 +332,11 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
         ),
     };
 
-    let mut last = Err(ResolutionError::EmptyStarts);
+    let mut last = Err(if let Some(f) = path.first() {
+        ResolutionError::CouldNotResolveCrate(f.ident.name)
+    } else {
+        ResolutionError::EmptyStarts
+    });
     for first in starts {
         last = path
             .iter()

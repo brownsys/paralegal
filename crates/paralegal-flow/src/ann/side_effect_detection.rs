@@ -8,7 +8,7 @@ use rustc_middle::{mir, ty};
 
 use either::Either;
 
-use crate::{ann::db::AutoMarkers, utils::resolve, Pctx};
+use crate::{ann::db::AutoMarkers, utils::resolve};
 
 const ALLOWED_INTRINSICS: &[&str] = &[
     // Prefetching.
@@ -159,7 +159,8 @@ const ALLOWED_FUNCTIONS: &[&str] = &[
     "core::panicking::panic_fmt",
     "core::panicking::panic_nounwind",
     "core::panicking::panic_nounwind_fmt",
-    "core::panicking::panic_str",
+    // Couldn't find this one in the actual source code
+    // "core::panicking::panic_str",
     "core::panicking::unreachable_display",
     // Alloc infrastructure.
     "alloc::alloc::alloc",
@@ -173,8 +174,15 @@ const ALLOWED_FUNCTIONS: &[&str] = &[
     "alloc::alloc::__rust_alloc_error_handler",
     // Format chrono.
     "chrono::naive::datetime::format",
-    "alloc::string::to_string",
-    "core::fmt::new",
+    "<core::ascii::Char as alloc::string::ToString>::to_string",
+    "<char as alloc::string::ToString>::to_string",
+    "<bool as alloc::string::ToString>::to_string",
+    "<u8 as alloc::string::ToString>::to_string",
+    "<i8 as alloc::string::ToString>::to_string",
+    "<alloc::string::String as alloc::string::ToString>::to_string",
+    // Can parse, but we don't support the lifetime parameter in *our* resolution code
+    // "<alloc::borrow::Cow<'_, str> as alloc::string::ToString>::to_string",
+    "core::fmt::Formatter::new",
     // Format strings.
     "alloc::fmt::format",
     // "core::fmt::rt::\{impl#1\}::new",
@@ -186,11 +194,19 @@ const ALLOWED_FUNCTIONS: &[&str] = &[
     // Architecture-dependent intrinsics.
     "core::core_arch",
     // Pointer-address conversion primitives.
-    "core::ptr::invalid",
-    "core::ptr::invalid_mut",
-    "core::ptr::const_ptr::addr",
-    "core::ptr::mut_ptr::addr",
-    "core::ptr::alignment::new_unchecked",
+    // Couldn't find this in the source
+    // "core::ptr::invalid",
+    // Couldn't find this in the source
+    // "core::ptr::invalid_mut",
+    // This rewrite will likely fail
+    // "core::ptr::const_ptr::addr", *
+    // Actually it works parsing wise but gets "UnsupportedType", because it's not a regular ADT type. So needs some more filling in holes in `resolve`.
+    // "<*const _>::addr",
+    // This rewrite will likely fail
+    // "core::ptr::mut_ptr::addr", *
+    // Same result around resolving this sort of type
+    // "<*mut _>::addr",
+    "core::ptr::alignment::Alignment::new_unchecked",
 ];
 
 const TRUSTED_MODULES: &[&str] = &[
