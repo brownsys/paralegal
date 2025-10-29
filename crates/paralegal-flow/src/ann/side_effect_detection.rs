@@ -220,7 +220,7 @@ const TRUSTED_MODULES: &[&str] = &[
     "alloc::slice",
     "core::slice",
     "alloc::string",
-    "std::collections::hash::map",
+    "std::collections::hash_map",
     "alloc::collections::btree",
     // Impls of global allocator.
     // "alloc::alloc::\{impl#0\}",

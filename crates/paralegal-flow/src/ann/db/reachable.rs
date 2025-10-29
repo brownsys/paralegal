@@ -280,6 +280,7 @@ impl<'tcx, 'b> mir::visit::Visitor<'tcx> for BodyAnalyzer<'tcx, 'b> {
 pub fn marker_if_unloadable<'a>(
     tcx: ty::TyCtxt<'_>,
     def_id: DefId,
+    // We make this a reference so we can coerce the returned one to a slice
     auto_markers: &'a AutoMarkers,
 ) -> Option<&'a Identifier> {
     if side_effect_detection::is_allowed(def_id, tcx) {
