@@ -1,5 +1,5 @@
 use crate::{
-    ann::db::AutoMarkers,
+    ann::{db::AutoMarkers, side_effect_detection},
     utils::{func_of_term, type_for_constructor},
     HashSet,
 };
@@ -111,7 +111,13 @@ impl<'tcx> MarkerCtx<'tcx> {
         let mut vis = BodyAnalyzer::new(self.clone(), res, &mono_body, param_env);
         use mir::visit::Visitor;
         vis.visit_body(&mono_body);
-        vis.found_markers.into_iter().collect()
+        let mut found = vis.found_markers;
+        if side_effect_detection::is_allowed(res.def_id(), self.tcx()) {
+            for m in self.auto_markers().all() {
+                found.remove(&m);
+            }
+        }
+        found.into_iter().collect()
     }
 
     // XXX: This code duplicates the auto-marker assignment logic from
@@ -276,13 +282,15 @@ pub fn marker_if_unloadable<'a>(
     def_id: DefId,
     auto_markers: &'a AutoMarkers,
 ) -> Option<&'a Identifier> {
-    if is_virtual(tcx, def_id) {
+    if side_effect_detection::is_allowed(def_id, tcx) {
+        None
+    } else if is_virtual(tcx, def_id) {
         trace!("  Is virtual");
-        return Some(&auto_markers.side_effect_unknown_virtual);
-    }
-    if tcx.is_foreign_item(def_id) {
+        Some(&auto_markers.side_effect_unknown_virtual)
+    } else if tcx.is_foreign_item(def_id) {
         trace!("  Is foreign");
-        return Some(&auto_markers.side_effect_foreign);
+        Some(&auto_markers.side_effect_foreign)
+    } else {
+        None
     }
-    None
 }

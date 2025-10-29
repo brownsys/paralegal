@@ -167,9 +167,13 @@ const ALLOWED_FUNCTIONS: &[&str] = &[
     "alloc::alloc::alloc_zeroed",
     "alloc::alloc::dealloc",
     "alloc::alloc::realloc",
-    // Impls of global allocator.
-    // "alloc::alloc::\{impl#0\}",
+    // Since Artem uses regexes this is enough, we use the module and impl instead.
+    // I was hoping I could just put the impl into the allowed modules, but the parser
+    // complains, so instead I have the functions separately here.
     // "alloc::alloc::\{impl#1\}",
+    "<alloc::alloc::Global as alloc::alloc::Allocator>::grow",
+    "<alloc::alloc::Global as alloc::alloc::Allocator>::deallocate",
+    "<alloc::alloc::Global as alloc::alloc::Allocator>::shrink",
     // Alloc error handler.
     "alloc::alloc::__rust_alloc_error_handler",
     // Format chrono.
@@ -207,6 +211,8 @@ const ALLOWED_FUNCTIONS: &[&str] = &[
     // Same result around resolving this sort of type
     // "<*mut _>::addr",
     "core::ptr::alignment::Alignment::new_unchecked",
+    // Not sure why this is needed, but it gets marked as "virtual" otherwise
+    "<() as std::clone::Clone>::clone",
 ];
 
 const TRUSTED_MODULES: &[&str] = &[
@@ -216,6 +222,10 @@ const TRUSTED_MODULES: &[&str] = &[
     "alloc::string",
     "std::collections::hash::map",
     "alloc::collections::btree",
+    // Impls of global allocator.
+    // "alloc::alloc::\{impl#0\}",
+    // Since Artem uses regexes this is enough, we use the module and impl instead
+    "alloc::alloc::Global",
 ];
 
 static RESOLVED_ALLOWED_ITEMS: OnceLock<FxHashSet<DefId>> = OnceLock::new();
@@ -231,13 +241,22 @@ fn flatten_child_items<'tcx>(
     let mut result = FxHashSet::default();
 
     while let Some(module) = queue.pop() {
-        for c in tcx.module_children(module) {
-            let Some(id) = c.res.opt_def_id() else {
-                continue;
-            };
-
+        let children = match tcx.def_kind(module) {
+            DefKind::Mod => Either::Left(
+                tcx.module_children(module)
+                    .iter()
+                    .filter_map(|c| c.res.opt_def_id()),
+            ),
+            DefKind::Impl { .. } => Either::Right(
+                tcx.associated_items(module)
+                    .in_definition_order()
+                    .map(|i| i.def_id),
+            ),
+            _ => continue,
+        };
+        for id in children {
             match tcx.def_kind(id) {
-                DefKind::Mod if !seen.contains(&id) => {
+                DefKind::Mod | DefKind::Impl { .. } if !seen.contains(&id) => {
                     seen.insert(id);
                     queue.push(id);
                 }
@@ -252,7 +271,7 @@ fn flatten_child_items<'tcx>(
     result
 }
 
-fn allowed_precheck(def_id: DefId, tcx: ty::TyCtxt<'_>) -> bool {
+pub fn is_allowed(def_id: DefId, tcx: ty::TyCtxt<'_>) -> bool {
     let resolve = |name| match resolve::resolve_string_to_def_id(tcx, name) {
         Ok(resolve::Res::Def(_, did)) => Some(did),
         Ok(other) => {
@@ -286,7 +305,7 @@ pub fn analyze_body<'tcx, 'b>(
     auto_markers: &AutoMarkers,
     tcx: ty::TyCtxt<'tcx>,
 ) -> FxHashSet<Identifier> {
-    if allowed_precheck(def_id, tcx) {
+    if is_allowed(def_id, tcx) {
         return FxHashSet::default();
     }
 
@@ -303,7 +322,7 @@ pub fn analyze_statement<'tcx, 'b>(
     auto_markers: &AutoMarkers,
     tcx: ty::TyCtxt<'tcx>,
 ) -> FxHashSet<Identifier> {
-    if allowed_precheck(def_id, tcx) {
+    if is_allowed(def_id, tcx) {
         return FxHashSet::default();
     }
 

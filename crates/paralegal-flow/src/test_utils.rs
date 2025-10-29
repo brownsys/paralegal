@@ -24,7 +24,8 @@ use std::{
 use paralegal_spdg::{
     traverse::{generic_flows_to, generic_influencers, EdgeSelection},
     utils::{display_list, write_sep},
-    DefInfo, DisplayPath, EdgeInfo, Endpoint, Node, NodeKind, TypeId, SPDG,
+    DefInfo, DisplayPath, EdgeInfo, Endpoint, InstructionInfo, Node, NodeInfo, NodeKind, TypeId,
+    SPDG,
 };
 
 use flowistry_pdg::{CallString, Constant};
@@ -598,6 +599,12 @@ impl<'g> CtrlRef<'g> {
             .collect::<Vec<_>>());
         assert!(!pure ^ contained.is_empty(), "Found {:?}", contained);
     }
+
+    pub fn side_effect_nodes(&'g self) -> impl Iterator<Item = NodeRef<'g>> {
+        let auto_markers = AutoMarkers::new();
+        let auto = auto_markers.all();
+        auto.into_iter().flat_map(|m| self.marked(m))
+    }
 }
 
 impl<'g> HasGraph<'g> for &FnRef<'g> {
@@ -798,7 +805,7 @@ pub struct NodeRef<'g> {
 
 impl Debug for NodeRef<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let weight = self.graph.ctrl.graph.node_weight(self.node).unwrap();
+        let weight = self.info();
         f.debug_struct("NodeRef")
             .field("node", &self.node)
             .field("description", &weight.kind)
@@ -817,6 +824,15 @@ impl<'g> HasGraph<'g> for &NodeRef<'g> {
 impl NodeRef<'_> {
     pub fn node(&self) -> Node {
         self.node
+    }
+
+    pub fn info(&self) -> &NodeInfo {
+        self.graph.ctrl.graph.node_weight(self.node).unwrap()
+    }
+
+    pub fn instruction_info(&self) -> &InstructionInfo {
+        let g = self.graph();
+        &g.desc.instruction_info[&self.info().at.leaf()]
     }
 }
 

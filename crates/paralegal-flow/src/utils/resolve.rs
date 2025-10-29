@@ -245,6 +245,13 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
                 },
             })
         }
+        TyKind::Tup(tys) => Ok(ty::Ty::new_tup(
+            tcx,
+            tys.iter()
+                .map(|ty| resolve_ty(tcx, ty))
+                .collect::<Result<Vec<_>>>()?
+                .as_ref(),
+        )),
         _ => Err(ResolutionError::UnsupportedType(t.clone())),
     }
 }
