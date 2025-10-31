@@ -824,7 +824,7 @@ pub fn flatten_child_items<'tcx>(
 
     while let Some(module) = queue.pop() {
         let children = match tcx.def_kind(module) {
-            DefKind::Mod => Either::Left(
+            DefKind::Mod => Box::new(
                 if let Some(local) = module.as_local() {
                     tcx.module_children_local(local)
                 } else {
@@ -832,17 +832,22 @@ pub fn flatten_child_items<'tcx>(
                 }
                 .iter()
                 .filter_map(|c| c.res.opt_def_id()),
-            ),
-            DefKind::Impl { .. } => Either::Right(
+            ) as Box<dyn Iterator<Item = DefId>>,
+            DefKind::Impl { .. } => Box::new(
                 tcx.associated_items(module)
                     .in_definition_order()
                     .map(|i| i.def_id),
-            ),
+            ) as Box<_>,
+            DefKind::Struct | DefKind::Enum => {
+                Box::new(tcx.inherent_impls(module).iter().copied()) as Box<_>
+            }
             _ => continue,
         };
         for id in children {
             match tcx.def_kind(id) {
-                DefKind::Mod | DefKind::Impl { .. } if !seen.contains(&id) => {
+                DefKind::Struct | DefKind::Enum | DefKind::Mod | DefKind::Impl { .. }
+                    if !seen.contains(&id) =>
+                {
                     seen.insert(id);
                     queue.push(id);
                 }
