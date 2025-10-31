@@ -14,12 +14,15 @@ use crate::{
     utils::Print,
     Callbacks, HashSet, EXTRA_RUSTC_ARGS,
 };
-use std::hash::{Hash, Hasher};
-use std::process::Command;
 use std::{
     fmt::{Debug, Formatter},
     sync::Once,
 };
+use std::{
+    hash::{Hash, Hasher},
+    sync::atomic::AtomicU32,
+};
+use std::{process::Command, sync::atomic::Ordering};
 
 use paralegal_spdg::{
     traverse::{generic_flows_to, generic_influencers, EdgeSelection},
@@ -186,10 +189,12 @@ macro_rules! define_flow_test_template {
 ///
 /// Start with [`InlineTestBuilder::new`], compile and run the test case with
 /// [`InlineTestBuilder::check`].
+#[derive(Clone)]
 pub struct InlineTestBuilder {
     ctrl_name: Option<String>,
     input: String,
     extra_args: Vec<String>,
+    marker_file: Option<String>,
 }
 
 #[macro_export]
@@ -198,6 +203,8 @@ macro_rules! inline_test {
         $crate::test_utils::InlineTestBuilder::new(stringify!($($t)*))
     };
 }
+
+static FILE_INDEX: AtomicU32 = AtomicU32::new(0);
 
 impl InlineTestBuilder {
     /// Constructor.
@@ -214,6 +221,7 @@ impl InlineTestBuilder {
             input: input.into(),
             ctrl_name: Some("crate::main".into()),
             extra_args: Default::default(),
+            marker_file: None,
         }
     }
 
@@ -238,6 +246,11 @@ impl InlineTestBuilder {
 
     pub fn without_entrypoint(&mut self) -> &mut Self {
         self.ctrl_name = None;
+        self
+    }
+
+    pub fn with_marker_file(&mut self, marker_file: impl Into<String>) -> &mut Self {
+        self.marker_file = Some(marker_file.into());
         self
     }
 
@@ -271,6 +284,15 @@ impl InlineTestBuilder {
         let mut args = vec!["".to_string()];
         if let Some(e) = &self.ctrl_name {
             args.extend(["--analyze".to_string(), e.clone()])
+        }
+        if let Some(m) = &self.marker_file {
+            let p = std::env::temp_dir().join(format!(
+                "markers-{}.toml",
+                FILE_INDEX.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::write(&p, m).unwrap();
+            args.push("--external-annotations".to_string());
+            args.push(p.to_str().unwrap().to_string());
         }
         args.extend(self.extra_args.iter().cloned());
 

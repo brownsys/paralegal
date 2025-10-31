@@ -825,9 +825,13 @@ pub fn flatten_child_items<'tcx>(
     while let Some(module) = queue.pop() {
         let children = match tcx.def_kind(module) {
             DefKind::Mod => Either::Left(
-                tcx.module_children(module)
-                    .iter()
-                    .filter_map(|c| c.res.opt_def_id()),
+                if let Some(local) = module.as_local() {
+                    tcx.module_children_local(local)
+                } else {
+                    tcx.module_children(module)
+                }
+                .iter()
+                .filter_map(|c| c.res.opt_def_id()),
             ),
             DefKind::Impl { .. } => Either::Right(
                 tcx.associated_items(module)

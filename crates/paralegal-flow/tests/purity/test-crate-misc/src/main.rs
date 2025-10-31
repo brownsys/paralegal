@@ -188,3 +188,88 @@ pub fn closure_tests(a: usize) {
 //         partially_opaque(sensitive_attr, flag, &lambda)
 //     }
 // }
+//
+extern "C" {
+    fn foo() -> i32;
+}
+struct MyStruct;
+
+impl MyStruct {
+    pub fn bar() -> i32 {
+        unsafe { foo() }
+    }
+}
+
+struct OtherStruct;
+
+impl OtherStruct {
+    pub fn bar() -> i32 {
+        unsafe { foo() }
+    }
+}
+
+#[paralegal::analyze]
+fn annotation_test_impl_pure() {
+    MyStruct::bar();
+}
+
+#[paralegal::analyze]
+fn annotation_test_impl_impure() {
+    OtherStruct::bar();
+}
+
+mod my_mod {
+    extern "C" {
+        fn foo() -> i32;
+    }
+
+    pub fn bar() -> i32 {
+        unsafe { foo() }
+    }
+
+    pub struct NestedStruct;
+
+    impl NestedStruct {
+        pub fn bar() -> i32 {
+            unsafe { foo() }
+        }
+    }
+}
+
+#[paralegal::analyze]
+fn annotation_test_nested_impl_pure() {
+    my_mod::NestedStruct::bar();
+}
+
+#[paralegal::analyze]
+fn annotation_test_mod_pure() {
+    my_mod::bar();
+}
+
+mod other_mod {
+    extern "C" {
+        fn foo() -> i32;
+    }
+
+    pub fn bar() -> i32 {
+        unsafe { foo() }
+    }
+
+    pub struct NestedStruct;
+
+    impl NestedStruct {
+        pub fn bar() -> i32 {
+            unsafe { foo() }
+        }
+    }
+}
+
+#[paralegal::analyze]
+fn annotation_test_mod_impure() {
+    other_mod::bar();
+}
+
+#[paralegal::analyze]
+fn annotation_test_nested_impl_impure() {
+    other_mod::NestedStruct::bar();
+}

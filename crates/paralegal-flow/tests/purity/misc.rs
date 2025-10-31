@@ -1,4 +1,4 @@
-use paralegal_flow::{ann::db::AutoMarkers, define_flow_test_template, test_utils::*};
+use paralegal_flow::{ann::db::AutoMarkers, define_flow_test_template, inline_test, test_utils::*};
 use paralegal_spdg::DisplayPath;
 
 const TEST_CRATE_NAME: &str = "tests/purity/test-crate-misc";
@@ -104,4 +104,28 @@ define_test!(side_effect_vec: ctrl -> {
 
 define_test!(closure_tests: ctrl -> {
     ctrl.assert_purity(true);
+});
+
+define_test!(annotation_test_impl_pure: ctrl -> {
+   ctrl.assert_purity(true);
+});
+
+define_test!(annotation_test_impl_impure: ctrl -> {
+   ctrl.assert_purity(false);
+});
+
+define_test!(annotation_test_mod_pure: ctrl -> {
+    ctrl.assert_purity(true);
+});
+
+define_test!(annotation_test_mod_impure: ctrl -> {
+    ctrl.assert_purity(false);
+});
+
+define_test!(annotation_test_nested_impl_pure: ctrl -> {
+    ctrl.assert_purity(true);
+});
+
+define_test!(annotation_test_nested_impl_impure: ctrl -> {
+    ctrl.assert_purity(false);
 });
