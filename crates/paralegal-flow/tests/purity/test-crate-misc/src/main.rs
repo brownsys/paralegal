@@ -273,3 +273,8 @@ fn annotation_test_mod_impure() {
 fn annotation_test_nested_impl_impure() {
     other_mod::NestedStruct::bar();
 }
+
+#[paralegal::analyze]
+fn clone_unit_test() {
+    ().clone()
+}

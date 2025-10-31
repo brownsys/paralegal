@@ -129,3 +129,8 @@ define_test!(annotation_test_nested_impl_pure: ctrl -> {
 define_test!(annotation_test_nested_impl_impure: ctrl -> {
     ctrl.assert_purity(false);
 });
+
+define_test!(clone_unit_test: ctrl -> {
+    println!("{:?}", ctrl.markers());
+    ctrl.assert_purity(true);
+});
