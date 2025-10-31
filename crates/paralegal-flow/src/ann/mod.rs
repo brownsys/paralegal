@@ -106,6 +106,16 @@ pub struct MarkerRefinement {
     on_argument: TinyBitSet,
     #[serde(default = "const_false")]
     on_return: bool,
+    /// Internal attribute, not intended for use by users. Ignores all other
+    /// refinements and applies the marker to all arguments and return values of
+    /// functions in the module and its children. Has no effect when used in the
+    /// multi-refinement position.
+    #[serde(default = "const_false")]
+    _internal_on_all_module_children: bool,
+    /// Internal attribute, not intended for use by users. Has no effect when used in the
+    /// multi-refinement position.
+    #[serde(default = "const_false")]
+    _internal_can_fail_resolve_silently: bool,
 }
 
 impl Display for MarkerRefinement {
@@ -145,6 +155,8 @@ impl MarkerRefinement {
         Self {
             on_argument: Default::default(),
             on_return: false,
+            _internal_can_fail_resolve_silently: false,
+            _internal_on_all_module_children: false,
         }
     }
 

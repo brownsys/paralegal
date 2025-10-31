@@ -8,7 +8,10 @@ use rustc_middle::{mir, ty};
 
 use either::Either;
 
-use crate::{ann::db::AutoMarkers, utils::resolve};
+use crate::{
+    ann::db::AutoMarkers,
+    utils::{flatten_child_items, resolve},
+};
 
 const ALLOWED_INTRINSICS: &[&str] = &[
     // Prefetching.
@@ -230,48 +233,8 @@ const TRUSTED_MODULES: &[&str] = &[
 
 static RESOLVED_ALLOWED_ITEMS: OnceLock<FxHashSet<DefId>> = OnceLock::new();
 
-fn flatten_child_items<'tcx>(
-    tcx: ty::TyCtxt<'tcx>,
-    modules: impl IntoIterator<Item = DefId>,
-) -> FxHashSet<DefId> {
-    use rustc_hir::def::DefKind;
-    let mut queue: Vec<_> = modules.into_iter().collect();
-    let mut seen = FxHashSet::default();
-    seen.extend(queue.iter().cloned());
-    let mut result = FxHashSet::default();
-
-    while let Some(module) = queue.pop() {
-        let children = match tcx.def_kind(module) {
-            DefKind::Mod => Either::Left(
-                tcx.module_children(module)
-                    .iter()
-                    .filter_map(|c| c.res.opt_def_id()),
-            ),
-            DefKind::Impl { .. } => Either::Right(
-                tcx.associated_items(module)
-                    .in_definition_order()
-                    .map(|i| i.def_id),
-            ),
-            _ => continue,
-        };
-        for id in children {
-            match tcx.def_kind(id) {
-                DefKind::Mod | DefKind::Impl { .. } if !seen.contains(&id) => {
-                    seen.insert(id);
-                    queue.push(id);
-                }
-                DefKind::Fn | DefKind::AssocFn | DefKind::Closure => {
-                    result.insert(id);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    result
-}
-
 pub fn is_allowed(def_id: DefId, tcx: ty::TyCtxt<'_>) -> bool {
+    return false;
     let resolve = |name| match resolve::resolve_string_to_def_id(tcx, name) {
         Ok(resolve::Res::Def(_, did)) => Some(did),
         Ok(other) => {

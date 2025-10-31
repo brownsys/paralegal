@@ -103,6 +103,15 @@ fn find_primitive_impls(tcx: TyCtxt<'_>, name: Symbol) -> impl Iterator<Item = D
 /// user and `None` is returned so the caller has the option of making progress
 /// before exiting.
 pub fn expect_resolve_string_to_def_id(tcx: TyCtxt, path: &str, relaxed: bool) -> Option<DefId> {
+    report_resolution_err(tcx, path, relaxed, resolve_string_to_def_id(tcx, path))
+}
+
+pub fn report_resolution_err(
+    tcx: TyCtxt<'_>,
+    path: &str,
+    relaxed: bool,
+    obj: Result<Res>,
+) -> Option<DefId> {
     let report_err = if relaxed {
         |tcx: TyCtxt<'_>, err: String| {
             tcx.dcx().warn(err);
@@ -112,7 +121,7 @@ pub fn expect_resolve_string_to_def_id(tcx: TyCtxt, path: &str, relaxed: bool) -
             tcx.dcx().err(err);
         }
     };
-    let res = resolve_string_to_def_id(tcx, path)
+    let res = obj
         .map_err(|e| report_err(tcx, format!("Could not resolve {path}: {e:?}")))
         .ok()?;
     match res {

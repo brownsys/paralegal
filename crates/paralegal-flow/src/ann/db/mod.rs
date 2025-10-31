@@ -16,7 +16,13 @@ use crate::{
         ExceptionAnnotation, MarkerAnnotation,
     },
     args::{Args, Stub},
-    utils::{is_function_like, resolve::expect_resolve_string_to_def_id, IntoDefId},
+    utils::{
+        self, is_function_like,
+        resolve::{
+            expect_resolve_string_to_def_id, report_resolution_err, resolve_string_to_def_id,
+        },
+        IntoDefId,
+    },
     Either, HashMap,
 };
 use flowistry::mir::FlowistryInput;
@@ -439,6 +445,8 @@ impl ItemMarkers {
                 MarkerRefinement {
                     on_return: false,
                     on_argument: Default::default(),
+                    _internal_can_fail_resolve_silently: false,
+                    _internal_on_all_module_children: false,
                 },
                 |mut acc, _, selector| {
                     match selector {
@@ -746,6 +754,8 @@ fn check_format(from_toml: &toml::Value) -> anyhow::Result<()> {
                     && k != "on_argument"
                     && k != "on_return"
                     && k != "refinements"
+                    && k != "_internal_on_all_module_children"
+                    && k != "_internal_can_fail_resolve_silently"
                 {
                     bail!("External annotation entry for `{key}.[{i}]` may only have `marker`, `markers`, `on_argument`, `on_return` or `refinements` fields");
                 }
@@ -791,15 +801,58 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
         let new_map: ExternalMarkers = from_toml
             .iter()
             .filter_map(|(path, entries)| {
-                let def_id = expect_resolve_string_to_def_id(tcx, path, relaxed)?;
-                let markers = entries
+                let res = resolve_string_to_def_id(tcx, path);
+                let must_succeed = entries
                     .iter()
-                    .flat_map(|entry| {
-                        entry.check_integrity(tcx, def_id);
-                        entry.flatten()
+                    .any(|entry| !entry.refinement._internal_can_fail_resolve_silently);
+                let def_id = match res {
+                    Err(e) if !must_succeed => {
+                        trace!("Failed to resolve path {}: {:?}", path, e);
+                        return None;
+                    }
+                    _ => report_resolution_err(tcx, path, relaxed, res)?,
+                };
+                Some((def_id, entries))
+            })
+            .flat_map(|(def_id, entries)| {
+                let on_module_children = entries
+                    .iter()
+                    .fold(None, |acc, entry| {
+                        if acc.is_some_and(|acc| {
+                            acc != entry.refinement._internal_on_all_module_children
+                        }) {
+                            tcx.dcx().err(format!(
+                                "Conflicting use of `on_all_module_children` on {}",
+                                tcx.def_path_str(def_id)
+                            ));
+                        }
+                        Some(
+                            acc.unwrap_or(false)
+                                || entry.refinement._internal_on_all_module_children,
+                        )
                     })
-                    .collect();
-                Some((def_id, markers))
+                    .unwrap_or(false);
+                let def_kind = tcx.def_kind(def_id);
+                let only_self = [def_id];
+                let def_ids = if on_module_children {
+                    let defs = match def_kind {
+                        DefKind::Struct | DefKind::Enum => tcx.inherent_impls(def_id),
+                        DefKind::Mod | DefKind::Impl { .. } => &only_self,
+                        _ => panic!(
+                            "Expected module-like def kind for {}, got {def_kind:?}",
+                            tcx.def_path_str(def_id)
+                        ),
+                    };
+                    utils::flatten_child_items(tcx, defs.iter().copied())
+                } else {
+                    [def_id].into_iter().collect()
+                };
+                def_ids.into_iter().flat_map(|def_id| {
+                    entries.into_iter().map(move |entry| {
+                        entry.check_integrity(tcx, def_id);
+                        (def_id, entry.flatten().collect())
+                    })
+                })
             })
             .collect();
         new_map

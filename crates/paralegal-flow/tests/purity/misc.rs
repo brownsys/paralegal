@@ -2,7 +2,11 @@ use paralegal_flow::{ann::db::AutoMarkers, define_flow_test_template, test_utils
 use paralegal_spdg::DisplayPath;
 
 const TEST_CRATE_NAME: &str = "tests/purity/test-crate-misc";
-const EXTRA_ARGS: [&str; 1] = ["--side-effect-markers"];
+const EXTRA_ARGS: [&str; 3] = [
+    "--side-effect-markers",
+    "--external-annotations",
+    "../stdlib-markers.toml",
+];
 
 lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool =

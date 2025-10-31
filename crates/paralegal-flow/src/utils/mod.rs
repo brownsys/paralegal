@@ -11,7 +11,7 @@ pub use flowistry_pdg_construction::utils::is_virtual;
 pub use paralegal_spdg::{ShortHash, TinyBitSet};
 
 use rustc_ast as ast;
-use rustc_data_structures::intern::Interned;
+use rustc_data_structures::{fx::FxHashSet, intern::Interned};
 use rustc_hir::{
     self as hir,
     def::{DefKind, Res},
@@ -810,4 +810,45 @@ impl<T> ContiguousIntCache<T> {
             )
         }
     }
+}
+
+pub fn flatten_child_items<'tcx>(
+    tcx: ty::TyCtxt<'tcx>,
+    modules: impl IntoIterator<Item = DefId>,
+) -> FxHashSet<DefId> {
+    use rustc_hir::def::DefKind;
+    let mut queue: Vec<_> = modules.into_iter().collect();
+    let mut seen = FxHashSet::default();
+    seen.extend(queue.iter().cloned());
+    let mut result = FxHashSet::default();
+
+    while let Some(module) = queue.pop() {
+        let children = match tcx.def_kind(module) {
+            DefKind::Mod => Either::Left(
+                tcx.module_children(module)
+                    .iter()
+                    .filter_map(|c| c.res.opt_def_id()),
+            ),
+            DefKind::Impl { .. } => Either::Right(
+                tcx.associated_items(module)
+                    .in_definition_order()
+                    .map(|i| i.def_id),
+            ),
+            _ => continue,
+        };
+        for id in children {
+            match tcx.def_kind(id) {
+                DefKind::Mod | DefKind::Impl { .. } if !seen.contains(&id) => {
+                    seen.insert(id);
+                    queue.push(id);
+                }
+                DefKind::Fn | DefKind::AssocFn | DefKind::Closure => {
+                    result.insert(id);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    result
 }
