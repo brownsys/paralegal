@@ -1,8 +1,8 @@
-use paralegal_flow::{ann::db::AutoMarkers, define_flow_test_template, inline_test, test_utils::*};
+use paralegal_flow::{ann::db::AutoMarkers, define_flow_test_template, test_utils::*};
 use paralegal_spdg::DisplayPath;
 
 const TEST_CRATE_NAME: &str = "tests/purity/test-crate-misc";
-const EXTRA_ARGS: [&str; 3] = [
+const EXTRA_ARGS: &[&str] = &[
     "--side-effect-markers",
     "--external-annotations",
     "../stdlib-markers.toml",
@@ -131,6 +131,11 @@ define_test!(annotation_test_nested_impl_impure: ctrl -> {
 });
 
 define_test!(clone_unit_test: ctrl -> {
-    println!("{:?}", ctrl.markers());
     ctrl.assert_purity(true);
+    assert!(ctrl.functions("clone").count() >= 1);
+});
+
+define_test!(clone_unit_test_wrapped: ctrl -> {
+    ctrl.assert_purity(true);
+    assert_eq!(ctrl.functions("clone").count(), 0);
 });

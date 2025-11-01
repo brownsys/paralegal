@@ -183,9 +183,14 @@ impl<'tcx> MarkerCtx<'tcx> {
         // This one we only get for the item directly, not the async parent or a
         // trait we implement (which is what "relevant_def_ids" retrieves)
         let side_effect_markers = self.side_effect_markers(def_id);
-        self.relevant_def_ids(def_id)
-            .flat_map(get)
-            .chain(side_effect_markers.iter().copied())
+        let mut iter = self.relevant_def_ids(def_id).flat_map(get).peekable();
+        let is_empty = iter.peek().is_none();
+        iter.chain(
+            is_empty
+                .then(|| side_effect_markers.iter().copied())
+                .into_iter()
+                .flatten(),
+        )
     }
 
     /// Retrieves all markers attached to this item without refinement. This

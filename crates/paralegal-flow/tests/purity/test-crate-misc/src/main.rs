@@ -278,3 +278,12 @@ fn annotation_test_nested_impl_impure() {
 fn clone_unit_test() {
     ().clone()
 }
+
+fn wrapper() {
+    ().clone()
+}
+
+#[paralegal::analyze]
+fn clone_unit_test_wrapped() {
+    wrapper()
+}

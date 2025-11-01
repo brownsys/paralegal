@@ -165,6 +165,9 @@ impl<'tcx> MarkerCtx<'tcx> {
                 }
                 ShimResult::IsNotShim => instance,
             };
+            if side_effect_detection::is_allowed_as_clone_unit_instance(self.tcx(), new_instance) {
+                return v.into_iter();
+            }
             MaybeMonomorphized::Monomorphized(new_instance)
         } else {
             MaybeMonomorphized::Plain(def_id)

@@ -35,6 +35,7 @@ pub enum ResolutionError {
     CouldNotResolveCrate(Symbol),
     UnsupportedType(Ty),
     ParseError(String),
+    NoImplsFound(DefId, Ty),
 }
 
 pub type Result<T> = std::result::Result<T, ResolutionError>;
@@ -342,11 +343,28 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
                 let mut impls = vec![];
                 /* This is relevant for issue 2 */
                 tcx.for_each_relevant_impl(r#trait.def_id(), r#type, |i| impls.push(i));
+                if impls.is_empty() {
+                    if tcx
+                        .lang_items()
+                        .clone_fn()
+                        .is_some_and(|c| c == r#trait.def_id())
+                        && r#type.is_unit()
+                    {
+                        tcx.dcx().err("Cannot assign markers to the Clone instance of (), is not a real function");
+                    }
+                    return Err(ResolutionError::NoImplsFound(
+                        r#trait.def_id(),
+                        (*slf.ty).clone(),
+                    ));
+                }
                 Box::new(impls.into_iter()) as Box<_>
             },
             &path[slf.position..],
         ),
     };
+
+    let starts = starts.collect::<Vec<_>>();
+    let starts = starts.into_iter();
 
     let mut last = Err(if let Some(f) = path.first() {
         ResolutionError::CouldNotResolveCrate(f.ident.name)

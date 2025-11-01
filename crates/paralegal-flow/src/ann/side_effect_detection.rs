@@ -262,6 +262,17 @@ pub fn is_allowed(def_id: DefId, tcx: ty::TyCtxt<'_>) -> bool {
         .contains(&def_id)
 }
 
+pub fn is_allowed_as_clone_unit_instance<'tcx>(
+    tcx: ty::TyCtxt<'tcx>,
+    instance: ty::Instance<'tcx>,
+) -> bool {
+    let fn_id = instance.def_id();
+    let generics = instance.args;
+
+    tcx.lang_items().clone_fn().is_some_and(|c| c == fn_id)
+        && matches!(generics.as_slice(), [ty] if ty.as_type().is_some_and(ty::Ty::is_unit))
+}
+
 pub fn analyze_body<'tcx, 'b>(
     def_id: DefId,
     body: &'b mir::Body<'tcx>,

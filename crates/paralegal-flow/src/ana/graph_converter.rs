@@ -428,36 +428,49 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             return;
         };
         let (inst, args) = type_as_fn(self.tcx(), ty_of_const(funcc)).unwrap();
-        let f = if let Some(inst) = try_resolve_function(
+        let minst = if let Some(inst) = try_resolve_function(
             self.tcx(),
             inst,
             TypingEnv::post_analysis(self.tcx(), function_id),
             args,
         ) {
-            match handle_shims(inst, self.tcx(), param_env, weight.span) {
-                ShimResult::IsHandledShim { instance, .. } => instance,
-                ShimResult::IsNotShim => inst,
-                ShimResult::IsNonHandleableShim => {
-                    self.ctx().maybe_span_err(
-                        weight.span,
-                        "SOUNDNESS: Cannot determine markers for shim usage",
-                    );
-                    self.register_markers(node, [self.auto_markers().side_effect_unknown]);
-                    return;
-                }
-            }
-            .def_id()
+            Some(
+                match handle_shims(inst, self.tcx(), param_env, weight.span) {
+                    ShimResult::IsHandledShim { instance, .. } => instance,
+                    ShimResult::IsNotShim => inst,
+                    ShimResult::IsNonHandleableShim => {
+                        self.ctx().maybe_span_err(
+                            weight.span,
+                            "SOUNDNESS: Cannot determine markers for shim usage",
+                        );
+                        self.register_markers(node, [self.auto_markers().side_effect_unknown]);
+                        return;
+                    }
+                },
+            )
         } else {
-            debug!("Could not resolve {inst:?} properly during marker assignment");
-            self.register_markers(node, [self.auto_markers().side_effect_unknown]);
-            inst
+            None
         };
+        let f = minst.map_or_else(
+            || {
+                debug!("Could not resolve {inst:?} properly during marker assignment");
+                self.register_markers(node, [self.auto_markers().side_effect_unknown]);
+                inst
+            },
+            |i| i.def_id(),
+        );
 
         self.known_def_ids.extend(Some(f));
 
         self.known_def_ids.extend(get_parent(self.tcx(), f));
         let ctx = self.marker_ctx().clone();
         match weight.use_ {
+            _ if minst.is_some_and(|inst| {
+                side_effect_detection::is_allowed_as_clone_unit_instance(self.tcx(), inst)
+            }) =>
+            {
+                ()
+            }
             Use::Arg(arg) => self.register_markers(node, ctx.markers_on_argument(f, arg)),
             Use::Return => self.register_markers(node, ctx.markers_on_return(f)),
             Use::Other => (),

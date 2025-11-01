@@ -226,13 +226,6 @@ marker = "std:allocation"
 on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
 on_return = true
 _internal_can_fail_resolve_silently = true
-# Not sure why this is needed, but it gets marked as "virtual" otherwise
-#
-[["<() as std::clone::Clone>::clone"]]
-marker = "std:clone"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
-on_return = true
-_internal_can_fail_resolve_silently = true
 
 
 # markers for microtesting
