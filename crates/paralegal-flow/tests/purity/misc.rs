@@ -1,4 +1,4 @@
-use paralegal_flow::{ann::db::AutoMarkers, define_flow_test_template, test_utils::*};
+use paralegal_flow::{ann::db::AutoMarkers, define_flow_test_template, inline_test, test_utils::*};
 use paralegal_spdg::DisplayPath;
 
 const TEST_CRATE_NAME: &str = "tests/purity/test-crate-misc";
@@ -132,10 +132,29 @@ define_test!(annotation_test_nested_impl_impure: ctrl -> {
 
 define_test!(clone_unit_test: ctrl -> {
     ctrl.assert_purity(true);
-    assert!(ctrl.functions("clone").count() >= 1);
+    assert!(ctrl.has_function("clone"));
 });
 
 define_test!(clone_unit_test_wrapped: ctrl -> {
     ctrl.assert_purity(true);
-    assert_eq!(ctrl.functions("clone").count(), 0);
+    assert!(!ctrl.has_function("clone"));
 });
+
+#[test]
+fn clone_test_reachability() {
+    inline_test! {
+        fn wrapper() {
+            ().clone();
+        }
+
+        fn main() {
+            wrapper();
+        }
+    }
+    .check_ctrl(|ctrl| {
+        for n in ctrl.side_effect_nodes() {
+            println!("Side effect node: {n:?}");
+        }
+        assert!(!ctrl.has_function("clone"));
+    });
+}

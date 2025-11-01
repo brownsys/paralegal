@@ -133,12 +133,17 @@ impl<'tcx> MarkerCtx<'tcx> {
         expect_resolve: bool,
     ) -> impl Iterator<Item = Identifier> + '_ {
         let mut v = vec![];
+        if !matches!(terminator.kind, mir::TerminatorKind::Call { .. }) {
+            return v.into_iter();
+        }
         trace!(
             "  Finding reachable markers for terminator {:?}",
             terminator.kind
         );
         let Some((def_id, gargs)) = func_of_term(self.tcx(), terminator) else {
-            v.push(self.db().auto_markers.side_effect_unknown_fn_ptr);
+            if self.0.config.marker_control().mark_side_effects() {
+                v.push(self.db().auto_markers.side_effect_unknown_fn_ptr);
+            }
             return v.into_iter();
         };
         let mut res = if expect_resolve {

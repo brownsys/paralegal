@@ -27,8 +27,8 @@ use std::{process::Command, sync::atomic::Ordering};
 use paralegal_spdg::{
     traverse::{generic_flows_to, generic_influencers, EdgeSelection},
     utils::{display_list, write_sep},
-    DefInfo, DisplayPath, EdgeInfo, Endpoint, InstructionInfo, Node, NodeInfo, NodeKind, TypeId,
-    SPDG,
+    DefInfo, DisplayPath, EdgeInfo, Endpoint, InstructionInfo, InstructionKind, Node, NodeInfo,
+    NodeKind, TypeId, SPDG,
 };
 
 use flowistry_pdg::{CallString, Constant};
@@ -330,6 +330,11 @@ pub trait HasGraph<'g>: Sized + Copy {
         )
     }
 
+    fn has_function(self, name: impl AsRef<str>) -> bool {
+        let name = Identifier::new_intern(name.as_ref());
+        self.graph().name_map.contains_key(&name)
+    }
+
     fn markers(self) -> HashSet<Identifier> {
         let graph = self.graph();
         graph
@@ -487,6 +492,21 @@ impl<'g> HasGraph<'g> for &CtrlRef<'g> {
             .values()
             .flat_map(|b| b.iter().cloned())
             .collect()
+    }
+
+    fn has_function(self, name: impl AsRef<str>) -> bool {
+        let name = Identifier::new_intern(name.as_ref());
+        self.graph().name_map.get(&name).is_some_and(|f| {
+            let set = f.iter().cloned().collect::<HashSet<_>>();
+            self.ctrl.graph.node_references()
+                .any(|n| {
+                    let found = matches!(self.graph.desc.instruction_info[&n.1.at.leaf()], InstructionInfo { kind: InstructionKind::FunctionCall(f), .. } if set.contains(&f.id));
+                    if found {
+                        println!("Found call to {name} in {}", n.1);
+                    }
+                    found
+                })
+        })
     }
 }
 
