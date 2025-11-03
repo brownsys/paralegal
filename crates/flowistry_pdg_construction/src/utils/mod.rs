@@ -892,6 +892,37 @@ fn place_projection_conflict<'tcx>(
         (ProjectionElem::Subslice { .. }, ProjectionElem::Subslice { .. }) => {
             Overlap::EqualOrDisjoint
         }
+        (ProjectionElem::Deref, ProjectionElem::Field(idx, _))
+            if matches!(idx.as_u32(), 0 | 1) && pi1.ty(body, tcx).ty.is_box() =>
+        {
+            // Special case for deref of box.
+            //
+            // Basically rustc is sloppy when it comes to boxes. It is perfectly permissible to have the following assignments:
+            //
+            // ```
+            // fn Box::new<T>(_1: T) {
+            //   ...
+            //   _5 = ShallowInitBox(move _4, std::sys::pal::unix::sync::mutex::Mutex);
+            //   (*_5) = move _1;
+            //   _0 = move _5;
+            // }
+            // ```
+            //
+            // This is technically invalid, because `Box` is not a reference (or
+            // pointer) type, but defined as `struct Box<T,
+            // A:Allocator>(Unique<T>, A)`. So technically it should be
+            // `*(_5.0.0)` to get to the contained value.
+            //
+            // Further more we must allow both the `.0` and `.1` field, since it
+            // also tries to match the allocator for conflicts.
+            //
+            // XXX(Justus): This does not try and adjust the the projection
+            // completely as explained above, instead it just matches the deref
+            // to the first projection on right of the assignment. This does not
+            // appear to be a problem at this point, but could cause more
+            // incorrect projections downstream.
+            Overlap::EqualOrDisjoint
+        }
         (
             ProjectionElem::Deref
             | ProjectionElem::Field(..)
