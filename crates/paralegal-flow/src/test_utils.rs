@@ -639,7 +639,12 @@ impl<'g> CtrlRef<'g> {
             .iter()
             .filter(|m| defined.contains(m))
             .collect::<Vec<_>>());
-        assert!(!pure ^ contained.is_empty(), "Found {:?}", contained);
+        assert!(
+            !pure ^ contained.is_empty(),
+            "Expected {}side effects, found {:?}",
+            if pure { "no " } else { "" },
+            contained
+        );
     }
 
     pub fn side_effect_nodes(&'g self) -> impl Iterator<Item = NodeRef<'g>> {
