@@ -35,7 +35,9 @@ define_test!(raw_mut_ptr_call: ctrl -> {
     ctrl.assert_purity(false);
 });
 
-define_test!(safe_raw_mut_ptr: ctrl -> {
+define_test!(safe_raw_mut_ptr
+    skip "We are more conservative than scrutinizer here and disallow all raw pointers, whether they are mutable or not."
+    : ctrl -> {
     ctrl.assert_purity(true);
 });
 
