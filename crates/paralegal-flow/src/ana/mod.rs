@@ -526,7 +526,7 @@ fn def_info_for_item(id: DefId, markers: &MarkerCtx, tcx: TyCtxt) -> DefInfo {
 /// reset it afterward).
 fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: Symbol, f: F) -> R {
     if matches!(opts.direct_debug(), LogLevelConfig::Targeted(s) if target.as_str() == s) {
-        with_temporary_logging_level(opts.verbosity(), f)
+        with_temporary_logging_level(opts.verbosity().unwrap_or(log::LevelFilter::Info), f)
     } else {
         f()
     }

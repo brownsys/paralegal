@@ -15,6 +15,7 @@
 
 use anyhow::Error;
 use clap::ValueEnum;
+use env_logger::Builder;
 use flowistry_pdg_construction::source_access::std_crates;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hash::FxHashMap;
@@ -105,13 +106,13 @@ impl TryFrom<ClapArgs> for Args {
         };
         anactrl.include_std |= marker_control.side_effect_markers;
         let verbosity = if trace {
-            log::LevelFilter::Trace
+            Some(log::LevelFilter::Trace)
         } else if debug {
-            log::LevelFilter::Debug
+            Some(log::LevelFilter::Debug)
         } else if verbose {
-            log::LevelFilter::Info
+            Some(log::LevelFilter::Info)
         } else {
-            log::LevelFilter::Warn
+            None
         };
         Ok(Args {
             verbosity,
@@ -139,7 +140,7 @@ pub enum Debugger {
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Args {
     /// Print additional logging output (up to the "info" level)
-    verbosity: log::LevelFilter,
+    verbosity: Option<log::LevelFilter>,
     log_level_config: LogLevelConfig,
     /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     result_path: std::path::PathBuf,
@@ -166,7 +167,7 @@ pub struct Args {
 impl Default for Args {
     fn default() -> Self {
         Self {
-            verbosity: log::LevelFilter::Info,
+            verbosity: None,
             log_level_config: LogLevelConfig::Disabled,
             result_path: PathBuf::from(paralegal_spdg::FLOW_GRAPH_OUT_NAME),
             relaxed: true,
@@ -378,7 +379,7 @@ impl Args {
         self.result_path.as_path()
     }
     /// Should we output additional log messages (level `info`)
-    pub fn verbosity(&self) -> log::LevelFilter {
+    pub fn verbosity(&self) -> Option<log::LevelFilter> {
         self.verbosity
     }
     /// Warn instead of crashing the program in case of non-fatal errors
@@ -418,18 +419,16 @@ impl Args {
     }
 
     pub fn setup_logging(&self) {
-        let lvl = self.verbosity();
-        // //let lvl = log::LevelFilter::Debug;
-        if simple_logger::SimpleLogger::new()
-            .with_level(lvl)
-            .with_module_level("flowistry", log::LevelFilter::Error)
-            .with_module_level("flowistry_pdg", lvl)
-            .with_module_level("rustc_utils", log::LevelFilter::Error)
-            .without_timestamps()
-            .init()
-            .is_ok()
-            && matches!(*self.direct_debug(), LogLevelConfig::Targeted(..))
-        {
+        let mut logger = Builder::from_default_env();
+        if let Some(lvl) = self.verbosity() {
+            logger
+                .filter_level(lvl)
+                .filter_module("flowistry", log::LevelFilter::Error)
+                .filter_module("flowistry_pdg", lvl)
+                .filter_module("rustc_utils", log::LevelFilter::Error);
+        };
+        logger.format_timestamp(None).init();
+        if matches!(*self.direct_debug(), LogLevelConfig::Targeted(..)) {
             log::set_max_level(log::LevelFilter::Warn);
         }
     }

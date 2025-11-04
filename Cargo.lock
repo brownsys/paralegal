@@ -1182,7 +1182,6 @@ dependencies = [
  "serde_bare",
  "serde_json",
  "serial_test",
- "simple_logger",
  "strum 0.25.0",
  "thiserror",
  "toml 0.8.19",
