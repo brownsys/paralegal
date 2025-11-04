@@ -27,7 +27,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "purity-tests-misc"
+name = "purity-tests-raw-ptr"
 version = "0.1.0"
 dependencies = [
  "paralegal",
