@@ -362,6 +362,7 @@ impl<'tcx, 'b> mir::visit::Visitor<'tcx> for BodyAnalyzer<'tcx, 'b> {
 
     fn visit_rvalue(&mut self, rvalue: &mir::Rvalue<'tcx>, location: mir::Location) {
         if let mir::Rvalue::Cast(mir::CastKind::Transmute, _, to) = rvalue {
+            trace!("Found transmute in {rvalue:?}");
             if contains_mut_ref(*to, self.tcx) {
                 self.found_markers
                     .insert(self.auto_markers.side_effect_transmute);
@@ -387,6 +388,7 @@ fn contains_mut_ref<'tcx>(ty: ty::Ty<'tcx>, tcx: ty::TyCtxt<'tcx>) -> bool {
             }
 
             if let Some(mir::Mutability::Mut) = t.ref_mutability() {
+                trace!("Found mut ref in {t:?}");
                 self.has_mut_ref = true;
             }
             t.super_visit_with(self)
