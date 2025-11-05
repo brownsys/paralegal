@@ -7,4 +7,3 @@ edition = "2021"
 
 [dependencies]
 paralegal = { path = "../../../../paralegal" }
-chrono = "0.4"

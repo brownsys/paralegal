@@ -145,9 +145,6 @@ on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
-# Format chrono.
-# "chrono::naive::datetime::format",
-
 [["<core::ascii::Char as alloc::string::ToString>::to_string"]]
 marker = "std:convert"
 on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
