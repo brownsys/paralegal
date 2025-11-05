@@ -11,10 +11,7 @@
 //! All interactions happen through the central database object: [`MarkerCtx`].
 
 use crate::{
-    ann::{
-        db::reachable::marker_if_unloadable, side_effect_detection, Annotation,
-        ExceptionAnnotation, MarkerAnnotation,
-    },
+    ann::{side_effect_detection, Annotation, ExceptionAnnotation, MarkerAnnotation},
     args::{Args, Stub},
     utils::{
         self, is_function_like,
@@ -33,6 +30,7 @@ use itertools::Itertools;
 use paralegal_spdg::{Identifier, TypeId};
 
 use rustc_data_structures::fx::FxHashMap;
+use rustc_data_structures::fx::FxHashSet;
 use rustc_errors::DiagMessage;
 use rustc_hir::def_id::{DefId, LOCAL_CRATE};
 use rustc_hir::{def::DefKind, def_id::CrateNum};
@@ -99,7 +97,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         if !is_function_like(self.tcx(), def_id) {
             return &[];
         }
-        if let Some(m) = marker_if_unloadable(self.tcx(), def_id, self.auto_markers()) {
+        if let Some(m) = self.marker_if_unloadable(def_id) {
             return std::slice::from_ref(m);
         }
         if !self.crate_is_included(def_id.krate) {
@@ -336,6 +334,10 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn crate_is_included(&self, krate: CrateNum) -> bool {
         (self.0.included_crates)(krate)
     }
+
+    pub fn is_allowed_intrinsic(&self, intrinsic: rustc_span::Symbol) -> bool {
+        self.0.allowed_intrinsics.contains(&intrinsic)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -408,6 +410,7 @@ pub struct MarkerDatabase<'tcx> {
     marker_statistics: RefCell<HashMap<MaybeMonomorphized<'tcx>, FunctionMarkerStat<'tcx>>>,
     auto_markers: AutoMarkers,
     side_effect_heuristics_results: Cache<DefId, Box<[Identifier]>>,
+    allowed_intrinsics: FxHashSet<rustc_span::Symbol>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -485,6 +488,7 @@ pub struct AutoMarkers {
     pub side_effect_raw_ptr: Identifier,
     pub side_effect_transmute: Identifier,
     pub side_effect_unknown: Identifier,
+    pub side_effect_intrinsic: Identifier,
 }
 
 impl AutoMarkers {
@@ -496,10 +500,11 @@ impl AutoMarkers {
             side_effect_raw_ptr: Identifier::new_intern("auto:side-effect:raw-ptr"),
             side_effect_transmute: Identifier::new_intern("auto:side-effect:transmute"),
             side_effect_unknown: Identifier::new_intern("auto:side-effect:unknown"),
+            side_effect_intrinsic: Identifier::new_intern("auto:side-effect:intrinsic"),
         }
     }
 
-    pub fn all(&self) -> [Identifier; 6] {
+    pub fn all(&self) -> [Identifier; 7] {
         [
             self.side_effect_unknown_virtual,
             self.side_effect_foreign,
@@ -507,6 +512,7 @@ impl AutoMarkers {
             self.side_effect_raw_ptr,
             self.side_effect_transmute,
             self.side_effect_unknown,
+            self.side_effect_intrinsic,
         ]
     }
 }
@@ -648,6 +654,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
             marker_statistics: RefCell::new(HashMap::default()),
             auto_markers: AutoMarkers::new(),
             side_effect_heuristics_results: Default::default(),
+            allowed_intrinsics: side_effect_detection::allowed_intrinsics(),
         }
     }
 }

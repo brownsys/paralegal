@@ -1,5 +1,6 @@
 use std::{collections::HashSet, sync::OnceLock};
 
+use flowistry_pdg_construction::utils::is_virtual;
 use paralegal_spdg::Identifier;
 
 use rustc_data_structures::fx::FxHashSet;
@@ -11,6 +12,7 @@ use either::Either;
 use crate::{
     ann::db::AutoMarkers,
     utils::{flatten_child_items, resolve},
+    MarkerCtx,
 };
 
 const ALLOWED_INTRINSICS: &[&str] = &[
@@ -152,6 +154,14 @@ const ALLOWED_INTRINSICS: &[&str] = &[
     // Transmute is allowlisted as an intrinsic, but is checked for separately.
     "transmute",
 ];
+
+pub(super) fn allowed_intrinsics() -> FxHashSet<rustc_span::Symbol> {
+    ALLOWED_INTRINSICS
+        .iter()
+        .copied()
+        .map(rustc_span::Symbol::intern)
+        .collect()
+}
 
 const ALLOWED_FUNCTIONS: &[&str] = &[
     // Panicking infrastructure.
@@ -401,4 +411,28 @@ fn contains_mut_ref<'tcx>(ty: ty::Ty<'tcx>, tcx: ty::TyCtxt<'tcx>) -> bool {
     };
     ty.visit_with(&mut visitor);
     visitor.has_mut_ref
+}
+
+impl<'tcx> MarkerCtx<'tcx> {
+    pub fn marker_if_unloadable<'a>(&'a self, def_id: DefId) -> Option<&'a Identifier> {
+        let auto_markers = self.auto_markers();
+        let tcx = self.tcx();
+        if is_allowed(def_id, tcx) {
+            None
+        } else if is_virtual(tcx, def_id) {
+            trace!("  Is virtual");
+            Some(&auto_markers.side_effect_unknown_virtual)
+        } else if tcx.is_foreign_item(def_id) {
+            trace!("  Is foreign");
+            Some(&auto_markers.side_effect_foreign)
+        } else if let Some(idef) = tcx.intrinsic(def_id) {
+            if self.is_allowed_intrinsic(idef.name) {
+                None
+            } else {
+                Some(&auto_markers.side_effect_intrinsic)
+            }
+        } else {
+            None
+        }
+    }
 }
