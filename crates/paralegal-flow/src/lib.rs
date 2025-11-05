@@ -13,7 +13,6 @@ extern crate serde;
 extern crate toml;
 #[macro_use]
 extern crate lazy_static;
-extern crate simple_logger;
 #[macro_use]
 extern crate log;
 extern crate humantime;
@@ -625,8 +624,6 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                 Box::new(DumpOnlyCallbacks::new())
             }
             CrateHandling::Analyze => {
-                plugin_args.setup_logging();
-
                 let opts = Box::leak(Box::new(plugin_args));
 
                 const RERUN_VAR: &str = "RERUN_WITH_PROFILER";
@@ -641,7 +638,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                 }
 
                 compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
-                if cfg!(debug_assertions) || opts.verbosity() >= Level::Debug {
+                if cfg!(debug_assertions) || log::max_level() >= Level::Debug {
                     compiler_args.push("-Ztrack-diagnostics".to_string());
                 }
 

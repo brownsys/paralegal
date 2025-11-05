@@ -33,7 +33,7 @@ trait_enum = "0.5"
 pretty = "0.12"
 nom = "7"
 log = { version = "0.4", features = ["serde"] }
-simple_logger = "5"
+env_logger = "0.10"
 num-derive = "0.4"
 num-traits = "0.2"
 petgraph = { workspace = true }

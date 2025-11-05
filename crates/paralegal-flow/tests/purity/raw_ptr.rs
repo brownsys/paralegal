@@ -1,97 +1,46 @@
-use paralegal_flow::inline_test;
+use paralegal_flow::define_flow_test_template;
+use paralegal_flow::test_utils::*;
 
-#[test]
-fn raw_mut_ptr_deref() {
-    inline_test! {
-        pub unsafe fn main(a: usize) {
-            let mut x = 42;
-            let raw = &mut x as *mut i32;
-            *raw = 5;
-        }
-    }
-    .with_extra_args(["--side-effect-markers"])
-    .check_ctrl(|ctrl| ctrl.assert_purity(false));
+const TEST_CRATE_NAME: &str = "tests/purity/test-crate-raw-ptr";
+const EXTRA_ARGS: &[&str] = &[
+    "--side-effect-markers",
+    // "--external-annotations",
+    // "../stdlib-markers.toml",
+];
+
+lazy_static! {
+    static ref TEST_CRATE_ANALYZED: bool =
+        run_paralegal_flow_with_flow_graph_dump_and(TEST_CRATE_NAME, EXTRA_ARGS);
 }
 
-#[test]
-fn raw_mut_ptr_mut_ref() {
-    inline_test! {
-        pub unsafe fn main(a: usize) {
-            let mut x = 42;
-            let raw = &mut x as *mut i32;
-            let mut_ref = &mut *raw;
-        }
-    }
-    .with_extra_args(["--side-effect-markers"])
-    .check_ctrl(|ctrl| ctrl.assert_purity(false));
+macro_rules! define_test {
+    ($($t:tt)*) => {
+        define_flow_test_template!(TEST_CRATE_ANALYZED, TEST_CRATE_NAME, $($t)*);
+    };
 }
 
-#[test]
-fn raw_mut_ptr_mut_ref_not_in_main() {
-    inline_test! {
-        pub unsafe fn helper(a: usize) {
-            let mut x = 42;
-            let raw = &mut x as *mut i32;
-            let mut_ref = &mut *raw;
-        }
+define_test!(raw_mut_ptr_deref: ctrl ->  {
+    ctrl.assert_purity(false);
+});
 
-        fn main() {
-            unsafe {
-                helper(0);
-            }
-        }
-    }
-    .with_extra_args(["--side-effect-markers"])
-    .check_ctrl(|ctrl| ctrl.assert_purity(false));
-}
+define_test!(raw_mut_ptr_mut_ref: ctrl -> {
+    ctrl.assert_purity(false);
+});
 
-#[test]
-fn raw_mut_ptr_call() {
-    inline_test! {
-        #[derive(Debug)]
-        struct Foo {
-            x: i32
-        }
+define_test!(raw_mut_ptr_mut_ref_not_in_main: ctrl -> {
+    ctrl.assert_purity(false);
+});
 
-        impl Foo {
-            fn amend(&mut self) {
-                self.x = 42;
-            }
-        }
-        // Raw mut pointer dereference into call.
-        pub unsafe fn main(a: usize) {
-            let mut x = Foo { x: 0 };
-            let raw = &mut x as *mut Foo;
-            (*raw).amend();
-        }
-    }
-    .with_extra_args(["--side-effect-markers"])
-    .check_ctrl(|ctrl| ctrl.assert_purity(false));
-}
+define_test!(raw_mut_ptr_call: ctrl -> {
+    ctrl.assert_purity(false);
+});
 
-#[test]
-fn safe_raw_mut_ptr() {
-    inline_test! {
-        pub unsafe fn main<'a>(a: usize) -> &'a i32 {
-            let mut x = 42;
-            let raw = &mut x as *mut i32;
-            let immutable = *raw;
-            &*raw
-        }
-    }
-    .with_extra_args(["--side-effect-markers"])
-    .check_ctrl(|ctrl| ctrl.assert_purity(true));
-}
+define_test!(safe_raw_mut_ptr
+    skip "We are more conservative than scrutinizer here and disallow all raw pointers, whether they are mutable or not."
+    : ctrl -> {
+    ctrl.assert_purity(true);
+});
 
-#[test]
-fn raw_const_ptr() {
-    inline_test! {
-        pub unsafe fn main(a: usize) {
-            let x = 42;
-            let raw = &x as *const i32;
-            let _points_at = *raw;
-        }
-    }
-    .with_extra_args(["--side-effect-markers"])
-    .check_ctrl(|ctrl| ctrl.assert_purity(true));
-}
+define_test!(raw_const_ptr: ctrl -> {
+    ctrl.assert_purity(true);
+});

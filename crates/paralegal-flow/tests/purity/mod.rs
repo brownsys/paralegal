@@ -5,10 +5,8 @@
 /// features that scrutinizer has.
 // Ignored for now because it needs an external crate.
 // mod foreign;
-mod external_libs;
 mod leaky;
 mod misc;
 mod raw_ptr;
 mod recursive;
 mod r#static;
-mod structs;

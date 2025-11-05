@@ -176,9 +176,9 @@ macro_rules! define_flow_test_template {
         $(#[$($attr)+])*
         fn $name() {
             assert!(*$analyze);
-            use_rustc(|| {
-                let graph = PreFrg::from_file_at($crate_name);
-                let $ctrl = graph.ctrl(stringify!($ctrl_name));
+            $crate::test_utils::use_rustc(|| {
+                let graph = $crate::test_utils::PreFrg::from_file_at($crate_name);
+                let $ctrl = $crate::test_utils::HasGraph::ctrl(&graph, stringify!($ctrl_name));
                 $block
             })
         }
@@ -635,11 +635,16 @@ impl<'g> CtrlRef<'g> {
         let auto_markers = AutoMarkers::new();
         let defined = self.markers();
         let auto = auto_markers.all();
-        let contained = dbg!(auto
+        let contained = auto
             .iter()
             .filter(|m| defined.contains(m))
-            .collect::<Vec<_>>());
-        assert!(!pure ^ contained.is_empty(), "Found {:?}", contained);
+            .collect::<Vec<_>>();
+        assert!(
+            !pure ^ contained.is_empty(),
+            "Expected {}side effects, found {:?}",
+            if pure { "no " } else { "" },
+            contained
+        );
     }
 
     pub fn side_effect_nodes(&'g self) -> impl Iterator<Item = NodeRef<'g>> {

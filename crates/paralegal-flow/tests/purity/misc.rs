@@ -158,3 +158,7 @@ fn clone_test_reachability() {
         assert!(!ctrl.has_function("clone"));
     });
 }
+
+define_test!(structs: ctrl -> {
+    ctrl.assert_purity(true);
+});

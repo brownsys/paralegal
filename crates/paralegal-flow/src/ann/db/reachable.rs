@@ -1,17 +1,16 @@
 use crate::{
-    ann::{db::AutoMarkers, side_effect_detection},
+    ann::side_effect_detection,
     utils::{func_of_term, type_for_constructor},
     HashSet,
 };
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
     determine_async,
-    utils::{handle_shims, is_virtual, try_monomorphize, try_resolve_function, ShimResult},
+    utils::{handle_shims, try_monomorphize, try_resolve_function, ShimResult},
 };
 use paralegal_spdg::Identifier;
 
 use rustc_data_structures::fx::FxHashSet;
-use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir,
     ty::{self, TypingEnv},
@@ -37,12 +36,11 @@ impl<'tcx> MarkerCtx<'tcx> {
         let res = res.into();
         let def_id = res.def_id();
         let mark_side_effects = self.db().config.marker_control().mark_side_effects();
-        let auto_markers = &self.db().auto_markers;
         if self.is_marked(def_id) {
             trace!("  Is marked");
             return &[];
         }
-        if let Some(marker) = marker_if_unloadable(self.tcx(), def_id, auto_markers) {
+        if let Some(marker) = self.marker_if_unloadable(def_id) {
             trace!("  Is unloadable");
             return if mark_side_effects {
                 std::slice::from_ref(&marker)
@@ -89,6 +87,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             return self.all_markers_associated_with(parent).collect::<Box<_>>();
         }
         let body = self.db().body_cache.get(res.def_id());
+
         let param_env = TypingEnv::post_analysis(self.tcx(), res.def_id())
             .with_post_analysis_normalized(self.tcx());
         let mono_body = match res {
@@ -282,24 +281,5 @@ impl<'tcx, 'b> mir::visit::Visitor<'tcx> for BodyAnalyzer<'tcx, 'b> {
         );
         self.found_markers.extend(markers);
         self.super_terminator(terminator, location);
-    }
-}
-
-pub fn marker_if_unloadable<'a>(
-    tcx: ty::TyCtxt<'_>,
-    def_id: DefId,
-    // We make this a reference so we can coerce the returned one to a slice
-    auto_markers: &'a AutoMarkers,
-) -> Option<&'a Identifier> {
-    if side_effect_detection::is_allowed(def_id, tcx) {
-        None
-    } else if is_virtual(tcx, def_id) {
-        trace!("  Is virtual");
-        Some(&auto_markers.side_effect_unknown_virtual)
-    } else if tcx.is_foreign_item(def_id) {
-        trace!("  Is foreign");
-        Some(&auto_markers.side_effect_foreign)
-    } else {
-        None
     }
 }

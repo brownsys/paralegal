@@ -287,3 +287,20 @@ fn wrapper() {
 fn clone_unit_test_wrapped() {
     wrapper()
 }
+
+struct Foo {
+    a: usize,
+    b: &'static str,
+    c: bool,
+}
+
+#[paralegal::analyze]
+fn structs(a: usize) {
+    let mut foo = Foo {
+        a,
+        b: "hello",
+        c: true,
+    };
+    foo.a = 30;
+    foo.b = "hello2";
+}

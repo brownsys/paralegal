@@ -389,27 +389,24 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     ) {
         let function = vis.current_function();
         let function_id = function.def_id();
-        let (term, func) = match body.stmt_at(loc) {
-            crate::Either::Right(
-                term @ mir::Terminator {
-                    kind: mir::TerminatorKind::Call { func, .. },
-                    ..
-                },
-            ) => (term, func),
-            crate::Either::Left(_) => {
-                let found = side_effect_detection::analyze_statement(
-                    function_id,
-                    body,
-                    loc,
-                    self.auto_markers(),
-                    self.tcx(),
-                );
-                if !found.is_empty() {
-                    self.register_markers(node, found);
-                }
-                return;
-            }
-            _ => return,
+        let side_effects = side_effect_detection::analyze_statement(
+            function_id,
+            body,
+            loc,
+            self.auto_markers(),
+            self.tcx(),
+        );
+        if !side_effects.is_empty() {
+            self.register_markers(node, side_effects);
+        }
+        let crate::Either::Right(
+            term @ mir::Terminator {
+                kind: mir::TerminatorKind::Call { func, .. },
+                ..
+            },
+        ) = body.stmt_at(loc)
+        else {
+            return;
         };
         debug!(
             "Assigning markers to {:?} in {:?}",

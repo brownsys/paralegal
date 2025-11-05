@@ -1,5 +1,6 @@
 use std::{collections::HashSet, sync::OnceLock};
 
+use flowistry_pdg_construction::utils::is_virtual;
 use paralegal_spdg::Identifier;
 
 use rustc_data_structures::fx::FxHashSet;
@@ -11,6 +12,7 @@ use either::Either;
 use crate::{
     ann::db::AutoMarkers,
     utils::{flatten_child_items, resolve},
+    MarkerCtx,
 };
 
 const ALLOWED_INTRINSICS: &[&str] = &[
@@ -153,6 +155,14 @@ const ALLOWED_INTRINSICS: &[&str] = &[
     "transmute",
 ];
 
+pub(super) fn allowed_intrinsics() -> FxHashSet<rustc_span::Symbol> {
+    ALLOWED_INTRINSICS
+        .iter()
+        .copied()
+        .map(rustc_span::Symbol::intern)
+        .collect()
+}
+
 const ALLOWED_FUNCTIONS: &[&str] = &[
     // Panicking infrastructure.
     "core::panicking::assert_failed",
@@ -231,35 +241,35 @@ const TRUSTED_MODULES: &[&str] = &[
     "alloc::alloc::Global",
 ];
 
-static RESOLVED_ALLOWED_ITEMS: OnceLock<FxHashSet<DefId>> = OnceLock::new();
+// static RESOLVED_ALLOWED_ITEMS: OnceLock<FxHashSet<DefId>> = OnceLock::new();
 
-pub fn is_allowed(def_id: DefId, tcx: ty::TyCtxt<'_>) -> bool {
+pub fn is_allowed(_def_id: DefId, _tcx: ty::TyCtxt<'_>) -> bool {
     return false;
-    let resolve = |name| match resolve::resolve_string_to_def_id(tcx, name) {
-        Ok(resolve::Res::Def(_, did)) => Some(did),
-        Ok(other) => {
-            tcx.dcx().err(format!(
-                "Expected to resolve to a definition, got {:?}",
-                other
-            ));
-            None
-        }
-        Err(e) => {
-            // We allow this case so that we can add functions from external crates to the allowlist
-            if !matches!(e, resolve::ResolutionError::CouldNotResolveCrate(_)) {
-                tcx.dcx().err(format!("Error resolving {name}: {:?}", e));
-            }
-            None
-        }
-    };
-    RESOLVED_ALLOWED_ITEMS
-        .get_or_init(|| {
-            let mut set =
-                flatten_child_items(tcx, TRUSTED_MODULES.iter().filter_map(|name| resolve(name)));
-            set.extend(ALLOWED_FUNCTIONS.iter().filter_map(|name| resolve(name)));
-            set
-        })
-        .contains(&def_id)
+    // let resolve = |name| match resolve::resolve_string_to_def_id(tcx, name) {
+    //     Ok(resolve::Res::Def(_, did)) => Some(did),
+    //     Ok(other) => {
+    //         tcx.dcx().err(format!(
+    //             "Expected to resolve to a definition, got {:?}",
+    //             other
+    //         ));
+    //         None
+    //     }
+    //     Err(e) => {
+    //         // We allow this case so that we can add functions from external crates to the allowlist
+    //         if !matches!(e, resolve::ResolutionError::CouldNotResolveCrate(_)) {
+    //             tcx.dcx().err(format!("Error resolving {name}: {:?}", e));
+    //         }
+    //         None
+    //     }
+    // };
+    // RESOLVED_ALLOWED_ITEMS
+    //     .get_or_init(|| {
+    //         let mut set =
+    //             flatten_child_items(tcx, TRUSTED_MODULES.iter().filter_map(|name| resolve(name)));
+    //         set.extend(ALLOWED_FUNCTIONS.iter().filter_map(|name| resolve(name)));
+    //         set
+    //     })
+    //     .contains(&def_id)
 }
 
 pub fn is_allowed_as_clone_unit_instance<'tcx>(
@@ -306,6 +316,11 @@ pub fn analyze_statement<'tcx, 'b>(
     match body.stmt_at(location) {
         Either::Left(statement) => {
             analyzer.visit_statement(statement, location);
+            trace!(
+                "Checking statement {:?}, found {:?}",
+                statement.kind,
+                analyzer.found_markers
+            );
         }
         Either::Right(terminator) => {
             analyzer.visit_terminator(terminator, location);
@@ -337,19 +352,14 @@ impl<'tcx, 'b> BodyAnalyzer<'tcx, 'b> {
 }
 
 impl<'tcx, 'b> mir::visit::Visitor<'tcx> for BodyAnalyzer<'tcx, 'b> {
-    fn visit_projection(
+    fn visit_projection_elem(
         &mut self,
         place_ref: mir::PlaceRef<'tcx>,
+        projection_elem: mir::PlaceElem<'tcx>,
         context: mir::visit::PlaceContext,
         location: mir::Location,
     ) {
-        if matches!(
-            (place_ref.projection.last(), context),
-            (
-                Some(mir::ProjectionElem::Deref),
-                mir::visit::PlaceContext::MutatingUse(_)
-            )
-        ) {
+        if matches!(projection_elem, mir::ProjectionElem::Deref,) {
             let ty = place_ref.ty(self.body, self.tcx).ty;
 
             if ty.is_mutable_ptr() && ty.is_unsafe_ptr() {
@@ -357,11 +367,12 @@ impl<'tcx, 'b> mir::visit::Visitor<'tcx> for BodyAnalyzer<'tcx, 'b> {
                     .insert(self.auto_markers.side_effect_raw_ptr);
             }
         }
-        self.super_projection(place_ref, context, location);
+        self.super_projection_elem(place_ref, projection_elem, context, location);
     }
 
     fn visit_rvalue(&mut self, rvalue: &mir::Rvalue<'tcx>, location: mir::Location) {
         if let mir::Rvalue::Cast(mir::CastKind::Transmute, _, to) = rvalue {
+            trace!("Found transmute in {rvalue:?}");
             if contains_mut_ref(*to, self.tcx) {
                 self.found_markers
                     .insert(self.auto_markers.side_effect_transmute);
@@ -387,6 +398,7 @@ fn contains_mut_ref<'tcx>(ty: ty::Ty<'tcx>, tcx: ty::TyCtxt<'tcx>) -> bool {
             }
 
             if let Some(mir::Mutability::Mut) = t.ref_mutability() {
+                trace!("Found mut ref in {t:?}");
                 self.has_mut_ref = true;
             }
             t.super_visit_with(self)
@@ -399,4 +411,28 @@ fn contains_mut_ref<'tcx>(ty: ty::Ty<'tcx>, tcx: ty::TyCtxt<'tcx>) -> bool {
     };
     ty.visit_with(&mut visitor);
     visitor.has_mut_ref
+}
+
+impl<'tcx> MarkerCtx<'tcx> {
+    pub fn marker_if_unloadable<'a>(&'a self, def_id: DefId) -> Option<&'a Identifier> {
+        let auto_markers = self.auto_markers();
+        let tcx = self.tcx();
+        if is_allowed(def_id, tcx) {
+            None
+        } else if is_virtual(tcx, def_id) {
+            trace!("  Is virtual");
+            Some(&auto_markers.side_effect_unknown_virtual)
+        } else if tcx.is_foreign_item(def_id) {
+            trace!("  Is foreign");
+            Some(&auto_markers.side_effect_foreign)
+        } else if let Some(idef) = tcx.intrinsic(def_id) {
+            if self.is_allowed_intrinsic(idef.name) {
+                None
+            } else {
+                Some(&auto_markers.side_effect_intrinsic)
+            }
+        } else {
+            None
+        }
+    }
 }
