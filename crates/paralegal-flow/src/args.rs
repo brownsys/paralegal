@@ -419,6 +419,10 @@ impl Args {
     }
 
     pub fn setup_logging(&self) {
+        self.try_setup_logging().unwrap()
+    }
+
+    pub fn try_setup_logging(&self) -> Result<(), log::SetLoggerError> {
         let mut logger = Builder::from_default_env();
         if let Some(lvl) = self.verbosity() {
             logger
@@ -427,10 +431,11 @@ impl Args {
                 .filter_module("flowistry_pdg", lvl)
                 .filter_module("rustc_utils", log::LevelFilter::Error);
         };
-        logger.format_timestamp(None).init();
+        logger.format_timestamp(None).try_init()?;
         if matches!(*self.direct_debug(), LogLevelConfig::Targeted(..)) {
             log::set_max_level(log::LevelFilter::Warn);
         }
+        Ok(())
     }
 }
 

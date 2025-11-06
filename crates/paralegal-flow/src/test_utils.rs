@@ -298,7 +298,7 @@ impl InlineTestBuilder {
 
         let args = crate::Args::try_from(TopLevelArgs::parse_from(args).args).unwrap();
 
-        args.setup_logging();
+        let _ = args.try_setup_logging();
 
         rustc_utils::test_utils::CompileBuilder::new(&self.input)
             .with_args(EXTRA_RUSTC_ARGS.iter().copied().map(ToOwned::to_owned))
