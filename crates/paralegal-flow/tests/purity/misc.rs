@@ -36,7 +36,7 @@ define_test!(side_effect_extern: ctrl -> {
 });
 
 define_test!(side_effect_extern_flow: ctrl -> {
-    let auto_markers = AutoMarkers::new();
+    let auto_markers = AutoMarkers::default();
     ctrl.assert_purity(false);
 
     let source1 = ctrl.marked("source");
@@ -55,7 +55,7 @@ define_test!(side_effect_extern_flow: ctrl -> {
 });
 
 fn tcp_flow_check(ctrl: CtrlRef<'_>) {
-    let auto_markers = AutoMarkers::new();
+    let auto_markers = AutoMarkers::default();
     let defined = dbg!(ctrl.markers());
     let auto = auto_markers.all();
     let contained = dbg!(auto
@@ -85,7 +85,7 @@ define_test!(side_effect_tcp_flow: ctrl -> {
 
 define_test!(side_effect_vec: ctrl -> {
 
-    let auto_markers = AutoMarkers::new();
+    let auto_markers = AutoMarkers::default();
     let auto = auto_markers.all();
     for m in auto {
         let marked = ctrl.marked(m);
