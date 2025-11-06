@@ -632,7 +632,7 @@ impl<'g> CtrlRef<'g> {
     }
 
     pub fn assert_purity(&self, pure: bool) {
-        let auto_markers = AutoMarkers::new();
+        let auto_markers = AutoMarkers::default();
         let defined = self.markers();
         let auto = auto_markers.all();
         let contained = auto
