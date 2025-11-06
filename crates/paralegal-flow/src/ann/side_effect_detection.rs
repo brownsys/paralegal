@@ -148,7 +148,10 @@ const ALLOWED_INTRINSICS: &[&str] = &[
     "type_id",
     "type_name",
     // Transmute is allowlisted as an intrinsic, but is checked for separately.
-    "transmute",
+    // Justus: I don't know why Artem was checking for this separately. For now
+    // I disallow this, though I still special case it with it's own effect
+    // type.
+    // "transmute",
 ];
 
 pub(super) fn allowed_intrinsics() -> FxHashSet<rustc_span::Symbol> {
@@ -301,7 +304,9 @@ impl<'tcx> MarkerCtx<'tcx> {
             trace!("  Is foreign");
             Some(&auto_markers.side_effect_foreign)
         } else if let Some(idef) = tcx.intrinsic(def_id) {
-            if self.is_allowed_intrinsic(idef.name) {
+            if idef.name.as_str() == "transmute" {
+                Some(&auto_markers.side_effect_transmute)
+            } else if self.is_allowed_intrinsic(idef.name) {
                 None
             } else {
                 Some(&auto_markers.side_effect_intrinsic)

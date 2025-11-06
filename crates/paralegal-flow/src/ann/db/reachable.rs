@@ -88,6 +88,14 @@ impl<'tcx> MarkerCtx<'tcx> {
         }
         let body = self.db().body_cache.get(res.def_id());
 
+        if self.db().config.dbg().dump_mir() {
+            use rustc_utils::BodyExt;
+            use std::io::Write;
+            let path = self.tcx().def_path_str(res.def_id()) + ".mir";
+            let mut f = std::fs::File::create(path.as_str()).unwrap();
+            write!(f, "{}", body.body().to_string(self.tcx()).unwrap()).unwrap();
+        }
+
         let param_env = TypingEnv::post_analysis(self.tcx(), res.def_id())
             .with_post_analysis_normalized(self.tcx());
         let mono_body = match res {

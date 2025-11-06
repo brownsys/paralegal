@@ -12,6 +12,7 @@ use rustc_type_ir::{PredicatePolarity, TyKind};
 
 use crate::{
     ana::Print,
+    ann::side_effect_detection,
     args::{InliningDepth, Stub},
     MarkerCtx, Pctx,
 };
@@ -82,8 +83,12 @@ impl<'tcx> InlineJudge<'tcx> {
             _ if !self.is_included(marker_target_def_id.krate) => {
                 InlineJudgement::AbstractViaType("inlining for crate disabled")
             }
-            _ if self.ctx.tcx().is_foreign_item(marker_target_def_id) => {
-                InlineJudgement::AbstractViaType("cannot inline foreign item")
+            _ if self
+                .marker_ctx()
+                .marker_if_unloadable(marker_target_def_id)
+                .is_some() =>
+            {
+                InlineJudgement::AbstractViaType("cannot unloadable item")
             }
             _ if self.ctx.tcx().is_constructor(marker_target_def_id) => {
                 // This is an enum constructor. It would be better to handle
