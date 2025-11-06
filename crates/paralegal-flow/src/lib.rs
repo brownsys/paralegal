@@ -13,7 +13,6 @@ extern crate serde;
 extern crate toml;
 #[macro_use]
 extern crate lazy_static;
-extern crate simple_logger;
 #[macro_use]
 extern crate log;
 extern crate humantime;
@@ -46,18 +45,17 @@ extern crate rustc_span;
 extern crate rustc_target;
 extern crate rustc_type_ir;
 
-use ann::dump_markers;
-use args::{ClapArgs, Debugger, LogLevelConfig};
-use desc::utils::write_sep;
-
 use flowistry_pdg_construction::source_access::{
-    dump_mir_and_borrowck_facts, intermediate_out_dir,
+    dump_mir_and_borrowck_facts_with_cache, intermediate_out_dir,
 };
 use log::Level;
 use paralegal_spdg::{AnalyzerStats, ProgramDescription, STAT_FILE_EXT};
-use rustc_middle::ty::TyCtxt;
+
+use rustc_borrowck::consumers::BodyWithBorrowckFacts;
+use rustc_middle::{mir::BorrowCheckResult, ty::TyCtxt};
 use rustc_plugin::CrateFilter;
 use rustc_span::ErrorGuaranteed;
+use rustc_utils::cache::Cache;
 
 pub use std::collections::{HashMap, HashSet};
 use std::{
@@ -90,13 +88,15 @@ pub mod test_utils;
 pub use paralegal_spdg as desc;
 
 pub use crate::ann::db::MarkerCtx;
-pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, MarkerControl};
-pub use ctx::Pctx;
-
 use crate::{
     stats::{Stats, TimedStat},
     utils::Print,
 };
+use ann::dump_markers;
+pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, MarkerControl};
+use args::{ClapArgs, Debugger, LogLevelConfig};
+pub use ctx::Pctx;
+use desc::utils::write_sep;
 
 pub const EXTRA_RUSTC_ARGS: &[&str] = &[
     "--cfg",
@@ -213,8 +213,35 @@ impl DumpOnlyCallbacks {
 
 const INTERMEDIATE_STAT_EXT: &str = "stats.json";
 
+thread_local! {
+    static BODY_CACHE: Cache<rustc_hir::def_id::LocalDefId, BodyWithBorrowckFacts<'static>> = Cache::default();
+}
+
+fn mir_borrowck(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::LocalDefId) -> &BorrowCheckResult<'_> {
+    use rustc_borrowck::consumers::{get_body_with_borrowck_facts, ConsumerOptions};
+    let body_with_facts =
+        get_body_with_borrowck_facts(tcx, def_id, ConsumerOptions::PoloniusInputFacts);
+
+    // SAFETY: The reader casts the 'static lifetime to 'tcx before using it.
+    let body_with_facts: BodyWithBorrowckFacts<'static> =
+        unsafe { std::mem::transmute(body_with_facts) };
+    BODY_CACHE.with(|cache| {
+        cache.get(&def_id, |_| body_with_facts);
+    });
+
+    let mut providers = rustc_middle::util::Providers::default();
+    rustc_borrowck::provide(&mut providers);
+    let original_mir_borrowck = providers.mir_borrowck;
+    original_mir_borrowck(tcx, def_id)
+}
+
 fn dump_mir_and_update_stats(tcx: TyCtxt, timer: &mut DumpStats) {
-    let (tycheck_time, dump_time) = dump_mir_and_borrowck_facts(tcx);
+    let (tycheck_time, dump_time) = dump_mir_and_borrowck_facts_with_cache(tcx, |i| {
+        BODY_CACHE.with(|cache| unsafe {
+            // SAFETY: The cache is guaranteed to outlive the returned reference.
+            std::mem::transmute::<Option<&'static _>, Option<&'_ _>>(cache.get_if_present(&i))
+        })
+    });
     let dump_marker_start = Instant::now();
     dump_markers(tcx);
     timer.dump_time = dump_marker_start.elapsed() + dump_time;
@@ -222,6 +249,10 @@ fn dump_mir_and_update_stats(tcx: TyCtxt, timer: &mut DumpStats) {
 }
 
 impl rustc_driver::Callbacks for DumpOnlyCallbacks {
+    fn config(&mut self, config: &mut rustc_interface::Config) {
+        config.override_queries = Some(|_session, local| local.mir_borrowck = mir_borrowck);
+    }
+
     fn after_expansion(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
@@ -250,6 +281,10 @@ impl FinalizingCallbacks for DumpOnlyCallbacks {
 }
 
 impl rustc_driver::Callbacks for Callbacks {
+    fn config(&mut self, config: &mut rustc_interface::Config) {
+        config.override_queries = Some(|_session, local| local.mir_borrowck = mir_borrowck);
+    }
+
     fn after_expansion<'tcx>(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
@@ -555,6 +590,9 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                 cargo.args(["-p", target]);
             }
         }
+        if args.anactrl().include_std() {
+            cargo.arg("-Zbuild-std=std,core,alloc,proc_macro");
+        }
         cargo.args(args.cargo_args());
     }
 
@@ -586,8 +624,6 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                 Box::new(DumpOnlyCallbacks::new())
             }
             CrateHandling::Analyze => {
-                plugin_args.setup_logging();
-
                 let opts = Box::leak(Box::new(plugin_args));
 
                 const RERUN_VAR: &str = "RERUN_WITH_PROFILER";
@@ -602,7 +638,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                 }
 
                 compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
-                if cfg!(debug_assertions) || opts.verbosity() >= Level::Debug {
+                if cfg!(debug_assertions) || log::max_level() >= Level::Debug {
                     compiler_args.push("-Ztrack-diagnostics".to_string());
                 }
 

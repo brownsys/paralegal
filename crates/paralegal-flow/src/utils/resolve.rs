@@ -34,6 +34,8 @@ pub enum ResolutionError {
     UnconvertibleRes(def::Res),
     CouldNotResolveCrate(Symbol),
     UnsupportedType(Ty),
+    ParseError(String),
+    NoImplsFound(DefId, Ty),
 }
 
 pub type Result<T> = std::result::Result<T, ResolutionError>;
@@ -102,6 +104,15 @@ fn find_primitive_impls(tcx: TyCtxt<'_>, name: Symbol) -> impl Iterator<Item = D
 /// user and `None` is returned so the caller has the option of making progress
 /// before exiting.
 pub fn expect_resolve_string_to_def_id(tcx: TyCtxt, path: &str, relaxed: bool) -> Option<DefId> {
+    report_resolution_err(tcx, path, relaxed, resolve_string_to_def_id(tcx, path))
+}
+
+pub fn report_resolution_err(
+    tcx: TyCtxt<'_>,
+    path: &str,
+    relaxed: bool,
+    obj: Result<Res>,
+) -> Option<DefId> {
     let report_err = if relaxed {
         |tcx: TyCtxt<'_>, err: String| {
             tcx.dcx().warn(err);
@@ -111,26 +122,7 @@ pub fn expect_resolve_string_to_def_id(tcx: TyCtxt, path: &str, relaxed: bool) -
             tcx.dcx().err(err);
         }
     };
-    let mut hasher = StableHasher::new();
-    path.hash(&mut hasher);
-    let mut parser = new_parser_from_source_str(
-        &tcx.sess.psess,
-        rustc_span::FileName::Anon(hasher.finish()),
-        path.to_string(),
-    )
-    .unwrap();
-    let qpath = parser.parse_expr().map_err(|e| e.emit()).ok()?;
-    if parser.token.kind != TokenKind::Eof {
-        report_err(tcx, format!("Tokens left over after parsing path {path}"));
-        return None;
-    }
-
-    let ExprKind::Path(slf, rest) = &qpath.kind else {
-        report_err(tcx, format!("Expected path expression, got {path}"));
-        return None;
-    };
-
-    let res = def_path_res(tcx, slf.as_deref(), &rest.segments)
+    let res = obj
         .map_err(|e| report_err(tcx, format!("Could not resolve {path}: {e:?}")))
         .ok()?;
     match res {
@@ -141,6 +133,34 @@ pub fn expect_resolve_string_to_def_id(tcx: TyCtxt, path: &str, relaxed: bool) -
             None
         }
     }
+}
+
+pub fn resolve_string_to_def_id(tcx: TyCtxt, path: &str) -> Result<Res> {
+    let mut hasher = StableHasher::new();
+    path.hash(&mut hasher);
+    let mut parser = new_parser_from_source_str(
+        &tcx.sess.psess,
+        rustc_span::FileName::Anon(hasher.finish()),
+        path.to_string(),
+    )
+    .unwrap();
+    let qpath = parser.parse_expr().map_err(|e| {
+        e.emit();
+        ResolutionError::ParseError("failed to parse expression".to_string())
+    })?;
+    if parser.token.kind != TokenKind::Eof {
+        return Err(ResolutionError::ParseError(format!(
+            "Tokens left over after parsing path {path}"
+        )));
+    }
+
+    let ExprKind::Path(slf, rest) = &qpath.kind else {
+        return Err(ResolutionError::ParseError(format!(
+            "Expected path expression, got {path}"
+        )));
+    };
+
+    def_path_res(tcx, slf.as_deref(), &rest.segments)
 }
 
 fn item_child_by_name(tcx: TyCtxt<'_>, def_id: DefId, name: Symbol) -> Option<Result<Res>> {
@@ -223,12 +243,25 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
     match &t.kind {
         TyKind::Path(qslf, pth) => {
             let adt = def_path_res(tcx, qslf.as_deref(), pth.segments.as_slice())?;
-            Ok(ty::Ty::new_adt(
-                tcx,
-                tcx.adt_def(adt.def_id()),
-                ty::List::empty(),
-            ))
+            Ok(match adt {
+                Res::Def(_, did) => ty::Ty::new_adt(tcx, tcx.adt_def(did), ty::List::empty()),
+                Res::PrimTy(t) => match t {
+                    PrimTy::Bool => tcx.types.bool,
+                    PrimTy::Char => tcx.types.char,
+                    PrimTy::Str => tcx.types.str_,
+                    PrimTy::Int(i) => ty::Ty::new_int(tcx, ty::int_ty(i)),
+                    PrimTy::Uint(u) => ty::Ty::new_uint(tcx, ty::uint_ty(u)),
+                    PrimTy::Float(f) => ty::Ty::new_float(tcx, ty::float_ty(f)),
+                },
+            })
         }
+        TyKind::Tup(tys) => Ok(ty::Ty::new_tup(
+            tcx,
+            tys.iter()
+                .map(|ty| resolve_ty(tcx, ty))
+                .collect::<Result<Vec<_>>>()?
+                .as_ref(),
+        )),
         _ => Err(ResolutionError::UnsupportedType(t.clone())),
     }
 }
@@ -310,13 +343,34 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
                 let mut impls = vec![];
                 /* This is relevant for issue 2 */
                 tcx.for_each_relevant_impl(r#trait.def_id(), r#type, |i| impls.push(i));
+                if impls.is_empty() {
+                    if tcx
+                        .lang_items()
+                        .clone_fn()
+                        .is_some_and(|c| c == r#trait.def_id())
+                        && r#type.is_unit()
+                    {
+                        tcx.dcx().err("Cannot assign markers to the Clone instance of (), is not a real function");
+                    }
+                    return Err(ResolutionError::NoImplsFound(
+                        r#trait.def_id(),
+                        (*slf.ty).clone(),
+                    ));
+                }
                 Box::new(impls.into_iter()) as Box<_>
             },
             &path[slf.position..],
         ),
     };
 
-    let mut last = Err(ResolutionError::EmptyStarts);
+    let starts = starts.collect::<Vec<_>>();
+    let starts = starts.into_iter();
+
+    let mut last = Err(if let Some(f) = path.first() {
+        ResolutionError::CouldNotResolveCrate(f.ident.name)
+    } else {
+        ResolutionError::EmptyStarts
+    });
     for first in starts {
         last = path
             .iter()

@@ -676,7 +676,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
 
         debug!(
             "Inlining call at {span:?} in {} at {:?} with handling {}",
-            self.tcx().def_path_debug_str(self.def_id),
+            self.tcx().def_path_str(self.def_id),
             location,
             calling_convention.as_ref()
         );
@@ -718,6 +718,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
     ) -> ModularMutationVisitor<'b, 'tcx, impl FnMut(Location, Mutation<'tcx>) + 'b> {
         ModularMutationVisitor::new(
             &self.place_info,
+            self.param_env,
             move |location, mutation: Mutation<'tcx>| {
                 self.apply_mutation(state, location, mutation.mutated)
             },

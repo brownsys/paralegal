@@ -17,7 +17,6 @@ use crate::{
 use std::{fs::File, io::BufReader, rc::Rc, time::Instant};
 
 use anyhow::Result;
-use either::Either;
 use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
     source_access::local_or_remote_paths,
@@ -289,10 +288,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
         // and whatever teardown rustc wants to do is finished we set
         // "self_time" and increment "total_time". See lib.rs for that.
         let stats = AnalyzerStats {
-            marker_annotation_count: mctx
-                .all_annotations()
-                .filter_map(|m| m.1.either(Annotation::as_marker, Some))
-                .count() as u32,
+            marker_annotation_count: mctx.marker_count() as u32,
             rustc_time: self.stats.get_timed(TimedStat::Rustc),
             pdg_functions,
             pdg_locs,
@@ -318,7 +314,10 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 let paths = local_or_remote_paths(c, self.ctx.tcx(), INTERMEDIATE_STAT_EXT);
 
                 let path = paths.iter().find(|p| p.exists()).unwrap_or_else(|| {
-                    panic!("No stats path found for included crate {c:?}, searched {paths:?}")
+                    panic!(
+                        "No stats path found for included crate {}, searched {paths:?}",
+                        self.tcx().crate_name(c)
+                    )
                 });
                 let rdr = BufReader::new(File::open(path).unwrap());
                 serde_json::from_reader(rdr).unwrap()
@@ -399,15 +398,14 @@ impl<'tcx> SPDGGenerator<'tcx> {
                 |id, _| (*id, vec![], vec![]),
                 |mut desc, _, ann| {
                     match ann {
-                        Either::Right(MarkerAnnotation { refinement, marker })
-                        | Either::Left(Annotation::Marker(MarkerAnnotation {
+                        | Annotation::Marker(MarkerAnnotation {
                             refinement,
                             marker,
-                        })) => {
+                        }) => {
                             assert!(refinement.on_self(), "Cannot refine a marker on a type (tried assigning refinement {refinement} to {:?})", desc.0);
-                            desc.2.push(*marker)
+                            desc.2.push(marker)
                         }
-                        Either::Left(Annotation::OType(id)) => desc.1.push(*id),
+                        Annotation::OType(id) => desc.1.push(id),
                         _ => panic!("Unexpected type of annotation {ann:?}"),
                     }
                     desc
@@ -513,8 +511,7 @@ fn def_info_for_item(id: DefId, markers: &MarkerCtx, tcx: TyCtxt) -> DefInfo {
         kind,
         src_info: src_loc_for_span(tcx.def_span(id), tcx),
         markers: markers
-            .combined_markers(id)
-            .cloned()
+            .all_markers_on_item(id)
             .map(|ann| paralegal_spdg::MarkerAnnotation {
                 marker: ann.marker,
                 on_return: ann.refinement.on_return(),
@@ -529,7 +526,7 @@ fn def_info_for_item(id: DefId, markers: &MarkerCtx, tcx: TyCtxt) -> DefInfo {
 /// reset it afterward).
 fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: Symbol, f: F) -> R {
     if matches!(opts.direct_debug(), LogLevelConfig::Targeted(s) if target.as_str() == s) {
-        with_temporary_logging_level(opts.verbosity(), f)
+        with_temporary_logging_level(opts.verbosity().unwrap_or(log::LevelFilter::Info), f)
     } else {
         f()
     }
@@ -669,7 +666,10 @@ impl<'tcx> CallChangeCallback<'tcx, K> for MyCallback<'tcx> {
         let changes = CallChanges::default();
 
         let judgement = self.judge.should_inline(&info);
-        debug!("Judgement for {:?}: {judgement}", info.callee.def_id(),);
+        debug!(
+            "Judgement for {}: {judgement}",
+            self.tcx.def_path_str(info.callee.def_id())
+        );
 
         let skip = match judgement {
             InlineJudgement::AbstractViaType(_) => SkipCall::Skip,

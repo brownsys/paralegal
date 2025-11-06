@@ -1,5 +1,6 @@
 //! Identifies the mutated places in a MIR instruction via modular approximation based on types.
 
+use either::Either;
 use flowistry_pdg::rustc_portable::Place;
 use itertools::Itertools;
 use log::trace;
@@ -34,7 +35,7 @@ pub struct Mutation<'tcx> {
     pub mutated: Place<'tcx>,
 
     /// The set of inputs to the mutating operation.
-    pub inputs: Vec<(PlaceOrConst<'tcx>, Option<u8>)>,
+    pub inputs: Vec<(PlaceOrConst<'tcx>, Option<u16>)>,
 
     #[allow(dead_code)]
     /// The certainty of whether the mutation is happening.
@@ -53,6 +54,7 @@ where
 {
     f: F,
     place_info: &'a PlaceInfo<'tcx>,
+    ty_env: ty::TypingEnv<'tcx>,
     time: Time,
     strict: bool,
 }
@@ -84,9 +86,15 @@ where
     F: FnMut(Location, Mutation<'tcx>),
 {
     /// Constructs a new visitor.
-    pub fn new(place_info: &'a PlaceInfo<'tcx>, f: F, strict: bool) -> Self {
+    pub fn new(
+        place_info: &'a PlaceInfo<'tcx>,
+        ty_env: ty::TypingEnv<'tcx>,
+        f: F,
+        strict: bool,
+    ) -> Self {
         ModularMutationVisitor {
             place_info,
+            ty_env,
             f,
             time: Time::Unspecified,
             strict,
@@ -111,22 +119,33 @@ where
             // In the case of _1 = aggregate { field1: op1, field2: op2, ... },
             // then destructure this into a series of mutations like
             // _1.field1 = op1, _1.field2 = op2, and so on.
-            Rvalue::Aggregate(agg_kind, ops) => {
+            Rvalue::Aggregate(agg_kind, original_ops) => {
+                let mut ops = Either::Left(original_ops.iter_enumerated());
                 let (mutated, tys) = match &**agg_kind {
-                    AggregateKind::Adt(def_id, idx, substs, _, _) => {
+                    AggregateKind::Adt(def_id, idx, substs, _, active) => {
                         let adt_def = tcx.adt_def(*def_id);
                         let variant = adt_def.variant(*idx);
-                        let mutated = match adt_def.adt_kind() {
+                        let kind = adt_def.adt_kind();
+                        let mutated = match kind {
                             AdtKind::Enum => mutated.project_deeper(
                                 &[ProjectionElem::Downcast(Some(variant.name), *idx)],
                                 tcx,
                             ),
                             AdtKind::Struct | AdtKind::Union => *mutated,
                         };
-                        let fields = variant.fields.iter();
-                        let tys = fields
-                            .map(|field| field.ty(tcx, substs))
-                            .collect::<Vec<_>>();
+                        let tys = if matches!(kind, AdtKind::Union) {
+                            let active_idx = active.unwrap();
+                            ops = Either::Right(
+                                [(active_idx, &original_ops[FieldIdx::from_usize(0)])].into_iter(),
+                            );
+                            vec![variant.fields[active_idx].ty(tcx, substs)]
+                        } else {
+                            variant
+                                .fields
+                                .iter()
+                                .map(|field| field.ty(tcx, substs))
+                                .collect::<Vec<_>>()
+                        };
                         (mutated, tys)
                     }
                     AggregateKind::Tuple => {
@@ -143,15 +162,15 @@ where
                 if tys.is_empty() {
                     return false;
                 }
-                let fields =
-                    tys.into_iter()
-                        .enumerate()
-                        .zip(ops.iter())
-                        .map(|((i, ty), input_op)| {
-                            let field = PlaceElem::Field(FieldIdx::from_usize(i), ty);
-                            let input_place = input_op.as_place();
-                            (mutated.project_deeper(&[field], tcx), input_place)
-                        });
+                #[cfg(debug_assertions)]
+                let ops = ops.into_iter().collect::<Vec<_>>();
+                #[cfg(debug_assertions)]
+                assert_eq!(tys.len(), ops.len());
+                let fields = tys.into_iter().zip(ops).map(|(ty, (i, input_op))| {
+                    let field = PlaceElem::Field(i, ty);
+                    let input_place = input_op.as_place();
+                    (mutated.project_deeper(&[field], tcx), input_place)
+                });
                 for (mutated, input) in fields {
                     match input {
                         // If we have an aggregate of aggregates, then recursively destructure sub-aggregates
@@ -266,7 +285,7 @@ where
         let arg_place_inputs = arg_places
             .iter()
             .copied()
-            .map(|(i, arg)| (arg, Some(i as u8)))
+            .map(|(i, arg)| (arg, Some(i as u16)))
             .collect::<Vec<_>>();
 
         if matches!(self.time, Time::Unspecified | Time::Before) {
@@ -287,7 +306,7 @@ where
                         mutated: arg,
                         inputs,
                         status: MutationStatus::Definitely,
-                        is_arg: Use::Arg(i as u8),
+                        is_arg: Use::Arg(i as u16),
                     },
                 );
             }
@@ -334,8 +353,12 @@ where
         if self.handle_special_rvalues(mutated, rvalue, location) {
             return;
         }
-        let mut collector =
-            PlaceAndConstCollector::new(self.place_info.tcx, self.place_info.body, self.strict);
+        let mut collector = PlaceAndConstCollector::new(
+            self.place_info.tcx,
+            self.place_info.body,
+            self.ty_env,
+            self.strict,
+        );
         collector.visit_rvalue(rvalue, location);
         let inputs = collector
             .values
@@ -368,7 +391,7 @@ where
                 self.place_info.body,
                 self.place_info.def_id,
             );
-            let mut arg_places = arg_places(self.place_info.tcx, args, self.strict);
+            let mut arg_places = arg_places(self.place_info.tcx, args, self.ty_env, self.strict);
             arg_places.retain(|(_, place)| {
                 place
                     .place()
@@ -393,6 +416,7 @@ where
 fn arg_places<'tcx>(
     tcx: ty::TyCtxt<'tcx>,
     args: &[Spanned<Operand<'tcx>>],
+    ty_env: ty::TypingEnv<'tcx>,
     strict: bool,
 ) -> Vec<(usize, PlaceOrConst<'tcx>)> {
     args.iter()
@@ -400,7 +424,9 @@ fn arg_places<'tcx>(
         .filter_map(|(i, arg)| {
             Some((
                 i,
-                PlaceOrConst::from_operand_default_policy(tcx, &arg.node, arg.span, strict)?,
+                PlaceOrConst::from_operand_default_policy(
+                    tcx, &arg.node, ty_env, arg.span, strict,
+                )?,
             ))
         })
         .collect::<Vec<_>>()
@@ -410,15 +436,22 @@ struct PlaceAndConstCollector<'tcx, 'a> {
     values: Vec<PlaceOrConst<'tcx>>,
     tcx: ty::TyCtxt<'tcx>,
     body: &'a mir::Body<'tcx>,
+    ty_env: ty::TypingEnv<'tcx>,
     strict: bool,
 }
 
 impl<'tcx, 'a> PlaceAndConstCollector<'tcx, 'a> {
-    fn new(tcx: ty::TyCtxt<'tcx>, body: &'a mir::Body<'tcx>, strict: bool) -> Self {
+    fn new(
+        tcx: ty::TyCtxt<'tcx>,
+        body: &'a mir::Body<'tcx>,
+        ty_env: ty::TypingEnv<'tcx>,
+        strict: bool,
+    ) -> Self {
         Self {
             values: Vec::new(),
             tcx,
             body,
+            ty_env,
             strict,
         }
     }
@@ -433,6 +466,7 @@ impl<'tcx> Visitor<'tcx> for PlaceAndConstCollector<'tcx, '_> {
         if let Some(pc) = PlaceOrConst::from_operand_default_policy(
             self.tcx,
             operand,
+            self.ty_env,
             self.body.source_info(location).span,
             self.strict,
         ) {

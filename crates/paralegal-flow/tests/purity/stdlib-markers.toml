@@ -1,0 +1,239 @@
+# Trusted modules
+
+[["alloc::vec"]]
+marker = "std:vec"
+_internal_can_fail_resolve_silently = true
+_internal_on_all_module_children = true
+
+[["alloc::vec"]]
+marker = "std:slice"
+_internal_can_fail_resolve_silently = true
+_internal_on_all_module_children = true
+
+[["core::slice"]]
+marker = "std:slice"
+_internal_can_fail_resolve_silently = true
+_internal_on_all_module_children = true
+
+[["alloc::string"]]
+marker = "std:string"
+_internal_can_fail_resolve_silently = true
+_internal_on_all_module_children = true
+
+[["std::collection::hash_map"]]
+marker = "std:hashmap"
+_internal_can_fail_resolve_silently = true
+_internal_on_all_module_children = true
+
+[["std::collection::btree"]]
+marker = "std:btree"
+_internal_can_fail_resolve_silently = true
+_internal_on_all_module_children = true
+
+# Impls of global allocator.
+# "alloc::alloc::\{impl#0\}",
+# Since Artem uses regexes this is enough, we use the module and impl instead
+[["alloc::alloc::Global"]]
+marker = "std:allocation"
+_internal_can_fail_resolve_silently = true
+_internal_on_all_module_children = true
+
+# allowed functions
+
+# Panicking infrastructure.
+[["core::panicking::assert_failed"]]
+marker = "std:panic"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["core::panicking::const_panic_fmt"]]
+marker = "std:panic"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["core::panicking::panic"]]
+marker = "std:panic"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["core::panicking::panic_display"]]
+marker = "std:panic"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["core::panicking::panic_fmt"]]
+marker = "std:panic"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["core::panicking::panic_nounwind"]]
+marker = "std:panic"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["core::panicking::panic_nounwind_fmt"]]
+marker = "std:panic"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+# Couldn't find this one in the actual source code
+# "core::panicking::panic_str",
+[["core::panicking::unreachable_display"]]
+marker = "std:panic"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+# Alloc infrastructure.
+[["alloc::alloc::alloc"]]
+marker = "std:allocation"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["alloc::alloc::alloc_zeroed"]]
+marker = "std:allocation"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["alloc::alloc::dealloc"]]
+marker = "std:allocation"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["alloc::alloc::realloc"]]
+marker = "std:allocation"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+# Since Artem uses regexes this is enough, we use the module and impl instead.
+# I was hoping I could just put the impl into the allowed modules, but the parser
+# complains, so instead I have the functions separately here.
+# "alloc::alloc::\{impl#1\}",
+[["<alloc::alloc::Global as alloc::alloc::Allocator>::grow"]]
+marker = "std:allocation"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["<alloc::alloc::Global as alloc::alloc::Allocator>::deallocate"]]
+marker = "std:allocation"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["<alloc::alloc::Global as alloc::alloc::Allocator>::shrink"]]
+marker = "std:allocation"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+# Alloc error handler.
+[["alloc::alloc::__rust_alloc_error_handler"]]
+marker = "std:allocation"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["<core::ascii::Char as alloc::string::ToString>::to_string"]]
+marker = "std:convert"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["<char as alloc::string::ToString>::to_string"]]
+marker = "std:convert"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["<bool as alloc::string::ToString>::to_string"]]
+marker = "std:convert"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["<u8 as alloc::string::ToString>::to_string"]]
+marker = "std:convert"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["<i8 as alloc::string::ToString>::to_string"]]
+marker = "std:convert"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["<alloc::string::String as alloc::string::ToString>::to_string"]]
+marker = "std:convert"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+# Can parse, but we don't support the lifetime parameter in *our* resolution code
+# "<alloc::borrow::Cow<'_, str> as alloc::string::ToString>::to_string",
+
+# Format strings.
+[["core::fmt::Formatter::new"]]
+marker = "std:fmt"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["alloc::fmt::format"]]
+marker = "std:fmt"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+# "core::fmt::rt::\{impl#1\}::new",
+
+# Rust 1.70 calls to memcmp to compare slices.
+# This is removed in further versions.
+# "core::slice::cmp::\{extern#0\}::memcmp",
+
+# Architecture-dependent intrinsics.
+# "core::core_arch",
+# Pointer-address conversion primitives.
+# Couldn't find this in the source
+# "core::ptr::invalid",
+# Couldn't find this in the source
+# "core::ptr::invalid_mut",
+# This rewrite will likely fail
+# "core::ptr::const_ptr::addr", *
+# Actually it works parsing wise but gets "UnsupportedType", because it's not a regular ADT type. So needs some more filling in holes in `resolve`.
+# "<*const _>::addr",
+# This rewrite will likely fail
+# "core::ptr::mut_ptr::addr", *
+# Same result around resolving this sort of type
+# "<*mut _>::addr",
+[["core::ptr::alignment::Alignment::new_unchecked"]]
+marker = "std:allocation"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+
+# markers for microtesting
+
+[["crate::MyStruct"]]
+marker = "ignore"
+on_return = true
+_internal_on_all_module_children = true
+
+
+[["crate::my_mod"]]
+marker = "ignore"
+on_return = true
+_internal_on_all_module_children = true

@@ -11,7 +11,7 @@ pub use flowistry_pdg_construction::utils::is_virtual;
 pub use paralegal_spdg::{ShortHash, TinyBitSet};
 
 use rustc_ast as ast;
-use rustc_data_structures::intern::Interned;
+use rustc_data_structures::{fx::FxHashSet, intern::Interned};
 use rustc_hir::{
     self as hir,
     def::{DefKind, Res},
@@ -26,7 +26,7 @@ use rustc_middle::{
 use rustc_span::{symbol::Ident, Span as RustSpan, Span};
 use rustc_target::spec::abi::Abi;
 
-use std::cmp::Ordering;
+use std::{cell::RefCell, cmp::Ordering, pin::Pin};
 
 mod print;
 pub mod resolve;
@@ -100,6 +100,13 @@ pub fn get_parent(tcx: TyCtxt, did: DefId) -> Option<DefId> {
         .find_by_name_and_kind(tcx, ident, kind, r#trait)?
         .def_id;
     Some(id)
+}
+
+pub fn is_function_like(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    matches!(
+        tcx.def_kind(did),
+        DefKind::Fn | DefKind::AssocFn | DefKind::Closure
+    )
 }
 
 pub fn entrypoint_is_async<'tcx>(
@@ -765,4 +772,92 @@ pub fn type_for_constructor(tcx: TyCtxt, def_id: DefId) -> DefId {
             panic!("Expected a variant or struct, got {other:?}");
         }
     }
+}
+
+#[derive(Default)]
+/// A lazily filled contiguous cache of values indexed by integers.
+pub struct ContiguousIntCache<T>(RefCell<Vec<Pin<Box<T>>>>);
+
+impl<T> ContiguousIntCache<T> {
+    pub fn new() -> Self {
+        Self(RefCell::new(Vec::new()))
+    }
+
+    /// Returns a reference corresponding to the given index key. Note that, if
+    /// the index is not yet found in the cache, it and all values with lower
+    /// indices are created and inserted. As such the initialization function
+    /// `f` is called for each missing index and must support creating all of
+    /// these values.
+    pub fn get_or_insert<'s>(&'s self, index: usize, f: impl Fn(usize) -> T) -> &'s T {
+        {
+            let mut m = self.0.borrow_mut();
+            let mut i = m.len();
+            if index >= m.len() {
+                m.resize_with(index + 1, || {
+                    let v = Box::pin(f(i));
+                    i += 1;
+                    v
+                });
+            }
+        }
+        unsafe { std::mem::transmute::<&'_ T, &'s T>(&*self.0.borrow()[index]) }
+    }
+
+    pub fn try_get<'s>(&'s self, index: usize) -> Option<&'s T> {
+        unsafe {
+            std::mem::transmute::<Option<&'_ T>, Option<&'s T>>(
+                self.0.borrow().get(index).map(|v| &**v),
+            )
+        }
+    }
+}
+
+pub fn flatten_child_items(
+    tcx: ty::TyCtxt,
+    modules: impl IntoIterator<Item = DefId>,
+) -> FxHashSet<DefId> {
+    use rustc_hir::def::DefKind;
+    let mut queue: Vec<_> = modules.into_iter().collect();
+    let mut seen = FxHashSet::default();
+    seen.extend(queue.iter().cloned());
+    let mut result = FxHashSet::default();
+
+    while let Some(module) = queue.pop() {
+        let children = match tcx.def_kind(module) {
+            DefKind::Mod => Box::new(
+                if let Some(local) = module.as_local() {
+                    tcx.module_children_local(local)
+                } else {
+                    tcx.module_children(module)
+                }
+                .iter()
+                .filter_map(|c| c.res.opt_def_id()),
+            ) as Box<dyn Iterator<Item = DefId>>,
+            DefKind::Impl { .. } => Box::new(
+                tcx.associated_items(module)
+                    .in_definition_order()
+                    .map(|i| i.def_id),
+            ) as Box<_>,
+            DefKind::Struct | DefKind::Enum => {
+                Box::new(tcx.inherent_impls(module).iter().copied()) as Box<_>
+            }
+            _ => continue,
+        };
+        for id in children {
+            match tcx.def_kind(id) {
+                DefKind::Struct | DefKind::Enum | DefKind::Mod | DefKind::Impl { .. }
+                    if !seen.contains(&id) =>
+                {
+                    seen.insert(id);
+                    queue.push(id);
+                }
+                DefKind::Fn | DefKind::AssocFn | DefKind::Closure => {
+                    result.insert(id);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    result
 }

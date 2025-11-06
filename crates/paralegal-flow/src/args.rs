@@ -15,6 +15,7 @@
 
 use anyhow::Error;
 use clap::ValueEnum;
+use env_logger::Builder;
 use flowistry_pdg_construction::source_access::std_crates;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hash::FxHashMap;
@@ -103,14 +104,15 @@ impl TryFrom<ClapArgs> for Args {
             Some(target) if !target.is_empty() => LogLevelConfig::Targeted(target),
             _ => LogLevelConfig::Disabled,
         };
+        anactrl.include_std |= marker_control.side_effect_markers;
         let verbosity = if trace {
-            log::LevelFilter::Trace
+            Some(log::LevelFilter::Trace)
         } else if debug {
-            log::LevelFilter::Debug
+            Some(log::LevelFilter::Debug)
         } else if verbose {
-            log::LevelFilter::Info
+            Some(log::LevelFilter::Info)
         } else {
-            log::LevelFilter::Warn
+            None
         };
         Ok(Args {
             verbosity,
@@ -138,7 +140,7 @@ pub enum Debugger {
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Args {
     /// Print additional logging output (up to the "info" level)
-    verbosity: log::LevelFilter,
+    verbosity: Option<log::LevelFilter>,
     log_level_config: LogLevelConfig,
     /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     result_path: std::path::PathBuf,
@@ -165,7 +167,7 @@ pub struct Args {
 impl Default for Args {
     fn default() -> Self {
         Self {
-            verbosity: log::LevelFilter::Info,
+            verbosity: None,
             log_level_config: LogLevelConfig::Disabled,
             result_path: PathBuf::from(paralegal_spdg::FLOW_GRAPH_OUT_NAME),
             relaxed: true,
@@ -377,7 +379,7 @@ impl Args {
         self.result_path.as_path()
     }
     /// Should we output additional log messages (level `info`)
-    pub fn verbosity(&self) -> log::LevelFilter {
+    pub fn verbosity(&self) -> Option<log::LevelFilter> {
         self.verbosity
     }
     /// Warn instead of crashing the program in case of non-fatal errors
@@ -417,20 +419,23 @@ impl Args {
     }
 
     pub fn setup_logging(&self) {
-        let lvl = self.verbosity();
-        // //let lvl = log::LevelFilter::Debug;
-        if simple_logger::SimpleLogger::new()
-            .with_level(lvl)
-            .with_module_level("flowistry", log::LevelFilter::Error)
-            .with_module_level("flowistry_pdg", lvl)
-            .with_module_level("rustc_utils", log::LevelFilter::Error)
-            .without_timestamps()
-            .init()
-            .is_ok()
-            && matches!(*self.direct_debug(), LogLevelConfig::Targeted(..))
-        {
+        self.try_setup_logging().unwrap()
+    }
+
+    pub fn try_setup_logging(&self) -> Result<(), log::SetLoggerError> {
+        let mut logger = Builder::from_default_env();
+        if let Some(lvl) = self.verbosity() {
+            logger
+                .filter_level(lvl)
+                .filter_module("flowistry", log::LevelFilter::Error)
+                .filter_module("flowistry_pdg", lvl)
+                .filter_module("rustc_utils", log::LevelFilter::Error);
+        };
+        logger.format_timestamp(None).try_init()?;
+        if matches!(*self.direct_debug(), LogLevelConfig::Targeted(..)) {
             log::set_max_level(log::LevelFilter::Warn);
         }
+        Ok(())
     }
 }
 
@@ -458,11 +463,21 @@ pub struct MarkerControl {
     /// `dump_serialized_flow_graph`.
     #[clap(long, env)]
     external_annotations: Option<std::path::PathBuf>,
+
+    /// Whether to automatically mark possibly side-effecting functions.
+    ///
+    /// Implies `--include-std`.
+    #[clap(long, env)]
+    side_effect_markers: bool,
 }
 
 impl MarkerControl {
     pub fn external_annotations(&self) -> Option<&std::path::Path> {
         self.external_annotations.as_deref()
+    }
+
+    pub fn mark_side_effects(&self) -> bool {
+        self.side_effect_markers
     }
 }
 
@@ -497,6 +512,9 @@ struct ClapAnalysisCtrl {
     /// 0, if it is enabled it defaults to no limit.
     #[clap(long, conflicts_with = "no_interprocedural_analysis")]
     k_depth: Option<u32>,
+    /// Recompile the standard library and make the code available for analysis.
+    #[clap(long, env)]
+    include_std: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -513,6 +531,7 @@ pub struct AnalysisCtrl {
     #[serde(skip)]
     included_crate_cache: OnceLock<FxHashSet<CrateNum>>,
     no_pdg_cache: bool,
+    include_std: bool,
 }
 
 impl Default for AnalysisCtrl {
@@ -523,6 +542,7 @@ impl Default for AnalysisCtrl {
             include: Default::default(),
             no_pdg_cache: false,
             included_crate_cache: OnceLock::new(),
+            include_std: false,
         }
     }
 }
@@ -537,6 +557,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             no_interprocedural_analysis,
             no_adaptive_approximation,
             k_depth,
+            include_std,
         } = value;
 
         let inlining_depth = if no_interprocedural_analysis {
@@ -553,6 +574,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             include,
             no_pdg_cache,
             included_crate_cache: OnceLock::new(),
+            include_std,
         })
     }
 }
@@ -594,7 +616,11 @@ impl AnalysisCtrl {
         self.included_crate_cache
             .get_or_init(|| {
                 if self.include.is_empty() {
-                    let std_crates = std_crates(tcx).collect::<FxHashSet<_>>();
+                    let std_crates = if self.include_std {
+                        Default::default()
+                    } else {
+                        std_crates(tcx).collect::<FxHashSet<_>>()
+                    };
                     tcx.crates(())
                         .iter()
                         .copied()
@@ -640,6 +666,10 @@ impl AnalysisCtrl {
 
     pub fn pdg_cache(&self) -> bool {
         !self.no_pdg_cache
+    }
+
+    pub fn include_std(&self) -> bool {
+        self.include_std
     }
 }
 

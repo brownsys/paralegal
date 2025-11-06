@@ -329,6 +329,7 @@ impl<T> Allocative for SimpleSizedAllocativeWrapper<T> {
 pub enum Constant {
     Int(i64),
     Uint(u64),
+    Char(char),
     // Placeholder. Floats in the rust compiler are a bit weird so I'll skip them for now.
     //Float(f64),
     Bool(bool),
@@ -343,6 +344,9 @@ impl Constant {
     }
     pub fn uint(u: impl Into<u64>) -> Self {
         Self::Uint(u.into())
+    }
+    pub fn char(c: impl Into<char>) -> Self {
+        Self::Char(c.into())
     }
     pub fn bool(b: impl Into<bool>) -> Self {
         Self::Bool(b.into())
@@ -362,6 +366,7 @@ impl std::fmt::Display for Constant {
             Self::Bool(b) => Display::fmt(b, f),
             Self::Int(i) => Display::fmt(i, f),
             Self::Uint(u) => Display::fmt(u, f),
+            Self::Char(c) => Display::fmt(c, f),
             Self::String(s) => Debug::fmt(s, f),
             Self::Zst(s) => f.write_str(s),
             //Self::Unknown(u) => write!(f, "Unsupported constant: {u}"),

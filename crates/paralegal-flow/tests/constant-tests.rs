@@ -1,7 +1,7 @@
 #![feature(rustc_private)]
 
 use flowistry_pdg::Constant;
-use paralegal_flow::test_utils::{FlowsTo, InlineTestBuilder};
+use paralegal_flow::test_utils::FlowsTo;
 
 use paralegal_flow::inline_test;
 

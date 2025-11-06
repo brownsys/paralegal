@@ -362,6 +362,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
     > {
         ModularMutationVisitor::new(
             &results.analysis.place_info,
+            results.analysis.param_env,
             move |location, mutation| {
                 let place = results.analysis.normalize_place(&mutation.mutated);
                 let inputs = mutation
@@ -440,6 +441,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                     Box::new(AggregateKind::Tuple),
                     IndexVec::from_iter(args.iter().map(|op| op.node.clone())),
                 );
+
                 self.modular_mutation_visitor(results, state, strict)
                     .visit_assign(destination, &rvalue, location);
                 return false;
@@ -455,10 +457,12 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                 return false;
             }
         };
+        // XXX: We ignore constants here, but maybe they should actually be
+        // propagated up and into the PDG.
         let ctrl_inputs = constructor
             .find_control_inputs(location)
             .into_iter()
-            .map(|(place, loc, edge)| (self.get_place_node(place, loc).unwrap(), edge))
+            .filter_map(|(place, loc, edge)| Some((self.get_place_node(place, loc)?, edge)))
             .collect();
         self.inlined_calls
             .push((location, child_instance, k, ctrl_inputs));
@@ -642,12 +646,12 @@ pub type PdgCache<'tcx, K> = Rc<TwoLevelCache<Instance<'tcx>, K, Option<PartialG
 enum Input<'tcx> {
     Unresolved {
         place: Place<'tcx>,
-        use_: Option<u8>,
+        use_: Option<u16>,
     },
     Const {
         const_: Constant,
         span: rustc_span::Span,
-        is_arg: Option<u8>,
+        is_arg: Option<u16>,
     },
     Resolved {
         node: Node,

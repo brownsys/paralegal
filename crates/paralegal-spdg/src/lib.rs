@@ -892,7 +892,7 @@ pub struct NodeInfo {
     pub span: Span,
 
     /// Whether this node is an argument to a function call, and if so which
-    pub is_arg: Option<u8>,
+    pub is_arg: Option<u16>,
 }
 
 impl Display for NodeInfo {

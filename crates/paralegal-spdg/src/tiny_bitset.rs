@@ -1,5 +1,8 @@
 use crate::utils::display_list;
-use std::fmt::{Display, Formatter};
+use std::{
+    fmt::{Display, Formatter},
+    ops::Range,
+};
 
 use allocative::Allocative;
 #[cfg(feature = "rustc")]
@@ -122,6 +125,14 @@ impl FromIterator<u32> for TinyBitSet {
         for item in iter {
             slf.set(item)
         }
+        slf
+    }
+}
+
+impl From<Range<u32>> for TinyBitSet {
+    fn from(range: Range<u32>) -> Self {
+        let mut slf = Self::new_empty();
+        slf.set_range(range);
         slf
     }
 }

@@ -45,7 +45,7 @@ impl<'tcx> NodeKey<'tcx> {
         }
     }
 
-    pub fn for_const(constant: Constant, is_arg: Option<u8>, at: OneHopLocation) -> Self {
+    pub fn for_const(constant: Constant, is_arg: Option<u16>, at: OneHopLocation) -> Self {
         Self {
             kind: NodeKeyKind::Const { constant, is_arg },
             at,
@@ -60,7 +60,7 @@ enum NodeKeyKind<'tcx> {
         /// for constants we need to track which (if any) argument position they
         /// are in a call, because the same constant (e.g. false), can be input
         /// more than once in a function call.
-        is_arg: Option<u8>,
+        is_arg: Option<u16>,
     },
     Place(Place<'tcx>),
 }

@@ -1,5 +1,10 @@
 use super::{path_for_item, src_loc_for_span};
-use crate::{ann::MarkerAnnotation, desc::*, utils::*, HashMap, HashSet, MarkerCtx, Pctx};
+use crate::{
+    ann::{db::AutoMarkers, side_effect_detection},
+    desc::*,
+    utils::*,
+    HashMap, HashSet, MarkerCtx, Pctx,
+};
 use flowistry_pdg::rustc_portable::Location;
 use flowistry_pdg_construction::{
     determine_async,
@@ -181,7 +186,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         place: mir::Place,
         at: CallString,
         span: rustc_span::Span,
-        is_arg: Option<u8>,
+        is_arg: Option<u16>,
     ) -> GNode {
         GNode(self.graph.add_node(NodeInfo {
             at,
@@ -206,35 +211,35 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         self.pctx.marker_ctx()
     }
 
-    /// Fetch annotations item identified by this `id`.
-    ///
-    /// The callback is used to filter out annotations where the "refinement"
-    /// doesn't match. The idea is that the caller of this function knows
-    /// whether they are looking for annotations on an argument or return of a
-    /// function identified by this `id` or on a type and the callback should be
-    /// used to enforce this.
-    fn register_annotations_for_function(
-        &mut self,
-        node: GNode,
-        function: DefId,
-        mut filter: impl FnMut(&MarkerAnnotation) -> bool,
-    ) {
-        let parent = get_parent(self.tcx(), function);
-        let marker_ctx = self.marker_ctx().clone();
-        self.register_markers(
-            node,
-            marker_ctx
-                .combined_markers(function)
-                .chain(
-                    parent
-                        .into_iter()
-                        .flat_map(|parent| marker_ctx.combined_markers(parent)),
-                )
-                .filter(|ann| filter(ann))
-                .map(|ann| ann.marker),
-        );
-        self.known_def_ids.extend(parent);
-    }
+    // /// Fetch annotations item identified by this `id`.
+    // ///
+    // /// The callback is used to filter out annotations where the "refinement"
+    // /// doesn't match. The idea is that the caller of this function knows
+    // /// whether they are looking for annotations on an argument or return of a
+    // /// function identified by this `id` or on a type and the callback should be
+    // /// used to enforce this.
+    // fn register_annotations_for_function(
+    //     &mut self,
+    //     node: GNode,
+    //     function: DefId,
+    //     mut filter: impl FnMut(&MarkerAnnotation) -> bool,
+    // ) {
+    //     let parent = get_parent(self.tcx(), function);
+    //     let marker_ctx = self.marker_ctx().clone();
+    //     self.register_markers(
+    //         node,
+    //         marker_ctx
+    //             .combined_markers(function)
+    //             .chain(
+    //                 parent
+    //                     .into_iter()
+    //                     .flat_map(|parent| marker_ctx.combined_markers(parent)),
+    //             )
+    //             .filter(|ann| filter(ann))
+    //             .map(|ann| ann.marker),
+    //     );
+    //     self.known_def_ids.extend(parent);
+    // }
 
     /// Check if this node is of a marked type and register that type.
     fn handle_node_types<K: Clone>(
@@ -323,7 +328,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         &'a self,
         typ: mir::tcx::PlaceTy<'tcx>,
         deep: bool,
-    ) -> impl Iterator<Item = TypeId> + 'a {
+    ) -> impl Iterator<Item = TypeId> + use<'a, 'tcx> {
         if deep {
             Either::Left(self.marker_ctx().deep_type_markers(typ.ty).iter().copied())
         } else {
@@ -345,35 +350,34 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
 
         let body = self.pctx.body_cache().get(function.def_id()).body();
 
+        let ctx = self.marker_ctx().clone();
         match (leaf_loc, weight.place()) {
             (RichLocation::Start, Some(place))
                 if matches!(body.local_kind(place.local), mir::LocalKind::Arg) =>
             {
                 let arg_num = place.local.as_u32() - 1;
                 self.known_def_ids.extend([function_id]);
-                self.register_annotations_for_argument(node, arg_num, function_id);
+                self.register_markers(node, ctx.markers_on_argument(function_id, arg_num as u16))
             }
             (RichLocation::End, Some(place)) if place.local == mir::RETURN_PLACE => {
                 self.known_def_ids.extend([function_id]);
-                self.register_annotations_for_return(node, function_id);
+                self.register_markers(node, ctx.markers_on_return(function_id))
             }
             (RichLocation::Location(loc), _) => {
-                self.handle_node_annotations_for_regular_location(node, weight, body, loc, vis)
+                self.handle_node_annotations_for_regular_location(node, weight, body, loc, vis);
             }
             _ => (),
         }
     }
 
-    fn register_annotations_for_argument(&mut self, node: GNode, arg_num: u32, function_id: DefId) {
-        self.register_annotations_for_function(node, function_id, |ann| {
-            ann.refinement.on_argument().contains(arg_num).unwrap()
-        });
+    fn auto_markers(&self) -> &AutoMarkers {
+        self.pctx.marker_ctx().auto_markers()
     }
 
-    fn register_annotations_for_return(&mut self, node: GNode, function_id: DefId) {
-        self.register_annotations_for_function(node, function_id, |ann| ann.refinement.on_return());
-    }
-
+    // XXX: This code duplicates the auto-marker assignment logic from
+    // MarkerCtx::terminator_reachable_markers and
+    // MarkerCtx::get_reachable_markers but really there should be only one
+    // source of truth.
     /// Helper for `node_annotations` to handle the case where the node is at a `RichLocation::Location`.
     fn handle_node_annotations_for_regular_location<K: Clone>(
         &mut self,
@@ -385,6 +389,11 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     ) {
         let function = vis.current_function();
         let function_id = function.def_id();
+        let side_effects =
+            side_effect_detection::analyze_statement(body, loc, self.auto_markers(), self.tcx());
+        if !side_effects.is_empty() {
+            self.register_markers(node, side_effects);
+        }
         let crate::Either::Right(
             term @ mir::Terminator {
                 kind: mir::TerminatorKind::Call { func, .. },
@@ -394,7 +403,11 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         else {
             return;
         };
-        debug!("Assigning markers to {:?}", term.kind);
+        debug!(
+            "Assigning markers to {:?} in {:?}",
+            weight.place(),
+            term.kind
+        );
         let param_env = TypingEnv::post_analysis(self.tcx(), function.def_id());
         let func =
             try_monomorphize(function, self.tcx(), param_env, func, term.source_info.span).unwrap();
@@ -403,43 +416,52 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                 weight.span,
                 "SOUNDNESS: Cannot determine markers for function call",
             );
+            self.register_markers(node, [self.auto_markers().side_effect_unknown_fn_ptr]);
             return;
         };
         let (inst, args) = type_as_fn(self.tcx(), ty_of_const(funcc)).unwrap();
-        let f = if let Some(inst) = try_resolve_function(
+        let minst = if let Some(inst) = try_resolve_function(
             self.tcx(),
             inst,
             TypingEnv::post_analysis(self.tcx(), function_id),
             args,
         ) {
-            match handle_shims(inst, self.tcx(), param_env, weight.span) {
-                ShimResult::IsHandledShim { instance, .. } => instance,
-                ShimResult::IsNotShim => inst,
-                ShimResult::IsNonHandleableShim => {
-                    self.ctx().maybe_span_err(
-                        weight.span,
-                        "SOUNDNESS: Cannot determine markers for shim usage",
-                    );
-                    return;
-                }
-            }
-            .def_id()
+            Some(
+                match handle_shims(inst, self.tcx(), param_env, weight.span) {
+                    ShimResult::IsHandledShim { instance, .. } => instance,
+                    ShimResult::IsNotShim => inst,
+                    ShimResult::IsNonHandleableShim => {
+                        self.ctx().maybe_span_err(
+                            weight.span,
+                            "SOUNDNESS: Cannot determine markers for shim usage",
+                        );
+                        self.register_markers(node, [self.auto_markers().side_effect_unknown]);
+                        return;
+                    }
+                },
+            )
         } else {
-            debug!("Could not resolve {inst:?} properly during marker assignment");
-            inst
+            None
         };
+        let f = minst.map_or_else(
+            || {
+                debug!("Could not resolve {inst:?} properly during marker assignment");
+                self.register_markers(node, [self.auto_markers().side_effect_unknown]);
+                inst
+            },
+            |i| i.def_id(),
+        );
 
         self.known_def_ids.extend(Some(f));
 
+        self.known_def_ids.extend(get_parent(self.tcx(), f));
+        let ctx = self.marker_ctx().clone();
         match weight.use_ {
-            Use::Arg(arg) => {
-                self.register_annotations_for_function(node, f, |ann| {
-                    ann.refinement.on_argument().contains(arg as u32).unwrap()
-                });
-            }
-            Use::Return => {
-                self.register_annotations_for_function(node, f, |ann| ann.refinement.on_return());
-            }
+            _ if minst.is_some_and(|inst| {
+                side_effect_detection::is_allowed_as_clone_unit_instance(self.tcx(), inst)
+            }) => {}
+            Use::Arg(arg) => self.register_markers(node, ctx.markers_on_argument(f, arg)),
+            Use::Return => self.register_markers(node, ctx.markers_on_return(f)),
             Use::Other => (),
         }
     }
@@ -532,7 +554,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     arg.into(),
                     driver.globalize_location(&RichLocation::Start.into()),
                     base_body.local_decls[arg].source_info.span,
-                    Some((arg.as_u32() - 1) as u8),
+                    Some((arg.as_u32() - 1) as u16),
                 )
             })
             .collect::<Vec<_>>();
@@ -557,13 +579,14 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             )
         };
 
+        let ctx = self.marker_ctx().clone();
         // Register the new nodes and add potential markers
         for (arg_num, a) in args_as_nodes.iter().enumerate() {
-            self.register_annotations_for_argument(*a, arg_num as u32, def_id);
+            self.register_markers(*a, ctx.markers_on_argument(def_id, arg_num as u16));
             let local = mir::Local::from_usize(arg_num + 1);
             self.handle_node_types_helper(*a, mono_ty(local), &[]);
         }
-        self.register_annotations_for_return(return_node, def_id);
+        self.register_markers(return_node, ctx.markers_on_return(def_id));
         let local = mir::RETURN_PLACE;
         self.handle_node_types_helper(return_node, mono_ty(local), &[]);
 

@@ -9,22 +9,26 @@ use rustc_errors::FatalError;
 use rustc_middle::ty::TyCtxt;
 
 use crate::{
-    ann::dump_markers,
+    ann::{db::AutoMarkers, dump_markers},
     desc::{Identifier, ProgramDescription},
     utils::Print,
     Callbacks, HashSet, EXTRA_RUSTC_ARGS,
 };
-use std::hash::{Hash, Hasher};
-use std::process::Command;
 use std::{
     fmt::{Debug, Formatter},
     sync::Once,
 };
+use std::{
+    hash::{Hash, Hasher},
+    sync::atomic::AtomicU32,
+};
+use std::{process::Command, sync::atomic::Ordering};
 
 use paralegal_spdg::{
     traverse::{generic_flows_to, generic_influencers, EdgeSelection},
     utils::{display_list, write_sep},
-    DefInfo, DisplayPath, EdgeInfo, Endpoint, Node, NodeKind, TypeId, SPDG,
+    DefInfo, DisplayPath, EdgeInfo, Endpoint, InstructionInfo, InstructionKind, Node, NodeInfo,
+    NodeKind, TypeId, SPDG,
 };
 
 use flowistry_pdg::{CallString, Constant};
@@ -172,9 +176,9 @@ macro_rules! define_flow_test_template {
         $(#[$($attr)+])*
         fn $name() {
             assert!(*$analyze);
-            use_rustc(|| {
-                let graph = PreFrg::from_file_at($crate_name);
-                let $ctrl = graph.ctrl(stringify!($ctrl_name));
+            $crate::test_utils::use_rustc(|| {
+                let graph = $crate::test_utils::PreFrg::from_file_at($crate_name);
+                let $ctrl = $crate::test_utils::HasGraph::ctrl(&graph, stringify!($ctrl_name));
                 $block
             })
         }
@@ -185,18 +189,22 @@ macro_rules! define_flow_test_template {
 ///
 /// Start with [`InlineTestBuilder::new`], compile and run the test case with
 /// [`InlineTestBuilder::check`].
+#[derive(Clone)]
 pub struct InlineTestBuilder {
-    ctrl_name: String,
+    ctrl_name: Option<String>,
     input: String,
     extra_args: Vec<String>,
+    marker_file: Option<String>,
 }
 
 #[macro_export]
 macro_rules! inline_test {
     ($($t:tt)*) => {
-        InlineTestBuilder::new(stringify!($($t)*))
+        $crate::test_utils::InlineTestBuilder::new(stringify!($($t)*))
     };
 }
+
+static FILE_INDEX: AtomicU32 = AtomicU32::new(0);
 
 impl InlineTestBuilder {
     /// Constructor.
@@ -211,20 +219,22 @@ impl InlineTestBuilder {
     pub fn new(input: impl Into<String>) -> Self {
         Self {
             input: input.into(),
-            ctrl_name: "crate::main".into(),
+            ctrl_name: Some("crate::main".into()),
             extra_args: Default::default(),
+            marker_file: None,
         }
     }
 
     /// Chose a function as analysis entrypoint. Overwrites any previous choice
     /// without warning.
     pub fn with_entrypoint(&mut self, name: impl Into<String>) -> &mut Self {
-        self.ctrl_name = name.into();
+        self.ctrl_name = Some(name.into());
         self
     }
 
-    pub fn with_extra_args(&mut self, args: impl IntoIterator<Item = String>) -> &mut Self {
-        self.extra_args.extend(args);
+    pub fn with_extra_args<S: ToString>(&mut self, args: impl IntoIterator<Item = S>) -> &mut Self {
+        self.extra_args
+            .extend(args.into_iter().map(|s| s.to_string()));
         self
     }
 
@@ -234,12 +244,22 @@ impl InlineTestBuilder {
         assert!(res.is_err(), "the compiler existed successfully");
     }
 
+    pub fn without_entrypoint(&mut self) -> &mut Self {
+        self.ctrl_name = None;
+        self
+    }
+
+    pub fn with_marker_file(&mut self, marker_file: impl Into<String>) -> &mut Self {
+        self.marker_file = Some(marker_file.into());
+        self
+    }
+
     /// Compile the code, select the [`CtrlRef`] corresponding to the configured
     /// entrypoint and hand it to the `check` function which should contain the
     /// test predicate.
     pub fn check_ctrl(&self, check: impl FnOnce(CtrlRef) + Send) {
         self.run(|graph| {
-            let cref = graph.ctrl(&self.ctrl_name);
+            let cref = graph.ctrl(&self.ctrl_name.as_ref().unwrap());
             check(cref);
         })
         .unwrap()
@@ -261,14 +281,24 @@ impl InlineTestBuilder {
             args: crate::ClapArgs,
         }
 
-        let args = ["".into(), "--analyze".into(), self.ctrl_name.to_string()]
-            .into_iter()
-            .chain(self.extra_args.iter().cloned())
-            .collect::<Vec<_>>();
+        let mut args = vec!["".to_string()];
+        if let Some(e) = &self.ctrl_name {
+            args.extend(["--analyze".to_string(), e.clone()])
+        }
+        if let Some(m) = &self.marker_file {
+            let p = std::env::temp_dir().join(format!(
+                "markers-{}.toml",
+                FILE_INDEX.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::write(&p, m).unwrap();
+            args.push("--external-annotations".to_string());
+            args.push(p.to_str().unwrap().to_string());
+        }
+        args.extend(self.extra_args.iter().cloned());
 
         let args = crate::Args::try_from(TopLevelArgs::parse_from(args).args).unwrap();
 
-        args.setup_logging();
+        let _ = args.try_setup_logging();
 
         rustc_utils::test_utils::CompileBuilder::new(&self.input)
             .with_args(EXTRA_RUSTC_ARGS.iter().copied().map(ToOwned::to_owned))
@@ -298,6 +328,22 @@ pub trait HasGraph<'g>: Sized + Copy {
                 .iter()
                 .map(move |&id| FnRef { graph, ident: id }),
         )
+    }
+
+    fn has_function(self, name: impl AsRef<str>) -> bool {
+        let name = Identifier::new_intern(name.as_ref());
+        self.graph().name_map.contains_key(&name)
+    }
+
+    fn markers(self) -> HashSet<Identifier> {
+        let graph = self.graph();
+        graph
+            .desc
+            .controllers
+            .values()
+            .flat_map(|c| c.markers.values())
+            .flat_map(|b| b.iter().cloned())
+            .collect()
     }
 
     fn marked_types(&self, marker: Identifier) -> Vec<TypeId> {
@@ -439,6 +485,29 @@ impl<'g> HasGraph<'g> for &CtrlRef<'g> {
     fn graph(self) -> &'g PreFrg {
         self.graph.graph()
     }
+
+    fn markers(self) -> HashSet<Identifier> {
+        self.ctrl
+            .markers
+            .values()
+            .flat_map(|b| b.iter().cloned())
+            .collect()
+    }
+
+    fn has_function(self, name: impl AsRef<str>) -> bool {
+        let name = Identifier::new_intern(name.as_ref());
+        self.graph().name_map.get(&name).is_some_and(|f| {
+            let set = f.iter().cloned().collect::<HashSet<_>>();
+            self.ctrl.graph.node_references()
+                .any(|n| {
+                    let found = matches!(self.graph.desc.instruction_info[&n.1.at.leaf()], InstructionInfo { kind: InstructionKind::FunctionCall(f), .. } if set.contains(&f.id));
+                    if found {
+                        println!("Found call to {name} in {}", n.1);
+                    }
+                    found
+                })
+        })
+    }
 }
 
 impl<'g> CtrlRef<'g> {
@@ -560,6 +629,28 @@ impl<'g> CtrlRef<'g> {
         self.constants()
             .find(|&(_, c)| c == constant)
             .map(|(n, _)| n)
+    }
+
+    pub fn assert_purity(&self, pure: bool) {
+        let auto_markers = AutoMarkers::default();
+        let defined = self.markers();
+        let auto = auto_markers.all();
+        let contained = auto
+            .iter()
+            .filter(|m| defined.contains(m))
+            .collect::<Vec<_>>();
+        assert!(
+            !pure ^ contained.is_empty(),
+            "Expected {}side effects, found {:?}",
+            if pure { "no " } else { "" },
+            contained
+        );
+    }
+
+    pub fn side_effect_nodes(&'g self) -> impl Iterator<Item = NodeRef<'g>> {
+        let auto_markers = AutoMarkers::default();
+        let auto = auto_markers.all();
+        auto.into_iter().flat_map(|m| self.marked(m))
     }
 }
 
@@ -686,6 +777,53 @@ impl Debug for NodeRefs<'_> {
     }
 }
 
+pub struct NodeRefsIter<'g> {
+    nodes: std::vec::IntoIter<Node>,
+    graph: &'g CtrlRef<'g>,
+}
+
+impl<'g> Iterator for NodeRefsIter<'g> {
+    type Item = NodeRef<'g>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.nodes.next().map(|node| NodeRef {
+            node,
+            graph: self.graph,
+        })
+    }
+}
+
+impl<'g> IntoIterator for NodeRefs<'g> {
+    type Item = NodeRef<'g>;
+    type IntoIter = NodeRefsIter<'g>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        NodeRefsIter {
+            nodes: self.nodes.into_iter(),
+            graph: self.graph,
+        }
+    }
+}
+
+impl<'g> FromIterator<NodeRef<'g>> for NodeRefs<'g> {
+    fn from_iter<T: IntoIterator<Item = NodeRef<'g>>>(iter: T) -> Self {
+        let mut i = iter.into_iter();
+        let one = i
+            .next()
+            .expect("Cannot build node refs from empty iterator");
+        Self {
+            nodes: [one.node]
+                .into_iter()
+                .chain(i.map(|n| {
+                    assert!(n.graph.id() == one.graph.id());
+                    n.node
+                }))
+                .collect(),
+            graph: one.graph,
+        }
+    }
+}
+
 impl<'g> NodeRefs<'g> {
     pub fn nth(&self, i: usize) -> Option<NodeRef<'g>> {
         Some(NodeRef {
@@ -714,7 +852,7 @@ pub struct NodeRef<'g> {
 
 impl Debug for NodeRef<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let weight = self.graph.ctrl.graph.node_weight(self.node).unwrap();
+        let weight = self.info();
         f.debug_struct("NodeRef")
             .field("node", &self.node)
             .field("description", &weight.kind)
@@ -733,6 +871,15 @@ impl<'g> HasGraph<'g> for &NodeRef<'g> {
 impl NodeRef<'_> {
     pub fn node(&self) -> Node {
         self.node
+    }
+
+    pub fn info(&self) -> &NodeInfo {
+        self.graph.ctrl.graph.node_weight(self.node).unwrap()
+    }
+
+    pub fn instruction_info(&self) -> &InstructionInfo {
+        let g = self.graph();
+        &g.desc.instruction_info[&self.info().at.leaf()]
     }
 }
 

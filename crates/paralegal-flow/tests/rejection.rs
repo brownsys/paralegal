@@ -84,8 +84,8 @@ fn allow_trait() {
             }
         }
 
-        fn main() {
-            Some(S).clone();
+        fn main(s: S) {
+            Some(s).clone();
         }
 
 
