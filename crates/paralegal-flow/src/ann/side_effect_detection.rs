@@ -1,4 +1,4 @@
-use std::{collections::HashSet, sync::OnceLock};
+use std::collections::HashSet;
 
 use flowistry_pdg_construction::utils::is_virtual;
 use paralegal_spdg::Identifier;
@@ -9,11 +9,7 @@ use rustc_middle::{mir, ty};
 
 use either::Either;
 
-use crate::{
-    ann::db::AutoMarkers,
-    utils::{flatten_child_items, resolve},
-    MarkerCtx,
-};
+use crate::{ann::db::AutoMarkers, MarkerCtx};
 
 const ALLOWED_INTRINSICS: &[&str] = &[
     // Prefetching.
@@ -163,115 +159,6 @@ pub(super) fn allowed_intrinsics() -> FxHashSet<rustc_span::Symbol> {
         .collect()
 }
 
-const ALLOWED_FUNCTIONS: &[&str] = &[
-    // Panicking infrastructure.
-    "core::panicking::assert_failed",
-    "core::panicking::const_panic_fmt",
-    "core::panicking::panic",
-    "core::panicking::panic_display",
-    "core::panicking::panic_fmt",
-    "core::panicking::panic_nounwind",
-    "core::panicking::panic_nounwind_fmt",
-    // Couldn't find this one in the actual source code
-    // "core::panicking::panic_str",
-    "core::panicking::unreachable_display",
-    // Alloc infrastructure.
-    "alloc::alloc::alloc",
-    "alloc::alloc::alloc_zeroed",
-    "alloc::alloc::dealloc",
-    "alloc::alloc::realloc",
-    // Since Artem uses regexes this is enough, we use the module and impl instead.
-    // I was hoping I could just put the impl into the allowed modules, but the parser
-    // complains, so instead I have the functions separately here.
-    // "alloc::alloc::\{impl#1\}",
-    "<alloc::alloc::Global as alloc::alloc::Allocator>::grow",
-    "<alloc::alloc::Global as alloc::alloc::Allocator>::deallocate",
-    "<alloc::alloc::Global as alloc::alloc::Allocator>::shrink",
-    // Alloc error handler.
-    "alloc::alloc::__rust_alloc_error_handler",
-    // Format chrono.
-    "chrono::naive::datetime::format",
-    "<core::ascii::Char as alloc::string::ToString>::to_string",
-    "<char as alloc::string::ToString>::to_string",
-    "<bool as alloc::string::ToString>::to_string",
-    "<u8 as alloc::string::ToString>::to_string",
-    "<i8 as alloc::string::ToString>::to_string",
-    "<alloc::string::String as alloc::string::ToString>::to_string",
-    // Can parse, but we don't support the lifetime parameter in *our* resolution code
-    // "<alloc::borrow::Cow<'_, str> as alloc::string::ToString>::to_string",
-    "core::fmt::Formatter::new",
-    // Format strings.
-    "alloc::fmt::format",
-    // "core::fmt::rt::\{impl#1\}::new",
-
-    // Rust 1.70 calls to memcmp to compare slices.
-    // This is removed in further versions.
-    // "core::slice::cmp::\{extern#0\}::memcmp",
-
-    // Architecture-dependent intrinsics.
-    "core::core_arch",
-    // Pointer-address conversion primitives.
-    // Couldn't find this in the source
-    // "core::ptr::invalid",
-    // Couldn't find this in the source
-    // "core::ptr::invalid_mut",
-    // This rewrite will likely fail
-    // "core::ptr::const_ptr::addr", *
-    // Actually it works parsing wise but gets "UnsupportedType", because it's not a regular ADT type. So needs some more filling in holes in `resolve`.
-    // "<*const _>::addr",
-    // This rewrite will likely fail
-    // "core::ptr::mut_ptr::addr", *
-    // Same result around resolving this sort of type
-    // "<*mut _>::addr",
-    "core::ptr::alignment::Alignment::new_unchecked",
-    // Not sure why this is needed, but it gets marked as "virtual" otherwise
-    "<() as std::clone::Clone>::clone",
-];
-
-const TRUSTED_MODULES: &[&str] = &[
-    "alloc::vec",
-    "alloc::slice",
-    "core::slice",
-    "alloc::string",
-    "std::collections::hash_map",
-    "alloc::collections::btree",
-    // Impls of global allocator.
-    // "alloc::alloc::\{impl#0\}",
-    // Since Artem uses regexes this is enough, we use the module and impl instead
-    "alloc::alloc::Global",
-];
-
-// static RESOLVED_ALLOWED_ITEMS: OnceLock<FxHashSet<DefId>> = OnceLock::new();
-
-pub fn is_allowed(_def_id: DefId, _tcx: ty::TyCtxt<'_>) -> bool {
-    return false;
-    // let resolve = |name| match resolve::resolve_string_to_def_id(tcx, name) {
-    //     Ok(resolve::Res::Def(_, did)) => Some(did),
-    //     Ok(other) => {
-    //         tcx.dcx().err(format!(
-    //             "Expected to resolve to a definition, got {:?}",
-    //             other
-    //         ));
-    //         None
-    //     }
-    //     Err(e) => {
-    //         // We allow this case so that we can add functions from external crates to the allowlist
-    //         if !matches!(e, resolve::ResolutionError::CouldNotResolveCrate(_)) {
-    //             tcx.dcx().err(format!("Error resolving {name}: {:?}", e));
-    //         }
-    //         None
-    //     }
-    // };
-    // RESOLVED_ALLOWED_ITEMS
-    //     .get_or_init(|| {
-    //         let mut set =
-    //             flatten_child_items(tcx, TRUSTED_MODULES.iter().filter_map(|name| resolve(name)));
-    //         set.extend(ALLOWED_FUNCTIONS.iter().filter_map(|name| resolve(name)));
-    //         set
-    //     })
-    //     .contains(&def_id)
-}
-
 pub fn is_allowed_as_clone_unit_instance<'tcx>(
     tcx: ty::TyCtxt<'tcx>,
     instance: ty::Instance<'tcx>,
@@ -284,15 +171,10 @@ pub fn is_allowed_as_clone_unit_instance<'tcx>(
 }
 
 pub fn analyze_body<'tcx, 'b>(
-    def_id: DefId,
     body: &'b mir::Body<'tcx>,
     auto_markers: &AutoMarkers,
     tcx: ty::TyCtxt<'tcx>,
 ) -> FxHashSet<Identifier> {
-    if is_allowed(def_id, tcx) {
-        return FxHashSet::default();
-    }
-
     use mir::visit::Visitor;
     let mut analyzer = BodyAnalyzer::new(body, auto_markers, tcx);
     analyzer.visit_body(body);
@@ -300,16 +182,11 @@ pub fn analyze_body<'tcx, 'b>(
 }
 
 pub fn analyze_statement<'tcx, 'b>(
-    def_id: DefId,
     body: &'b mir::Body<'tcx>,
     location: mir::Location, // we take location here so we can guarantee that the statement is within the body
     auto_markers: &AutoMarkers,
     tcx: ty::TyCtxt<'tcx>,
 ) -> FxHashSet<Identifier> {
-    if is_allowed(def_id, tcx) {
-        return FxHashSet::default();
-    }
-
     use mir::visit::Visitor;
 
     let mut analyzer = BodyAnalyzer::new(body, auto_markers, tcx);
@@ -359,7 +236,7 @@ impl<'tcx, 'b> mir::visit::Visitor<'tcx> for BodyAnalyzer<'tcx, 'b> {
         context: mir::visit::PlaceContext,
         location: mir::Location,
     ) {
-        if matches!(projection_elem, mir::ProjectionElem::Deref,) {
+        if matches!(projection_elem, mir::ProjectionElem::Deref) {
             let ty = place_ref.ty(self.body, self.tcx).ty;
 
             if ty.is_mutable_ptr() && ty.is_unsafe_ptr() {
@@ -417,9 +294,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn marker_if_unloadable<'a>(&'a self, def_id: DefId) -> Option<&'a Identifier> {
         let auto_markers = self.auto_markers();
         let tcx = self.tcx();
-        if is_allowed(def_id, tcx) {
-            None
-        } else if is_virtual(tcx, def_id) {
+        if is_virtual(tcx, def_id) {
             trace!("  Is virtual");
             Some(&auto_markers.side_effect_unknown_virtual)
         } else if tcx.is_foreign_item(def_id) {

@@ -110,12 +110,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         let mut vis = BodyAnalyzer::new(self.clone(), res, &mono_body, param_env);
         use mir::visit::Visitor;
         vis.visit_body(&mono_body);
-        let mut found = vis.found_markers;
-        if side_effect_detection::is_allowed(res.def_id(), self.tcx()) {
-            for m in self.auto_markers().all() {
-                found.remove(&m);
-            }
-        }
+        let found = vis.found_markers;
         found.into_iter().collect()
     }
 
