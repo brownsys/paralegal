@@ -85,7 +85,7 @@ impl<'tcx> CachedBody<'tcx> {
         clean_undecodable_data_from_body(&mut body);
 
         Self {
-            body: body,
+            body,
             input_facts: FlowistryFacts {
                 subset_base: body_with_facts
                     .input_facts
@@ -264,7 +264,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
 ///
 /// Ensure this gets called early in the compiler before the unoptimized mir
 /// bodies are stolen.
-pub fn dump_mir_and_borrowck_facts<'tcx>(tcx: TyCtxt<'tcx>) -> (Duration, Duration) {
+pub fn dump_mir_and_borrowck_facts(tcx: TyCtxt<'_>) -> (Duration, Duration) {
     dump_mir_and_borrowck_facts_with_cache(tcx, |_| None)
 }
 

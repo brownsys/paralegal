@@ -154,12 +154,12 @@ pub fn constant_from_const<'tcx>(
     span: rustc_span::Span,
 ) -> Result<Constant, ConstConversionError<'tcx>> {
     if matches!(c, mir::Const::Unevaluated(..)) {
-        return Err(ConstConversionError::UnsupportedConstType(c.clone()));
+        return Err(ConstConversionError::UnsupportedConstType(*c));
     };
     if let Ok(const_val) = c.eval(tcx, ty_env, span) {
         constant_from_const_value(tcx, c.ty(), &const_val)
     } else {
-        Err(ConstConversionError::EvalFailed(c.clone()))
+        Err(ConstConversionError::EvalFailed(*c))
     }
 }
 
