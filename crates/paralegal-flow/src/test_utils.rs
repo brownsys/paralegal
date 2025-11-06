@@ -648,7 +648,7 @@ impl<'g> CtrlRef<'g> {
     }
 
     pub fn side_effect_nodes(&'g self) -> impl Iterator<Item = NodeRef<'g>> {
-        let auto_markers = AutoMarkers::new();
+        let auto_markers = AutoMarkers::default();
         let auto = auto_markers.all();
         auto.into_iter().flat_map(|m| self.marked(m))
     }
