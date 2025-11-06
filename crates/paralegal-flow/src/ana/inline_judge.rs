@@ -1,4 +1,4 @@
-use std::{fmt::Display, marker, rc::Rc};
+use std::{fmt::Display, rc::Rc};
 
 use flowistry_pdg_construction::CallInfo;
 use paralegal_spdg::{utils::write_sep, Identifier};
@@ -12,7 +12,6 @@ use rustc_type_ir::{PredicatePolarity, TyKind};
 
 use crate::{
     ana::Print,
-    ann::side_effect_detection,
     args::{InliningDepth, Stub},
     MarkerCtx, Pctx,
 };

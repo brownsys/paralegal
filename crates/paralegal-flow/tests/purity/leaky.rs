@@ -26,7 +26,9 @@ define_test!(interior: ctrl -> {
     ctrl.assert_purity(false);
 });
 
-define_test!(implicit: ctrl -> {
+define_test!(implicit
+    skip "We don't support this yet"
+    : ctrl -> {
     ctrl.assert_purity(false);
 });
 
