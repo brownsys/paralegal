@@ -157,7 +157,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         self.relevant_def_ids(defid).flat_map(get)
     }
 
-    fn relevant_def_ids<'a>(&'a self, start: DefId) -> impl Iterator<Item = DefId> + use<'a> {
+    fn relevant_def_ids(&self, start: DefId) -> impl Iterator<Item = DefId> + use<'_> {
         let start = self.defid_rewrite(start);
         let tcx = self.tcx();
         let parent_maybe = matches!(tcx.def_kind(start), DefKind::AssocFn | DefKind::AssocTy)
@@ -276,7 +276,7 @@ impl<'tcx> MarkerCtx<'tcx> {
     }
 
     /// Iterate over all discovered annotations, whether local or external
-    pub fn all_annotations<'a>(&'a self) -> impl Iterator<Item = (DefId, Annotation)> + use<'a> {
+    pub fn all_annotations(&self) -> impl Iterator<Item = (DefId, Annotation)> + use<'_> {
         self.0
             .other_annotations
             .iter()
@@ -295,10 +295,10 @@ impl<'tcx> MarkerCtx<'tcx> {
             )
     }
 
-    pub fn all_markers_on_item<'a>(
-        &'a self,
+    pub fn all_markers_on_item(
+        &self,
         def_id: DefId,
-    ) -> impl Iterator<Item = MarkerAnnotation> + use<'a> {
+    ) -> impl Iterator<Item = MarkerAnnotation> + use<'_> {
         self.0
             .markers
             .get(&def_id)
@@ -419,7 +419,7 @@ struct ItemMarkers {
 }
 
 impl ItemMarkers {
-    fn all<'a>(&'a self) -> impl Iterator<Item = Identifier> + use<'a> {
+    fn all(&self) -> impl Iterator<Item = Identifier> + use<'_> {
         self.markers.values().flatten().copied()
     }
 
@@ -427,10 +427,7 @@ impl ItemMarkers {
         self.markers.is_empty()
     }
 
-    fn for_selector<'a>(
-        &'a self,
-        selector: MarkerSelector,
-    ) -> impl Iterator<Item = Identifier> + use<'a> {
+    fn for_selector(&self, selector: MarkerSelector) -> impl Iterator<Item = Identifier> + use<'_> {
         self.markers
             .get(&selector)
             .map_or(&[] as &[_], |markers| markers.as_slice())
@@ -442,12 +439,10 @@ impl ItemMarkers {
         self.markers.len()
     }
 
-    fn recreate_refinements<'a>(&self) -> impl Iterator<Item = super::MarkerAnnotation> + use<'a> {
+    fn recreate_refinements(&self) -> impl Iterator<Item = super::MarkerAnnotation> + use<'_> {
         self.markers
             .iter()
-            .flat_map(|(selector, markers)| {
-                markers.into_iter().map(move |marker| (*marker, selector))
-            })
+            .flat_map(|(selector, markers)| markers.iter().map(move |marker| (*marker, selector)))
             .into_grouping_map()
             .fold(
                 MarkerRefinement {
@@ -491,8 +486,8 @@ pub struct AutoMarkers {
     pub side_effect_intrinsic: Identifier,
 }
 
-impl AutoMarkers {
-    pub fn new() -> Self {
+impl Default for AutoMarkers {
+    fn default() -> Self {
         AutoMarkers {
             side_effect_unknown_virtual: Identifier::new_intern("auto:side-effect:unknown:virtual"),
             side_effect_foreign: Identifier::new_intern("auto:side-effect:foreign"),
@@ -503,7 +498,9 @@ impl AutoMarkers {
             side_effect_intrinsic: Identifier::new_intern("auto:side-effect:intrinsic"),
         }
     }
+}
 
+impl AutoMarkers {
     pub fn all(&self) -> [Identifier; 7] {
         [
             self.side_effect_unknown_virtual,
@@ -652,7 +649,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
             included_crates: Rc::new(|f| f == LOCAL_CRATE),
             stubs: FxHashMap::default(),
             marker_statistics: RefCell::new(HashMap::default()),
-            auto_markers: AutoMarkers::new(),
+            auto_markers: Default::default(),
             side_effect_heuristics_results: Default::default(),
             allowed_intrinsics: side_effect_detection::allowed_intrinsics(),
         }
@@ -721,10 +718,7 @@ impl ExternalAnnotationEntry {
             .flat_map(move |marker| {
                 refinement_iter
                     .clone()
-                    .map(move |refinement| MarkerAnnotation {
-                        marker,
-                        refinement: refinement.clone(),
-                    })
+                    .map(move |&refinement| MarkerAnnotation { marker, refinement })
             })
     }
 
@@ -860,7 +854,7 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
                     [def_id].into_iter().collect()
                 };
                 def_ids.into_iter().flat_map(|def_id| {
-                    entries.into_iter().map(move |entry| {
+                    entries.iter().map(move |entry| {
                         entry.check_integrity(tcx, def_id);
                         (def_id, entry.flatten().collect())
                     })

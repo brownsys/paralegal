@@ -173,8 +173,8 @@ pub fn is_allowed_as_clone_unit_instance<'tcx>(
         && matches!(generics.as_slice(), [ty] if ty.as_type().is_some_and(ty::Ty::is_unit))
 }
 
-pub fn analyze_body<'tcx, 'b>(
-    body: &'b mir::Body<'tcx>,
+pub fn analyze_body<'tcx>(
+    body: &mir::Body<'tcx>,
     auto_markers: &AutoMarkers,
     tcx: ty::TyCtxt<'tcx>,
 ) -> FxHashSet<Identifier> {
@@ -184,8 +184,8 @@ pub fn analyze_body<'tcx, 'b>(
     analyzer.found_markers
 }
 
-pub fn analyze_statement<'tcx, 'b>(
-    body: &'b mir::Body<'tcx>,
+pub fn analyze_statement<'tcx>(
+    body: &mir::Body<'tcx>,
     location: mir::Location, // we take location here so we can guarantee that the statement is within the body
     auto_markers: &AutoMarkers,
     tcx: ty::TyCtxt<'tcx>,
@@ -231,7 +231,7 @@ impl<'tcx, 'b> BodyAnalyzer<'tcx, 'b> {
     }
 }
 
-impl<'tcx, 'b> mir::visit::Visitor<'tcx> for BodyAnalyzer<'tcx, 'b> {
+impl<'tcx> mir::visit::Visitor<'tcx> for BodyAnalyzer<'tcx, '_> {
     fn visit_projection_elem(
         &mut self,
         place_ref: mir::PlaceRef<'tcx>,
@@ -293,8 +293,8 @@ fn contains_mut_ref<'tcx>(ty: ty::Ty<'tcx>, tcx: ty::TyCtxt<'tcx>) -> bool {
     visitor.has_mut_ref
 }
 
-impl<'tcx> MarkerCtx<'tcx> {
-    pub fn marker_if_unloadable<'a>(&'a self, def_id: DefId) -> Option<&'a Identifier> {
+impl MarkerCtx<'_> {
+    pub fn marker_if_unloadable(&self, def_id: DefId) -> Option<&Identifier> {
         let auto_markers = self.auto_markers();
         let tcx = self.tcx();
         if is_virtual(tcx, def_id) {

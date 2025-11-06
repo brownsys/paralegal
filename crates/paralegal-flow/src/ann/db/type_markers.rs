@@ -120,6 +120,6 @@ impl<'tcx> MarkerCtx<'tcx> {
 
     pub fn type_has_surface_markers(&self, ty: ty::Ty) -> Option<DefId> {
         let def_id = ty.defid()?;
-        (!self.markers_on_self(def_id).next().is_none()).then_some(def_id)
+        (self.markers_on_self(def_id).next().is_some()).then_some(def_id)
     }
 }

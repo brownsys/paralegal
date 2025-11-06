@@ -459,10 +459,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         match weight.use_ {
             _ if minst.is_some_and(|inst| {
                 side_effect_detection::is_allowed_as_clone_unit_instance(self.tcx(), inst)
-            }) =>
-            {
-                ()
-            }
+            }) => {}
             Use::Arg(arg) => self.register_markers(node, ctx.markers_on_argument(f, arg)),
             Use::Return => self.register_markers(node, ctx.markers_on_return(f)),
             Use::Other => (),

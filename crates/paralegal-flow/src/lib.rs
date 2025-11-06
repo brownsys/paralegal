@@ -235,11 +235,11 @@ fn mir_borrowck(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::LocalDefId) -> &Borr
     original_mir_borrowck(tcx, def_id)
 }
 
-fn dump_mir_and_update_stats<'tcx>(tcx: TyCtxt<'tcx>, timer: &mut DumpStats) {
+fn dump_mir_and_update_stats(tcx: TyCtxt, timer: &mut DumpStats) {
     let (tycheck_time, dump_time) = dump_mir_and_borrowck_facts_with_cache(tcx, |i| {
         BODY_CACHE.with(|cache| unsafe {
             // SAFETY: The cache is guaranteed to outlive the returned reference.
-            std::mem::transmute::<Option<&'static _>, Option<&'tcx _>>(cache.get_if_present(&i))
+            std::mem::transmute::<Option<&'static _>, Option<&'_ _>>(cache.get_if_present(&i))
         })
     });
     let dump_marker_start = Instant::now();

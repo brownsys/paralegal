@@ -43,7 +43,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         if let Some(marker) = self.marker_if_unloadable(def_id) {
             trace!("  Is unloadable");
             return if mark_side_effects {
-                std::slice::from_ref(&marker)
+                std::slice::from_ref(marker)
             } else {
                 &[]
             };
@@ -260,7 +260,7 @@ impl<'tcx, 'b> BodyAnalyzer<'tcx, 'b> {
     }
 }
 
-impl<'tcx, 'b> mir::visit::Visitor<'tcx> for BodyAnalyzer<'tcx, 'b> {
+impl<'tcx> mir::visit::Visitor<'tcx> for BodyAnalyzer<'tcx, '_> {
     fn visit_local_decl(&mut self, l: mir::Local, v: &mir::LocalDecl<'tcx>) {
         let markers = self.ctx.deep_type_markers(v.ty);
         if !markers.is_empty() {

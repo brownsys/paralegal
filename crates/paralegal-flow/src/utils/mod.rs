@@ -812,8 +812,8 @@ impl<T> ContiguousIntCache<T> {
     }
 }
 
-pub fn flatten_child_items<'tcx>(
-    tcx: ty::TyCtxt<'tcx>,
+pub fn flatten_child_items(
+    tcx: ty::TyCtxt,
     modules: impl IntoIterator<Item = DefId>,
 ) -> FxHashSet<DefId> {
     use rustc_hir::def::DefKind;
