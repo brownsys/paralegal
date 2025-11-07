@@ -568,23 +568,31 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             .cargo_args()
             .iter()
             .any(|a| a.starts_with("-p") || a == "--package");
-        if args.target().is_some() | args_select_package {
-            let mut new_cmd = std::process::Command::new(cargo.get_program());
-            for (k, v) in cargo.get_envs() {
-                if k == "RUSTC_WORKSPACE_WRAPPER" {
-                    new_cmd.env("RUSTC_WRAPPER", v.unwrap());
-                } else if let Some(v) = v {
-                    new_cmd.env(k, v);
-                } else {
-                    new_cmd.env_remove(k);
-                }
+        // And here we also set cargo to the specific cargo for our toolchain instead
+        let mut new_cmd = std::process::Command::new(
+            std::path::Path::new(env!("SYSROOT_PATH"))
+                .join("bin")
+                .join("cargo"),
+        );
+        for (k, v) in cargo.get_envs() {
+            if k == "RUSTC_WORKSPACE_WRAPPER" {
+                new_cmd.env("RUSTC_WRAPPER", v.unwrap());
+            } else if let Some(v) = v {
+                new_cmd.env(k, v);
+            } else {
+                new_cmd.env_remove(k);
             }
-            if let Some(wd) = cargo.get_current_dir() {
-                new_cmd.current_dir(wd);
-            }
-            new_cmd.args(cargo.get_args().filter(|a| *a != "--all"));
-            *cargo = new_cmd
         }
+        if let Some(wd) = cargo.get_current_dir() {
+            new_cmd.current_dir(wd);
+        }
+        if args.target().is_some() | args_select_package {
+            new_cmd.args(cargo.get_args().filter(|a| *a != "--all"));
+        } else {
+            new_cmd.args(cargo.get_args());
+        }
+
+        *cargo = new_cmd;
         if let Some(target) = args.target().as_ref() {
             if !args_select_package {
                 cargo.args(["-p", target]);
@@ -594,6 +602,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
             cargo.arg("-Zbuild-std=std,core,alloc,proc_macro");
         }
         cargo.args(args.cargo_args());
+        debug!("Running cargo command: {cargo:?}");
     }
 
     fn run(
