@@ -21,7 +21,27 @@ fn get_rustup_lib_path() -> PathBuf {
     rustup_lib
 }
 
-/// Helper for calculating a hash of all (modification dates of) Rust files in this crate.
+#[allow(dead_code)]
+fn hash_via_modification_date(path: &Path, hasher: &mut DefaultHasher) -> Result<()> {
+    let metadata = path.metadata()?;
+    let modified = metadata.modified()?;
+
+    let duration = modified.duration_since(SystemTime::UNIX_EPOCH)?;
+    duration.as_secs().hash(hasher);
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn hash_via_content(path: &Path, hasher: &mut DefaultHasher) -> std::io::Result<()> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)?;
+    buffer.hash(hasher);
+    Ok(())
+}
+
+/// Helper for calculating a hash of all Rust files in this crate.
 fn visit_dirs(dir: &Path, hasher: &mut DefaultHasher) -> Result<()> {
     if !dir.is_dir() {
         return Ok(());
@@ -32,11 +52,7 @@ fn visit_dirs(dir: &Path, hasher: &mut DefaultHasher) -> Result<()> {
         if path.is_dir() {
             visit_dirs(&path, hasher)?;
         } else if path.extension().is_some_and(|ext| ext == "rs") {
-            let metadata = entry.metadata()?;
-            let modified = metadata.modified()?;
-
-            let duration = modified.duration_since(SystemTime::UNIX_EPOCH)?;
-            duration.as_secs().hash(hasher);
+            hash_via_content(&path, hasher)?;
             // Tell Cargo to rerun if this source file changes
             println!("cargo:rerun-if-changed={}", path.display());
         }

@@ -403,6 +403,7 @@ impl Args {
         self.relaxed.hash(hasher);
         self.target.hash(hasher);
         self.result_path.hash(hasher);
+        self.anactrl().hash(hasher);
         config_hash_for_file(&self.marker_control.external_annotations, hasher);
     }
 
@@ -534,6 +535,24 @@ pub struct AnalysisCtrl {
     include_std: bool,
 }
 
+impl std::hash::Hash for AnalysisCtrl {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let Self {
+            analyze,
+            inlining_depth,
+            include,
+            included_crate_cache: _,
+            no_pdg_cache,
+            include_std,
+        } = self;
+        analyze.hash(state);
+        inlining_depth.hash(state);
+        include.hash(state);
+        no_pdg_cache.hash(state);
+        include_std.hash(state);
+    }
+}
+
 impl Default for AnalysisCtrl {
     fn default() -> Self {
         Self {
@@ -579,7 +598,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, strum::EnumIs, strum::AsRefStr, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, strum::EnumIs, strum::AsRefStr, Clone, Hash)]
 pub enum InliningDepth {
     /// Inline to arbitrary depth
     Unconstrained,
