@@ -9,7 +9,7 @@ use rustc_middle::{
         AggregateKind, BasicBlock, Body, Location, Operand, Place, Rvalue, Statement,
         StatementKind, Terminator, TerminatorKind,
     },
-    ty::{GenericArgsRef, Instance, TyCtxt},
+    ty::{self, GenericArgsRef, Instance, TyCtxt},
 };
 use rustc_span::{source_map::Spanned, Span};
 
@@ -26,6 +26,7 @@ use crate::utils;
 pub enum AsyncType {
     Fn,
     Trait,
+    Tool,
 }
 
 /// Context for a call to [`Future::poll`](std::future::Future::poll), when
@@ -96,6 +97,12 @@ pub fn try_as_async_trait_function<'tcx>(
 pub fn match_async_trait_assign<'tcx>(
     statement: &Statement<'tcx>,
 ) -> Option<(DefId, GenericArgsRef<'tcx>)> {
+    match_coroutine_assign(statement)
+}
+
+pub fn match_coroutine_assign<'tcx>(
+    statement: &Statement<'tcx>,
+) -> Option<(DefId, GenericArgsRef<'tcx>)> {
     match &statement.kind {
         StatementKind::Assign(box (
             _,
@@ -121,7 +128,6 @@ fn has_async_trait_signature(tcx: TyCtxt, def_id: DefId) -> bool {
     }
 }
 
-use rustc_middle::ty;
 fn match_pin_box_dyn_ty(lang_items: &rustc_hir::LanguageItems, t: ty::Ty) -> bool {
     let ty::TyKind::Adt(pin_ty, args) = t.kind() else {
         return false;
@@ -166,6 +172,62 @@ fn get_async_generator<'tcx>(body: &Body<'tcx>) -> (DefId, GenericArgsRef<'tcx>,
     (*def_id, generic_args, location)
 }
 
+// matches std::pin::Pin<std::boxed::Box<dyn std::future::Future<_>>
+fn has_async_tool_signature(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    let sig = tcx.fn_sig(def_id);
+    let lang_items = tcx.lang_items();
+    let ty::TyKind::Adt(adt_def, inner) = sig.skip_binder().output().skip_binder().kind() else {
+        return false;
+    };
+    if !lang_items.pin_type().is_some_and(|p| p == adt_def.did()) {
+        return false;
+    }
+    let [b_ty] = inner.as_slice() else {
+        return false;
+    };
+    let Some(f_ty) = b_ty.as_type().and_then(ty::Ty::boxed_ty) else {
+        return false;
+    };
+    let ty::TyKind::Dynamic(preds, _, ty::DynKind::Dyn) = f_ty.kind() else {
+        return false;
+    };
+    let Some(ty::ExistentialPredicate::Trait(t)) = preds.first().map(|b| b.skip_binder()) else {
+        return false;
+    };
+    lang_items.future_trait().is_some_and(|f| f == t.def_id)
+}
+
+fn try_as_async_tool<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+    body: &Body<'tcx>,
+) -> Option<(DefId, GenericArgsRef<'tcx>, Location)> {
+    if !has_async_tool_signature(tcx, def_id) {
+        return None;
+    }
+    let mut matching_statements =
+        body.basic_blocks
+            .iter_enumerated()
+            .flat_map(|(block, bbdat)| {
+                bbdat.statements.iter().enumerate().filter_map(
+                    move |(statement_index, statement)| {
+                        let (def_id, generics) = match_coroutine_assign(statement)?;
+                        Some((
+                            def_id,
+                            generics,
+                            Location {
+                                block,
+                                statement_index,
+                            },
+                        ))
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+    assert_eq!(matching_statements.len(), 1);
+    matching_statements.pop()
+}
+
 /// Try to interpret this function as an async function.
 ///
 /// If this is an async function it returns the [`Instance`] of the generator,
@@ -178,11 +240,10 @@ pub fn determine_async<'tcx>(
 ) -> Option<(Instance<'tcx>, Location, AsyncType)> {
     let ((generator_def_id, args, loc), asyncness) = if is_async(tcx, def_id) {
         (get_async_generator(body), AsyncType::Fn)
+    } else if let Some(g) = try_as_async_trait_function(tcx, def_id, body) {
+        (g, AsyncType::Trait)
     } else {
-        (
-            try_as_async_trait_function(tcx, def_id, body)?,
-            AsyncType::Trait,
-        )
+        (try_as_async_tool(tcx, def_id, body)?, AsyncType::Tool)
     };
     let typing_env = body.typing_env(tcx).with_post_analysis_normalized(tcx);
     let generator_fn = utils::try_resolve_function(tcx, generator_def_id, typing_env, args)?;
