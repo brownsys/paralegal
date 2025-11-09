@@ -29,6 +29,16 @@ pub enum AsyncType {
     Tool,
 }
 
+impl AsyncType {
+    pub fn describe(&self) -> &'static str {
+        match self {
+            AsyncType::Fn => "async function",
+            AsyncType::Trait => "async trait",
+            AsyncType::Tool => "async tool",
+        }
+    }
+}
+
 /// Context for a call to [`Future::poll`](std::future::Future::poll), when
 /// called on a future created via an `async fn` or an async block.
 pub struct AsyncFnPollEnv<'tcx> {
@@ -174,6 +184,10 @@ fn get_async_generator<'tcx>(body: &Body<'tcx>) -> (DefId, GenericArgsRef<'tcx>,
 
 // matches std::pin::Pin<std::boxed::Box<dyn std::future::Future<_>>
 fn has_async_tool_signature(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    use rustc_hir::def::DefKind;
+    if !matches!(tcx.def_kind(def_id), DefKind::Fn | DefKind::AssocFn) {
+        return false;
+    }
     let sig = tcx.fn_sig(def_id);
     let lang_items = tcx.lang_items();
     let ty::TyKind::Adt(adt_def, inner) = sig.skip_binder().output().skip_binder().kind() else {

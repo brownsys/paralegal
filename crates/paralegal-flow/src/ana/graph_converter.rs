@@ -71,6 +71,11 @@ pub fn assemble_pdg<'tcx>(
         .body();
 
     let async_state = determine_async(tcx, base_body_def_id, base_body);
+    debug!(
+        "async_state for {}: {}",
+        tcx.def_path_str(target),
+        async_state.map_or("not async", |(.., s)| s.describe())
+    );
 
     // These will refer to the function we are actually analyzing from, which may
     // be a generator if the target is async.
