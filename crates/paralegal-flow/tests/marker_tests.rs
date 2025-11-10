@@ -317,3 +317,36 @@ fn async_fn_marker() {
         assert!(source.flows_to_data(&sink));
     });
 }
+
+#[test]
+fn lifetime_resolving() {
+    inline_test! {
+        use std::marker::PhantomData;
+
+        trait Test {
+            fn test_method(&self);
+        }
+
+        struct Ref<'a> {
+            _marker: PhantomData<&'a ()>,
+        }
+
+        impl Test for Ref<'_> {
+            fn test_method(&self) {
+                todo!()
+            }
+        }
+
+        fn main() {
+            Ref { _marker: PhantomData }.test_method();
+        }
+    }
+    .with_marker_file(
+        "
+        [[\"<crate::Ref as crate::Test>::test_method\"]]
+        marker = \"present\"
+        on_argument = [0]
+        ",
+    )
+    .check_ctrl(|ctrl| assert!(dbg!(ctrl.markers()).contains(&Identifier::new_intern("present"))));
+}
