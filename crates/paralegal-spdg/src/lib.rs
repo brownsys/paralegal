@@ -1191,3 +1191,41 @@ impl Display for DisplayNode<'_> {
         }
     }
 }
+
+pub struct AutoMarkers {
+    pub side_effect_unknown_virtual: Identifier,
+    pub side_effect_foreign: Identifier,
+    pub side_effect_unknown_fn_ptr: Identifier,
+    pub side_effect_raw_ptr: Identifier,
+    pub side_effect_transmute: Identifier,
+    pub side_effect_unknown: Identifier,
+    pub side_effect_intrinsic: Identifier,
+}
+
+impl Default for AutoMarkers {
+    fn default() -> Self {
+        AutoMarkers {
+            side_effect_unknown_virtual: Identifier::new_intern("auto:side-effect:unknown:virtual"),
+            side_effect_foreign: Identifier::new_intern("auto:side-effect:foreign"),
+            side_effect_unknown_fn_ptr: Identifier::new_intern("auto:side-effect:unknown:fn-ptr"),
+            side_effect_raw_ptr: Identifier::new_intern("auto:side-effect:raw-ptr"),
+            side_effect_transmute: Identifier::new_intern("auto:side-effect:transmute"),
+            side_effect_unknown: Identifier::new_intern("auto:side-effect:unknown"),
+            side_effect_intrinsic: Identifier::new_intern("auto:side-effect:intrinsic"),
+        }
+    }
+}
+
+impl AutoMarkers {
+    pub fn all(&self) -> [Identifier; 7] {
+        [
+            self.side_effect_unknown_virtual,
+            self.side_effect_foreign,
+            self.side_effect_unknown_fn_ptr,
+            self.side_effect_raw_ptr,
+            self.side_effect_transmute,
+            self.side_effect_unknown,
+            self.side_effect_intrinsic,
+        ]
+    }
+}
