@@ -5,7 +5,7 @@ use paralegal_spdg::{utils::write_sep, Identifier};
 use rustc_hir::def_id::{CrateNum, DefId};
 use rustc_middle::ty::{
     AssocKind, BoundVariableKind, Clause, ClauseKind, Instance, ProjectionPredicate,
-    TraitPredicate, TypingEnv,
+    TraitPredicate, TyCtxt, TypingEnv,
 };
 use rustc_span::Span;
 use rustc_type_ir::{PredicatePolarity, TyKind};
@@ -192,13 +192,34 @@ struct SafetyChecker<'tcx> {
     reason: &'static str,
 }
 
+struct PpInst<'tcx> {
+    tcx: TyCtxt<'tcx>,
+    i: Instance<'tcx>,
+}
+
+impl std::fmt::Display for PpInst<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.tcx.def_path_str(self.i.def_id()))?;
+        if !self.i.args.is_empty() {
+            write!(f, "<")?;
+            write_sep(f, ",", self.i.args, |a, fmt| write!(fmt, "{:?}", a))?;
+            write!(f, ">")?;
+        }
+        Ok(())
+    }
+}
+
 impl<'tcx> SafetyChecker<'tcx> {
     /// Emit an error or a warning with some preformatted messaging.
     fn err(&self, s: &str, span: Span) {
         let sess = self.ctx.tcx().dcx();
         let msg = format!(
-            "the call to {:?} is not safe to abstract as demanded by '{}', because of: {s}",
-            self.resolved, self.reason
+            "the call to {} is not safe to abstract as demanded by '{}', because of: {s}",
+            PpInst {
+                i: self.resolved,
+                tcx: self.ctx.tcx()
+            },
+            self.reason
         );
         if self.emit_err {
             let mut diagnostic = sess.struct_span_err(span, msg);
