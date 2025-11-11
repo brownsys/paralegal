@@ -135,14 +135,20 @@ impl<'tcx> InlineJudge<'tcx> {
             InliningDepth::Unconstrained => InlineJudgement::Inline(false),
         };
         if let InlineJudgement::AbstractViaType(reason) = judgement {
-            let emit_err = !(is_marked || self.ctx.opts().relaxed());
-            self.ensure_is_safe_to_approximate(
-                info.param_env,
-                info.callee,
-                info.span,
-                emit_err,
-                reason,
-            )
+            if !self
+                .marker_ctx()
+                .all_markers_associated_with(marker_target_def_id)
+                .any(|m| m.as_str().starts_with("std:"))
+            {
+                let emit_err = !(is_marked || self.ctx.opts().relaxed());
+                self.ensure_is_safe_to_approximate(
+                    info.param_env,
+                    info.callee,
+                    info.span,
+                    emit_err,
+                    reason,
+                )
+            }
         }
         judgement
     }
@@ -234,11 +240,20 @@ impl<'tcx> SafetyChecker<'tcx> {
 
     /// Emit an error that mentions the `markers` found
     fn err_markers(&self, s: &str, markers: &[Identifier], span: Span) {
-        if !markers.is_empty() {
+        let mut markers = markers
+            .iter()
+            .filter(|m| !m.as_str().starts_with("std:"))
+            .peekable();
+        if markers.peek().is_some() {
             self.err(
                 &format!(
                     "{s}: found marker(s) {}",
-                    Print(|fmt| write_sep(fmt, ", ", markers, |elem, fmt| write!(fmt, "'{elem}'")))
+                    Print(
+                        |fmt| write_sep(fmt, ", ", markers.clone(), |elem, fmt| write!(
+                            fmt,
+                            "'{elem}'"
+                        ))
+                    )
                 ),
                 span,
             );
