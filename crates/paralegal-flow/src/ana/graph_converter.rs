@@ -613,7 +613,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             };
             if n.place.local.as_u32() == 1 && at.location == RichLocation::Start {
                 let ridx = self.translate_node(nidx);
-                let Some(mir::ProjectionElem::Field(id, _)) = n.place.projection.first() else {
+                let Some(mir::ProjectionElem::Field(id, fty)) = n.place.projection.first() else {
                     tcx.dcx().span_err(
                         *span,
                         format!("Expected field projection on async generator in {def_id:?}, found {:?}", n.place),
@@ -621,7 +621,35 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     continue;
                 };
 
-                let arg = args_as_nodes[id.as_usize()];
+                let Some(arg) = args_as_nodes.get(id.as_usize()) else {
+                    let inst = driver.current_function();
+                    for fun in [inst.def_id(), def_id] {
+                        let mut f = std::io::BufWriter::new(
+                            std::fs::File::create(format!("{}.mir", tcx.def_path_str(fun)))
+                                .unwrap(),
+                        );
+                        use rustc_middle::mir::pretty::{write_mir_fn, PrettyPrintMirOptions};
+                        write_mir_fn(
+                            tcx,
+                            self.ctx().body_cache().get(fun).body(),
+                            &mut |_, _| Ok(()),
+                            &mut f,
+                            PrettyPrintMirOptions {
+                                include_extra_comments: false,
+                            },
+                        )
+                        .unwrap();
+                    }
+                    tcx.dcx().span_err(
+                        *span,
+                        format!(
+                            "Expected argument node for field {} ({fty:?}) in {}, found none",
+                            id.as_usize(),
+                            tcx.def_path_str(def_id)
+                        ),
+                    );
+                    continue;
+                };
                 self.graph.add_edge(
                     arg.to_index(),
                     ridx.to_index(),
