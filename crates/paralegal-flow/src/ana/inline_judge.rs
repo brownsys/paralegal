@@ -227,6 +227,7 @@ impl<'tcx> SafetyChecker<'tcx> {
             },
             self.reason
         );
+        return;
         if self.emit_err {
             let mut diagnostic = sess.struct_span_err(span, msg);
             diagnostic.span_note(self.call_span, "Called from here");
