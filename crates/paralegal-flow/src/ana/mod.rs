@@ -40,6 +40,7 @@ use rustc_span::{ErrorGuaranteed, FileNameDisplayPreference, Span as RustSpan, S
 
 mod graph_converter;
 mod inline_judge;
+mod simple_interpreter;
 
 use std::time::Duration;
 
