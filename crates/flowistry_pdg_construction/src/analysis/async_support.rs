@@ -81,43 +81,22 @@ pub fn try_as_async_trait_function<'tcx>(
     if !has_async_trait_signature(tcx, def_id) {
         return None;
     }
-    let mut matching_statements =
-        body.basic_blocks
-            .iter_enumerated()
-            .flat_map(|(block, bbdat)| {
-                bbdat.statements.iter().enumerate().filter_map(
-                    move |(statement_index, statement)| {
-                        let (def_id, generics) = match_async_trait_assign(statement)?;
-                        Some((
-                            def_id,
-                            generics,
-                            Location {
-                                block,
-                                statement_index,
-                            },
-                        ))
-                    },
-                )
-            })
-            .collect::<Vec<_>>();
-    assert_eq!(matching_statements.len(), 1);
-    matching_statements.pop()
+    let (def_id, generics, loc, _) = find_coroutine_assign(body);
+    Some((def_id, generics, loc))
 }
 
-pub fn match_async_trait_assign<'tcx>(
-    statement: &Statement<'tcx>,
-) -> Option<(DefId, GenericArgsRef<'tcx>)> {
-    match_coroutine_assign(statement)
-}
-
-pub fn match_coroutine_assign<'tcx>(
-    statement: &Statement<'tcx>,
-) -> Option<(DefId, GenericArgsRef<'tcx>)> {
+pub fn match_coroutine_assign<'tcx, 'a>(
+    statement: &'a Statement<'tcx>,
+) -> Option<(
+    DefId,
+    GenericArgsRef<'tcx>,
+    &'a rustc_index::IndexVec<FieldIdx, Operand<'tcx>>,
+)> {
     match &statement.kind {
         StatementKind::Assign(box (
             _,
-            Rvalue::Aggregate(box AggregateKind::Coroutine(def_id, generic_args), _args),
-        )) => Some((*def_id, *generic_args)),
+            Rvalue::Aggregate(box AggregateKind::Coroutine(def_id, generic_args), args),
+        )) => Some((*def_id, *generic_args, args)),
         _ => None,
     }
 }
@@ -211,6 +190,38 @@ fn has_async_tool_signature(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     lang_items.future_trait().is_some_and(|f| f == t.def_id)
 }
 
+pub fn find_coroutine_assign<'tcx, 'a>(
+    body: &'a Body<'tcx>,
+) -> (
+    DefId,
+    GenericArgsRef<'tcx>,
+    Location,
+    &'a rustc_index::IndexVec<FieldIdx, Operand<'tcx>>,
+) {
+    let mut matching_statements =
+        body.basic_blocks
+            .iter_enumerated()
+            .flat_map(|(block, bbdat)| {
+                bbdat.statements.iter().enumerate().filter_map(
+                    move |(statement_index, statement)| {
+                        let (def_id, generics, args) = match_coroutine_assign(statement)?;
+                        Some((
+                            def_id,
+                            generics,
+                            Location {
+                                block,
+                                statement_index,
+                            },
+                            args,
+                        ))
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+    assert_eq!(matching_statements.len(), 1);
+    matching_statements.pop().unwrap()
+}
+
 fn try_as_async_tool<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
@@ -219,27 +230,8 @@ fn try_as_async_tool<'tcx>(
     if !has_async_tool_signature(tcx, def_id) {
         return None;
     }
-    let mut matching_statements =
-        body.basic_blocks
-            .iter_enumerated()
-            .flat_map(|(block, bbdat)| {
-                bbdat.statements.iter().enumerate().filter_map(
-                    move |(statement_index, statement)| {
-                        let (def_id, generics) = match_coroutine_assign(statement)?;
-                        Some((
-                            def_id,
-                            generics,
-                            Location {
-                                block,
-                                statement_index,
-                            },
-                        ))
-                    },
-                )
-            })
-            .collect::<Vec<_>>();
-    assert_eq!(matching_statements.len(), 1);
-    matching_statements.pop()
+    let (def_id, gargs, loc, _) = find_coroutine_assign(body);
+    Some((def_id, gargs, loc))
 }
 
 /// Try to interpret this function as an async function.

@@ -595,6 +595,12 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         let local = mir::RETURN_PLACE;
         self.handle_node_types_helper(return_node, mono_ty(local), &[]);
 
+        let interpreter =
+            super::simple_interpreter::SimpleInterpreter::interpret_body(tcx, base_body).unwrap();
+
+        let coroutine_fields =
+            flowistry_pdg_construction::async_support::find_coroutine_assign(base_body).3;
+
         // Establish connections to existing nodes
         let generator_loc = RichLocation::Location(loc);
         let transition_at = CallString::new(&[GlobalLocation {
@@ -611,6 +617,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             else {
                 continue;
             };
+
             if n.place.local.as_u32() == 1 && at.location == RichLocation::Start {
                 let ridx = self.translate_node(nidx);
                 let Some(mir::ProjectionElem::Field(id, fty)) = n.place.projection.first() else {
@@ -621,7 +628,21 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     continue;
                 };
 
-                let Some(arg) = args_as_nodes.get(id.as_usize()) else {
+                use rustc_middle::mir::Operand;
+
+                let (Operand::Copy(op_in_parent) | Operand::Move(op_in_parent)) =
+                    coroutine_fields[*id]
+                else {
+                    tcx.dcx()
+                        .span_err(*span, format!("Expected to find operator {id:?} in parent"));
+                    continue;
+                };
+                let target_arg = interpreter.resolve(op_in_parent).unwrap();
+
+                // Subtract for 0, which is always the return value
+                let target_local = target_arg.local.as_usize() - 1;
+
+                let Some(arg) = args_as_nodes.get(target_local) else {
                     let inst = driver.current_function();
                     for fun in [inst.def_id(), def_id] {
                         let mut f = std::io::BufWriter::new(
