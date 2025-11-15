@@ -824,7 +824,7 @@ pub fn flatten_child_items(
 
     while let Some(module) = queue.pop() {
         let children = match tcx.def_kind(module) {
-            DefKind::Mod => Box::new(
+            DefKind::Mod | DefKind::ExternCrate => Box::new(
                 if let Some(local) = module.as_local() {
                     tcx.module_children_local(local)
                 } else {

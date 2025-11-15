@@ -303,9 +303,14 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
             [primitive] => {
                 /* Start here for issue 1 */
                 let sym = primitive.ident.name;
-                return PrimTy::from_name(sym)
-                    .map(Res::PrimTy)
-                    .ok_or(ResolutionError::CannotResolvePrimitiveType(sym));
+                if let Some(t) = PrimTy::from_name(sym) {
+                    return Ok(Res::PrimTy(t));
+                } else {
+                    (
+                        Box::new(find_crates(tcx, sym)) as Box<dyn Iterator<Item = DefId>>,
+                        &[],
+                    )
+                }
             }
             [base, ref path @ ..] => {
                 /* This is relevant for issue 2 */

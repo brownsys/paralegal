@@ -807,7 +807,7 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
                 let def_ids = if on_module_children {
                     let defs = match def_kind {
                         DefKind::Struct | DefKind::Enum => tcx.inherent_impls(def_id),
-                        DefKind::Mod | DefKind::Impl { .. } => &only_self,
+                        DefKind::Mod | DefKind::Impl { .. } | DefKind::ExternCrate => &only_self,
                         _ => panic!(
                             "Expected module-like def kind for {}, got {def_kind:?}",
                             tcx.def_path_str(def_id)
