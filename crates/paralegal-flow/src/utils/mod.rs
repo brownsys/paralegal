@@ -818,13 +818,16 @@ pub fn flatten_child_items(
 ) -> FxHashSet<DefId> {
     use rustc_hir::def::DefKind;
     let mut queue: Vec<_> = modules.into_iter().collect();
+    trace!("flatten_child_items starting with: {:?}", queue);
     let mut seen = FxHashSet::default();
     seen.extend(queue.iter().cloned());
     let mut result = FxHashSet::default();
 
     while let Some(module) = queue.pop() {
-        let children = match tcx.def_kind(module) {
-            DefKind::Mod | DefKind::ExternCrate => Box::new(
+        let def_kind = tcx.def_kind(module);
+        trace!("Processing item: {:?} with def kind {:?}", module, def_kind);
+        let children = match def_kind {
+            DefKind::Mod => Box::new(
                 if let Some(local) = module.as_local() {
                     tcx.module_children_local(local)
                 } else {
@@ -841,10 +844,18 @@ pub fn flatten_child_items(
             DefKind::Struct | DefKind::Enum => {
                 Box::new(tcx.inherent_impls(module).iter().copied()) as Box<_>
             }
-            _ => continue,
+            _ => {
+                continue;
+            }
         };
-        for id in children {
-            match tcx.def_kind(id) {
+        for id in children.filter(|id| id.krate == module.krate) {
+            let def_kind = tcx.def_kind(id);
+            trace!(
+                "Processing child item: {:?} with def kind {:?}",
+                id,
+                def_kind
+            );
+            match def_kind {
                 DefKind::Struct | DefKind::Enum | DefKind::Mod | DefKind::Impl { .. }
                     if !seen.contains(&id) =>
                 {

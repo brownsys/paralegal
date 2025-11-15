@@ -9,9 +9,15 @@ use paralegal_spdg::{Identifier, InstructionKind};
 const TEST_CRATE_NAME: &str = "tests/marker-tests";
 const EXTRA_ARGS: &[&str] = &["--no-interprocedural-analysis"];
 
+const CRATE_MARKER_CRATE_PATH: &str = "tests/test-crates-for-crate-marker/consumer";
+
 lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool =
         run_paralegal_flow_with_flow_graph_dump_and(TEST_CRATE_NAME, EXTRA_ARGS);
+    static ref CRATE_MARKER_CRATE_ANALYZED: bool = run_paralegal_flow_with_flow_graph_dump_and(
+        CRATE_MARKER_CRATE_PATH,
+        &["--external-annotations", "external-annotations.toml"]
+    );
 }
 
 macro_rules! define_test {
@@ -19,6 +25,13 @@ macro_rules! define_test {
         define_flow_test_template!(TEST_CRATE_ANALYZED, TEST_CRATE_NAME, $($t)*);
     };
 }
+
+define_flow_test_template!(CRATE_MARKER_CRATE_ANALYZED, CRATE_MARKER_CRATE_PATH,
+    crate_marker :
+    ctrl -> {
+        assert!(!ctrl.marked("found").is_empty());
+    }
+);
 
 #[test]
 fn use_wrapper() {

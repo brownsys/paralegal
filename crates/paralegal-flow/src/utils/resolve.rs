@@ -369,6 +369,7 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
     };
 
     let starts = starts.collect::<Vec<_>>();
+    trace!("starts: {:?}", starts);
     let starts = starts.into_iter();
 
     let mut last = Err(if let Some(f) = path.first() {
@@ -406,8 +407,10 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
             });
 
         if last.is_ok() {
+            trace!("last: {:?}", last);
             return last;
         }
     }
+    trace!("last: {:?}", last);
     last
 }
