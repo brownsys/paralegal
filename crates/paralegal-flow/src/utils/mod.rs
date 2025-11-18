@@ -831,14 +831,15 @@ pub fn flatten_child_items(
             def_kind
         );
         let children = match def_kind {
-            DefKind::Mod => Box::new(
-                if let Some(local) = module.as_local() {
+            DefKind::Mod => {
+                let it = if let Some(local) = module.as_local() {
                     tcx.module_children_local(local)
                 } else {
                     tcx.module_children(module)
                 }
                 .iter()
                 .filter_map(|c| c.res.opt_def_id())
+                .filter(|c| tcx.opt_parent(*c).is_none_or(|parent| parent == module))
                 .chain(
                     // Trait impls are not contained in `module_children` where
                     // they are defined, but instead associated with the crate
@@ -849,8 +850,9 @@ pub fn flatten_child_items(
                         .into_iter()
                         .flatten()
                         .copied(),
-                ),
-            ) as Box<dyn Iterator<Item = DefId>>,
+                );
+                Box::new(it) as Box<dyn Iterator<Item = DefId>>
+            }
             DefKind::Impl { .. } => Box::new(
                 tcx.associated_items(module)
                     .in_definition_order()
@@ -863,7 +865,7 @@ pub fn flatten_child_items(
                 continue;
             }
         };
-        for id in children.filter(|id| tcx.opt_parent(*id).is_none_or(|id| id == module)) {
+        for id in children {
             let def_kind = tcx.def_kind(id);
             trace!(
                 "Processing child item: {} with def kind {:?}",
