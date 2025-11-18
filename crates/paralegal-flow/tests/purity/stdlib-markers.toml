@@ -4,31 +4,43 @@
 marker = "std:vec"
 _internal_can_fail_resolve_silently = true
 _internal_on_all_module_children = true
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
 
 [["alloc::vec"]]
 marker = "std:slice"
 _internal_can_fail_resolve_silently = true
 _internal_on_all_module_children = true
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
 
 [["core::slice"]]
 marker = "std:slice"
 _internal_can_fail_resolve_silently = true
 _internal_on_all_module_children = true
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
 
 [["alloc::string"]]
 marker = "std:string"
 _internal_can_fail_resolve_silently = true
 _internal_on_all_module_children = true
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
 
-[["std::collection::hash_map"]]
+[["std::collections::hash_map"]]
 marker = "std:hashmap"
 _internal_can_fail_resolve_silently = true
 _internal_on_all_module_children = true
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
 
-[["std::collection::btree"]]
+[["std::collections::btree"]]
 marker = "std:btree"
 _internal_can_fail_resolve_silently = true
 _internal_on_all_module_children = true
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
 
 # Impls of global allocator.
 # "alloc::alloc::\{impl#0\}",
@@ -37,6 +49,8 @@ _internal_on_all_module_children = true
 marker = "std:allocation"
 _internal_can_fail_resolve_silently = true
 _internal_on_all_module_children = true
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
 
 # allowed functions
 
@@ -231,9 +245,73 @@ _internal_can_fail_resolve_silently = true
 marker = "ignore"
 on_return = true
 _internal_on_all_module_children = true
+_internal_can_fail_resolve_silently = true
 
 
 [["crate::my_mod"]]
 marker = "ignore"
 on_return = true
 _internal_on_all_module_children = true
+_internal_can_fail_resolve_silently = true
+
+
+[["<std::slice::Iter as std::iter::Iterator>::fold"]]
+marker = "std:slice"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["str::as_bytes"]]
+marker = "std:string"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+
+[["<std::slice::Iter as std::iter::Iterator>::next"]]
+marker = "std:slice"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+_internal_can_fail_resolve_silently = true
+
+[["<std::sync::MutexGuard as std::ops::DerefMut>::deref_mut"]]
+marker = "side-effect:external-state"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+
+[["std::io::error"]]
+marker = "std:error"
+_internal_on_all_module_children = true
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+
+[["core::future::get_context"]]
+marker = "std:future"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+
+# Safe, because (safe) slice API observes lifetimes. Might have to exclude
+# unsafe functions at some point though.
+[["core::slice"]]
+marker = "std:slice"
+_internal_on_all_module_children = true
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+
+[["<std::ops::Range as std::slice::SliceIndex>::get"]]
+marker = "std:slice"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+
+[["<std::ops::Range as std::slice::SliceIndex>::get_mut"]]
+marker = "std:slice"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+
+[["<std::ops::Range as std::slice::SliceIndex>::index"]]
+marker = "std:slice"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+
+[["<std::ops::Range as std::slice::SliceIndex>::index_mut"]]
+marker = "std:slice"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true

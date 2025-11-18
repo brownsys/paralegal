@@ -10,13 +10,13 @@ _internal_on_all_module_children = true
 on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
 on_return = true
 
-# [["memchr"]]
-# marker = "memchr"
-# _internal_on_all_module_children = true
-# on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
-# on_return = true
-
-[["memchr::memrchr"]]
+[["memchr"]]
 marker = "memchr"
+_internal_on_all_module_children = true
 on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
 on_return = true
+
+# [["memchr::memrchr"]]
+# marker = "memchr"
+# on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+# on_return = true
