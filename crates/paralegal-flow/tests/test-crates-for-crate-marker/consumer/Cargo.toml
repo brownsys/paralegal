@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 paralegal = { path = "../../../../paralegal" }
 producer = { path = "../producer" }
+serde_json = "1.0"

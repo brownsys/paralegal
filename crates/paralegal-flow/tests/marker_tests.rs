@@ -26,12 +26,20 @@ macro_rules! define_test {
     };
 }
 
-define_flow_test_template!(CRATE_MARKER_CRATE_ANALYZED, CRATE_MARKER_CRATE_PATH,
-    crate_marker :
-    ctrl -> {
-        assert!(!ctrl.marked("found").is_empty());
-    }
-);
+macro_rules! crate_marker_test {
+    ($($t:tt)*) => {
+        define_flow_test_template!(CRATE_MARKER_CRATE_ANALYZED, CRATE_MARKER_CRATE_PATH, $($t)*);
+    };
+}
+
+crate_marker_test!(crate_marker : ctrl -> {
+    assert!(!ctrl.marked("found").is_empty());
+});
+
+crate_marker_test!(serde_json: ctrl -> {
+    assert!(!ctrl.marked("serde").is_empty());
+    ctrl.assert_purity(true);
+});
 
 #[test]
 fn use_wrapper() {

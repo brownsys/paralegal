@@ -825,7 +825,11 @@ pub fn flatten_child_items(
 
     while let Some(module) = queue.pop() {
         let def_kind = tcx.def_kind(module);
-        trace!("Processing item: {:?} with def kind {:?}", module, def_kind);
+        trace!(
+            "Processing item: {} with def kind {:?}",
+            tcx.def_path_str(module),
+            def_kind
+        );
         let children = match def_kind {
             DefKind::Mod => Box::new(
                 if let Some(local) = module.as_local() {
@@ -834,7 +838,18 @@ pub fn flatten_child_items(
                     tcx.module_children(module)
                 }
                 .iter()
-                .filter_map(|c| c.res.opt_def_id()),
+                .filter_map(|c| c.res.opt_def_id())
+                .chain(
+                    // Trait impls are not contained in `module_children` where
+                    // they are defined, but instead associated with the crate
+                    // itself.
+                    module
+                        .as_crate_root()
+                        .map(|c| tcx.trait_impls_in_crate(c))
+                        .into_iter()
+                        .flatten()
+                        .copied(),
+                ),
             ) as Box<dyn Iterator<Item = DefId>>,
             DefKind::Impl { .. } => Box::new(
                 tcx.associated_items(module)
