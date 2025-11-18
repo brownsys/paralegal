@@ -20,11 +20,7 @@ macro_rules! define_test {
 }
 
 define_test!(fs: ctrl -> {
-    for (n, m) in ctrl.spdg().markers.iter() {
-        let info = ctrl.spdg().node_info(*n);
-        let instruction = & ctrl.graph().desc.instruction_info[&info.at.leaf()];
-        eprintln!("{} in {} is marked {m:?}", info.kind, instruction.description);
-    }
+    ctrl.show_side_effects(false);
 
     assert!(!ctrl.marked("side-effect:fs:write").is_empty());
 });

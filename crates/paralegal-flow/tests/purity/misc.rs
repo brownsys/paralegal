@@ -1,5 +1,4 @@
 use paralegal_flow::{ann::db::AutoMarkers, define_flow_test_template, inline_test, test_utils::*};
-use paralegal_spdg::DisplayPath;
 
 const TEST_CRATE_NAME: &str = "tests/purity/test-crate-misc";
 const EXTRA_ARGS: &[&str] = &[
@@ -84,25 +83,8 @@ define_test!(side_effect_tcp_flow: ctrl -> {
 });
 
 define_test!(side_effect_vec: ctrl -> {
+    ctrl.show_side_effects(true);
 
-    let auto_markers = AutoMarkers::default();
-    let auto = auto_markers.all();
-    for m in auto {
-        let marked = ctrl.marked(m);
-        if !marked.is_empty() {
-            println!("Side effect {m}");
-        }
-        for n in marked {
-            assert_eq!(n.info().at.root().function, ctrl.id());
-            let d = DisplayPath::from(&ctrl.graph().desc.def_info[&n.info().at.leaf().function].path);
-            println!("{} in {} in {}", n.info().kind, n.instruction_info().description, d);
-            for loc in n.info().at.iter() {
-                let d = DisplayPath::from(&ctrl.graph().desc.def_info[&loc.function].path);
-                println!("  called from {d}");
-            }
-        }
-
-    }
     ctrl.assert_purity(true);
 });
 

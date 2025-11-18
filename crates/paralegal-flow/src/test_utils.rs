@@ -652,6 +652,35 @@ impl<'g> CtrlRef<'g> {
         let auto = auto_markers.all();
         auto.into_iter().flat_map(|m| self.marked(m))
     }
+
+    pub fn show_side_effects(&self, show_trace: bool) {
+        let auto_markers = AutoMarkers::default();
+        let auto = auto_markers.all();
+        for m in auto {
+            let marked = self.marked(m);
+            if !marked.is_empty() {
+                println!("Side effect {m}");
+            }
+            for n in marked {
+                let d = DisplayPath::from(
+                    &self.graph().desc.def_info[&n.info().at.leaf().function].path,
+                );
+                println!(
+                    "{} in {} in {}",
+                    n.info().kind,
+                    n.instruction_info().description,
+                    d
+                );
+                if !show_trace {
+                    continue;
+                }
+                for loc in n.info().at.iter() {
+                    let d = DisplayPath::from(&self.graph().desc.def_info[&loc.function].path);
+                    println!("  called from {d}");
+                }
+            }
+        }
+    }
 }
 
 impl<'g> HasGraph<'g> for &FnRef<'g> {
