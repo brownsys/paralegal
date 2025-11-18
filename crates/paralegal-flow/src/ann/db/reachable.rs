@@ -35,6 +35,10 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn get_reachable_markers(&self, res: impl Into<MaybeMonomorphized<'tcx>>) -> &[Identifier] {
         let res = res.into();
         let def_id = res.def_id();
+        trace!(
+            "Checking reachable markers for {}",
+            self.tcx().def_path_str(def_id)
+        );
         let mark_side_effects = self.db().config.marker_control().mark_side_effects();
         if self.is_marked(def_id) {
             trace!("  Is marked");

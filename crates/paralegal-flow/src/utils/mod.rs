@@ -866,8 +866,8 @@ pub fn flatten_child_items(
         for id in children.filter(|id| id.krate == module.krate) {
             let def_kind = tcx.def_kind(id);
             trace!(
-                "Processing child item: {:?} with def kind {:?}",
-                id,
+                "Processing child item: {} with def kind {:?}",
+                tcx.def_path_str(id),
                 def_kind
             );
             match def_kind {

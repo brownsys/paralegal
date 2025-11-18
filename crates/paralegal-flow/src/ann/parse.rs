@@ -501,7 +501,7 @@ pub(crate) fn otype_ann_match(ann: &ast::AttrArgs, tcx: TyCtxt) -> Result<Vec<De
                 Some(
                     def_path_res(tcx, qself.as_deref(), &path.segments)
                         .map_err(|err| format!("Failed resolution: {err:?}",))
-                        .map(|d| d.def_id()),
+                        .map(|d| d.first().unwrap().def_id()),
                 )
             })
             .collect()

@@ -87,7 +87,7 @@ impl<'tcx> InlineJudge<'tcx> {
                 .marker_if_unloadable(marker_target_def_id)
                 .is_some() =>
             {
-                InlineJudgement::AbstractViaType("cannot unloadable item")
+                InlineJudgement::AbstractViaType("unloadable item")
             }
             _ if self.ctx.tcx().is_constructor(marker_target_def_id) => {
                 // This is an enum constructor. It would be better to handle

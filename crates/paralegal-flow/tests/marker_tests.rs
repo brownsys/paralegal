@@ -41,6 +41,11 @@ crate_marker_test!(serde_json: ctrl -> {
     ctrl.assert_purity(true);
 });
 
+crate_marker_test!(memchr: ctrl -> {
+    assert!(!ctrl.marked("memchr").is_empty());
+    ctrl.assert_purity(true);
+});
+
 #[test]
 fn use_wrapper() {
     InlineTestBuilder::new(stringify! {

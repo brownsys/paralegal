@@ -540,10 +540,10 @@ impl<'tcx> MarkerDatabase<'tcx> {
             .build_config()
             .stubs
             .iter()
-            .filter_map(|(k, v)| {
-                let res = expect_resolve_string_to_def_id(tcx, k, args.relaxed());
-                let res = if args.relaxed() { res? } else { res.unwrap() };
-                Some((res, v))
+            .flat_map(|(k, v)| {
+                expect_resolve_string_to_def_id(tcx, k, args.relaxed())
+                    .into_iter()
+                    .zip(std::iter::repeat(v))
             })
             .collect();
         let included_crates = Rc::new(args.anactrl().inclusion_predicate(tcx));
@@ -556,11 +556,19 @@ impl<'tcx> MarkerDatabase<'tcx> {
         let mut markers: FxHashMap<DefId, ItemMarkers> = external_markers
             .into_iter()
             .map(|(item, anns)| (item, ItemMarkers::from_annotations(anns)))
+            .inspect(|(item, anns)| {
+                trace!("Loaded annotations for {:?}: {anns:?}", item);
+            })
             .collect();
         for (item, anns) in local_annotations {
             for ann in anns {
                 match ann {
                     Annotation::Marker(r) => {
+                        trace!(
+                            "Assigning marker {} to {}",
+                            r.marker,
+                            tcx.def_path_str(item)
+                        );
                         for s in refinement_to_selectors(r.refinement) {
                             markers
                                 .entry(item)
@@ -770,19 +778,19 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
 
         let new_map: ExternalMarkers = from_toml
             .iter()
-            .filter_map(|(path, entries)| {
+            .flat_map(|(path, entries)| {
                 let res = resolve_string_to_def_id(tcx, path);
                 let must_succeed = entries
                     .iter()
                     .any(|entry| !entry.refinement._internal_can_fail_resolve_silently);
-                let def_id = match res {
+                let def_ids = match res {
                     Err(e) if !must_succeed => {
                         trace!("Failed to resolve path {}: {:?}", path, e);
-                        return None;
+                        vec![]
                     }
-                    _ => report_resolution_err(tcx, path, relaxed, res)?,
+                    _ => report_resolution_err(tcx, path, relaxed, res),
                 };
-                Some((def_id, entries))
+                def_ids.into_iter().zip(std::iter::repeat(entries))
             })
             .flat_map(|(def_id, entries)| {
                 let on_module_children = entries
