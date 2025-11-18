@@ -7,7 +7,7 @@ _internal_on_all_module_children = true
 on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
 on_return = true
 
-[["alloc::vec"]]
+[["alloc::slice"]]
 marker = "std:slice"
 _internal_can_fail_resolve_silently = true
 _internal_on_all_module_children = true
@@ -49,6 +49,12 @@ on_return = true
 marker = "std:allocation"
 _internal_can_fail_resolve_silently = true
 _internal_on_all_module_children = true
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+
+[["alloc::alloc::exchange_malloc"]]
+marker = "std:allocation"
+_internal_can_fail_resolve_silently = true
 on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
 on_return = true
 

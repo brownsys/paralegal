@@ -96,6 +96,10 @@ define_test!(side_effect_vec: ctrl -> {
             assert_eq!(n.info().at.root().function, ctrl.id());
             let d = DisplayPath::from(&ctrl.graph().desc.def_info[&n.info().at.leaf().function].path);
             println!("{} in {} in {}", n.info().kind, n.instruction_info().description, d);
+            for loc in n.info().at.iter() {
+                let d = DisplayPath::from(&ctrl.graph().desc.def_info[&loc.function].path);
+                println!("  called from {d}");
+            }
         }
 
     }
