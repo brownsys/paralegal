@@ -863,7 +863,7 @@ pub fn flatten_child_items(
                 continue;
             }
         };
-        for id in children.filter(|id| id.krate == module.krate) {
+        for id in children.filter(|id| tcx.opt_parent(*id).is_none_or(|id| id == module)) {
             let def_kind = tcx.def_kind(id);
             trace!(
                 "Processing child item: {} with def kind {:?}",

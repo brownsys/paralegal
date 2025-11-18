@@ -557,7 +557,7 @@ impl<'tcx> MarkerDatabase<'tcx> {
             .into_iter()
             .map(|(item, anns)| (item, ItemMarkers::from_annotations(anns)))
             .inspect(|(item, anns)| {
-                trace!("Loaded annotations for {:?}: {anns:?}", item);
+                //trace!("Loaded annotations for {:?}: {anns:?}", item);
             })
             .collect();
         for (item, anns) in local_annotations {
