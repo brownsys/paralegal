@@ -167,7 +167,7 @@ impl SPDGGenCommand {
     /// Register a Rust function as entrypoint for the analysis. Equivalent to
     /// the `#[analyze]` annotation.
     pub fn analysis_target(&mut self, target: impl AsRef<str>) -> &mut Self {
-        self.0.args(["--analysis", target.as_ref()]);
+        self.0.args(["--analyze", target.as_ref()]);
         self
     }
 
