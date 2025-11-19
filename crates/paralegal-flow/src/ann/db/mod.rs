@@ -15,9 +15,7 @@ use crate::{
     args::{Args, Stub},
     utils::{
         self, is_function_like,
-        resolve::{
-            self, expect_resolve_string_to_def_id, report_resolution_err, resolve_string_to_def_id,
-        },
+        resolve::{self, expect_resolve_string_to_def_id, resolve_string_to_def_id},
         IntoDefId,
     },
     Either, HashMap,
@@ -556,9 +554,6 @@ impl<'tcx> MarkerDatabase<'tcx> {
         let mut markers: FxHashMap<DefId, ItemMarkers> = external_markers
             .into_iter()
             .map(|(item, anns)| (item, ItemMarkers::from_annotations(anns)))
-            .inspect(|(item, anns)| {
-                //trace!("Loaded annotations for {:?}: {anns:?}", item);
-            })
             .collect();
         for (item, anns) in local_annotations {
             for ann in anns {
@@ -755,8 +750,7 @@ fn parse_external_marker_file(s: &str) -> anyhow::Result<RawExternalMarkers> {
 /// Given the TOML of external annotations we have parsed, resolve the paths
 /// (keys of the map) to [`DefId`]s.
 fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
-    //let relaxed = opts.relaxed();
-    let relaxed = false;
+    let relaxed = opts.relaxed();
     if let Some(annotation_file) = opts.marker_control().external_annotations() {
         let data = std::fs::read_to_string(annotation_file).unwrap_or_else(|_| {
             panic!(
@@ -780,9 +774,10 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
             .iter()
             .flat_map(|(path, entries)| {
                 let res = resolve_string_to_def_id(tcx, path);
-                let must_succeed = entries
-                    .iter()
-                    .any(|entry| !entry.refinement._internal_can_fail_resolve_silently);
+                let must_succeed = !relaxed
+                    && entries
+                        .iter()
+                        .any(|entry| !entry.refinement._internal_can_fail_resolve_silently);
                 let def_ids = res.unwrap_or_else(|e| {
                     if !must_succeed {
                         trace!("Failed to resolve path {}: {:?}", path, e);

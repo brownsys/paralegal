@@ -164,6 +164,13 @@ impl SPDGGenCommand {
         self
     }
 
+    /// Register a Rust function as entrypoint for the analysis. Equivalent to
+    /// the `#[analyze]` annotation.
+    pub fn analysis_target(&mut self, target: impl AsRef<str>) -> &mut Self {
+        self.0.args(["--analysis", target.as_ref()]);
+        self
+    }
+
     /// Abort compilation once the analysis artifacts have been created. Also
     /// sets the expectation for the compilation to succeed to `false`.
     pub fn abort_after_analysis(&mut self) -> &mut Self {
