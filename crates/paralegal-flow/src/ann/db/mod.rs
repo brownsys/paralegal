@@ -16,7 +16,7 @@ use crate::{
     utils::{
         self, is_function_like,
         resolve::{
-            expect_resolve_string_to_def_id, report_resolution_err, resolve_string_to_def_id,
+            self, expect_resolve_string_to_def_id, report_resolution_err, resolve_string_to_def_id,
         },
         IntoDefId,
     },
@@ -783,16 +783,18 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
                 let must_succeed = entries
                     .iter()
                     .any(|entry| !entry.refinement._internal_can_fail_resolve_silently);
-                let def_ids = match res {
-                    Err(e) if !must_succeed => {
+                let def_ids = res.unwrap_or_else(|e| {
+                    if !must_succeed {
                         trace!("Failed to resolve path {}: {:?}", path, e);
-                        vec![]
+                    } else {
+                        tcx.dcx()
+                            .err(format!("Failed to resolve path {}: {:?}", path, e));
                     }
-                    _ => report_resolution_err(tcx, path, relaxed, res),
-                };
+                    vec![]
+                });
                 def_ids.into_iter().zip(std::iter::repeat(entries))
             })
-            .flat_map(|(def_id, entries)| {
+            .flat_map(|(res, entries)| {
                 let on_module_children = entries
                     .iter()
                     .fold(None, |acc, entry| {
@@ -801,7 +803,7 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
                         }) {
                             tcx.dcx().err(format!(
                                 "Conflicting use of `on_all_module_children` on {}",
-                                tcx.def_path_str(def_id)
+                                res.as_string(tcx)
                             ));
                         }
                         Some(
@@ -810,20 +812,28 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
                         )
                     })
                     .unwrap_or(false);
-                let def_kind = tcx.def_kind(def_id);
-                let only_self = [def_id];
+                let only_self = match res {
+                    resolve::Res::Def(_, id) => Box::new([id]) as Box<[_]>,
+                    _ => Box::new([]),
+                };
                 let def_ids = if on_module_children {
-                    let defs = match def_kind {
-                        DefKind::Struct | DefKind::Enum => tcx.inherent_impls(def_id),
-                        DefKind::Mod | DefKind::Impl { .. } | DefKind::ExternCrate => &only_self,
-                        _ => panic!(
-                            "Expected module-like def kind for {}, got {def_kind:?}",
-                            tcx.def_path_str(def_id)
-                        ),
+                    let defs = match res {
+                        resolve::Res::PrimTy(t) => tcx.incoherent_impls(t),
+                        resolve::Res::Def(_, _) => &only_self,
                     };
+
                     utils::flatten_child_items(tcx, defs.iter().copied())
                 } else {
-                    [def_id].into_iter().collect()
+                    match res {
+                        resolve::Res::Def(_, id) => Some(id),
+                        resolve::Res::PrimTy(t) => {
+                            tcx.dcx()
+                                .err(format!("Cannot assign markers to primitive type {t:?}"));
+                            None
+                        }
+                    }
+                    .into_iter()
+                    .collect()
                 };
                 def_ids.into_iter().flat_map(|def_id| {
                     entries.iter().map(move |entry| {

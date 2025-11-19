@@ -18,7 +18,7 @@ use rustc_span::Symbol;
 #[derive(Debug, Clone, Copy)]
 pub enum Res {
     Def(DefKind, DefId),
-    PrimTy(PrimTy),
+    PrimTy(SimplifiedType),
 }
 
 #[derive(Clone, Debug)]
@@ -50,7 +50,7 @@ impl Res {
     fn from_def_res(res: def::Res) -> Result<Self> {
         match res {
             def::Res::Def(k, i) => Ok(Res::Def(k, i)),
-            def::Res::PrimTy(t) => Ok(Res::PrimTy(t)),
+            def::Res::PrimTy(t) => Ok(Res::PrimTy(prim_ty_to_simp_ty(t))),
             other => Err(ResolutionError::UnconvertibleRes(other)),
         }
     }
@@ -61,6 +61,24 @@ impl Res {
         } else {
             panic!("Not a def")
         }
+    }
+
+    pub fn as_string(&self, tcx: TyCtxt<'_>) -> String {
+        match self {
+            Res::Def(_, id) => tcx.def_path_str(*id),
+            Res::PrimTy(ty) => format!("{ty:?}"),
+        }
+    }
+}
+
+fn prim_ty_to_simp_ty(pt: PrimTy) -> SimplifiedType {
+    match pt {
+        PrimTy::Bool => SimplifiedType::Bool,
+        PrimTy::Char => SimplifiedType::Char,
+        PrimTy::Str => SimplifiedType::Str,
+        PrimTy::Int(i) => SimplifiedType::Int(ty::int_ty(i)),
+        PrimTy::Uint(u) => SimplifiedType::Uint(ty::uint_ty(u)),
+        PrimTy::Float(f) => SimplifiedType::Float(ty::float_ty(f)),
     }
 }
 
@@ -253,13 +271,14 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
             };
             Ok(match adt {
                 Res::Def(_, did) => ty::Ty::new_adt(tcx, tcx.adt_def(did), ty::List::empty()),
-                Res::PrimTy(t) => match t {
-                    PrimTy::Bool => tcx.types.bool,
-                    PrimTy::Char => tcx.types.char,
-                    PrimTy::Str => tcx.types.str_,
-                    PrimTy::Int(i) => ty::Ty::new_int(tcx, ty::int_ty(*i)),
-                    PrimTy::Uint(u) => ty::Ty::new_uint(tcx, ty::uint_ty(*u)),
-                    PrimTy::Float(f) => ty::Ty::new_float(tcx, ty::float_ty(*f)),
+                Res::PrimTy(pt) => match pt {
+                    SimplifiedType::Bool => tcx.types.bool,
+                    SimplifiedType::Char => tcx.types.char,
+                    SimplifiedType::Str => tcx.types.str_,
+                    SimplifiedType::Int(i) => ty::Ty::new_int(tcx, *i),
+                    SimplifiedType::Uint(u) => ty::Ty::new_uint(tcx, *u),
+                    SimplifiedType::Float(f) => ty::Ty::new_float(tcx, *f),
+                    _ => return Err(ResolutionError::UnsupportedType(t.clone())),
                 },
             })
         }
@@ -311,8 +330,8 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
             [primitive] => {
                 /* Start here for issue 1 */
                 let sym = primitive.ident.name;
-                if let Some(t) = PrimTy::from_name(sym) {
-                    return Ok(vec![Res::PrimTy(t)]);
+                if let Some(sim_ty) = as_primitive_ty(sym) {
+                    return Ok(vec![Res::PrimTy(sim_ty)]);
                 } else {
                     (
                         Box::new(find_crates(tcx, sym)) as Box<dyn Iterator<Item = DefId>>,

@@ -20,7 +20,7 @@ macro_rules! define_test {
 }
 
 define_test!(fs: ctrl -> {
-    ctrl.show_side_effects(false);
+    ctrl.show_side_effects(true);
 
     assert!(!ctrl.marked("side-effect:fs:write").is_empty());
 });
