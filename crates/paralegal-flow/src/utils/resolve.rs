@@ -299,6 +299,17 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
                 ty::Ty::new_param(tcx, 0, Symbol::intern("T")),
             ))
         }
+        TyKind::Ref(lt, mt) => {
+            if lt.is_some() {
+                tcx.dcx().warn("Ignoring lifetimes in reference types");
+            }
+            let inner = resolve_ty(tcx, &mt.ty)?;
+            let lt = ty::Region::new_var(tcx, ty::RegionVid::ZERO);
+            Ok(match mt.mutbl {
+                hir::Mutability::Mut => ty::Ty::new_mut_ref(tcx, lt, inner),
+                hir::Mutability::Not => ty::Ty::new_imm_ref(tcx, lt, inner),
+            })
+        }
         _ => Err(ResolutionError::UnsupportedType(t.clone())),
     }
 }

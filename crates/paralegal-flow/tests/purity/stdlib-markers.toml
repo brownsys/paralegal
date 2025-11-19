@@ -338,3 +338,18 @@ on_return = true
 marker = "std:slice"
 on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
 on_return = true
+
+[["std::path::Path::new"]]
+marker = "std:fs"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+
+[["core::fmt::rt::Argument::new"]]
+marker = "std:fmt"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+
+[["<&std::fs::File as std::io::Write>::write"]]
+marker = "side-effect:fs:write"
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true

@@ -12,6 +12,7 @@ use either::Either;
 use crate::{ann::db::AutoMarkers, MarkerCtx};
 
 const ALLOWED_INTRINSICS: &[&str] = &[
+    "three_way_compare",
     // Prefetching.
     "prefetch_read_data",
     "prefetch_write_data",
