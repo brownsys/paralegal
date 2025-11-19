@@ -306,6 +306,18 @@ impl Span {
     }
 }
 
+impl std::fmt::Display for Span {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}:{}:{}",
+            self.source_file.abs_file_path.display(),
+            self.start.line,
+            self.start.col,
+        )
+    }
+}
+
 /// Metadata on a function call.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq, Allocative)]
 pub struct FunctionCallInfo {

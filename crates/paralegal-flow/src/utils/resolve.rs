@@ -1,4 +1,4 @@
-use std::hash::Hash;
+use std::{hash::Hash, panic};
 
 use ast::Mutability;
 use hir::{
@@ -289,6 +289,16 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
                 .collect::<Result<Vec<_>>>()?
                 .as_ref(),
         )),
+        TyKind::Slice(inner) => {
+            if !matches!(inner.kind, TyKind::Infer) {
+                tcx.dcx()
+                    .warn(format!("Ignoring non-wildcard slice type {inner:?}"));
+            }
+            Ok(ty::Ty::new_slice(
+                tcx,
+                ty::Ty::new_param(tcx, 0, Symbol::intern("T")),
+            ))
+        }
         _ => Err(ResolutionError::UnsupportedType(t.clone())),
     }
 }

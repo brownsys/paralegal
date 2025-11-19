@@ -675,8 +675,13 @@ impl<'g> CtrlRef<'g> {
                     continue;
                 }
                 for loc in n.info().at.iter() {
-                    let d = DisplayPath::from(&self.graph().desc.def_info[&loc.function].path);
-                    println!("  called from {d}");
+                    let i_info = &self.graph.desc.instruction_info[&loc];
+                    let d_info = &self.graph().desc.def_info[&loc.function];
+                    println!(
+                        "  called from {} {}",
+                        DisplayPath::from(&d_info.path),
+                        i_info.span
+                    );
                 }
             }
         }
