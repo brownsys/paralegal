@@ -46,6 +46,12 @@ crate_marker_test!(memchr: ctrl -> {
     ctrl.assert_purity(true);
 });
 
+crate_marker_test!(marker_overlap: ctrl -> {
+    assert!(!ctrl.marked("found").is_empty());
+    assert!(!ctrl.marked("submod-conflict").is_empty());
+    assert!(!ctrl.marked("direct-conflict").is_empty());
+});
+
 #[test]
 fn use_wrapper() {
     InlineTestBuilder::new(stringify! {

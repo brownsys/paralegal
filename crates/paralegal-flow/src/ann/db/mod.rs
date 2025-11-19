@@ -837,7 +837,11 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
                     })
                 })
             })
-            .collect();
+            .into_grouping_map()
+            .reduce(|mut one: Vec<_>, _, mut other| {
+                one.extend(other.drain(..));
+                one
+            });
         new_map
     } else {
         HashMap::new()

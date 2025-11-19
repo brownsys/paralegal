@@ -20,3 +20,15 @@ on_return = true
 # marker = "memchr"
 # on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
 # on_return = true
+
+[["producer::a_mod"]]
+marker = "submod-conflict"
+_internal_on_all_module_children = true
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true
+
+[["producer::a_mod"]]
+marker = "direct-conflict"
+_internal_on_all_module_children = true
+on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_return = true

@@ -12,3 +12,8 @@ fn serde_json() {
 fn memchr() {
     memchr::memrchr(b'a', b"hello");
 }
+
+#[paralegal::analyze]
+fn marker_overlap() {
+    producer::a_mod::target()
+}
