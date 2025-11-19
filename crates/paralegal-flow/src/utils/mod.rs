@@ -839,7 +839,15 @@ pub fn flatten_child_items(
                 }
                 .iter()
                 .filter_map(|c| c.res.opt_def_id())
-                .filter(|c| tcx.opt_parent(*c).is_none_or(|parent| parent == module))
+                .filter(|c| {
+                    let parent = tcx.opt_parent(*c);
+                    assert!(
+                        parent.is_some() || c.is_crate_root(),
+                        "{c:?} has no parent but isn't a crate (is {:?})",
+                        tcx.def_kind(*c)
+                    );
+                    parent.is_some_and(|parent| parent == module)
+                })
                 .chain(
                     // Trait impls are not contained in `module_children` where
                     // they are defined, but instead associated with the crate

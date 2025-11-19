@@ -842,6 +842,17 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
                 one.extend(other.drain(..));
                 one
             });
+        // let mut f = std::io::BufWriter::new(
+        //     std::fs::File::create("computed-external-marker-assignments.txt").unwrap(),
+        // );
+        // use std::io::Write;
+        // for (item, markers) in new_map.iter() {
+        //     write!(f, "{:20} : ", tcx.def_path_str(item)).unwrap();
+        //     for ann in markers.iter() {
+        //         write!(f, "{}, ", ann.marker).unwrap();
+        //     }
+        //     writeln!(f).unwrap();
+        // }
         new_map
     } else {
         HashMap::new()
