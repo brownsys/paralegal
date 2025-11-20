@@ -428,10 +428,9 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
     } else {
         ResolutionError::EmptyStarts
     });
-    let found = starts
-        .filter_map(|first| {
-            let res = path
-                .iter()
+    let mut found = starts
+        .map(|first| {
+            path.iter()
                 // for each segment, find the child item
                 .try_fold(Res::Def(tcx.def_kind(first), first), |res, segment| {
                     no_generics_supported(segment);
@@ -456,13 +455,15 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
                             search_space: SearchSpace::Mod,
                         })
                     }
-                });
-            res.ok()
+                })
         })
         .collect::<Vec<_>>();
-    trace!("last: {:?}", found);
+
     if found.is_empty() {
-        return empty_err;
+        empty_err
+    } else if found.iter().all(|f| f.is_err()) {
+        found.pop().unwrap().map(|_| vec![])
+    } else {
+        Ok(found.into_iter().filter_map(|f| f.ok()).collect())
     }
-    Ok(found)
 }

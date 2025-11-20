@@ -24,3 +24,12 @@ define_test!(fs: ctrl -> {
 
     assert!(!ctrl.marked("side-effect:fs:write").is_empty());
 });
+
+define_test!(path_eq: ctrl -> {
+    ctrl.show_side_effects(true);
+    ctrl.assert_purity(true);
+});
+
+define_test!(os_str_from_bytes: ctrl -> {
+    ctrl.assert_purity(true);
+});

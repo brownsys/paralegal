@@ -774,10 +774,9 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
             .iter()
             .flat_map(|(path, entries)| {
                 let res = resolve_string_to_def_id(tcx, path);
-                let must_succeed = !relaxed
-                    && entries
-                        .iter()
-                        .any(|entry| !entry.refinement._internal_can_fail_resolve_silently);
+                let must_succeed = entries
+                    .iter()
+                    .any(|entry| !entry.refinement._internal_can_fail_resolve_silently);
                 let def_ids = res.unwrap_or_else(|e| {
                     if !must_succeed {
                         trace!("Failed to resolve path {}: {:?}", path, e);
