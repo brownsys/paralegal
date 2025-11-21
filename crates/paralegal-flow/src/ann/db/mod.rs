@@ -813,7 +813,13 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
                 let def_ids = if on_module_children {
                     let defs = match res {
                         resolve::Res::PrimTy(t) => tcx.incoherent_impls(t),
-                        resolve::Res::Def(_, _) => &only_self,
+                        resolve::Res::Def(_, id) => {
+                            let def_kind =tcx.def_kind(id);
+                            if !matches!(def_kind, DefKind::Impl {..} | DefKind::Struct | DefKind::Enum | DefKind::Mod | DefKind::Trait) {
+                                tcx.dcx().err(format!("on_all_module_children used on a non-module-like item {}, has kind {def_kind:?}", tcx.def_path_str(id)));
+                            };
+                            &only_self
+                        },
                     };
 
                     utils::flatten_child_items(tcx, defs.iter().copied())
