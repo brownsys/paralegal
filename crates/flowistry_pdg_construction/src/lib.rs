@@ -30,8 +30,8 @@ pub mod utils;
 pub use analysis::async_support::{self, determine_async, is_async_trait_fn};
 pub use analysis::global::call_tree_visit::{VisitDriver, Visitor};
 pub use analysis::global::{
-    DepEdge, DepEdgeKind, DepNode, DepNodeKind, MemoPdgConstructor, Node, OneHopLocation,
-    PartialGraph, Use,
+    DepEdge, DepEdgeKind, DepNode, DepNodeKind, GraphSizeEstimator, MemoPdgConstructor, Node,
+    OneHopLocation, PartialGraph, Use,
 };
 pub use analysis::CallingConvention;
 pub use callback::{

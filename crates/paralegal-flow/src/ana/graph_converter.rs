@@ -1,3 +1,6 @@
+use std::hash::Hash;
+use std::time::Instant;
+
 use super::{path_for_item, src_loc_for_span};
 use crate::{
     ann::{db::AutoMarkers, side_effect_detection},
@@ -18,7 +21,7 @@ use rustc_hash::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir,
-    ty::{Instance, TyCtxt, TypingEnv},
+    ty::{self, Instance, TyCtxt, TypingEnv},
 };
 
 use either::Either;
@@ -48,6 +51,8 @@ struct GraphAssembler<'tcx, 'a> {
     /// conversion.
     types: HashMap<GNode, Vec<DefId>>,
     known_def_ids: &'a mut FxHashSet<DefId>,
+    counter: u64,
+    started: Instant,
 }
 
 /// Create a global PDG (spanning the entire call tree) starting from the given
@@ -86,6 +91,20 @@ pub fn assemble_pdg<'tcx>(
 
     let mut driver = VisitDriver::new(pdg_constructor, possible_generator_instance, k);
     let mut assembler = GraphAssembler::new(pctx.clone(), known_def_ids, base_body_def_id);
+    let print_estimated_size = |driver: &mut VisitDriver<'tcx, '_, u32>| {
+        let mut deepchain_printer = StacktracePrinter::new(tcx);
+        driver.start(&mut deepchain_printer);
+        if deepchain_printer.locations_printed > 0 {
+            panic!("Printed a long chain");
+        }
+        let mut estimator = flowistry_pdg_construction::GraphSizeEstimator::new();
+        driver.start(&mut estimator);
+        println!(
+            "Graph for {}: {}",
+            tcx.def_path_str(target),
+            estimator.format_size()
+        );
+    };
 
     // If the top level function is async we start analysis from the generator
     // instead (because the async function itself is basically empty, it just
@@ -100,6 +119,7 @@ pub fn assemble_pdg<'tcx>(
                 location: RichLocation::Location(loc),
             },
             |driver| {
+                print_estimated_size(driver);
                 driver.start(&mut assembler);
             },
         );
@@ -112,6 +132,7 @@ pub fn assemble_pdg<'tcx>(
         // have to manually sync up the actual arguments to the async function.
         assembler.fix_async_args(base_instance, loc, &mut driver);
     } else {
+        print_estimated_size(&mut driver);
         driver.start(&mut assembler);
     }
     let return_ = assembler.determine_return();
@@ -149,6 +170,8 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             known_def_ids,
             types: Default::default(),
             is_async,
+            counter: 0,
+            started: Instant::now(),
         }
     }
 
@@ -172,6 +195,14 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         vis: &mut VisitDriver<'tcx, '_, K>,
         weight: &DepNode<'tcx, OneHopLocation>,
     ) -> GNode {
+        self.counter += 1;
+        if self.counter % 1_000_000 == 0 {
+            println!(
+                "[{}] Seen {} mil nodes",
+                self.started.elapsed().as_secs(),
+                self.counter / 1_000_000
+            );
+        }
         let weight = globalize_node(vis, weight, self.tcx());
         let table = self.nodes.last_mut().unwrap();
         let prior = table[node.index()];
@@ -281,21 +312,23 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             } else {
                 (place.local.into(), place.projection.as_slice())
             };
-        trace!("Using base place {base_place:?} with projections {projections:?}");
+        trace!(
+            "Using base place {base_place:?} in {} with projections {projections:?}",
+            tcx.def_path_str(function.def_id())
+        );
 
         let resolution = vis.current_function();
 
-        // Thread through each caller to recover generic arguments
         let body = self.pctx.body_cache().get(function.def_id()).body();
-        let raw_ty = base_place.ty(body, tcx);
-        let base_ty = try_monomorphize(
+        let ty = try_monomorphize(
             resolution,
             tcx,
             TypingEnv::fully_monomorphized(),
-            &raw_ty,
+            &body.local_decls[base_place.local].ty,
             span,
         )
         .unwrap();
+        let base_ty = place_ty_from_ty_and_projections(tcx, ty, base_place.projection);
 
         self.handle_node_types_helper(node, base_ty, projections);
     }
@@ -717,6 +750,18 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     }
 }
 
+fn place_ty_from_ty_and_projections<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    ty: ty::Ty<'tcx>,
+    projection: &[mir::PlaceElem<'tcx>],
+) -> mir::tcx::PlaceTy<'tcx> {
+    projection
+        .iter()
+        .fold(mir::tcx::PlaceTy::from_ty(ty), |place_ty, &elem| {
+            place_ty.projection_ty(tcx, elem)
+        })
+}
+
 fn globalize_node<'tcx, K: Clone>(
     vis: &mut VisitDriver<'tcx, '_, K>,
     node: &DepNode<'tcx, OneHopLocation>,
@@ -834,5 +879,51 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssembler<
                 at: edge.at,
             },
         );
+    }
+}
+
+struct StacktracePrinter<'tcx> {
+    tcx: TyCtxt<'tcx>,
+    locations_printed: u32,
+}
+
+impl<'tcx> StacktracePrinter<'tcx> {
+    fn new(tcx: TyCtxt<'tcx>) -> Self {
+        Self {
+            tcx,
+            locations_printed: 0,
+        }
+    }
+}
+
+impl<'tcx> Visitor<'tcx, u32> for StacktracePrinter<'tcx> {
+    fn visit_partial_graph(
+        &mut self,
+        vis: &mut VisitDriver<'tcx, '_, u32>,
+        partial_graph: &PartialGraph<'tcx, u32>,
+    ) {
+        let call_string = vis.call_stack();
+        if 36 == call_string.len() && self.locations_printed < 5 {
+            self.locations_printed += 1;
+            println!(
+                "Found deep graph for {}",
+                self.tcx.def_path_str(partial_graph.def_id())
+            );
+            for loc in call_string.iter().rev() {
+                let fun = loc.function;
+
+                let span = self.tcx.def_span(fun);
+                let smap = &self.tcx.sess.source_map();
+                let (_, start, ..) = smap.span_to_location_info(span);
+                println!(
+                    "    Called from {:100} {}:{start}",
+                    self.tcx.def_path_str(fun),
+                    smap.span_to_filename(span)
+                        .display(rustc_span::FileNameDisplayPreference::Local),
+                )
+            }
+            println!();
+        }
+        vis.visit_partial_graph(self, partial_graph);
     }
 }
