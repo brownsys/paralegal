@@ -285,7 +285,11 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                             place.local == alias.local
                         } else {
                             trace!("Checking conflict status of {place:?} and {alias:?}");
-                            utils::places_conflict(self.tcx(), &self.mono_body, *place, alias)
+                            self.memo.place_conflict_context.places_conflict(
+                                &self.mono_body,
+                                *place,
+                                alias,
+                            )
                         }
                     });
 
@@ -757,7 +761,17 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
                     } else {
                         continue;
                     };
-                    let src = final_state.get_place_node(*place, location.into()).unwrap();
+                    let Some(src) = final_state.get_place_node(*place, location.into()) else {
+                        let span = match location {
+                            RichLocation::Location(l) => self.mono_body.source_info(*l).span,
+                            _ => self.mono_body.span,
+                        };
+                        // CORNER CUTTING: we should investigate why this happens.
+                        self.tcx()
+                            .dcx()
+                            .span_err(span, format!("could not find reference to {place:?} here"));
+                        continue;
+                    };
                     let eloc = RichLocation::End;
                     let key = NodeKey::for_place(*place, eloc.into());
                     let prior = final_state.get_node(&key);
