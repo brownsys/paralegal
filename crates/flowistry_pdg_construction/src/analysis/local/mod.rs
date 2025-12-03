@@ -769,7 +769,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
                         // CORNER CUTTING: we should investigate why this happens.
                         self.tcx()
                             .dcx()
-                            .span_err(span, format!("could not find reference to {place:?} here"));
+                            .span_warn(span, format!("could not find reference to {place:?} here"));
                         continue;
                     };
                     let eloc = RichLocation::End;
