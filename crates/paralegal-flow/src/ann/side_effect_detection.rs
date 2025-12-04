@@ -153,6 +153,7 @@ const ALLOWED_INTRINSICS: &[&str] = &[
     // I disallow this, though I still special case it with it's own effect
     // type.
     // "transmute",
+    "ub_checks",
 ];
 
 pub(super) fn allowed_intrinsics() -> FxHashSet<rustc_span::Symbol> {

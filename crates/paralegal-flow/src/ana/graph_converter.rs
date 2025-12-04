@@ -92,10 +92,12 @@ pub fn assemble_pdg<'tcx>(
     let mut driver = VisitDriver::new(pdg_constructor, possible_generator_instance, k);
     let mut assembler = GraphAssembler::new(pctx.clone(), known_def_ids, base_body_def_id);
     let print_estimated_size = |driver: &mut VisitDriver<'tcx, '_, u32>| {
-        let mut deepchain_printer = StacktracePrinter::new(tcx);
-        driver.start(&mut deepchain_printer);
-        if deepchain_printer.locations_printed > 0 {
-            panic!("Printed a long chain");
+        if let Some(depth) = pctx.opts().anactrl().fail_on_deep_call_chain() {
+            let mut deepchain_printer = StacktracePrinter::new(tcx, depth);
+            driver.start(&mut deepchain_printer);
+            if deepchain_printer.locations_printed > 0 {
+                panic!("Printed a long chain");
+            }
         }
         let mut estimator = flowistry_pdg_construction::GraphSizeEstimator::new();
         driver.start(&mut estimator);
@@ -885,13 +887,15 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssembler<
 struct StacktracePrinter<'tcx> {
     tcx: TyCtxt<'tcx>,
     locations_printed: u32,
+    target_depth: usize,
 }
 
 impl<'tcx> StacktracePrinter<'tcx> {
-    fn new(tcx: TyCtxt<'tcx>) -> Self {
+    fn new(tcx: TyCtxt<'tcx>, target_depth: u32) -> Self {
         Self {
             tcx,
             locations_printed: 0,
+            target_depth: target_depth as usize
         }
     }
 }
@@ -903,7 +907,7 @@ impl<'tcx> Visitor<'tcx, u32> for StacktracePrinter<'tcx> {
         partial_graph: &PartialGraph<'tcx, u32>,
     ) {
         let call_string = vis.call_stack();
-        if 36 == call_string.len() && self.locations_printed < 5 {
+        if self.target_depth <= call_string.len() && self.locations_printed < 5 {
             self.locations_printed += 1;
             println!(
                 "Found deep graph for {}",
