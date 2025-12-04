@@ -78,7 +78,10 @@ impl<'tcx> MarkerCtx<'tcx> {
         }
         let non_direct = (!is_self_marked).then(|| self.get_reachable_markers(res));
 
+        let filter_std_markers = self.db().config.marker_control().elide_on_whitelist_markers();
+
         direct_markers.chain(non_direct.into_iter().flatten().copied())
+            .filter(move |m| !filter_std_markers || !(m.as_str().starts_with("std:") || m.as_str().starts_with("safe-libs:")))
     }
 
     /// If the transitive marker cache did not contain the answer, this is what
@@ -123,6 +126,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         use mir::visit::Visitor;
         vis.visit_body(&mono_body);
         let found = vis.found_markers;
+        trace!("Found markers {found:?}");
         found.into_iter().collect()
     }
 

@@ -382,3 +382,51 @@ fn lifetime_resolving() {
     )
     .check_ctrl(|ctrl| assert!(dbg!(ctrl.markers()).contains(&Identifier::new_intern("present"))));
 }
+
+#[test]
+fn dont_inline_on_std_marker() {
+    inline_test! {
+        #[paralegal_flow::marker(target1)]
+        fn canary1 () {}
+
+        #[paralegal_flow::marker(target2)]
+        fn canary2 (arg: usize) {}
+
+        fn hidden1() {
+            canary1()
+        }
+
+        fn hidden2(arg: usize) {
+            canary2(arg)
+        }
+
+        fn intermediate1() {
+            hidden1()
+        }
+
+        fn intermediate2(arg: usize) {
+            hidden2(arg)
+        }
+
+        fn main() {
+            intermediate1();
+            intermediate2(0);
+        }
+    }.with_marker_file(
+        "
+        [[\"crate::hidden1\"]]
+        marker = \"std:test\"
+        on_return = true
+
+        [[\"crate::hidden2\"]]
+        marker = \"safe-libs:test\"
+        on_argument = [0]
+        "
+    ).with_extra_args(["--elide-on-whitelist-markers"])
+    .check_ctrl(|ctrl| {
+        assert!(ctrl.marked("std:test").is_empty());
+        assert!(ctrl.marked("safe-libs:test").is_empty());
+        assert!(ctrl.marked("target1").is_empty());
+        assert!(ctrl.marked("target2").is_empty());
+    });
+}

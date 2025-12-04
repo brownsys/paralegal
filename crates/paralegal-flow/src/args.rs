@@ -470,6 +470,8 @@ pub struct MarkerControl {
     /// Implies `--include-std`.
     #[clap(long, env)]
     side_effect_markers: bool,
+    #[clap(long)]
+    elide_on_whitelist_markers: bool,
 }
 
 impl MarkerControl {
@@ -479,6 +481,10 @@ impl MarkerControl {
 
     pub fn mark_side_effects(&self) -> bool {
         self.side_effect_markers
+    }
+
+    pub fn elide_on_whitelist_markers(&self) -> bool {
+        self.elide_on_whitelist_markers
     }
 }
 
