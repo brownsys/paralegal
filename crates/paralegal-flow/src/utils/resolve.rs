@@ -289,6 +289,23 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
                 .collect::<Result<Vec<_>>>()?
                 .as_ref(),
         )),
+        TyKind::Array(inner, const_) => {
+            if !matches!(inner.kind, TyKind::Infer) {
+                tcx.dcx()
+                    .warn(format!("Ignoring non-wildcard slice type {inner:?}"));
+            }
+            if !matches!(const_.value.kind, rustc_ast::ExprKind::Underscore) {
+                tcx.dcx()
+                    .warn(format!("Ignoring const argument {const_:?} in array type"));
+            }
+            let our_len = 42;
+            warn!("Array types may not behave properly with instance markers because we always use the instance of arrays of length {our_len}");
+            Ok(ty::Ty::new_array(
+                tcx,
+                ty::Ty::new_param(tcx, 0, Symbol::intern("T")),
+                our_len,
+            ))
+        }
         TyKind::Slice(inner) => {
             if !matches!(inner.kind, TyKind::Infer) {
                 tcx.dcx()
@@ -339,6 +356,7 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
 /// 2. It probably cannot resolve a qualified path if the base is a primitive
 ///    type. E.g. `usize::abs_diff` resolves but `<usize>::abs_diff` does not.
 pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) -> Result<Vec<Res>> {
+    trace!("Resolving {qself:?} {path:?}");
     let no_generics_supported = |segment: &PathSegment| {
         if segment.args.is_some() {
             tcx.dcx().err(format!(
@@ -464,6 +482,13 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
     } else if found.iter().all(|f| f.is_err()) {
         found.pop().unwrap().map(|_| vec![])
     } else {
-        Ok(found.into_iter().filter_map(|f| f.ok()).collect())
+        Ok(found.into_iter().filter_map(|f| f.ok())
+            .inspect(|res| {
+                trace!("  Resolved to {res:?}");
+                if let Res::Def(_, did) = res {
+                    trace!("    {} at {:?}", tcx.def_path_str(did), tcx.def_span(did));
+                }
+            })
+            .collect())
     }
 }

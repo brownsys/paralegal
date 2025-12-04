@@ -148,3 +148,8 @@ fn clone_test_reachability() {
 define_test!(structs: ctrl -> {
     ctrl.assert_purity(true);
 });
+
+define_test!(array_iter_marker: ctrl -> {
+    ctrl.assert_purity(true);
+    assert!(ctrl.has_function("into_iter"));
+});
