@@ -905,6 +905,13 @@ pub struct NodeInfo {
 
     /// Whether this node is an argument to a function call, and if so which
     pub is_arg: Option<u16>,
+
+    /// Is this node (the value behind it) the same before and after the
+    /// operation applied at this location?
+    ///
+    /// Specifically this considers taking references (and pointers) and
+    /// dereferencing them to mean the value is the same.
+    pub same: bool,
 }
 
 impl Display for NodeInfo {

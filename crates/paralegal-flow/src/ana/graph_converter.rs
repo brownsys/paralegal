@@ -225,6 +225,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         at: CallString,
         span: rustc_span::Span,
         is_arg: Option<u16>,
+        same: bool,
     ) -> GNode {
         GNode(self.graph.add_node(NodeInfo {
             at,
@@ -234,6 +235,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             },
             span: src_loc_for_span(span, self.tcx()),
             is_arg,
+            same,
         }))
     }
 
@@ -595,6 +597,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     driver.globalize_location(&RichLocation::Start.into()),
                     base_body.local_decls[arg].source_info.span,
                     Some((arg.as_u32() - 1) as u16),
+                    true,
                 )
             })
             .collect::<Vec<_>>();
@@ -603,6 +606,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             driver.globalize_location(&RichLocation::End.into()),
             base_body.local_decls[mir::RETURN_PLACE].source_info.span,
             None,
+            true,
         );
 
         let mono_ty = |local| {
@@ -781,6 +785,42 @@ fn globalize_node<'tcx, K: Clone>(
             },
         },
         is_arg: node.use_.as_arg(),
+        same: is_pure_node(vis, node),
+    }
+}
+
+fn is_pure_node<'tcx, K: Clone>(
+    vis: &VisitDriver<'tcx, '_, K>,
+    node: &DepNode<'tcx, OneHopLocation>,
+) -> bool {
+    use mir::{Rvalue::*, StatementKind::*};
+    let RichLocation::Location(loc) = node.at.location else {
+        // Only argument and return nodes appear at these locations and they
+        // are never operationally changed.
+        return true;
+    };
+    match vis.current_body().stmt_at(loc) {
+        Either::Left(mir::Statement { kind, .. }) => match kind {
+            FakeRead(..)
+            | Deinit(..)
+            | StorageLive(..)
+            | StorageDead(..)
+            | Retag(..)
+            | PlaceMention(..)
+            | AscribeUserType(..)
+            | Coverage(..)
+            | ConstEvalCounter
+            | Nop
+            | BackwardIncompatibleDropHint { .. } => true,
+            Intrinsic(..) | SetDiscriminant { .. } => false,
+            Assign(a) => match &a.1 {
+                Use(..) | Ref(..) | ThreadLocalRef(..) | RawPtr(..) | Cast(..)
+                | ShallowInitBox(..) | Aggregate(..) => true,
+                Repeat(..) | Len(..) | BinaryOp(..) | NullaryOp(..) | UnaryOp(..)
+                | Discriminant(..) | CopyForDeref(..) => false,
+            },
+        },
+        _ => false,
     }
 }
 
@@ -816,7 +856,14 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssembler<
         _is_at_start: bool,
     ) {
         let [parent_table, this_table] = self.nodes.last_chunk_mut().unwrap();
-        this_table[in_this.index()] = parent_table[in_caller.index()]
+        let parent_idx = parent_table[in_caller.index()];
+        this_table[in_this.index()] = parent_idx;
+
+        // We now know that this function is being inlined so we clear the
+        // purity flag in the parent which would have been set there previously
+        // as the statements were being traversed.
+        let weight = self.graph.node_weight_mut(parent_idx.0).unwrap();
+        weight.same = true
     }
 
     fn visit_node(
@@ -895,7 +942,7 @@ impl<'tcx> StacktracePrinter<'tcx> {
         Self {
             tcx,
             locations_printed: 0,
-            target_depth: target_depth as usize
+            target_depth: target_depth as usize,
         }
     }
 }

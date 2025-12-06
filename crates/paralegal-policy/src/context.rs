@@ -8,7 +8,7 @@ use std::{io::Write, process::exit, sync::Arc};
 use fixedbitset::FixedBitSet;
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_spdg::traverse::{
-    generic_flows_to, generic_influencees, generic_influencers, EdgeSelection,
+    edge_generic_flows_to, generic_influencees, generic_influencers, EdgeSelection,
 };
 use paralegal_spdg::{
     CallString, DefKind, DisplayNode, Endpoint, FunctionHandling, GlobalNode, HashMap, HashSet,
@@ -729,7 +729,7 @@ where
                 });
             }
         }
-        generic_flows_to(
+        edge_generic_flows_to(
             self.iter_nodes(),
             edge_type,
             &ctx.desc.controllers[&cf_id],
@@ -808,7 +808,7 @@ where
         //         });
         //     }
         // }
-        generic_flows_to(
+        edge_generic_flows_to(
             self.iter_nodes(),
             edge_type,
             &ctx.desc.controllers[&cf_id],

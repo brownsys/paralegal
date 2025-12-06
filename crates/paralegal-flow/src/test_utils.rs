@@ -25,7 +25,7 @@ use std::{
 use std::{process::Command, sync::atomic::Ordering};
 
 use paralegal_spdg::{
-    traverse::{generic_flows_to, generic_influencers, EdgeSelection},
+    traverse::{edge_generic_flows_to, generic_flows_to, generic_influencers, EdgeSelection},
     utils::{display_list, write_sep},
     DefInfo, DisplayPath, EdgeInfo, Endpoint, InstructionInfo, InstructionKind, Node, NodeInfo,
     NodeKind, TypeId, SPDG,
@@ -1043,6 +1043,27 @@ pub trait FlowsTo {
             .copied()
             .any(|n| self.spdg().graph.neighbors(n).next().is_some())
     }
+
+    fn flows_to_unchanged(&self, other: &impl FlowsTo) -> bool {
+        if self.spdg_ident() != other.spdg_ident() {
+            return false;
+        }
+
+        let graph = &self.spdg().graph;
+
+        let fgraph = petgraph::visit::NodeFiltered::from_fn(graph, |n| {
+            graph.node_weight(n).unwrap().same
+                || self.nodes().contains(&n)
+                || other.nodes().contains(&n)
+        });
+
+        generic_flows_to(
+            self.nodes().iter().copied(),
+            &fgraph,
+            other.nodes().iter().copied(),
+        )
+        .is_some()
+    }
 }
 
 fn influences_ctrl_impl(
@@ -1060,7 +1081,7 @@ fn influences_ctrl_impl(
         EdgeSelection::Control,
     );
 
-    generic_flows_to(
+    edge_generic_flows_to(
         slf.nodes().iter().copied(),
         edge_selection,
         slf.spdg(),
@@ -1104,7 +1125,7 @@ fn flows_to_impl(
     if slf.spdg_ident() != other.spdg_ident() {
         return false;
     }
-    generic_flows_to(
+    edge_generic_flows_to(
         slf.nodes().iter().copied(),
         edge_selection,
         slf.spdg(),
