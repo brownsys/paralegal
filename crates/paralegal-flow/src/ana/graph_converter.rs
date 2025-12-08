@@ -789,11 +789,21 @@ fn globalize_node<'tcx, K: Clone>(
     }
 }
 
+fn place_is_idempotent_projection(place: mir::Place<'_>) -> bool {
+    use mir::PlaceElem;
+    place.projection.iter().all(|p| {
+        matches!(
+            p,
+            PlaceElem::Deref | PlaceElem::Subtype(_) | PlaceElem::OpaqueCast(_)
+        )
+    })
+}
+
 fn is_pure_node<'tcx, K: Clone>(
     vis: &VisitDriver<'tcx, '_, K>,
     node: &DepNode<'tcx, OneHopLocation>,
 ) -> bool {
-    use mir::{Rvalue::*, StatementKind::*};
+    use mir::{Operand, Rvalue::*, StatementKind as Sk};
     let RichLocation::Location(loc) = node.at.location else {
         // Only argument and return nodes appear at these locations and they
         // are never operationally changed.
@@ -801,24 +811,43 @@ fn is_pure_node<'tcx, K: Clone>(
     };
     match vis.current_body().stmt_at(loc) {
         Either::Left(mir::Statement { kind, .. }) => match kind {
-            FakeRead(..)
-            | Deinit(..)
-            | StorageLive(..)
-            | StorageDead(..)
-            | Retag(..)
-            | PlaceMention(..)
-            | AscribeUserType(..)
-            | Coverage(..)
-            | ConstEvalCounter
-            | Nop
-            | BackwardIncompatibleDropHint { .. } => true,
-            Intrinsic(..) | SetDiscriminant { .. } => false,
-            Assign(a) => match &a.1 {
-                Use(..) | Ref(..) | ThreadLocalRef(..) | RawPtr(..) | Cast(..)
-                | ShallowInitBox(..) | Aggregate(..) => true,
-                Repeat(..) | Len(..) | BinaryOp(..) | NullaryOp(..) | UnaryOp(..)
-                | Discriminant(..) | CopyForDeref(..) => false,
-            },
+            Sk::FakeRead(..)
+            | Sk::Deinit(..)
+            | Sk::StorageLive(..)
+            | Sk::StorageDead(..)
+            | Sk::Retag(..)
+            | Sk::PlaceMention(..)
+            | Sk::AscribeUserType(..)
+            | Sk::Coverage(..)
+            | Sk::ConstEvalCounter
+            | Sk::Nop
+            | Sk::BackwardIncompatibleDropHint { .. } => true,
+            Sk::Intrinsic(..) | Sk::SetDiscriminant { .. } => false,
+            Sk::Assign(a) => {
+                // This is a conservative match. If the place is projected out
+                // at all, we say it's not the same. In theory we could, for
+                // example, check whether it gets assigned to another projection
+                // on the same type and would admit more patterns.
+
+                let place = match &a.1 {
+                    Use(op) | Cast(_, op, _) | ShallowInitBox(op, _) => match op {
+                        Operand::Copy(place) | Operand::Move(place) => place,
+                        Operand::Constant(_) => return true,
+                    },
+
+                    Ref(_, _, place) | RawPtr(_, place) => place,
+                    Aggregate(_, aggs) => {
+                        return aggs
+                            .iter()
+                            .filter_map(|o| o.place())
+                            .all(place_is_idempotent_projection)
+                    }
+                    ThreadLocalRef(..) => return true,
+                    Repeat(..) | Len(..) | BinaryOp(..) | NullaryOp(..) | UnaryOp(..)
+                    | Discriminant(..) | CopyForDeref(..) => return false,
+                };
+                place_is_idempotent_projection(*place)
+            }
         },
         _ => false,
     }
