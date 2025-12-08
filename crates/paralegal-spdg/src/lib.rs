@@ -872,6 +872,15 @@ pub mod node_cluster {
                     .collect::<Option<Box<_>>>()?,
             })
         }
+
+        /// Returns some if this cluster contains only one node.
+        pub fn try_as_single(&self) -> Option<GlobalNode> {
+            if let [node] = &*self.nodes {
+                Some(GlobalNode::from_local_node(self.controller_id, *node))
+            } else {
+                None
+            }
+        }
     }
 }
 
