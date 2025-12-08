@@ -26,7 +26,7 @@ use petgraph::{Direction, Incoming};
 
 use crate::algo::flows_to::CtrlFlowsTo;
 
-use crate::diagnostics::{ControllerContext, HasDiagnosticsBase};
+use crate::diagnostics::HasDiagnosticsBase;
 use crate::{assert_warning, diagnostics::DiagnosticsRecorder};
 use crate::{Diagnostics, Stats};
 

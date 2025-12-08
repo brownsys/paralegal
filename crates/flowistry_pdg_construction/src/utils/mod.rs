@@ -2,7 +2,6 @@ use std::{collections::hash_map::Entry, fmt::Formatter, hash::Hash};
 
 use either::Either;
 
-use indexical::bitset::bitvec::bitvec::ptr;
 use itertools::Itertools;
 use log::trace;
 
