@@ -777,7 +777,7 @@ pub mod node_cluster {
     #[derive(Debug, Hash, Clone)]
     pub struct NodeCluster {
         controller_id: Endpoint,
-        nodes: Box<[Node]>,
+        nodes: Vec<Node>,
     }
 
     /// Owned iterator of a [`NodeCluster`]
@@ -869,7 +869,7 @@ pub mod node_cluster {
                 controller_id: ctrl_id,
                 nodes: std::iter::once(Some(first.local_node()))
                     .chain(it.map(|n| (n.controller_id() == ctrl_id).then_some(n.local_node())))
-                    .collect::<Option<Box<_>>>()?,
+                    .collect::<Option<_>>()?,
             })
         }
 
@@ -880,6 +880,11 @@ pub mod node_cluster {
             } else {
                 None
             }
+        }
+
+        #[doc(hidden)]
+        pub fn push_node(&mut self, node: Node) {
+            self.nodes.push(node);
         }
     }
 }

@@ -895,6 +895,21 @@ impl ControllerContext {
     pub fn argument(&self, idx: u32) -> Option<NodeCluster> {
         self.controller_argument(self.id, idx)
     }
+
+    /// Get all arguments for this controller grouped by argument index
+    pub fn arguments_by_index(&self) -> Vec<NodeCluster> {
+        let mut args = vec![];
+        let g = &self.current().graph;
+        for n in self.current().arguments.iter() {
+            let w = g.node_weight(*n).unwrap();
+            let Some(a) = w.is_arg else { continue };
+            if (a as usize) >= args.len() {
+                args.resize_with((a as usize) + 1, || NodeCluster::new(self.id(), []));
+            }
+            args[a as usize].push_node(*n);
+        }
+        args
+    }
 }
 
 impl HasDiagnosticsBase for ControllerContext {

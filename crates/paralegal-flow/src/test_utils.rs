@@ -614,6 +614,22 @@ impl<'g> CtrlRef<'g> {
         }
     }
 
+    pub fn arguments_by_index(&'g self) -> Vec<NodeRefs<'g>> {
+        let mut args = vec![];
+        for n in self.ctrl.arguments.iter() {
+            let w = self.ctrl.graph.node_weight(*n).unwrap();
+            let Some(a) = w.is_arg else { continue };
+            if (a as usize) >= args.len() {
+                args.resize_with((a as usize) + 1, || NodeRefs {
+                    graph: self,
+                    nodes: vec![],
+                });
+            }
+            args[a as usize].nodes.push(*n);
+        }
+        args
+    }
+
     pub fn constants(&'g self) -> impl Iterator<Item = (NodeRef<'g>, Constant)> {
         let spdg = self.spdg();
         spdg.all_sources().filter_map(|node| {
