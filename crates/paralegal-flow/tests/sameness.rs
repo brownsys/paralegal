@@ -25,6 +25,27 @@ fn simple() {
 }
 
 #[test]
+fn from_async_arg() {
+    inline_test! {
+
+        #[paralegal_flow::marker(end, arguments = [0])]
+        fn target(i: usize) {}
+
+        #[paralegal_flow::marker(start, arguments = [0])]
+        async fn main(i: usize) {
+            target(i);
+        }
+    }
+    .check_ctrl(|ctrl| {
+        let sources = ctrl.marked("start");
+        let target = ctrl.marked("end");
+        assert!(!sources.is_empty());
+        assert!(!target.is_empty());
+        assert!(sources.flows_to_unchanged(&target));
+    });
+}
+
+#[test]
 fn no() {
     inline_test! {
         #[paralegal_flow::marker(start, return)]
