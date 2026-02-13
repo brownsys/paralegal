@@ -8,12 +8,18 @@ use hir::{
     def_id::LOCAL_CRATE,
     ImplItemRef, ItemKind, Node, PrimTy, TraitItemRef,
 };
-use rustc_ast::{self as ast, token::TokenKind, ExprKind, PathSegment, QSelf, Ty, TyKind};
+use rustc_ast::{
+    self as ast, token::TokenKind, ExprKind, GenericBound, PathSegment, QSelf, TraitObjectSyntax,
+    Ty, TyKind,
+};
 use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_hir::{self as hir, def_id::DefId};
-use rustc_middle::ty::{self, fast_reject::SimplifiedType, FloatTy, IntTy, TyCtxt, UintTy};
+use rustc_middle::ty::{
+    self, fast_reject::SimplifiedType, FloatTy, IntTy, List, Region, TyCtxt, UintTy,
+};
 use rustc_parse::new_parser_from_source_str;
 use rustc_span::Symbol;
+use rustc_type_ir::DynKind;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Res {
@@ -327,6 +333,30 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
                 hir::Mutability::Not => ty::Ty::new_imm_ref(tcx, lt, inner),
             })
         }
+        // Special handling for `dyn Any`
+        TyKind::TraitObject(bounds, TraitObjectSyntax::Dyn) => {
+            println!("Checking trait object type {t:?} for dyn Any");
+            let [GenericBound::Trait(t_ref)] = bounds.as_slice() else {
+                println!("Bound has too many elements");
+                return Err(ResolutionError::UnsupportedType(t.clone()));
+            };
+            let resolved_trait = def_path_res(tcx, None, &t_ref.trait_ref.path.segments)?;
+            println!("Trait resolved");
+            let Some(t) = resolved_trait
+                .iter()
+                .find(|t| tcx.is_diagnostic_item(Symbol::intern("Any"), t.def_id()))
+            else {
+                println!("Trait is not Any");
+                return Err(ResolutionError::UnsupportedType(t.clone()));
+            };
+            println!("Found dyn Any");
+            Ok(ty::Ty::new_dynamic(
+                tcx,
+                tcx.item_bounds_to_existential_predicates(t.def_id(), List::empty()),
+                Region::new_var(tcx, 0_u32.into()),
+                DynKind::Dyn,
+            ))
+        }
         _ => Err(ResolutionError::UnsupportedType(t.clone())),
     }
 }
@@ -402,14 +432,32 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
         Some(slf) => (
             if slf.position == 0 {
                 /* this is relevant for 3 */
-                let TyKind::Path(qslf, pth) = &slf.ty.kind else {
-                    return Err(ResolutionError::UnsupportedType((*slf.ty).clone()));
-                };
-                Box::new(
-                    def_path_res(tcx, qslf.as_deref(), &pth.segments)?
-                        .into_iter()
-                        .flat_map(|def_id| tcx.inherent_impls(def_id.def_id()).iter().copied()),
-                ) as Box<dyn Iterator<Item = DefId>>
+                let t = &*slf.ty;
+                match &slf.ty.kind {
+                    TyKind::Path(qslf, pth) => Box::new(
+                        def_path_res(tcx, qslf.as_deref(), &pth.segments)?
+                            .into_iter()
+                            .flat_map(|def_id| tcx.inherent_impls(def_id.def_id()).iter().copied()),
+                    )
+                        as Box<dyn Iterator<Item = DefId>>,
+                    TyKind::TraitObject(bounds, TraitObjectSyntax::Dyn) => {
+                        let [GenericBound::Trait(t_ref)] = bounds.as_slice() else {
+                            return Err(ResolutionError::UnsupportedType(t.clone()));
+                        };
+                        let resolved_trait =
+                            def_path_res(tcx, None, &t_ref.trait_ref.path.segments)?;
+                        let any_sym = Symbol::intern("Any");
+                        let Some(t) = resolved_trait
+                            .iter()
+                            .find(|t| tcx.is_diagnostic_item(any_sym, t.def_id()))
+                        else {
+                            return Err(ResolutionError::UnsupportedType(t.clone()));
+                        };
+                        let impls = tcx.inherent_impls(t.def_id());
+                        Box::new(impls.iter().cloned()) as Box<_>
+                    }
+                    _ => return Err(ResolutionError::UnsupportedType((*slf.ty).clone())),
+                }
             } else {
                 let mut impls = vec![];
                 for r#trait in def_path_res(tcx, None, &path[..slf.position])? {
@@ -482,7 +530,9 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
     } else if found.iter().all(|f| f.is_err()) {
         found.pop().unwrap().map(|_| vec![])
     } else {
-        Ok(found.into_iter().filter_map(|f| f.ok())
+        Ok(found
+            .into_iter()
+            .filter_map(|f| f.ok())
             .inspect(|res| {
                 trace!("  Resolved to {res:?}");
                 if let Res::Def(_, did) = res {
