@@ -333,30 +333,6 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
                 hir::Mutability::Not => ty::Ty::new_imm_ref(tcx, lt, inner),
             })
         }
-        // Special handling for `dyn Any`
-        TyKind::TraitObject(bounds, TraitObjectSyntax::Dyn) => {
-            println!("Checking trait object type {t:?} for dyn Any");
-            let [GenericBound::Trait(t_ref)] = bounds.as_slice() else {
-                println!("Bound has too many elements");
-                return Err(ResolutionError::UnsupportedType(t.clone()));
-            };
-            let resolved_trait = def_path_res(tcx, None, &t_ref.trait_ref.path.segments)?;
-            println!("Trait resolved");
-            let Some(t) = resolved_trait
-                .iter()
-                .find(|t| tcx.is_diagnostic_item(Symbol::intern("Any"), t.def_id()))
-            else {
-                println!("Trait is not Any");
-                return Err(ResolutionError::UnsupportedType(t.clone()));
-            };
-            println!("Found dyn Any");
-            Ok(ty::Ty::new_dynamic(
-                tcx,
-                tcx.item_bounds_to_existential_predicates(t.def_id(), List::empty()),
-                Region::new_var(tcx, 0_u32.into()),
-                DynKind::Dyn,
-            ))
-        }
         _ => Err(ResolutionError::UnsupportedType(t.clone())),
     }
 }
