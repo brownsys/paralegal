@@ -13,6 +13,7 @@ test = ["rustc_utils/test"]
 
 [dependencies]
 paralegal-spdg = { path = "../paralegal-spdg", features = ["rustc"] }
+cargo-paralegal-flow.path = "../cargo-paralegal-flow"
 
 flowistry_pdg_construction = { path = "../flowistry_pdg_construction" }
 flowistry_pdg = { path = "../flowistry_pdg" }
@@ -23,9 +24,8 @@ rustc_plugin = { workspace = true }
 indexical = { version = "0.3.1", default-features = false, features = [
     "rustc",
 ] }
+clap.workspace = true
 
-
-clap = { version = "4.5.23", features = ["derive", "cargo", "env"] }
 serde = { workspace = true, features = ["derive"] }
 lazy_static = "1"
 ordermap = "0.5.4"
@@ -34,8 +34,8 @@ pretty = "0.12"
 nom = "7"
 tracing.workspace = true
 tracing-subscriber.workspace = true
-num-derive = "0.4"
-num-traits = "0.2"
+num-derive.workspace = true
+num-traits.workspace = true
 petgraph = { workspace = true }
 humantime = "2"
 strum = { workspace = true }

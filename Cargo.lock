@@ -254,7 +254,12 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "cargo_metadata",
+ "clap",
+ "lazy_static",
+ "num-derive",
+ "num-traits",
  "paralegal-non-rustc-utils",
+ "serde",
  "tracing",
 ]
 
@@ -1179,6 +1184,7 @@ name = "paralegal-flow"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "cargo-paralegal-flow",
  "chrono",
  "clap",
  "dot",

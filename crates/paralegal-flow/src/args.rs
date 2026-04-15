@@ -15,8 +15,6 @@
 
 use anyhow::Error;
 use clap::ValueEnum;
-use flowistry_pdg_construction::source_access::std_crates;
-use paralegal_spdg::utils::setup_logging;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
@@ -26,10 +24,17 @@ use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::OnceLock;
 
+use cargo_paralegal_flow::{
+    ClapAnalysisCtrl, ClapArgs, Debugger, DumpOption, MarkerControl, ParseableDumpArgs,
+};
+use flowistry_pdg_construction::source_access::std_crates;
+use paralegal_spdg::utils::setup_logging;
+
+use crate::num_traits::FromPrimitive;
 use crate::utils::TinyBitSet;
-use crate::{num_derive, num_traits::FromPrimitive};
 
 #[derive(thiserror::Error, Debug)]
 enum VarError {
@@ -71,8 +76,7 @@ impl TryFrom<ClapArgs> for Args {
         }
         let mut dump: DumpArgs = dump.into();
         if let Some(from_env) = env_var_expect_unicode("PARALEGAL_DUMP")? {
-            let from_env =
-                DumpArgs::from_str(&from_env, false).map_err(|s| anyhow::anyhow!("{}", s))?;
+            let from_env = DumpArgs::from_str(&from_env).map_err(|s| anyhow::anyhow!("{}", s))?;
             dump.0 |= from_env.0;
         }
         anactrl.analyze = anactrl
@@ -96,7 +100,7 @@ impl TryFrom<ClapArgs> for Args {
         anactrl
             .include
             .extend(build_config.1.include.iter().cloned());
-        anactrl.include_std |= marker_control.side_effect_markers;
+        anactrl.include_std |= marker_control.mark_side_effects();
 
         Ok(Args {
             result_path,
@@ -111,12 +115,6 @@ impl TryFrom<ClapArgs> for Args {
             attach_to_debugger,
         })
     }
-}
-
-#[derive(serde::Serialize, serde::Deserialize, clap::ValueEnum, Clone, Copy)]
-pub enum Debugger {
-    /// The CodeLLDB debugger. Learn more at <https://github.com/vadimcn/codelldb/blob/v1.10.0/MANUAL.md>.
-    CodeLldb,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -160,86 +158,6 @@ impl Default for Args {
     }
 }
 
-/// Arguments as exposed on the command line.
-///
-/// You should then use `try_into` to convert this to [`Args`], the argument
-/// structure used internally.
-#[derive(clap::Args)]
-pub struct ClapArgs {
-    /// Where to write the resulting GraphLocation (defaults to `flow-graph.json`)
-    #[clap(long, default_value = paralegal_spdg::FLOW_GRAPH_OUT_NAME)]
-    result_path: std::path::PathBuf,
-    /// Emit warnings instead of aborting the analysis on sanity checks
-    ///
-    /// This is now the default behavior and this flag is deprecated. Use
-    /// `--strict` to turn off this behavior.
-    #[clap(long, env = "PARALEGAL_RELAXED", hide = true)]
-    relaxed: bool,
-    /// Emit errors instead of warnings for potential soundness risks
-    #[clap(long, env = "PARALEGAL_STRICT")]
-    strict: bool,
-    /// Run paralegal only on this crate
-    #[clap(long, env = "PARALEGAL_TARGET")]
-    target: Option<String>,
-    /// Abort the compilation after finishing the analysis
-    #[clap(long, env)]
-    abort_after_analysis: bool,
-    /// Attach to a debugger before running the analyses
-    #[clap(long)]
-    attach_to_debugger: Option<Debugger>,
-    /// Additional arguments that control the flow analysis specifically
-    #[clap(flatten, next_help_heading = "Flow Analysis")]
-    anactrl: ClapAnalysisCtrl,
-    /// Additional arguments which control marker assignment and discovery
-    #[clap(flatten, next_help_heading = "Marker Control")]
-    marker_control: MarkerControl,
-    /// Additional arguments that control debug args specifically
-    #[clap(flatten)]
-    dump: ParseableDumpArgs,
-    /// Pass through for additional cargo arguments (like --features)
-    #[clap(last = true)]
-    cargo_args: Vec<String>,
-}
-
-#[derive(Clone, clap::Args)]
-pub struct ParseableDumpArgs {
-    /// Generate intermediate of various formats and at various stages of
-    /// compilation. A short description of each value is provided here, for a
-    /// more comprehensive explanation refer to the [notion page on
-    /// dumping](https://www.notion.so/justus-adam/Dumping-Intermediate-Representations-4bd66ec11f8f4c459888a8d8cfb10e93).
-    ///
-    /// Can also be supplied as a comma-separated list (no spaces) and be set with the `PARALEGAL_DUMP` variable.
-    #[clap(long, value_enum)]
-    dump: Vec<DumpArgs>,
-}
-
-lazy_static! {
-    static ref DUMP_ARGS_OPTIONS: Vec<DumpArgs> = DumpOption::value_variants()
-        .iter()
-        .map(|&v| v.into())
-        .collect();
-}
-
-impl clap::ValueEnum for DumpArgs {
-    fn value_variants<'a>() -> &'a [Self] {
-        &DUMP_ARGS_OPTIONS
-    }
-
-    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
-        let mut it = self.0.into_iter_set_in_domain();
-        let v = it.next().unwrap();
-        assert!(it.next().is_none());
-        DumpOption::from_u32(v).unwrap().to_possible_value()
-    }
-
-    fn from_str(input: &str, ignore_case: bool) -> Result<Self, String> {
-        input
-            .split(',')
-            .map(|segment| DumpOption::from_str(segment, ignore_case))
-            .collect()
-    }
-}
-
 impl From<DumpOption> for DumpArgs {
     fn from(value: DumpOption) -> Self {
         [value].into_iter().collect()
@@ -248,7 +166,7 @@ impl From<DumpOption> for DumpArgs {
 
 impl From<ParseableDumpArgs> for DumpArgs {
     fn from(value: ParseableDumpArgs) -> Self {
-        value.dump.into_iter().flat_map(|opt| opt.iter()).collect()
+        value.dump.into_iter().map(|opt| opt.into()).collect()
     }
 }
 
@@ -269,34 +187,21 @@ impl DumpArgs {
     }
 }
 
+impl FromStr for DumpArgs {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.split(",")
+            .map(|opt| DumpOption::from_str(opt, true))
+            .collect()
+    }
+}
+
 impl FromIterator<DumpOption> for DumpArgs {
     fn from_iter<T: IntoIterator<Item = DumpOption>>(iter: T) -> Self {
         Self(iter.into_iter().map(|v| v as u32).collect())
     }
 }
-
-#[derive(
-    Copy,
-    Clone,
-    Eq,
-    PartialEq,
-    serde::Serialize,
-    serde::Deserialize,
-    clap::ValueEnum,
-    num_derive::FromPrimitive,
-)]
-enum DumpOption {
-    /// A simple PDG rendering per controller provided by flowistry
-    FlowistryPdg,
-    /// A PDG rendering that includes markers and is grouped by call site.
-    /// Includes all controllers that are analyzed.
-    Spdg,
-    /// Dump the MIR (`.mir`) of each called controller
-    Mir,
-    /// Dump everything we know of
-    All,
-}
-
 impl Args {
     pub fn target(&self) -> Option<&str> {
         self.target.as_deref()
@@ -335,7 +240,7 @@ impl Args {
         self.relaxed.hash(hasher);
         self.target.hash(hasher);
         self.result_path.hash(hasher);
-        config_hash_for_file(&self.marker_control.external_annotations, hasher);
+        config_hash_for_file(&self.marker_control.external_annotations(), hasher);
     }
 
     pub fn marker_control(&self) -> &MarkerControl {
@@ -364,73 +269,6 @@ fn config_hash_for_file(path: &Option<impl AsRef<Path>>, state: &mut impl Hasher
         .transpose()
         .unwrap()
         .hash(state);
-}
-
-#[derive(serde::Serialize, serde::Deserialize, clap::Args, Default)]
-pub struct MarkerControl {
-    /// A JSON file from which to load additional annotations. Whereas normally
-    /// annotation can only be placed on crate-local items, these can also be
-    /// placed on third party items, such as functions from the stdlib.
-    ///
-    /// The file is expected to contain a `HashMap<Identifier, (Vec<Annotation>,
-    /// ObjectType)>`, which is the same type as `annotations` field from the
-    /// `ProgramDescription` struct. It uses the `serde` derived serializer. An
-    /// example for the format can be generated by running `paralegal-flow` with
-    /// `dump_serialized_flow_graph`.
-    #[clap(long, env)]
-    external_annotations: Option<std::path::PathBuf>,
-
-    /// Whether to automatically mark possibly side-effecting functions.
-    ///
-    /// Implies `--include-std`.
-    #[clap(long, env)]
-    side_effect_markers: bool,
-}
-
-impl MarkerControl {
-    pub fn external_annotations(&self) -> Option<&std::path::Path> {
-        self.external_annotations.as_deref()
-    }
-
-    pub fn mark_side_effects(&self) -> bool {
-        self.side_effect_markers
-    }
-}
-
-/// Arguments that control the flow analysis
-#[derive(clap::Args)]
-struct ClapAnalysisCtrl {
-    /// Target this function as analysis entrypoint. Command line version of
-    /// `#[paralegal::analyze]`). Must be a full rust path and resolve to a
-    /// function. May be specified multiple times and multiple, comma separated
-    /// paths may be supplied at the same time.
-    #[clap(long)]
-    analyze: Vec<String>,
-    /// Limits the PDG to a single function. This is intended for testing and
-    /// should not be used in production.
-    #[clap(long, env)]
-    no_interprocedural_analysis: bool,
-    /// Do not decide whether to represent a function in the PDG based on the
-    /// presence of markers. This will create very large PDGs that span all
-    /// crates configured for analysis and with source code present.
-    #[clap(long, conflicts_with_all = ["no_interprocedural_analysis"])]
-    no_adaptive_approximation: bool,
-    /// Limit the set of crates to analyze. Beware that if those crates contain
-    /// marked code (other than the surface API), this poses a soundness risk.
-    /// This is intended as an optimization experts can apply for large
-    /// projects.
-    #[clap(long)]
-    include: Vec<String>,
-    #[clap(long)]
-    no_pdg_cache: bool,
-    /// Add an additional k inlining steps on top of what the marker guided
-    /// setup recommends. If adaptive approximation is enabled this defaults to
-    /// 0, if it is enabled it defaults to no limit.
-    #[clap(long, conflicts_with = "no_interprocedural_analysis")]
-    k_depth: Option<u32>,
-    /// Recompile the standard library and make the code available for analysis.
-    #[clap(long, env)]
-    include_std: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]

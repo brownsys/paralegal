@@ -93,8 +93,8 @@ use crate::{
     utils::Print,
 };
 use ann::dump_markers;
-pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, MarkerControl};
-use args::{ClapArgs, Debugger};
+pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs};
+use cargo_paralegal_flow::{ClapArgs, Debugger};
 pub use ctx::Pctx;
 use desc::utils::write_sep;
 
@@ -644,7 +644,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
                 }
 
                 if let Some(dbg) = opts.attach_to_debugger() {
-                    dbg.attach()
+                    attach_debugger(dbg)
                 }
 
                 debug!(
@@ -664,24 +664,22 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
     }
 }
 
-impl Debugger {
-    fn attach(self) {
-        use std::process::{id, Command};
-        use std::thread::sleep;
+fn attach_debugger(debugger: Debugger) {
+    use std::process::{id, Command};
+    use std::thread::sleep;
 
-        match self {
-            Debugger::CodeLldb => {
-                let url = format!(
-                    "vscode://vadimcn.vscode-lldb/launch/config?{{'request':'attach','pid':{}}}",
-                    id()
-                );
-                Command::new("code")
-                    .arg("--open-url")
-                    .arg(url)
-                    .output()
-                    .unwrap();
-                sleep(Duration::from_millis(1000));
-            }
+    match debugger {
+        Debugger::CodeLldb => {
+            let url = format!(
+                "vscode://vadimcn.vscode-lldb/launch/config?{{'request':'attach','pid':{}}}",
+                id()
+            );
+            Command::new("code")
+                .arg("--open-url")
+                .arg(url)
+                .output()
+                .unwrap();
+            sleep(Duration::from_millis(1000));
         }
     }
 }
