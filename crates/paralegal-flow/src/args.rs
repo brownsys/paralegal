@@ -15,8 +15,8 @@
 
 use anyhow::Error;
 use clap::ValueEnum;
-use env_logger::Builder;
 use flowistry_pdg_construction::source_access::std_crates;
+use paralegal_spdg::utils::setup_logging;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
@@ -55,9 +55,6 @@ impl TryFrom<ClapArgs> for Args {
     type Error = Error;
     fn try_from(value: ClapArgs) -> Result<Self, Self::Error> {
         let ClapArgs {
-            verbose,
-            debug,
-            debug_target,
             result_path,
             relaxed,
             target,
@@ -66,7 +63,6 @@ impl TryFrom<ClapArgs> for Args {
             dump,
             marker_control,
             cargo_args,
-            trace,
             attach_to_debugger,
             strict,
         } = value;
@@ -100,23 +96,9 @@ impl TryFrom<ClapArgs> for Args {
         anactrl
             .include
             .extend(build_config.1.include.iter().cloned());
-        let log_level_config = match debug_target {
-            Some(target) if !target.is_empty() => LogLevelConfig::Targeted(target),
-            _ => LogLevelConfig::Disabled,
-        };
         anactrl.include_std |= marker_control.side_effect_markers;
-        let verbosity = if trace {
-            Some(log::LevelFilter::Trace)
-        } else if debug {
-            Some(log::LevelFilter::Debug)
-        } else if verbose {
-            Some(log::LevelFilter::Info)
-        } else {
-            None
-        };
+
         Ok(Args {
-            verbosity,
-            log_level_config,
             result_path,
             relaxed: !strict,
             target,
@@ -139,9 +121,6 @@ pub enum Debugger {
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Args {
-    /// Print additional logging output (up to the "info" level)
-    verbosity: Option<log::LevelFilter>,
-    log_level_config: LogLevelConfig,
     /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     result_path: std::path::PathBuf,
     /// Emit warnings instead of aborting the analysis on sanity checks
@@ -167,8 +146,6 @@ pub struct Args {
 impl Default for Args {
     fn default() -> Self {
         Self {
-            verbosity: None,
-            log_level_config: LogLevelConfig::Disabled,
             result_path: PathBuf::from(paralegal_spdg::FLOW_GRAPH_OUT_NAME),
             relaxed: true,
             target: None,
@@ -189,21 +166,6 @@ impl Default for Args {
 /// structure used internally.
 #[derive(clap::Args)]
 pub struct ClapArgs {
-    /// Print additional logging output (up to the "info" level)
-    #[clap(short, long, env = "PARALEGAL_VERBOSE")]
-    verbose: bool,
-    /// Print additional logging output (up to the "debug" level).
-    ///
-    /// Passing this flag (or env variable) with no value will enable debug
-    /// output globally. You may instead pass the name of a specific target
-    /// function and then only during analysis of that function the debug output
-    /// is enabled.
-    #[clap(long, env = "PARALEGAL_DEBUG")]
-    debug: bool,
-    #[clap(long, env = "PARALEGAL_TRACE")]
-    trace: bool,
-    #[clap(long, env = "PARALEGAL_DEBUG_TARGET")]
-    debug_target: Option<String>,
     /// Where to write the resulting GraphLocation (defaults to `flow-graph.json`)
     #[clap(long, default_value = paralegal_spdg::FLOW_GRAPH_OUT_NAME)]
     result_path: std::path::PathBuf,
@@ -335,35 +297,9 @@ enum DumpOption {
     All,
 }
 
-/// How a specific logging level was configured. (currently only used for the
-/// `--debug` level)
-#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
-pub enum LogLevelConfig {
-    /// Logging for this level is only enabled for a specific target function
-    Targeted(String),
-    /// Logging for this level is not directly enabled
-    Disabled,
-}
-
-impl LogLevelConfig {
-    pub fn is_enabled(&self) -> bool {
-        matches!(self, LogLevelConfig::Targeted(_))
-    }
-}
-
-impl std::fmt::Display for LogLevelConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-
 impl Args {
     pub fn target(&self) -> Option<&str> {
         self.target.as_deref()
-    }
-    /// Returns the configuration specified for the `--debug` option
-    pub fn direct_debug(&self) -> &LogLevelConfig {
-        &self.log_level_config
     }
     /// Access the debug arguments
     pub fn dbg(&self) -> &DumpArgs {
@@ -377,10 +313,6 @@ impl Args {
     /// the file to write results to
     pub fn result_path(&self) -> &std::path::Path {
         self.result_path.as_path()
-    }
-    /// Should we output additional log messages (level `info`)
-    pub fn verbosity(&self) -> Option<log::LevelFilter> {
-        self.verbosity
     }
     /// Warn instead of crashing the program in case of non-fatal errors
     pub fn relaxed(&self) -> bool {
@@ -418,24 +350,8 @@ impl Args {
         self.attach_to_debugger
     }
 
-    pub fn setup_logging(&self) {
-        self.try_setup_logging().unwrap()
-    }
-
-    pub fn try_setup_logging(&self) -> Result<(), log::SetLoggerError> {
-        let mut logger = Builder::from_default_env();
-        if let Some(lvl) = self.verbosity() {
-            logger
-                .filter_level(lvl)
-                .filter_module("flowistry", log::LevelFilter::Error)
-                .filter_module("flowistry_pdg", lvl)
-                .filter_module("rustc_utils", log::LevelFilter::Error);
-        };
-        logger.format_timestamp(None).try_init()?;
-        if matches!(*self.direct_debug(), LogLevelConfig::Targeted(..)) {
-            log::set_max_level(log::LevelFilter::Warn);
-        }
-        Ok(())
+    pub fn setup_logging(&self) -> anyhow::Result<()> {
+        setup_logging()
     }
 }
 

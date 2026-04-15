@@ -11,7 +11,7 @@ use crate::{
     discover::FnToAnalyze,
     stats::{Stats, TimedStat},
     utils::*,
-    DumpStats, HashMap, HashSet, LogLevelConfig, MarkerCtx, Pctx, INTERMEDIATE_STAT_EXT,
+    DumpStats, HashMap, HashSet, MarkerCtx, Pctx, INTERMEDIATE_STAT_EXT,
 };
 
 use std::{fs::File, io::BufReader, rc::Rc, time::Instant};
@@ -123,31 +123,17 @@ impl<'tcx> SPDGGenerator<'tcx> {
     /// Should only be called after the visit.
     pub fn analyze(&mut self) -> Result<(ProgramDescription, AnalyzerStats)> {
         let targets = std::mem::take(&mut self.functions_to_analyze);
-        if let LogLevelConfig::Targeted(s) = self.ctx.opts().direct_debug() {
-            assert!(
-                targets.iter().any(|target| target.name().as_str() == s),
-                "Debug output option specified a specific target '{s}', but no such target was found in [{}]",
-                Print(|f: &mut std::fmt::Formatter<'_>| {
-                    write_sep(f, ", ", targets.iter(), |t, f| {
-                        f.write_str(t.name().as_str())
-                    })
-                })
-            )
-        }
 
         let mut known_def_ids = FxHashSet::default();
 
         targets
             .iter()
             .map(|desc| {
-                let target_name = desc.name();
-                with_reset_level_if_target(self.ctx.opts(), target_name, || {
-                    self.handle_target(
-                        //hash_verifications,
-                        desc,
-                        &mut known_def_ids,
-                    )
-                })
+                self.handle_target(
+                    //hash_verifications,
+                    desc,
+                    &mut known_def_ids,
+                )
             })
             .collect::<Result<HashMap<Endpoint, SPDG>>>()
             .map(|controllers| {
@@ -518,17 +504,6 @@ fn def_info_for_item(id: DefId, markers: &MarkerCtx, tcx: TyCtxt) -> DefInfo {
                 on_argument: ann.refinement.on_argument(),
             })
             .collect(),
-    }
-}
-
-/// A higher order function that increases the logging level if the `target`
-/// matches the one selected with the `debug` flag on the command line (and
-/// reset it afterward).
-fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: Symbol, f: F) -> R {
-    if matches!(opts.direct_debug(), LogLevelConfig::Targeted(s) if target.as_str() == s) {
-        with_temporary_logging_level(opts.verbosity().unwrap_or(log::LevelFilter::Info), f)
-    } else {
-        f()
     }
 }
 

@@ -5,7 +5,7 @@ use std::process::Command;
 extern crate chrono;
 use std::env;
 
-const COMPILER_DEPENDENT_BINARIES: &[&str] = &["paralegal-flow", "cargo-paralegal-flow"];
+const COMPILER_DEPENDENT_BINARIES: &[&str] = &["paralegal-flow"];
 
 fn add_link_arg_for_compiler_binaries(s: impl std::fmt::Display) {
     for bin in COMPILER_DEPENDENT_BINARIES {

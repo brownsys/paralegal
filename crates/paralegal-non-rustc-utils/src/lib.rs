@@ -1,9 +1,73 @@
-//! Utility functions and structs
-
 use std::fmt;
 use std::fmt::{Display, Formatter, Write};
+use std::path::{Path, PathBuf};
 
-pub use flowistry_pdg::utils::write_sep;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+
+/// Name of the file used for emitting the serialized
+/// [`ProgramDescription`].
+pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.o";
+
+pub const FLOW_GRAPH_EXT: &str = ".fgo";
+
+pub const ARTIFACT_NAME: &str = "paralegal-artifact.json";
+
+/// Extension for output files containing statistics of the analzyer run.
+pub const STAT_FILE_EXT: &str = "stat.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParalegalArtifact {
+    pub targets: Vec<PathBuf>,
+}
+
+pub trait FileSystemStorable: Sized {
+    fn load(path: impl AsRef<Path>) -> Result<Self>;
+    fn store(&self, path: impl AsRef<Path>) -> Result<()>;
+}
+
+#[macro_export]
+macro_rules! fs_storable_default {
+    ($t:ty) => {
+        impl $crate::FileSystemStorable for $t {
+            fn load(path: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
+                let reader = std::io::BufReader::new(std::fs::File::open(path.as_ref())?);
+                Ok(serde_json::from_reader(reader)?)
+            }
+
+            fn store(&self, path: impl AsRef<std::path::Path>) -> anyhow::Result<()> {
+                let file = std::io::BufWriter::new(std::fs::File::create(path)?);
+                Ok(serde_json::to_writer(file, self)?)
+            }
+        }
+    };
+}
+
+fs_storable_default!(ParalegalArtifact);
+
+/// Write all elements from `it` into the formatter `fmt` using `f`, separating
+/// them with `sep`
+pub fn write_sep<
+    E,
+    I: IntoIterator<Item = E>,
+    F: FnMut(E, &mut fmt::Formatter<'_>) -> fmt::Result,
+>(
+    fmt: &mut fmt::Formatter<'_>,
+    sep: &str,
+    it: I,
+    mut f: F,
+) -> fmt::Result {
+    let mut first = true;
+    for e in it {
+        if first {
+            first = false;
+        } else {
+            fmt.write_str(sep)?;
+        }
+        f(e, fmt)?;
+    }
+    Ok(())
+}
 
 /// Has a [`Display`] implementation if the elements of the iterator inside have
 /// one. This will render them surrounded by `[` brackets and separated by `, `
@@ -132,4 +196,18 @@ impl std::fmt::Display for TruncatedHumanTime {
         );
         write!(f, "{}ns", self.0.as_nanos())
     }
+}
+
+pub fn setup_logging() -> anyhow::Result<()> {
+    tracing_subscriber::fmt::fmt()
+        .with_env_filter(
+            tracing_subscriber::filter::EnvFilter::builder()
+                .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
+                .from_env()?,
+        )
+        .with_timer(tracing_subscriber::fmt::time::ChronoLocal::new(
+            "%H:%M:%S".to_string(),
+        ))
+        .init();
+    Ok(())
 }

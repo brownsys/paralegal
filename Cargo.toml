@@ -16,6 +16,13 @@ strum = { version = "0.25", features = ["derive"] }
 anyhow = { version = "1.0.72", features = ["backtrace"] }
 allocative = "0.3.4"
 internment = { version = "0.8.6" }
+serde_json = { version = "1" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = [
+    "local-time",
+    "chrono",
+    "env-filter",
+] }
 
 rustc_utils = { version = "=0.12.0-nightly-2024-12-15", features = [
     "indexical",

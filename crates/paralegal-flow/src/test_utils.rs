@@ -75,7 +75,14 @@ pub fn use_rustc<A, F: FnOnce() -> A>(f: F) -> A {
 pub fn paralegal_flow_command(dir: impl AsRef<Path>) -> std::process::Command {
     // Force paralegal-flow binary to be built
     let success = Command::new("cargo")
-        .args(["build", "-p", "paralegal-flow"])
+        .args([
+            "build",
+            "--bin",
+            "paralegal-flow",
+            "--bin",
+            "cargo-paralegal-flow",
+        ])
+        .current_dir("../..")
         .status()
         .unwrap()
         .success();
@@ -298,7 +305,7 @@ impl InlineTestBuilder {
 
         let args = crate::Args::try_from(TopLevelArgs::parse_from(args).args).unwrap();
 
-        let _ = args.try_setup_logging();
+        let _ = args.setup_logging();
 
         rustc_utils::test_utils::CompileBuilder::new(&self.input)
             .with_args(EXTRA_RUSTC_ARGS.iter().copied().map(ToOwned::to_owned))

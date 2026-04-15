@@ -49,7 +49,7 @@ use flowistry_pdg_construction::source_access::{
     dump_mir_and_borrowck_facts_with_cache, intermediate_out_dir,
 };
 use log::Level;
-use paralegal_spdg::{AnalyzerStats, ProgramDescription, STAT_FILE_EXT};
+use paralegal_spdg::{AnalyzerStats, ProgramDescription, FLOW_GRAPH_EXT, STAT_FILE_EXT};
 
 use rustc_borrowck::consumers::BodyWithBorrowckFacts;
 use rustc_middle::{mir::BorrowCheckResult, ty::TyCtxt};
@@ -94,7 +94,7 @@ use crate::{
 };
 use ann::dump_markers;
 pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs, MarkerControl};
-use args::{ClapArgs, Debugger, LogLevelConfig};
+use args::{ClapArgs, Debugger};
 pub use ctx::Pctx;
 use desc::utils::write_sep;
 
@@ -398,7 +398,8 @@ impl Callbacks {
             stats.serialization_time = self.stats.get_timed(TimedStat::Serialization);
 
             self.stats.measure(TimedStat::Serialization, || {
-                desc.canonical_write(self.opts.result_path()).unwrap()
+                desc.canonical_write(tcx.output_filenames(()).with_extension(FLOW_GRAPH_EXT))
+                    .unwrap()
             });
 
             assert!(self.stat_ref.replace(stats).is_none());
@@ -614,7 +615,7 @@ impl rustc_plugin::RustcPlugin for DfppPlugin {
         // `log::set_max_level`.
         //println!("compiling {compiler_args:?}");
 
-        plugin_args.setup_logging();
+        plugin_args.setup_logging().unwrap();
 
         let handling = how_to_handle_this_crate(&plugin_args, &mut compiler_args);
         let mut callbacks = match handling.handling {
