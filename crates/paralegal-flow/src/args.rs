@@ -22,8 +22,7 @@ use rustc_middle::ty::TyCtxt;
 use rustc_span::Symbol;
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
-use std::hash::{Hash, Hasher};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::OnceLock;
 
@@ -34,7 +33,6 @@ use flowistry_pdg_construction::source_access::std_crates;
 use paralegal_spdg::utils::setup_logging;
 
 use crate::utils::TinyBitSet;
-use num_traits::FromPrimitive;
 
 #[derive(thiserror::Error, Debug)]
 enum VarError {
@@ -59,6 +57,13 @@ fn env_var_expect_unicode(k: impl AsRef<OsStr>) -> Result<Option<String>, VarErr
 impl TryFrom<ClapArgs> for Args {
     type Error = Error;
     fn try_from(value: ClapArgs) -> Result<Self, Self::Error> {
+        let build_config: (_, BuildConfig) = if let Some(conf) = value.get_build_config() {
+            let absolute = conf.canonicalize()?;
+            let config = toml::from_str(&std::fs::read_to_string(&absolute)?)?;
+            (Some(absolute), config)
+        } else {
+            Default::default()
+        };
         let ClapArgs {
             result_path,
             relaxed,
@@ -70,7 +75,7 @@ impl TryFrom<ClapArgs> for Args {
             cargo_args,
             attach_to_debugger,
             strict,
-            build_config,
+            build_config: _,
         } = value;
         if relaxed {
             eprintln!("The `--relaxed` flag is deprecated. This is now the default behavior and therefore the flag is ignored.");
@@ -90,14 +95,7 @@ impl TryFrom<ClapArgs> for Args {
                 .analyze
                 .extend(from_env.split(',').map(ToOwned::to_owned));
         }
-        let build_config_file = &build_config;
-        let build_config: (_, BuildConfig) = if let Ok(absolute) = build_config_file.canonicalize()
-        {
-            let config = toml::from_str(&std::fs::read_to_string(&absolute)?)?;
-            (Some(absolute), config)
-        } else {
-            Default::default()
-        };
+
         anactrl
             .include
             .extend(build_config.1.include.iter().cloned());

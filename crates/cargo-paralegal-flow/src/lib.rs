@@ -46,8 +46,8 @@ pub struct ClapArgs {
     #[clap(flatten)]
     pub dump: ParseableDumpArgs,
     /// Pass through for additional cargo arguments (like --features)
-    #[clap(long, default_value = "Paralegal.toml")]
-    pub build_config: PathBuf,
+    #[clap(long)]
+    pub build_config: Option<PathBuf>,
     #[clap(last = true)]
     pub cargo_args: Vec<String>,
 }
@@ -59,11 +59,23 @@ impl ClapArgs {
             std::time::Instant::now().hash(hasher);
         }
         // TODO Add other relevant arguments
-        config_hash_for_file(Some(&self.build_config), hasher);
+        let build_config = self.get_build_config();
+        config_hash_for_file(build_config, hasher);
         self.relaxed.hash(hasher);
         self.target.hash(hasher);
         self.result_path.hash(hasher);
         config_hash_for_file(self.marker_control.external_annotations().as_ref(), hasher);
+    }
+
+    pub fn get_build_config(&self) -> Option<&Path> {
+        const DEFAULT_BUILD_CONFIG_PATH: &str = "Paralegal.toml";
+        self.build_config
+            .as_ref()
+            .map(PathBuf::as_path)
+            .or_else(|| {
+                let path = Path::new(DEFAULT_BUILD_CONFIG_PATH);
+                path.exists().then_some(path)
+            })
     }
 }
 

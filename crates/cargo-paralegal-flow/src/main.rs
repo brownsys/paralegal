@@ -36,13 +36,16 @@ fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().collect::<Vec<_>>();
     setup_logging()?;
     debug!(?args, "In cargo");
-    let slf = args.remove(0);
+    if args.get(1).is_some_and(|p| p == "paralegal-flow") {
+        args.remove(1);
+    }
+    let slf = &args[0];
     let rustc_wrapper_bin = Path::new(&slf)
         .parent()
         .map_or(Path::new("paralegal-flow").to_path_buf(), |p| {
             p.join("paralegal-flow")
         });
-    let args = ClapArgs::parse();
+    let args = ClapArgs::parse_from(args);
 
     let mut hasher = DefaultHasher::new();
     args.hash_config(&mut hasher);

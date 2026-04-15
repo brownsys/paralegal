@@ -473,8 +473,6 @@ pub fn run(mut compiler_args: Vec<String>, plugin_args: Args) -> Result<(), Erro
     // filters going on in the logging crates. One is imposed by `log`
     // automatically and the other by `simple_logger` internally.
 
-    plugin_args.setup_logging().unwrap();
-
     let handling = how_to_handle_this_crate(&plugin_args, &mut compiler_args);
     let mut callbacks = match handling.handling {
         CrateHandling::JustCompile => Box::new(NoopCallbacks) as Box<dyn FinalizingCallbacks>,

@@ -2,6 +2,8 @@
 use std::path::Path;
 
 use cargo_paralegal_flow::{ClapArgs, EXEC_HASH_ARG, PARALEGAL_ARGS};
+use paralegal_spdg::utils::setup_logging;
+use tracing::debug;
 
 extern crate rustc_driver;
 
@@ -72,6 +74,7 @@ fn unescape_version(s: &str) -> String {
 }
 
 fn main() -> anyhow::Result<()> {
+    setup_logging()?;
     let use_real_version = matches!(std::env::var("PARALEGAL_USE_REAL_RUSTC_VERSION"), Ok(v) if v == "1" || v.eq_ignore_ascii_case("true"));
     let mut args = std::env::args().collect::<Vec<_>>();
     let version_args = VersionArgs::parse_args(args.iter());
@@ -93,6 +96,8 @@ fn main() -> anyhow::Result<()> {
         }
         std::process::exit(0);
     }
+
+    debug!(?args);
 
     if let Some((hash_check_arg, _)) = args.iter().enumerate().find(|elem| elem.1 == EXEC_HASH_ARG)
     {
