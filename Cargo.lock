@@ -260,6 +260,7 @@ dependencies = [
  "num-traits",
  "paralegal-non-rustc-utils",
  "serde",
+ "serde_json",
  "tracing",
 ]
 
@@ -1206,7 +1207,6 @@ dependencies = [
  "paralegal-spdg",
  "petgraph",
  "pretty",
- "rustc_plugin 0.12.0-nightly-2024-12-15 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustc_utils 0.12.0-nightly-2024-12-15 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_bare",
@@ -1214,7 +1214,7 @@ dependencies = [
  "serial_test",
  "strum 0.25.0",
  "thiserror",
- "toml 0.8.19",
+ "toml",
  "tracing",
  "tracing-subscriber",
  "trait_enum",
@@ -1525,32 +1525,6 @@ name = "rustc-demangle"
 version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "719b953e2095829ee67db738b3bfa9fa368c94900df327b3f07fe6e794d2fe1f"
-
-[[package]]
-name = "rustc_plugin"
-version = "0.12.0-nightly-2024-12-15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "351d0edb6bb7f15aa21d83c29604cdc3bdcec506e12233868b369ee6d3328da3"
-replace = "rustc_plugin 0.12.0-nightly-2024-12-15 (git+https://github.com/JustusAdam/rustc_plugin?rev=34379c9f1df773a10ecdbc5053896092c7a15c01)"
-
-[[package]]
-name = "rustc_plugin"
-version = "0.12.0-nightly-2024-12-15"
-source = "git+https://github.com/JustusAdam/rustc_plugin?rev=34379c9f1df773a10ecdbc5053896092c7a15c01#34379c9f1df773a10ecdbc5053896092c7a15c01"
-dependencies = [
- "cargo_metadata",
- "log",
- "rustc_tools_util",
- "serde",
- "serde_json",
- "toml 0.7.8",
-]
-
-[[package]]
-name = "rustc_tools_util"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3c5a95edfa0c893236ae4778bb7c4752760e4c0d245e19b5eff33c5aa5eb9dc"
 
 [[package]]
 name = "rustc_utils"
@@ -1930,18 +1904,6 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "0.7.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd79e69d3b627db300ff956027cc6c3798cef26d22526befdfcd12feeb6d2257"
-dependencies = [
- "serde",
- "serde_spanned",
- "toml_datetime",
- "toml_edit 0.19.15",
-]
-
-[[package]]
-name = "toml"
 version = "0.8.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1ed1f98e3fdc28d6d910e6737ae6ab1a93bf1985935a1193e68f93eeb68d24e"
@@ -1949,7 +1911,7 @@ dependencies = [
  "serde",
  "serde_spanned",
  "toml_datetime",
- "toml_edit 0.22.22",
+ "toml_edit",
 ]
 
 [[package]]
@@ -1963,19 +1925,6 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.19.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b5bb770da30e5cbfde35a2d7b9b8a2c4b8ef89548a7a6aeab5c9a576e3e7421"
-dependencies = [
- "indexmap",
- "serde",
- "serde_spanned",
- "toml_datetime",
- "winnow 0.5.40",
-]
-
-[[package]]
-name = "toml_edit"
 version = "0.22.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ae48d6208a266e853d946088ed816055e556cc6028c5e8e2b84d9fa5dd7c7f5"
@@ -1984,7 +1933,7 @@ dependencies = [
  "serde",
  "serde_spanned",
  "toml_datetime",
- "winnow 0.6.20",
+ "winnow",
 ]
 
 [[package]]
@@ -2336,15 +2285,6 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
-
-[[package]]
-name = "winnow"
-version = "0.5.40"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f593a95398737aeed53e489c785df13f3618e41dbcd6718c6addbf1395aa6876"
-dependencies = [
- "memchr",
-]
 
 [[package]]
 name = "winnow"

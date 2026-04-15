@@ -33,8 +33,8 @@ use cargo_paralegal_flow::{
 use flowistry_pdg_construction::source_access::std_crates;
 use paralegal_spdg::utils::setup_logging;
 
-use crate::num_traits::FromPrimitive;
 use crate::utils::TinyBitSet;
+use num_traits::FromPrimitive;
 
 #[derive(thiserror::Error, Debug)]
 enum VarError {
@@ -70,6 +70,7 @@ impl TryFrom<ClapArgs> for Args {
             cargo_args,
             attach_to_debugger,
             strict,
+            build_config,
         } = value;
         if relaxed {
             eprintln!("The `--relaxed` flag is deprecated. This is now the default behavior and therefore the flag is ignored.");
@@ -89,7 +90,7 @@ impl TryFrom<ClapArgs> for Args {
                 .analyze
                 .extend(from_env.split(',').map(ToOwned::to_owned));
         }
-        let build_config_file = std::path::Path::new("Paralegal.toml");
+        let build_config_file = &build_config;
         let build_config: (_, BuildConfig) = if let Ok(absolute) = build_config_file.canonicalize()
         {
             let config = toml::from_str(&std::fs::read_to_string(&absolute)?)?;
@@ -179,14 +180,6 @@ impl From<ParseableDumpArgs> for DumpArgs {
 #[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
 pub struct DumpArgs(TinyBitSet);
 
-impl DumpArgs {
-    fn iter(self) -> impl Iterator<Item = DumpOption> {
-        self.0
-            .into_iter_set_in_domain()
-            .filter_map(DumpOption::from_u32)
-    }
-}
-
 impl FromStr for DumpArgs {
     type Err = String;
 
@@ -230,19 +223,6 @@ impl Args {
         &self.build_config.1
     }
 
-    pub fn hash_config(&self, hasher: &mut impl Hasher) {
-        if self.attach_to_debugger.is_some() {
-            // If we run the debugger try to make the hash fail so we actually run.
-            std::time::Instant::now().hash(hasher);
-        }
-        // TODO Add other relevant arguments
-        config_hash_for_file(&self.build_config.0, hasher);
-        self.relaxed.hash(hasher);
-        self.target.hash(hasher);
-        self.result_path.hash(hasher);
-        config_hash_for_file(&self.marker_control.external_annotations(), hasher);
-    }
-
     pub fn marker_control(&self) -> &MarkerControl {
         &self.marker_control
     }
@@ -258,17 +238,6 @@ impl Args {
     pub fn setup_logging(&self) -> anyhow::Result<()> {
         setup_logging()
     }
-}
-
-fn config_hash_for_file(path: &Option<impl AsRef<Path>>, state: &mut impl Hasher) {
-    path.as_ref()
-        .map(|path| {
-            let path = path.as_ref();
-            Ok::<_, std::io::Error>((path, path.metadata()?.modified()?))
-        })
-        .transpose()
-        .unwrap()
-        .hash(state);
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]

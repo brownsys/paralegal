@@ -15,3 +15,4 @@ clap.workspace = true
 serde.workspace = true
 num-derive.workspace = true
 num-traits.workspace = true
+serde_json.workspace = true

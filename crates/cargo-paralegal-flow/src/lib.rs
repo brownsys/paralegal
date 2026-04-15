@@ -1,8 +1,19 @@
+use std::{
+    hash::{Hash, Hasher},
+    path::{Path, PathBuf},
+};
+
+use serde::{Deserialize, Serialize};
+
+pub const PARALEGAL_ARGS: &str = "PARALEGAL_ARGS";
+
+pub const EXEC_HASH_ARG: &str = "--exec-hash";
+
 /// Arguments as exposed on the command line.
 ///
 /// You should then use `try_into` to convert this to [`Args`], the argument
 /// structure used internally.
-#[derive(clap::Args)]
+#[derive(clap::Parser, Serialize, Deserialize)]
 pub struct ClapArgs {
     /// Where to write the resulting GraphLocation (defaults to `flow-graph.json`)
     #[clap(long, default_value = paralegal_non_rustc_utils::FLOW_GRAPH_OUT_NAME)]
@@ -35,8 +46,36 @@ pub struct ClapArgs {
     #[clap(flatten)]
     pub dump: ParseableDumpArgs,
     /// Pass through for additional cargo arguments (like --features)
+    #[clap(long, default_value = "Paralegal.toml")]
+    pub build_config: PathBuf,
     #[clap(last = true)]
     pub cargo_args: Vec<String>,
+}
+
+impl ClapArgs {
+    pub fn hash_config(&self, hasher: &mut impl Hasher) {
+        if self.attach_to_debugger.is_some() {
+            // If we run the debugger try to make the hash fail so we actually run.
+            std::time::Instant::now().hash(hasher);
+        }
+        // TODO Add other relevant arguments
+        config_hash_for_file(Some(&self.build_config), hasher);
+        self.relaxed.hash(hasher);
+        self.target.hash(hasher);
+        self.result_path.hash(hasher);
+        config_hash_for_file(self.marker_control.external_annotations().as_ref(), hasher);
+    }
+}
+
+fn config_hash_for_file(path: Option<impl AsRef<Path>>, state: &mut impl Hasher) {
+    path.as_ref()
+        .map(|path| {
+            let path = path.as_ref();
+            Ok::<_, std::io::Error>((path, path.metadata()?.modified()?))
+        })
+        .transpose()
+        .unwrap()
+        .hash(state);
 }
 
 #[derive(serde::Serialize, serde::Deserialize, clap::ValueEnum, Clone, Copy)]
@@ -67,7 +106,7 @@ pub enum DumpOption {
     All,
 }
 
-#[derive(Clone, clap::Args)]
+#[derive(Clone, clap::Args, Serialize, Deserialize)]
 pub struct ParseableDumpArgs {
     /// Generate intermediate of various formats and at various stages of
     /// compilation. A short description of each value is provided here, for a
@@ -101,7 +140,7 @@ pub struct MarkerControl {
 }
 
 /// Arguments that control the flow analysis
-#[derive(clap::Args)]
+#[derive(clap::Args, Serialize, Deserialize)]
 pub struct ClapAnalysisCtrl {
     /// Target this function as analysis entrypoint. Command line version of
     /// `#[paralegal::analyze]`). Must be a full rust path and resolve to a

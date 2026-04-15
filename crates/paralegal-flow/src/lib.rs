@@ -3,24 +3,7 @@
 //! While this is technically a "library", it only is so for the purposes of
 //! being able to reference the same code in the two executables `paralegal_flow` and
 //! `cargo-paralegal-flow` (a structure suggested by [rustc_plugin]).
-#![feature(rustc_private, min_specialization, box_patterns, let_chains)]
-#[macro_use]
-extern crate clap;
-extern crate ordermap;
-extern crate rustc_plugin;
-extern crate rustc_utils;
-extern crate serde;
-extern crate toml;
-#[macro_use]
-extern crate lazy_static;
-#[macro_use]
-extern crate log;
-extern crate humantime;
-
-extern crate petgraph;
-
-extern crate num_derive;
-extern crate num_traits;
+#![feature(rustc_private, min_specialization, let_chains)]
 
 extern crate rustc_abi;
 extern crate rustc_arena;
@@ -48,14 +31,13 @@ extern crate rustc_type_ir;
 use flowistry_pdg_construction::source_access::{
     dump_mir_and_borrowck_facts_with_cache, intermediate_out_dir,
 };
-use log::Level;
 use paralegal_spdg::{AnalyzerStats, ProgramDescription, FLOW_GRAPH_EXT, STAT_FILE_EXT};
 
 use rustc_borrowck::consumers::BodyWithBorrowckFacts;
 use rustc_middle::{mir::BorrowCheckResult, ty::TyCtxt};
-use rustc_plugin::CrateFilter;
 use rustc_span::ErrorGuaranteed;
 use rustc_utils::cache::Cache;
+use tracing::{debug, error, info};
 
 pub use std::collections::{HashMap, HashSet};
 use std::{
@@ -105,16 +87,13 @@ pub const EXTRA_RUSTC_ARGS: &[&str] = &[
     "-Zcrate-attr=register_tool(paralegal_flow)",
 ];
 
-/// A struct so we can implement [`rustc_plugin::RustcPlugin`]
-pub struct DfppPlugin;
-
 /// Top level argument structure. This is only used for parsing. The actual
 /// configuration of paralegal-flow [`struct@Args`] which is stored in `args`. `cargo_args` is
 /// forwarded and `_progname` is only to comply with the calling convention of
 /// `cargo` (it passes the program name as first argument).
 #[derive(clap::Parser)]
 #[clap(version = concat!(
-    crate_version!(),
+    clap::crate_version!(),
     "\nbuilt ", env!("BUILD_TIME"),
     "\ncommit ", env!("COMMIT_HASH"),
     "\nwith ", env!("RUSTC_VERSION"),
@@ -418,29 +397,6 @@ impl Callbacks {
     }
 }
 
-pub const CARGO_ENCODED_RUSTFLAGS: &str = "CARGO_ENCODED_RUSTFLAGS";
-
-fn add_to_rustflags(new: impl IntoIterator<Item = String>) -> Result<(), std::env::VarError> {
-    use std::env::{var, VarError};
-    let mut prior = var(CARGO_ENCODED_RUSTFLAGS)
-        .map(|flags| flags.split('\x1f').map(str::to_string).collect())
-        .or_else(|err| {
-            if matches!(err, VarError::NotPresent) {
-                var("RUSTFLAGS").map(|flags| flags.split_whitespace().map(str::to_string).collect())
-            } else {
-                Err(err)
-            }
-        })
-        .or_else(|err| {
-            matches!(err, VarError::NotPresent)
-                .then(Vec::new)
-                .ok_or(err)
-        })?;
-    prior.extend(new);
-    std::env::set_var(CARGO_ENCODED_RUSTFLAGS, prior.join("\x1f"));
-    Ok(())
-}
-
 #[derive(Debug, Clone, Copy)]
 enum CrateHandling {
     JustCompile,
@@ -511,157 +467,58 @@ fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>)
     }
 }
 
-impl rustc_plugin::RustcPlugin for DfppPlugin {
-    type Args = Args;
+pub fn run(mut compiler_args: Vec<String>, plugin_args: Args) -> Result<(), ErrorGuaranteed> {
+    // return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks { }).run();
+    // Setting the log levels is bit complicated because there are two level
+    // filters going on in the logging crates. One is imposed by `log`
+    // automatically and the other by `simple_logger` internally.
 
-    fn version(&self) -> std::borrow::Cow<'static, str> {
-        crate_version!().into()
-    }
+    plugin_args.setup_logging().unwrap();
 
-    fn driver_name(&self) -> std::borrow::Cow<'static, str> {
-        "paralegal-flow".into()
-    }
-
-    fn reported_driver_version(&self) -> std::borrow::Cow<'static, str> {
-        env!("RUSTC_VERSION").into()
-    }
-
-    fn hash_config(&self, args: &Self::Args, hasher: &mut impl std::hash::Hasher) {
-        args.hash_config(hasher);
-    }
-
-    fn args(
-        &self,
-        _target_dir: &rustc_plugin::Utf8Path,
-    ) -> rustc_plugin::RustcPluginArgs<Self::Args> {
-        use clap::Parser;
-        let args = ArgWrapper::parse();
-
-        // Override the SYSROOT so that it points to the version we were
-        // compiled against.
-        //
-        // This is actually not necessary for *this* binary, but it will be
-        // inherited by the calls to `cargo` and `rustc` done by `rustc_plugin`
-        // and thus those will use the version of `std` that matches the nightly
-        // compiler version we link against.
-        std::env::set_var("SYSROOT", env!("SYSROOT_PATH"));
-
-        add_to_rustflags(["--cfg".into(), "paralegal".into()]).unwrap();
-
-        rustc_plugin::RustcPluginArgs {
-            args: args.args.try_into().unwrap(),
-            filter: CrateFilter::AllCrates,
+    let handling = how_to_handle_this_crate(&plugin_args, &mut compiler_args);
+    let mut callbacks = match handling.handling {
+        CrateHandling::JustCompile => Box::new(NoopCallbacks) as Box<dyn FinalizingCallbacks>,
+        CrateHandling::CompileAndDump => {
+            compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
+            Box::new(DumpOnlyCallbacks::new())
         }
-    }
+        CrateHandling::Analyze => {
+            let opts = Box::leak(Box::new(plugin_args));
 
-    fn modify_cargo(&self, cargo: &mut std::process::Command, args: &Self::Args) {
-        // All right so actually all that's happening here is that we drop the
-        // "--all" that rustc_plugin automatically adds in such cases where the
-        // arguments passed to paralegal indicate that we are supposed to run
-        // only on select crates. Also we replace the `RUSTC_WORKSPACE_WRAPPER`
-        // argument with `RUSTC_WRAPPER`
-        // because of https://github.com/cognitive-engineering-lab/rustc_plugin/issues/19
-        //
-        // There isn't a nice way to do this so we hand-code what amounts to a
-        // call to `cargo.clone()`, but with the one modification of removing
-        // that argument.
-        let args_select_package = args
-            .cargo_args()
-            .iter()
-            .any(|a| a.starts_with("-p") || a == "--package");
-        if args.target().is_some() | args_select_package {
-            let mut new_cmd = std::process::Command::new(cargo.get_program());
-            for (k, v) in cargo.get_envs() {
-                if k == "RUSTC_WORKSPACE_WRAPPER" {
-                    new_cmd.env("RUSTC_WRAPPER", v.unwrap());
-                } else if let Some(v) = v {
-                    new_cmd.env(k, v);
-                } else {
-                    new_cmd.env_remove(k);
-                }
+            const RERUN_VAR: &str = "RERUN_WITH_PROFILER";
+            if let Ok(debugger) = std::env::var(RERUN_VAR) {
+                info!("Restarting with debugger '{debugger}'");
+                let mut dsplit = debugger.split(' ');
+                let mut cmd = std::process::Command::new(dsplit.next().unwrap());
+                cmd.args(dsplit)
+                    .args(std::env::args())
+                    .env_remove(RERUN_VAR);
+                std::process::exit(cmd.status().unwrap().code().unwrap_or(0));
             }
-            if let Some(wd) = cargo.get_current_dir() {
-                new_cmd.current_dir(wd);
+
+            compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
+            if cfg!(debug_assertions) {
+                compiler_args.push("-Ztrack-diagnostics".to_string());
             }
-            new_cmd.args(cargo.get_args().filter(|a| *a != "--all"));
-            *cargo = new_cmd
+
+            if let Some(dbg) = opts.attach_to_debugger() {
+                attach_debugger(dbg)
+            }
+
+            debug!(
+                "Arguments: {}",
+                Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
+            );
+            Box::new(Callbacks::new(opts))
         }
-        if let Some(target) = args.target().as_ref() {
-            if !args_select_package {
-                cargo.args(["-p", target]);
-            }
-        }
-        if args.anactrl().include_std() {
-            cargo.arg("-Zbuild-std=std,core,alloc,proc_macro");
-        }
-        cargo.args(args.cargo_args());
-    }
+    };
 
-    fn run(
-        self,
-        mut compiler_args: Vec<String>,
-        plugin_args: Self::Args,
-    ) -> Result<(), ErrorGuaranteed> {
-        // return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks { }).run();
-        // Setting the log levels is bit complicated because there are two level
-        // filters going on in the logging crates. One is imposed by `log`
-        // automatically and the other by `simple_logger` internally.
+    let upcasted_callback = callbacks.upcast_mut();
 
-        // We use `log::set_max_level` later to selectively enable debug output
-        // for specific targets. This max level is distinct from the one
-        // provided to `with_level` below. Therefore in the case where we have a
-        // `--debug` targeting a specific function we need to set the
-        // `with_level` level lower and then increase it with
-        // `log::set_max_level`.
-        //println!("compiling {compiler_args:?}");
+    rustc_driver::RunCompiler::new(&compiler_args, upcasted_callback).run();
 
-        plugin_args.setup_logging().unwrap();
-
-        let handling = how_to_handle_this_crate(&plugin_args, &mut compiler_args);
-        let mut callbacks = match handling.handling {
-            CrateHandling::JustCompile => Box::new(NoopCallbacks) as Box<dyn FinalizingCallbacks>,
-            CrateHandling::CompileAndDump => {
-                compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
-                Box::new(DumpOnlyCallbacks::new())
-            }
-            CrateHandling::Analyze => {
-                let opts = Box::leak(Box::new(plugin_args));
-
-                const RERUN_VAR: &str = "RERUN_WITH_PROFILER";
-                if let Ok(debugger) = std::env::var(RERUN_VAR) {
-                    info!("Restarting with debugger '{debugger}'");
-                    let mut dsplit = debugger.split(' ');
-                    let mut cmd = std::process::Command::new(dsplit.next().unwrap());
-                    cmd.args(dsplit)
-                        .args(std::env::args())
-                        .env_remove(RERUN_VAR);
-                    std::process::exit(cmd.status().unwrap().code().unwrap_or(0));
-                }
-
-                compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
-                if cfg!(debug_assertions) || log::max_level() >= Level::Debug {
-                    compiler_args.push("-Ztrack-diagnostics".to_string());
-                }
-
-                if let Some(dbg) = opts.attach_to_debugger() {
-                    attach_debugger(dbg)
-                }
-
-                debug!(
-                    "Arguments: {}",
-                    Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
-                );
-                Box::new(Callbacks::new(opts))
-            }
-        };
-
-        let upcasted_callback = callbacks.upcast_mut();
-
-        rustc_driver::RunCompiler::new(&compiler_args, upcasted_callback).run();
-
-        callbacks.finalize();
-        Ok(())
-    }
+    callbacks.finalize();
+    Ok(())
 }
 
 fn attach_debugger(debugger: Debugger) {

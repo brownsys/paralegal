@@ -2,7 +2,6 @@ use std::fmt::{Display, Write};
 
 use either::Either;
 use flowistry_pdg_construction::source_access::{intermediate_out_dir, ParalegalEncoder};
-use log::debug;
 use rustc_ast::Attribute;
 
 use rustc_hir::{
@@ -23,6 +22,7 @@ pub mod parse;
 pub mod side_effect_detection;
 
 use parse::*;
+use tracing::{debug, warn};
 
 use crate::{discover::AttrMatchT, sym_vec, utils::MetaItemMatch};
 

@@ -45,6 +45,7 @@ use rustc_utils::cache::Cache;
 use anyhow::Context;
 use serde::Deserialize;
 use serde_json::json;
+use tracing::trace;
 
 use std::{
     cell::{RefCell, RefMut},

@@ -37,6 +37,7 @@ use rustc_middle::{
     ty::{Instance, TyCtxt, TypingEnv},
 };
 use rustc_span::{ErrorGuaranteed, FileNameDisplayPreference, Span as RustSpan, Symbol};
+use tracing::{debug, info};
 
 mod graph_converter;
 mod inline_judge;

@@ -20,7 +20,6 @@ flowistry_pdg = { path = "../flowistry_pdg" }
 flowistry = { workspace = true }
 
 rustc_utils = { workspace = true }
-rustc_plugin = { workspace = true }
 indexical = { version = "0.3.1", default-features = false, features = [
     "rustc",
 ] }

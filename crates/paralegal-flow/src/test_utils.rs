@@ -38,7 +38,7 @@ use petgraph::visit::{IntoNeighbors, IntoNodeReferences};
 use petgraph::visit::{NodeRef as _, Visitable};
 use std::path::Path;
 
-lazy_static! {
+lazy_static::lazy_static! {
     pub static ref CWD_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 }
 

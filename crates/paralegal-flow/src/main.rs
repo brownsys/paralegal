@@ -1,6 +1,9 @@
 #![feature(rustc_private)]
+use std::path::Path;
 
-extern crate rustc_plugin;
+use cargo_paralegal_flow::{ClapArgs, EXEC_HASH_ARG, PARALEGAL_ARGS};
+
+extern crate rustc_driver;
 
 #[derive(Default)]
 struct VersionArgs {
@@ -68,10 +71,10 @@ fn unescape_version(s: &str) -> String {
     s.replace("\\n", "\n")
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let use_real_version = matches!(std::env::var("PARALEGAL_USE_REAL_RUSTC_VERSION"), Ok(v) if v == "1" || v.eq_ignore_ascii_case("true"));
-    let args = std::env::args();
-    let version_args = VersionArgs::parse_args(args);
+    let mut args = std::env::args().collect::<Vec<_>>();
+    let version_args = VersionArgs::parse_args(args.iter());
     let long_version = if use_real_version {
         REAL_LONG_VERSION
     } else {
@@ -90,5 +93,34 @@ fn main() {
         }
         std::process::exit(0);
     }
-    rustc_plugin::driver_main(paralegal_flow::DfppPlugin);
+
+    if let Some((hash_check_arg, _)) = args.iter().enumerate().find(|elem| elem.1 == EXEC_HASH_ARG)
+    {
+        args.remove(hash_check_arg);
+        args.remove(hash_check_arg);
+    }
+
+    // Setting RUSTC_WRAPPER causes Cargo to pass 'rustc' as the first argument.
+    // We're invoking the compiler programmatically, so we ignore this
+    let wrapper_mode =
+        args.get(1).map(Path::new).and_then(Path::file_stem) == Some("rustc".as_ref());
+
+    if wrapper_mode {
+        // we still want to be able to invoke it normally though
+        args.remove(1);
+    }
+
+    // this conditional check for the --sysroot flag is there so users can call
+    // the driver directly without having to pass --sysroot or anything
+    args.extend(["--sysroot".into(), env!("SYSROOT_PATH").into()]);
+
+    let parsed_plugin_args: ClapArgs = serde_json::from_str(&std::env::var(PARALEGAL_ARGS)?)?;
+    let plugin_args: paralegal_flow::Args = parsed_plugin_args.try_into()?;
+
+    //   let early_dcx = EarlyDiagCtxt::new(ErrorOutputType::default());
+    //   rustc_driver::init_rustc_env_logger(&early_dcx);
+
+    std::process::exit(rustc_driver::catch_with_exit_code(move || {
+        paralegal_flow::run(args, plugin_args)
+    }))
 }

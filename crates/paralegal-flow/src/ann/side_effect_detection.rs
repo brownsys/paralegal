@@ -8,6 +8,7 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::{mir, ty};
 
 use either::Either;
+use tracing::trace;
 
 use crate::{ann::db::AutoMarkers, MarkerCtx};
 
