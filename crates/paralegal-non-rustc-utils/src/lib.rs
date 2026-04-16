@@ -4,6 +4,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use tracing::Level;
+use tracing_subscriber::filter::{Directive, Targets};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 /// Name of the file used for emitting the serialized
 /// [`ProgramDescription`].
@@ -199,16 +203,24 @@ impl std::fmt::Display for TruncatedHumanTime {
 }
 
 pub fn setup_logging() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::fmt()
-        .with_env_filter(
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_timer(tracing_subscriber::fmt::time::ChronoLocal::new(
+                    "%H:%M:%S".to_string(),
+                ))
+                .with_writer(std::io::stderr),
+        )
+        .with(
             tracing_subscriber::filter::EnvFilter::builder()
                 .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
                 .from_env()?,
         )
-        .with_timer(tracing_subscriber::fmt::time::ChronoLocal::new(
-            "%H:%M:%S".to_string(),
-        ))
-        .with_writer(std::io::stderr)
-        .init();
+        .with(
+            Targets::new()
+                .with_target("flowistry", Level::ERROR)
+                .with_target("rustc_utils", Level::ERROR),
+        )
+        .try_init()?;
     Ok(())
 }
