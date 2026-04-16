@@ -3,9 +3,11 @@ use std::path::Path;
 
 use cargo_paralegal_flow::{ClapArgs, EXEC_HASH_ARG, PARALEGAL_ARGS};
 use paralegal_spdg::utils::setup_logging;
+use rustc_session::{config::ErrorOutputType, EarlyDiagCtxt};
 use tracing::debug;
 
 extern crate rustc_driver;
+extern crate rustc_session;
 
 #[derive(Default)]
 struct VersionArgs {
@@ -115,15 +117,13 @@ fn main() -> anyhow::Result<()> {
         args.remove(1);
     }
 
-    // this conditional check for the --sysroot flag is there so users can call
-    // the driver directly without having to pass --sysroot or anything
     args.extend(["--sysroot".into(), env!("SYSROOT_PATH").into()]);
 
     let parsed_plugin_args: ClapArgs = serde_json::from_str(&std::env::var(PARALEGAL_ARGS)?)?;
     let plugin_args: paralegal_flow::Args = parsed_plugin_args.try_into()?;
 
-    //   let early_dcx = EarlyDiagCtxt::new(ErrorOutputType::default());
-    //   rustc_driver::init_rustc_env_logger(&early_dcx);
+    let early_dcx = EarlyDiagCtxt::new(ErrorOutputType::default());
+    rustc_driver::init_rustc_env_logger(&early_dcx);
 
     std::process::exit(rustc_driver::catch_with_exit_code(move || {
         paralegal_flow::run(args, plugin_args)

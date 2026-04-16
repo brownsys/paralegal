@@ -27,8 +27,8 @@ use std::{process::Command, sync::atomic::Ordering};
 use paralegal_spdg::{
     traverse::{generic_flows_to, generic_influencers, EdgeSelection},
     utils::{display_list, write_sep},
-    DefInfo, DisplayPath, EdgeInfo, Endpoint, InstructionInfo, InstructionKind, Node, NodeInfo,
-    NodeKind, TypeId, SPDG,
+    DefInfo, DisplayPath, EdgeInfo, Endpoint, FileSystemStorable, InstructionInfo, InstructionKind,
+    Node, NodeInfo, NodeKind, ParalegalArtifact, TypeId, SPDG,
 };
 
 use flowistry_pdg::{CallString, Constant};
@@ -139,7 +139,6 @@ where
         .unwrap()
         .success());
     paralegal_flow_command(dir)
-        .args(["--abort-after-analysis"])
         .args(extra)
         .status()
         .unwrap()
@@ -448,11 +447,18 @@ impl<'g> HasGraph<'g> for &'g PreFrg {
 impl PreFrg {
     pub fn from_file_at(dir: &str) -> Self {
         use_rustc(|| {
-            let desc = ProgramDescription::canonical_read(format!(
-                "{dir}/{}",
-                paralegal_spdg::FLOW_GRAPH_OUT_NAME
-            ))
-            .unwrap();
+            let path = Path::new(dir).join(paralegal_non_rustc_utils::ARTIFACT_NAME);
+            let artifact = ParalegalArtifact::load(&path).unwrap();
+            let desc_path = match artifact.targets.as_slice() {
+                [p] => p,
+                [] => panic!("Artifact at {} had no target crates", path.display()),
+                other => panic!(
+                    "Artifact at {} had too many target crates ({})",
+                    path.display(),
+                    other.len()
+                ),
+            };
+            let desc = ProgramDescription::canonical_read(desc_path).unwrap();
             Self::from_description(desc)
         })
     }

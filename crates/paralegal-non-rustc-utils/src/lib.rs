@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 /// [`ProgramDescription`].
 pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.o";
 
-pub const FLOW_GRAPH_EXT: &str = ".fgo";
+pub const FLOW_GRAPH_EXT: &str = "fgo";
 
 pub const ARTIFACT_NAME: &str = "paralegal-artifact.json";
 
@@ -208,6 +208,7 @@ pub fn setup_logging() -> anyhow::Result<()> {
         .with_timer(tracing_subscriber::fmt::time::ChronoLocal::new(
             "%H:%M:%S".to_string(),
         ))
+        .with_writer(std::io::stderr)
         .init();
     Ok(())
 }

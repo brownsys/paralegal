@@ -404,6 +404,7 @@ enum CrateHandling {
     Analyze,
 }
 
+#[derive(Debug)]
 struct CrateInfo {
     #[allow(dead_code)]
     name: Option<String>,
@@ -446,6 +447,13 @@ fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>)
     );
     let handling = match &crate_name {
         _ if is_build_script => CrateHandling::JustCompile,
+        // The invoker is requesting info from the compiler
+        _ if compiler_args
+            .iter()
+            .any(|a| a == "--print" || a.starts_with("--print=")) =>
+        {
+            CrateHandling::JustCompile
+        }
         Some(krate)
             if matches!(
                 plugin_args
@@ -474,6 +482,7 @@ pub fn run(mut compiler_args: Vec<String>, plugin_args: Args) -> Result<(), Erro
     // automatically and the other by `simple_logger` internally.
 
     let handling = how_to_handle_this_crate(&plugin_args, &mut compiler_args);
+    debug!(?handling, "Crate handling");
     let mut callbacks = match handling.handling {
         CrateHandling::JustCompile => Box::new(NoopCallbacks) as Box<dyn FinalizingCallbacks>,
         CrateHandling::CompileAndDump => {
