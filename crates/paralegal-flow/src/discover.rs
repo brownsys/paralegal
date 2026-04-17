@@ -18,6 +18,7 @@ use rustc_hir::{
 };
 use rustc_middle::{hir::nested_filter::OnlyBodies, ty::TyCtxt};
 use rustc_span::{symbol::Ident, Span, Symbol};
+use tracing::trace;
 
 use self::resolve::expect_resolve_string_to_def_id;
 
@@ -105,11 +106,15 @@ impl<'tcx> CollectingVisitor<'tcx> {
 
     /// Does the function named by this id have the `paralegal_flow::analyze` annotation
     fn should_analyze_function(&self, ident: LocalDefId) -> bool {
-        self.tcx
-            .hir()
-            .attrs(self.tcx.local_def_id_to_hir_id(ident))
-            .iter()
-            .any(|a| a.matches_path(&self.analyze_marker))
+        let attrs = self.tcx.hir().attrs(self.tcx.local_def_id_to_hir_id(ident));
+        let should_analyze = attrs.iter().any(|a| a.matches_path(&self.analyze_marker));
+        trace!(
+            name = self.tcx.def_path_str(ident),
+            should_analyze,
+            ?attrs,
+            "discovering function"
+        );
+        should_analyze
     }
 }
 

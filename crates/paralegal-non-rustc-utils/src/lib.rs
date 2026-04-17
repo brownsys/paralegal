@@ -219,7 +219,8 @@ pub fn setup_logging() -> anyhow::Result<()> {
         .with(
             Targets::new()
                 .with_target("flowistry", Level::ERROR)
-                .with_target("rustc_utils", Level::ERROR),
+                .with_target("rustc_utils", Level::ERROR)
+                .with_default(Level::TRACE),
         )
         .try_init()?;
     Ok(())

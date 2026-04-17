@@ -116,7 +116,6 @@ impl TryFrom<ClapArgs> for Args {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Args {
     /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     result_path: std::path::PathBuf,
@@ -175,7 +174,7 @@ impl From<ParseableDumpArgs> for DumpArgs {
 /// cli, internally we use the snake-case version of the option as a method on
 /// this type. This is so we can rename the outer UI without breaking code or
 /// even combine options together.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct DumpArgs(TinyBitSet);
 
 impl FromStr for DumpArgs {
@@ -238,7 +237,6 @@ impl Args {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
 pub struct AnalysisCtrl {
     /// Target this function as analysis target. Command line version of
     /// `#[paralegal::analyze]`). Must be a full rust path and resolve to a
@@ -249,7 +247,6 @@ pub struct AnalysisCtrl {
     /// Flowistry's recursive analysis).
     inlining_depth: InliningDepth,
     include: Vec<String>,
-    #[serde(skip)]
     included_crate_cache: OnceLock<FxHashSet<CrateNum>>,
     no_pdg_cache: bool,
     include_std: bool,
@@ -300,7 +297,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, strum::EnumIs, strum::AsRefStr, Clone)]
+#[derive(strum::EnumIs, strum::AsRefStr, Clone)]
 pub enum InliningDepth {
     /// Inline to arbitrary depth
     Unconstrained,

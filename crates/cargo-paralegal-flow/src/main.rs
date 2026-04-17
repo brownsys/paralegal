@@ -3,7 +3,7 @@ use std::hash::{DefaultHasher, Hasher};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use anyhow::{ensure, Context};
+use anyhow::Context;
 use cargo_metadata::Message;
 use clap::Parser;
 use tracing::{debug, error};
@@ -12,7 +12,6 @@ use cargo_paralegal_flow::{ClapArgs, EXEC_HASH_ARG, PARALEGAL_ARGS};
 use paralegal_non_rustc_utils::{
     setup_logging, FileSystemStorable, ParalegalArtifact, ARTIFACT_NAME, FLOW_GRAPH_EXT,
 };
-use tracing::field::debug;
 
 pub const CARGO_ENCODED_RUSTFLAGS: &str = "CARGO_ENCODED_RUSTFLAGS";
 
@@ -42,12 +41,7 @@ fn main() -> anyhow::Result<()> {
     if args.get(1).is_some_and(|p| p == "paralegal-flow") {
         args.remove(1);
     }
-    let slf = &args[0];
-    let rustc_wrapper_bin = Path::new(&slf)
-        .parent()
-        .map_or(Path::new("paralegal-flow").to_path_buf(), |p| {
-            p.join("paralegal-flow")
-        });
+    let rustc_wrapper_bin = std::env::current_exe()?.with_file_name("paralegal-flow");
     let args = ClapArgs::parse_from(args);
 
     let mut hasher = DefaultHasher::new();
@@ -59,12 +53,31 @@ fn main() -> anyhow::Result<()> {
     rustflags.push(EXEC_HASH_ARG.into());
     rustflags.push(format!("{exec_hash:1x}"));
 
+    let metadata = cargo_metadata::MetadataCommand::new()
+        // At the moment this is fine, because we only use this for info about
+        // workspace members and the target directory
+        .no_deps()
+        .other_options(["--offline".into()])
+        .exec()?;
+
     let mut cmd = Command::new("cargo");
     cmd.args(&["check", "--message-format=json"]) // or "build"
+        .arg("--target-dir")
+        .arg(metadata.target_directory.join("paralegal"))
         .stdout(Stdio::piped())
         .env("RUSTC_WRAPPER", rustc_wrapper_bin)
         .env(PARALEGAL_ARGS, serde_json::to_string(&args)?)
         .env(CARGO_ENCODED_RUSTFLAGS, rustflags.join("\x1f"));
+
+    // HACK: if running on the rustc codebase, this env var needs to exist
+    // for the code to compile
+    if metadata
+        .packages
+        .iter()
+        .any(|p| p.name == "rustc-main" && metadata.workspace_members.contains(&p.id))
+    {
+        cmd.env("CFG_RELEASE", "");
+    }
 
     if args.anactrl.include_std {
         cmd.arg("-Zbuild-std=std,core,alloc,proc_macro");
@@ -77,7 +90,7 @@ fn main() -> anyhow::Result<()> {
     let mut targets = vec![];
 
     for message in Message::parse_stream(reader) {
-        match message.unwrap() {
+        match message? {
             Message::CompilerArtifact(artifact) => {
                 let mut applicable = false;
                 match artifact

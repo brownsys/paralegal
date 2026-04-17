@@ -328,7 +328,7 @@ impl Callbacks {
         let vis = discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone());
         let mut generator = vis.run();
         let (desc, stats) = generator.analyze()?;
-        info!("All elems walked");
+        info!(num_controllers = desc.controllers.len(), "All elems walked");
         tcx.dcx().abort_if_errors();
 
         if self.opts.dbg().dump_spdg() {
@@ -483,12 +483,10 @@ pub fn run(mut compiler_args: Vec<String>, plugin_args: Args) -> Result<(), Erro
 
     let handling = how_to_handle_this_crate(&plugin_args, &mut compiler_args);
     debug!(?handling, "Crate handling");
+    compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
     let mut callbacks = match handling.handling {
         CrateHandling::JustCompile => Box::new(NoopCallbacks) as Box<dyn FinalizingCallbacks>,
-        CrateHandling::CompileAndDump => {
-            compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
-            Box::new(DumpOnlyCallbacks::new())
-        }
+        CrateHandling::CompileAndDump => Box::new(DumpOnlyCallbacks::new()),
         CrateHandling::Analyze => {
             let opts = Box::leak(Box::new(plugin_args));
 
@@ -503,7 +501,6 @@ pub fn run(mut compiler_args: Vec<String>, plugin_args: Args) -> Result<(), Erro
                 std::process::exit(cmd.status().unwrap().code().unwrap_or(0));
             }
 
-            compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
             if cfg!(debug_assertions) {
                 compiler_args.push("-Ztrack-diagnostics".to_string());
             }
@@ -512,10 +509,6 @@ pub fn run(mut compiler_args: Vec<String>, plugin_args: Args) -> Result<(), Erro
                 attach_debugger(dbg)
             }
 
-            debug!(
-                "Arguments: {}",
-                Print(|f| write_sep(f, " ", &compiler_args, Display::fmt))
-            );
             Box::new(Callbacks::new(opts))
         }
     };
