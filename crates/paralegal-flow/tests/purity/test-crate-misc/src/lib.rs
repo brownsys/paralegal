@@ -47,7 +47,7 @@ fn source2() -> i32 {
 fn side_effect_extern_flow() -> std::io::Result<()> {
     let x = source2();
     let z = source();
-    let y = plus(z, 3);
+    let y = unsafe { plus(z, 3) };
     let result = y + x;
     Ok(())
 }
@@ -55,7 +55,7 @@ fn side_effect_extern_flow() -> std::io::Result<()> {
 #[paralegal::analyze]
 fn side_effect_extern() -> std::io::Result<()> {
     let x = 2;
-    let y = plus(3, x);
+    let y = unsafe { plus(3, x) };
     Ok(())
 }
 

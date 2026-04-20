@@ -5,9 +5,10 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use anyhow::Context;
-use cargo_metadata::Message;
+use cargo_metadata::diagnostic::{Diagnostic, DiagnosticLevel};
+use cargo_metadata::{CompilerMessage, Message};
 use clap::Parser;
-use tracing::{debug, error};
+use tracing::{debug, error, trace};
 
 use cargo_paralegal_flow::{ClapArgs, EXEC_HASH_ARG, PARALEGAL_ARGS};
 use paralegal_non_rustc_utils::{
@@ -43,7 +44,9 @@ fn main() -> anyhow::Result<()> {
         args.remove(1);
     }
     let rustc_wrapper_bin = std::env::current_exe()?.with_file_name("paralegal-flow");
-    let args = ClapArgs::parse_from(args);
+    let mut args = ClapArgs::parse_from(args);
+
+    args.anactrl.include_std |= args.marker_control.mark_side_effects();
 
     let mut hasher = DefaultHasher::new();
     args.hash_config(&mut hasher);
@@ -89,6 +92,8 @@ fn main() -> anyhow::Result<()> {
     if args.anactrl.include_std {
         cmd.arg("-Zbuild-std=std,core,alloc,proc_macro");
     }
+
+    trace!(cargo_cmd=?cmd);
 
     let mut child = cmd.spawn()?;
 
@@ -137,6 +142,15 @@ fn main() -> anyhow::Result<()> {
                     other => error!(?other, "Too many applicable paths"),
                 }
                 debug!(?artifact, applicable, "Found artifact");
+            }
+            Message::TextLine(l) => println!("{l}"),
+            Message::CompilerMessage(CompilerMessage { message, .. })
+                if matches!(
+                    message.level,
+                    DiagnosticLevel::Error | DiagnosticLevel::Ice | DiagnosticLevel::FailureNote
+                ) =>
+            {
+                println!("{}", message)
             }
             _ => (),
         }

@@ -99,7 +99,6 @@ impl TryFrom<ClapArgs> for Args {
         anactrl
             .include
             .extend(build_config.1.include.iter().cloned());
-        anactrl.include_std |= marker_control.mark_side_effects();
 
         Ok(Args {
             result_path,
