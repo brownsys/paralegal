@@ -5,6 +5,7 @@ extern crate rustc_middle;
 extern crate rustc_span;
 
 use hir::def_id::DefId;
+use paralegal_non_rustc_utils::prepare_analyzer_command;
 use rustc_errors::FatalError;
 use rustc_middle::ty::TyCtxt;
 
@@ -73,41 +74,10 @@ pub fn use_rustc<A, F: FnOnce() -> A>(f: F) -> A {
 /// and `paralegal-flow` executables that were built from this project are (first) in the
 /// `PATH`.
 pub fn paralegal_flow_command(dir: impl AsRef<Path>) -> std::process::Command {
+    let factory = prepare_analyzer_command(Path::new("../..")).unwrap();
     // Force paralegal-flow binary to be built
-    let success = Command::new("cargo")
-        .args([
-            "build",
-            "--bin",
-            "paralegal-flow",
-            "--bin",
-            "cargo-paralegal-flow",
-        ])
-        .current_dir("../..")
-        .status()
-        .unwrap()
-        .success();
-    assert!(success);
-    let path = std::env::var("PATH").unwrap_or_else(|_| Default::default());
-    let cargo_paralegal_flow_path = Path::new("../../target/debug/cargo-paralegal-flow")
-        .canonicalize()
-        .unwrap();
-    let mut new_path = std::ffi::OsString::with_capacity(
-        path.len() + cargo_paralegal_flow_path.as_os_str().len() + 1,
-    );
-    // We then append the parent (e.g. its directory) to the search path. That
-    // directory (we presume) contains both `paralegal-flow` and `cargo-paralegal-flow`.
-    new_path.push(cargo_paralegal_flow_path.parent().unwrap_or_else(|| {
-        panic!(
-            "cargo-paralegal-flow path {} had no parent",
-            cargo_paralegal_flow_path.display()
-        )
-    }));
-    new_path.push(":");
-    new_path.push(path);
-    let mut cmd = Command::new(cargo_paralegal_flow_path);
-    cmd.arg("paralegal-flow")
-        .env("PATH", new_path)
-        .current_dir(dir);
+    let mut cmd = factory.make();
+    cmd.current_dir(dir);
     eprintln!("Command is {cmd:?}");
     cmd
 }

@@ -1,8 +1,10 @@
+use std::ffi::OsString;
 use std::fmt;
 use std::fmt::{Display, Formatter, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 use tracing::Level;
 use tracing_subscriber::filter::{Directive, Targets};
@@ -224,4 +226,54 @@ pub fn setup_logging() -> anyhow::Result<()> {
         )
         .try_init()?;
     Ok(())
+}
+
+pub struct CommandFactory {
+    path: OsString,
+    bin: PathBuf,
+}
+
+impl CommandFactory {
+    pub fn make(&self) -> Command {
+        let mut cmd = Command::new(&self.bin);
+        cmd.arg("paralegal-flow").env("PATH", &self.path);
+        cmd
+    }
+}
+
+/// Makes sure `paralegal-flow` and `cargo-paralegal-flow` have been built, then returns
+/// a factory for [`Command`]s that invoke them properly
+pub fn prepare_analyzer_command(paralegal_root: &Path) -> anyhow::Result<CommandFactory> {
+    let paralegal_root = paralegal_root.canonicalize()?;
+    let success = Command::new("cargo")
+        .args([
+            "build",
+            "--bin",
+            "paralegal-flow",
+            "--bin",
+            "cargo-paralegal-flow",
+        ])
+        .current_dir(&paralegal_root)
+        .status()
+        .unwrap()
+        .success();
+    ensure!(success, "cargo command failed");
+    let path = std::env::var_os("PATH").unwrap_or_else(|| Default::default());
+    let bin_dir = paralegal_root.join("target").join("debug");
+    let cargo_paralegal_flow_path = bin_dir.join("cargo-paralegal-flow");
+    ensure!(cargo_paralegal_flow_path.exists());
+    let mut new_path = std::ffi::OsString::with_capacity(
+        path.len() + cargo_paralegal_flow_path.as_os_str().len() + 1,
+    );
+    // We then append the parent (e.g. its directory) to the search path. That
+    // directory (we presume) contains both `paralegal-flow` and `cargo-paralegal-flow`.
+    new_path.push(bin_dir);
+    if !path.is_empty() {
+        new_path.push(":");
+        new_path.push(path);
+    }
+    Ok(CommandFactory {
+        path: new_path,
+        bin: cargo_paralegal_flow_path,
+    })
 }
