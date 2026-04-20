@@ -1,4 +1,5 @@
 #![feature(exit_status_error)]
+use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hasher};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -79,6 +80,12 @@ fn main() -> anyhow::Result<()> {
         cmd.env("CFG_RELEASE", "");
     }
 
+    let packages = metadata
+        .packages
+        .iter()
+        .map(|p| (&p.id, p))
+        .collect::<HashMap<_, _>>();
+
     if args.anactrl.include_std {
         cmd.arg("-Zbuild-std=std,core,alloc,proc_macro");
     }
@@ -93,6 +100,14 @@ fn main() -> anyhow::Result<()> {
         match message? {
             Message::CompilerArtifact(artifact) => {
                 let mut applicable = false;
+                if let Some(target) = &args.target {
+                    if packages
+                        .get(&artifact.package_id)
+                        .is_none_or(|p| &p.name != target)
+                    {
+                        continue;
+                    }
+                }
                 match artifact
                     .filenames
                     .iter()

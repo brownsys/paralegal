@@ -35,7 +35,7 @@ use paralegal_spdg::{AnalyzerStats, ProgramDescription, FLOW_GRAPH_EXT, STAT_FIL
 
 use rustc_borrowck::consumers::BodyWithBorrowckFacts;
 use rustc_middle::{mir::BorrowCheckResult, ty::TyCtxt};
-use rustc_span::ErrorGuaranteed;
+use rustc_span::{sym::plugin, ErrorGuaranteed};
 use rustc_utils::cache::Cache;
 use tracing::{debug, error, info};
 
@@ -445,42 +445,36 @@ fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>)
         &crate_name,
         Some(krate) if krate == "build_script_build"
     );
-    let handling = match &crate_name {
-        _ if is_build_script => CrateHandling::JustCompile,
-        // The invoker is requesting info from the compiler
-        _ if compiler_args
-            .iter()
-            .any(|a| a == "--print" || a.starts_with("--print=")) =>
-        {
-            CrateHandling::JustCompile
-        }
-        Some(krate)
-            if matches!(
-                plugin_args
-                    .target(),
-                    Some(target) if &target.replace('-', "_") == krate
-            ) =>
-        {
-            CrateHandling::Analyze
-        }
-        _ if std::env::var("CARGO_PRIMARY_PACKAGE").is_ok() => CrateHandling::Analyze,
-        Some(krate) if plugin_args.anactrl().included(krate) => CrateHandling::CompileAndDump,
-        _ => CrateHandling::JustCompile,
-    };
-
-    CrateInfo {
-        name: crate_name,
-        handling,
+    let mut info = CrateInfo {
+        name: crate_name.clone(),
+        handling: CrateHandling::JustCompile,
         is_build_script,
+    };
+    if is_build_script
+        || compiler_args
+            .iter()
+            .any(|a| a == "--print" || a.starts_with("--print="))
+    {
+        return info;
     }
+    let name = info
+        .name
+        .as_ref()
+        .expect("crate name should be known at this point");
+    if plugin_args.anactrl().included(name) {
+        info.handling = CrateHandling::CompileAndDump;
+    }
+    if let Some(target) = plugin_args.target() {
+        if target == name {
+            info.handling = CrateHandling::Analyze;
+        }
+    } else if std::env::var("CARGO_PRIMARY_PACKAGE").is_ok() {
+        info.handling = CrateHandling::Analyze;
+    }
+    info
 }
 
 pub fn run(mut compiler_args: Vec<String>, plugin_args: Args) -> Result<(), ErrorGuaranteed> {
-    // return rustc_driver::RunCompiler::new(&compiler_args, &mut NoopCallbacks { }).run();
-    // Setting the log levels is bit complicated because there are two level
-    // filters going on in the logging crates. One is imposed by `log`
-    // automatically and the other by `simple_logger` internally.
-
     let handling = how_to_handle_this_crate(&plugin_args, &mut compiler_args);
     debug!(?handling, "Crate handling");
     compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
