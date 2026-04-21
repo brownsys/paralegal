@@ -5,6 +5,7 @@ extern crate rustc_middle;
 extern crate rustc_span;
 
 use hir::def_id::DefId;
+use paralegal_non_rustc_utils::prepare_analyzer_command;
 use rustc_errors::FatalError;
 use rustc_middle::ty::TyCtxt;
 
@@ -27,8 +28,8 @@ use std::{process::Command, sync::atomic::Ordering};
 use paralegal_spdg::{
     traverse::{generic_flows_to, generic_influencers, EdgeSelection},
     utils::{display_list, write_sep},
-    DefInfo, DisplayPath, EdgeInfo, Endpoint, InstructionInfo, InstructionKind, Node, NodeInfo,
-    NodeKind, TypeId, SPDG,
+    DefInfo, DisplayPath, EdgeInfo, Endpoint, FileSystemStorable, InstructionInfo, InstructionKind,
+    Node, NodeInfo, NodeKind, ParalegalArtifact, TypeId, SPDG,
 };
 
 use flowistry_pdg::{CallString, Constant};
@@ -38,7 +39,7 @@ use petgraph::visit::{IntoNeighbors, IntoNodeReferences};
 use petgraph::visit::{NodeRef as _, Visitable};
 use std::path::Path;
 
-lazy_static! {
+lazy_static::lazy_static! {
     pub static ref CWD_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 }
 
@@ -73,34 +74,10 @@ pub fn use_rustc<A, F: FnOnce() -> A>(f: F) -> A {
 /// and `paralegal-flow` executables that were built from this project are (first) in the
 /// `PATH`.
 pub fn paralegal_flow_command(dir: impl AsRef<Path>) -> std::process::Command {
+    let factory = prepare_analyzer_command(Path::new("../..")).unwrap();
     // Force paralegal-flow binary to be built
-    let success = Command::new("cargo")
-        .args(["build", "-p", "paralegal-flow"])
-        .status()
-        .unwrap()
-        .success();
-    assert!(success);
-    let path = std::env::var("PATH").unwrap_or_else(|_| Default::default());
-    let cargo_paralegal_flow_path = Path::new("../../target/debug/cargo-paralegal-flow")
-        .canonicalize()
-        .unwrap();
-    let mut new_path = std::ffi::OsString::with_capacity(
-        path.len() + cargo_paralegal_flow_path.as_os_str().len() + 1,
-    );
-    // We then append the parent (e.g. its directory) to the search path. That
-    // directory (we presume) contains both `paralegal-flow` and `cargo-paralegal-flow`.
-    new_path.push(cargo_paralegal_flow_path.parent().unwrap_or_else(|| {
-        panic!(
-            "cargo-paralegal-flow path {} had no parent",
-            cargo_paralegal_flow_path.display()
-        )
-    }));
-    new_path.push(":");
-    new_path.push(path);
-    let mut cmd = Command::new(cargo_paralegal_flow_path);
-    cmd.arg("paralegal-flow")
-        .env("PATH", new_path)
-        .current_dir(dir);
+    let mut cmd = factory.make();
+    cmd.current_dir(dir);
     eprintln!("Command is {cmd:?}");
     cmd
 }
@@ -132,7 +109,6 @@ where
         .unwrap()
         .success());
     paralegal_flow_command(dir)
-        .args(["--abort-after-analysis"])
         .args(extra)
         .status()
         .unwrap()
@@ -259,7 +235,7 @@ impl InlineTestBuilder {
     /// test predicate.
     pub fn check_ctrl(&self, check: impl FnOnce(CtrlRef) + Send) {
         self.run(|graph| {
-            let cref = graph.ctrl(&self.ctrl_name.as_ref().unwrap());
+            let cref = graph.ctrl(self.ctrl_name.as_ref().unwrap());
             check(cref);
         })
         .unwrap()
@@ -298,7 +274,7 @@ impl InlineTestBuilder {
 
         let args = crate::Args::try_from(TopLevelArgs::parse_from(args).args).unwrap();
 
-        let _ = args.try_setup_logging();
+        let _ = args.setup_logging();
 
         rustc_utils::test_utils::CompileBuilder::new(&self.input)
             .with_args(EXTRA_RUSTC_ARGS.iter().copied().map(ToOwned::to_owned))
@@ -441,11 +417,18 @@ impl<'g> HasGraph<'g> for &'g PreFrg {
 impl PreFrg {
     pub fn from_file_at(dir: &str) -> Self {
         use_rustc(|| {
-            let desc = ProgramDescription::canonical_read(format!(
-                "{dir}/{}",
-                paralegal_spdg::FLOW_GRAPH_OUT_NAME
-            ))
-            .unwrap();
+            let path = Path::new(dir).join(paralegal_non_rustc_utils::ARTIFACT_NAME);
+            let artifact = ParalegalArtifact::load(&path).unwrap();
+            let desc_path = match artifact.targets.as_slice() {
+                [p] => p,
+                [] => panic!("Artifact at {} had no target crates", path.display()),
+                other => panic!(
+                    "Artifact at {} had too many target crates ({})",
+                    path.display(),
+                    other.len()
+                ),
+            };
+            let desc = ProgramDescription::canonical_read(desc_path).unwrap();
             Self::from_description(desc)
         })
     }

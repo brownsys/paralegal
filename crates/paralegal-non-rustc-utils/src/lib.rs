@@ -1,9 +1,79 @@
-//! Utility functions and structs
-
+use std::ffi::OsString;
 use std::fmt;
 use std::fmt::{Display, Formatter, Write};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
-pub use flowistry_pdg::utils::write_sep;
+use anyhow::{ensure, Result};
+use serde::{Deserialize, Serialize};
+use tracing::Level;
+use tracing_subscriber::filter::Targets;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+
+/// Name of the file used for emitting the serialized
+/// [`ProgramDescription`].
+pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.o";
+
+pub const FLOW_GRAPH_EXT: &str = "fgo";
+
+pub const ARTIFACT_NAME: &str = "paralegal-artifact.json";
+
+/// Extension for output files containing statistics of the analzyer run.
+pub const STAT_FILE_EXT: &str = "stat.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParalegalArtifact {
+    pub targets: Vec<PathBuf>,
+}
+
+pub trait FileSystemStorable: Sized {
+    fn load(path: impl AsRef<Path>) -> Result<Self>;
+    fn store(&self, path: impl AsRef<Path>) -> Result<()>;
+}
+
+#[macro_export]
+macro_rules! fs_storable_default {
+    ($t:ty) => {
+        impl $crate::FileSystemStorable for $t {
+            fn load(path: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
+                let reader = std::io::BufReader::new(std::fs::File::open(path.as_ref())?);
+                Ok(serde_json::from_reader(reader)?)
+            }
+
+            fn store(&self, path: impl AsRef<std::path::Path>) -> anyhow::Result<()> {
+                let file = std::io::BufWriter::new(std::fs::File::create(path)?);
+                Ok(serde_json::to_writer(file, self)?)
+            }
+        }
+    };
+}
+
+fs_storable_default!(ParalegalArtifact);
+
+/// Write all elements from `it` into the formatter `fmt` using `f`, separating
+/// them with `sep`
+pub fn write_sep<
+    E,
+    I: IntoIterator<Item = E>,
+    F: FnMut(E, &mut fmt::Formatter<'_>) -> fmt::Result,
+>(
+    fmt: &mut fmt::Formatter<'_>,
+    sep: &str,
+    it: I,
+    mut f: F,
+) -> fmt::Result {
+    let mut first = true;
+    for e in it {
+        if first {
+            first = false;
+        } else {
+            fmt.write_str(sep)?;
+        }
+        f(e, fmt)?;
+    }
+    Ok(())
+}
 
 /// Has a [`Display`] implementation if the elements of the iterator inside have
 /// one. This will render them surrounded by `[` brackets and separated by `, `
@@ -132,4 +202,78 @@ impl std::fmt::Display for TruncatedHumanTime {
         );
         write!(f, "{}ns", self.0.as_nanos())
     }
+}
+
+pub fn setup_logging() -> anyhow::Result<()> {
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_timer(tracing_subscriber::fmt::time::ChronoLocal::new(
+                    "%H:%M:%S".to_string(),
+                ))
+                .with_writer(std::io::stderr),
+        )
+        .with(
+            tracing_subscriber::filter::EnvFilter::builder()
+                .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
+                .from_env()?,
+        )
+        .with(
+            Targets::new()
+                .with_target("flowistry", Level::ERROR)
+                .with_target("rustc_utils", Level::ERROR)
+                .with_default(Level::TRACE),
+        )
+        .try_init()?;
+    Ok(())
+}
+
+pub struct CommandFactory {
+    path: OsString,
+    bin: PathBuf,
+}
+
+impl CommandFactory {
+    pub fn make(&self) -> Command {
+        let mut cmd = Command::new(&self.bin);
+        cmd.arg("paralegal-flow").env("PATH", &self.path);
+        cmd
+    }
+}
+
+/// Makes sure `paralegal-flow` and `cargo-paralegal-flow` have been built, then returns
+/// a factory for [`Command`]s that invoke them properly
+pub fn prepare_analyzer_command(paralegal_root: &Path) -> anyhow::Result<CommandFactory> {
+    let paralegal_root = paralegal_root.canonicalize()?;
+    let success = Command::new("cargo")
+        .args([
+            "build",
+            "--bin",
+            "paralegal-flow",
+            "--bin",
+            "cargo-paralegal-flow",
+        ])
+        .current_dir(&paralegal_root)
+        .status()
+        .unwrap()
+        .success();
+    ensure!(success, "cargo command failed");
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let bin_dir = paralegal_root.join("target").join("debug");
+    let cargo_paralegal_flow_path = bin_dir.join("cargo-paralegal-flow");
+    ensure!(cargo_paralegal_flow_path.exists());
+    let mut new_path = std::ffi::OsString::with_capacity(
+        path.len() + cargo_paralegal_flow_path.as_os_str().len() + 1,
+    );
+    // We then append the parent (e.g. its directory) to the search path. That
+    // directory (we presume) contains both `paralegal-flow` and `cargo-paralegal-flow`.
+    new_path.push(bin_dir);
+    if !path.is_empty() {
+        new_path.push(":");
+        new_path.push(path);
+    }
+    Ok(CommandFactory {
+        path: new_path,
+        bin: cargo_paralegal_flow_path,
+    })
 }

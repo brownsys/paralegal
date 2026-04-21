@@ -15,8 +15,6 @@
 
 use anyhow::Error;
 use clap::ValueEnum;
-use env_logger::Builder;
-use flowistry_pdg_construction::source_access::std_crates;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
@@ -24,12 +22,17 @@ use rustc_middle::ty::TyCtxt;
 use rustc_span::Symbol;
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
-use std::hash::{Hash, Hasher};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::OnceLock;
 
+use cargo_paralegal_flow::{
+    ClapAnalysisCtrl, ClapArgs, Debugger, DumpOption, MarkerControl, ParseableDumpArgs,
+};
+use flowistry_pdg_construction::source_access::std_crates;
+use paralegal_spdg::utils::setup_logging;
+
 use crate::utils::TinyBitSet;
-use crate::{num_derive, num_traits::FromPrimitive};
 
 #[derive(thiserror::Error, Debug)]
 enum VarError {
@@ -54,10 +57,14 @@ fn env_var_expect_unicode(k: impl AsRef<OsStr>) -> Result<Option<String>, VarErr
 impl TryFrom<ClapArgs> for Args {
     type Error = Error;
     fn try_from(value: ClapArgs) -> Result<Self, Self::Error> {
+        let build_config: (_, BuildConfig) = if let Some(conf) = value.get_build_config() {
+            let absolute = conf.canonicalize()?;
+            let config = toml::from_str(&std::fs::read_to_string(&absolute)?)?;
+            (Some(absolute), config)
+        } else {
+            Default::default()
+        };
         let ClapArgs {
-            verbose,
-            debug,
-            debug_target,
             result_path,
             relaxed,
             target,
@@ -66,17 +73,16 @@ impl TryFrom<ClapArgs> for Args {
             dump,
             marker_control,
             cargo_args,
-            trace,
             attach_to_debugger,
             strict,
+            build_config: _,
         } = value;
         if relaxed {
             eprintln!("The `--relaxed` flag is deprecated. This is now the default behavior and therefore the flag is ignored.");
         }
         let mut dump: DumpArgs = dump.into();
         if let Some(from_env) = env_var_expect_unicode("PARALEGAL_DUMP")? {
-            let from_env =
-                DumpArgs::from_str(&from_env, false).map_err(|s| anyhow::anyhow!("{}", s))?;
+            let from_env = DumpArgs::from_str(&from_env).map_err(|s| anyhow::anyhow!("{}", s))?;
             dump.0 |= from_env.0;
         }
         anactrl.analyze = anactrl
@@ -89,34 +95,12 @@ impl TryFrom<ClapArgs> for Args {
                 .analyze
                 .extend(from_env.split(',').map(ToOwned::to_owned));
         }
-        let build_config_file = std::path::Path::new("Paralegal.toml");
-        let build_config: (_, BuildConfig) = if let Ok(absolute) = build_config_file.canonicalize()
-        {
-            let config = toml::from_str(&std::fs::read_to_string(&absolute)?)?;
-            (Some(absolute), config)
-        } else {
-            Default::default()
-        };
+
         anactrl
             .include
             .extend(build_config.1.include.iter().cloned());
-        let log_level_config = match debug_target {
-            Some(target) if !target.is_empty() => LogLevelConfig::Targeted(target),
-            _ => LogLevelConfig::Disabled,
-        };
-        anactrl.include_std |= marker_control.side_effect_markers;
-        let verbosity = if trace {
-            Some(log::LevelFilter::Trace)
-        } else if debug {
-            Some(log::LevelFilter::Debug)
-        } else if verbose {
-            Some(log::LevelFilter::Info)
-        } else {
-            None
-        };
+
         Ok(Args {
-            verbosity,
-            log_level_config,
             result_path,
             relaxed: !strict,
             target,
@@ -131,17 +115,7 @@ impl TryFrom<ClapArgs> for Args {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, clap::ValueEnum, Clone, Copy)]
-pub enum Debugger {
-    /// The CodeLLDB debugger. Learn more at <https://github.com/vadimcn/codelldb/blob/v1.10.0/MANUAL.md>.
-    CodeLldb,
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Args {
-    /// Print additional logging output (up to the "info" level)
-    verbosity: Option<log::LevelFilter>,
-    log_level_config: LogLevelConfig,
     /// Where to write the resulting forge code to (defaults to `analysis_result.frg`)
     result_path: std::path::PathBuf,
     /// Emit warnings instead of aborting the analysis on sanity checks
@@ -167,8 +141,6 @@ pub struct Args {
 impl Default for Args {
     fn default() -> Self {
         Self {
-            verbosity: None,
-            log_level_config: LogLevelConfig::Disabled,
             result_path: PathBuf::from(paralegal_spdg::FLOW_GRAPH_OUT_NAME),
             relaxed: true,
             target: None,
@@ -183,101 +155,6 @@ impl Default for Args {
     }
 }
 
-/// Arguments as exposed on the command line.
-///
-/// You should then use `try_into` to convert this to [`Args`], the argument
-/// structure used internally.
-#[derive(clap::Args)]
-pub struct ClapArgs {
-    /// Print additional logging output (up to the "info" level)
-    #[clap(short, long, env = "PARALEGAL_VERBOSE")]
-    verbose: bool,
-    /// Print additional logging output (up to the "debug" level).
-    ///
-    /// Passing this flag (or env variable) with no value will enable debug
-    /// output globally. You may instead pass the name of a specific target
-    /// function and then only during analysis of that function the debug output
-    /// is enabled.
-    #[clap(long, env = "PARALEGAL_DEBUG")]
-    debug: bool,
-    #[clap(long, env = "PARALEGAL_TRACE")]
-    trace: bool,
-    #[clap(long, env = "PARALEGAL_DEBUG_TARGET")]
-    debug_target: Option<String>,
-    /// Where to write the resulting GraphLocation (defaults to `flow-graph.json`)
-    #[clap(long, default_value = paralegal_spdg::FLOW_GRAPH_OUT_NAME)]
-    result_path: std::path::PathBuf,
-    /// Emit warnings instead of aborting the analysis on sanity checks
-    ///
-    /// This is now the default behavior and this flag is deprecated. Use
-    /// `--strict` to turn off this behavior.
-    #[clap(long, env = "PARALEGAL_RELAXED", hide = true)]
-    relaxed: bool,
-    /// Emit errors instead of warnings for potential soundness risks
-    #[clap(long, env = "PARALEGAL_STRICT")]
-    strict: bool,
-    /// Run paralegal only on this crate
-    #[clap(long, env = "PARALEGAL_TARGET")]
-    target: Option<String>,
-    /// Abort the compilation after finishing the analysis
-    #[clap(long, env)]
-    abort_after_analysis: bool,
-    /// Attach to a debugger before running the analyses
-    #[clap(long)]
-    attach_to_debugger: Option<Debugger>,
-    /// Additional arguments that control the flow analysis specifically
-    #[clap(flatten, next_help_heading = "Flow Analysis")]
-    anactrl: ClapAnalysisCtrl,
-    /// Additional arguments which control marker assignment and discovery
-    #[clap(flatten, next_help_heading = "Marker Control")]
-    marker_control: MarkerControl,
-    /// Additional arguments that control debug args specifically
-    #[clap(flatten)]
-    dump: ParseableDumpArgs,
-    /// Pass through for additional cargo arguments (like --features)
-    #[clap(last = true)]
-    cargo_args: Vec<String>,
-}
-
-#[derive(Clone, clap::Args)]
-pub struct ParseableDumpArgs {
-    /// Generate intermediate of various formats and at various stages of
-    /// compilation. A short description of each value is provided here, for a
-    /// more comprehensive explanation refer to the [notion page on
-    /// dumping](https://www.notion.so/justus-adam/Dumping-Intermediate-Representations-4bd66ec11f8f4c459888a8d8cfb10e93).
-    ///
-    /// Can also be supplied as a comma-separated list (no spaces) and be set with the `PARALEGAL_DUMP` variable.
-    #[clap(long, value_enum)]
-    dump: Vec<DumpArgs>,
-}
-
-lazy_static! {
-    static ref DUMP_ARGS_OPTIONS: Vec<DumpArgs> = DumpOption::value_variants()
-        .iter()
-        .map(|&v| v.into())
-        .collect();
-}
-
-impl clap::ValueEnum for DumpArgs {
-    fn value_variants<'a>() -> &'a [Self] {
-        &DUMP_ARGS_OPTIONS
-    }
-
-    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
-        let mut it = self.0.into_iter_set_in_domain();
-        let v = it.next().unwrap();
-        assert!(it.next().is_none());
-        DumpOption::from_u32(v).unwrap().to_possible_value()
-    }
-
-    fn from_str(input: &str, ignore_case: bool) -> Result<Self, String> {
-        input
-            .split(',')
-            .map(|segment| DumpOption::from_str(segment, ignore_case))
-            .collect()
-    }
-}
-
 impl From<DumpOption> for DumpArgs {
     fn from(value: DumpOption) -> Self {
         [value].into_iter().collect()
@@ -286,7 +163,7 @@ impl From<DumpOption> for DumpArgs {
 
 impl From<ParseableDumpArgs> for DumpArgs {
     fn from(value: ParseableDumpArgs) -> Self {
-        value.dump.into_iter().flat_map(|opt| opt.iter()).collect()
+        value.dump.into_iter().collect()
     }
 }
 
@@ -296,14 +173,16 @@ impl From<ParseableDumpArgs> for DumpArgs {
 /// cli, internally we use the snake-case version of the option as a method on
 /// this type. This is so we can rename the outer UI without breaking code or
 /// even combine options together.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct DumpArgs(TinyBitSet);
 
-impl DumpArgs {
-    fn iter(self) -> impl Iterator<Item = DumpOption> {
-        self.0
-            .into_iter_set_in_domain()
-            .filter_map(DumpOption::from_u32)
+impl FromStr for DumpArgs {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.split(",")
+            .map(|opt| DumpOption::from_str(opt, true))
+            .collect()
     }
 }
 
@@ -312,58 +191,9 @@ impl FromIterator<DumpOption> for DumpArgs {
         Self(iter.into_iter().map(|v| v as u32).collect())
     }
 }
-
-#[derive(
-    Copy,
-    Clone,
-    Eq,
-    PartialEq,
-    serde::Serialize,
-    serde::Deserialize,
-    clap::ValueEnum,
-    num_derive::FromPrimitive,
-)]
-enum DumpOption {
-    /// A simple PDG rendering per controller provided by flowistry
-    FlowistryPdg,
-    /// A PDG rendering that includes markers and is grouped by call site.
-    /// Includes all controllers that are analyzed.
-    Spdg,
-    /// Dump the MIR (`.mir`) of each called controller
-    Mir,
-    /// Dump everything we know of
-    All,
-}
-
-/// How a specific logging level was configured. (currently only used for the
-/// `--debug` level)
-#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
-pub enum LogLevelConfig {
-    /// Logging for this level is only enabled for a specific target function
-    Targeted(String),
-    /// Logging for this level is not directly enabled
-    Disabled,
-}
-
-impl LogLevelConfig {
-    pub fn is_enabled(&self) -> bool {
-        matches!(self, LogLevelConfig::Targeted(_))
-    }
-}
-
-impl std::fmt::Display for LogLevelConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-
 impl Args {
     pub fn target(&self) -> Option<&str> {
         self.target.as_deref()
-    }
-    /// Returns the configuration specified for the `--debug` option
-    pub fn direct_debug(&self) -> &LogLevelConfig {
-        &self.log_level_config
     }
     /// Access the debug arguments
     pub fn dbg(&self) -> &DumpArgs {
@@ -378,10 +208,6 @@ impl Args {
     pub fn result_path(&self) -> &std::path::Path {
         self.result_path.as_path()
     }
-    /// Should we output additional log messages (level `info`)
-    pub fn verbosity(&self) -> Option<log::LevelFilter> {
-        self.verbosity
-    }
     /// Warn instead of crashing the program in case of non-fatal errors
     pub fn relaxed(&self) -> bool {
         self.relaxed
@@ -391,19 +217,6 @@ impl Args {
     }
     pub fn build_config(&self) -> &BuildConfig {
         &self.build_config.1
-    }
-
-    pub fn hash_config(&self, hasher: &mut impl Hasher) {
-        if self.attach_to_debugger.is_some() {
-            // If we run the debugger try to make the hash fail so we actually run.
-            std::time::Instant::now().hash(hasher);
-        }
-        // TODO Add other relevant arguments
-        config_hash_for_file(&self.build_config.0, hasher);
-        self.relaxed.hash(hasher);
-        self.target.hash(hasher);
-        self.result_path.hash(hasher);
-        config_hash_for_file(&self.marker_control.external_annotations, hasher);
     }
 
     pub fn marker_control(&self) -> &MarkerControl {
@@ -418,106 +231,11 @@ impl Args {
         self.attach_to_debugger
     }
 
-    pub fn setup_logging(&self) {
-        self.try_setup_logging().unwrap()
-    }
-
-    pub fn try_setup_logging(&self) -> Result<(), log::SetLoggerError> {
-        let mut logger = Builder::from_default_env();
-        if let Some(lvl) = self.verbosity() {
-            logger
-                .filter_level(lvl)
-                .filter_module("flowistry", log::LevelFilter::Error)
-                .filter_module("flowistry_pdg", lvl)
-                .filter_module("rustc_utils", log::LevelFilter::Error);
-        };
-        logger.format_timestamp(None).try_init()?;
-        if matches!(*self.direct_debug(), LogLevelConfig::Targeted(..)) {
-            log::set_max_level(log::LevelFilter::Warn);
-        }
-        Ok(())
+    pub fn setup_logging(&self) -> anyhow::Result<()> {
+        setup_logging()
     }
 }
 
-fn config_hash_for_file(path: &Option<impl AsRef<Path>>, state: &mut impl Hasher) {
-    path.as_ref()
-        .map(|path| {
-            let path = path.as_ref();
-            Ok::<_, std::io::Error>((path, path.metadata()?.modified()?))
-        })
-        .transpose()
-        .unwrap()
-        .hash(state);
-}
-
-#[derive(serde::Serialize, serde::Deserialize, clap::Args, Default)]
-pub struct MarkerControl {
-    /// A JSON file from which to load additional annotations. Whereas normally
-    /// annotation can only be placed on crate-local items, these can also be
-    /// placed on third party items, such as functions from the stdlib.
-    ///
-    /// The file is expected to contain a `HashMap<Identifier, (Vec<Annotation>,
-    /// ObjectType)>`, which is the same type as `annotations` field from the
-    /// `ProgramDescription` struct. It uses the `serde` derived serializer. An
-    /// example for the format can be generated by running `paralegal-flow` with
-    /// `dump_serialized_flow_graph`.
-    #[clap(long, env)]
-    external_annotations: Option<std::path::PathBuf>,
-
-    /// Whether to automatically mark possibly side-effecting functions.
-    ///
-    /// Implies `--include-std`.
-    #[clap(long, env)]
-    side_effect_markers: bool,
-}
-
-impl MarkerControl {
-    pub fn external_annotations(&self) -> Option<&std::path::Path> {
-        self.external_annotations.as_deref()
-    }
-
-    pub fn mark_side_effects(&self) -> bool {
-        self.side_effect_markers
-    }
-}
-
-/// Arguments that control the flow analysis
-#[derive(clap::Args)]
-struct ClapAnalysisCtrl {
-    /// Target this function as analysis entrypoint. Command line version of
-    /// `#[paralegal::analyze]`). Must be a full rust path and resolve to a
-    /// function. May be specified multiple times and multiple, comma separated
-    /// paths may be supplied at the same time.
-    #[clap(long)]
-    analyze: Vec<String>,
-    /// Limits the PDG to a single function. This is intended for testing and
-    /// should not be used in production.
-    #[clap(long, env)]
-    no_interprocedural_analysis: bool,
-    /// Do not decide whether to represent a function in the PDG based on the
-    /// presence of markers. This will create very large PDGs that span all
-    /// crates configured for analysis and with source code present.
-    #[clap(long, conflicts_with_all = ["no_interprocedural_analysis"])]
-    no_adaptive_approximation: bool,
-    /// Limit the set of crates to analyze. Beware that if those crates contain
-    /// marked code (other than the surface API), this poses a soundness risk.
-    /// This is intended as an optimization experts can apply for large
-    /// projects.
-    #[clap(long)]
-    include: Vec<String>,
-    #[clap(long)]
-    no_pdg_cache: bool,
-    /// Add an additional k inlining steps on top of what the marker guided
-    /// setup recommends. If adaptive approximation is enabled this defaults to
-    /// 0, if it is enabled it defaults to no limit.
-    #[clap(long, conflicts_with = "no_interprocedural_analysis")]
-    k_depth: Option<u32>,
-    /// Recompile the standard library and make the code available for analysis.
-    #[clap(long, env)]
-    include_std: bool,
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
 pub struct AnalysisCtrl {
     /// Target this function as analysis target. Command line version of
     /// `#[paralegal::analyze]`). Must be a full rust path and resolve to a
@@ -528,7 +246,6 @@ pub struct AnalysisCtrl {
     /// Flowistry's recursive analysis).
     inlining_depth: InliningDepth,
     include: Vec<String>,
-    #[serde(skip)]
     included_crate_cache: OnceLock<FxHashSet<CrateNum>>,
     no_pdg_cache: bool,
     include_std: bool,
@@ -579,7 +296,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, strum::EnumIs, strum::AsRefStr, Clone)]
+#[derive(strum::EnumIs, strum::AsRefStr, Clone)]
 pub enum InliningDepth {
     /// Inline to arbitrary depth
     Unconstrained,

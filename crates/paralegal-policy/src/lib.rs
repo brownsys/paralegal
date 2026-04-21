@@ -52,13 +52,13 @@
 
 extern crate core;
 
-use anyhow::{ensure, Result};
+use anyhow::{bail, ensure, Result};
 pub use paralegal_spdg;
 use paralegal_spdg::utils::TruncatedHumanTime;
-use paralegal_spdg::STAT_FILE_EXT;
 pub use paralegal_spdg::{
     traverse::EdgeSelection, GlobalNode, IntoIterGlobalNodes, ProgramDescription,
 };
+use paralegal_spdg::{FileSystemStorable, ParalegalArtifact, STAT_FILE_EXT};
 use std::time::{Duration, Instant};
 use std::{
     path::{Path, PathBuf},
@@ -202,13 +202,13 @@ impl GraphLocation {
     /// Use the default graph file name in the specified directory.
     pub fn std(dir: impl AsRef<Path>) -> Self {
         Self {
-            path: dir.as_ref().join(paralegal_spdg::FLOW_GRAPH_OUT_NAME),
+            path: dir.as_ref().join(paralegal_spdg::ARTIFACT_NAME),
             construction_time: None,
         }
     }
 
     /// Get the path where the analyzzer wrote statistics to. Use this path to
-    /// read a [paralegal_spdg::AnalyzerStats::canonical_read].
+    /// read a [paralegal_spdg::AnalyzerStats::load].
     pub fn stats_path(&self) -> PathBuf {
         self.path.with_extension(STAT_FILE_EXT)
     }
@@ -272,7 +272,17 @@ impl GraphLocation {
         let _ = simple_logger::init_with_env();
 
         let deser_started = Instant::now();
-        let desc = ProgramDescription::canonical_read(&self.path)?;
+        let artifact = ParalegalArtifact::load(&self.path)?;
+
+        let path = match artifact.targets.as_slice() {
+            [] => bail!("no matching targets found"),
+            [path] => path,
+            _ => {
+                let num = artifact.targets.len();
+                bail!("Loading more than one graph is not currently supported (found {num})");
+            }
+        };
+        let desc = ProgramDescription::canonical_read(path)?;
         let mut ctx = RootContext::new(desc, config);
         ctx.stats.pdg_construction = self.construction_time;
         ctx.stats.deserialization = Some(deser_started.elapsed());

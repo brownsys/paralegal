@@ -5,6 +5,7 @@ use flowistry::mir::FlowistryInput;
 use flowistry_pdg::RichLocation;
 use flowistry_pdg_construction::{is_async_trait_fn, source_access::BodyCache, utils::type_as_fn};
 use thiserror::Error;
+use tracing::info;
 
 use crate::{desc::Identifier, rustc_span::ErrorGuaranteed, Either, Symbol, TyCtxt};
 pub use flowistry_pdg_construction::utils::is_virtual;
@@ -689,14 +690,6 @@ macro_rules! sym_vec {
     ($($e:expr),*) => {
         vec![$(rustc_span::Symbol::intern($e)),*]
     };
-}
-
-pub fn with_temporary_logging_level<R, F: FnOnce() -> R>(filter: log::LevelFilter, f: F) -> R {
-    let reset_level = log::max_level();
-    log::set_max_level(filter);
-    let r = f();
-    log::set_max_level(reset_level);
-    r
 }
 
 pub fn time<R, F: FnOnce() -> R>(msg: &str, f: F) -> R {

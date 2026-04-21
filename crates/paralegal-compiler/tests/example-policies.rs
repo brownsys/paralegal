@@ -10,20 +10,9 @@ fn cargo_toml(name: &str) -> String {
     let policy_path = Path::new("../../crates/paralegal-policy")
         .canonicalize()
         .unwrap();
-    format!(
-        "
-[package]
-name = \"{name}\"
-version = \"0.1.0\"
-edition = \"2021\"
-
-[dependencies]
-anyhow = \"1\"
-paralegal-policy = {{ path = \"{}\" }}
-clap = {{ version = \"4\", features = [\"derive\"] }}
-",
-        policy_path.display()
-    )
+    include_str!("Cargo.toml")
+        .replace("PATH", &policy_path.display().to_string())
+        .replace("NAME", name)
 }
 
 fn list_files<P: AsRef<Path>>(root: P) -> impl Iterator<Item = std::path::PathBuf> {
@@ -67,6 +56,12 @@ fn example_policies_compile() {
     if !output_path.exists() {
         std::fs::create_dir(&output_path).expect("Failed to create output directory");
     }
+    std::fs::write(
+        Path::new(CARGO_TMPDIR).join("rust-toolchain.toml"),
+        "[toolchain]
+channel = \"1.90\"",
+    )
+    .unwrap();
     let paths = entries
         .map(|entry| {
             let path = entry.strip_prefix(examples_dir).unwrap();
@@ -109,7 +104,10 @@ fn example_policies_compile() {
         .expect("Failed to write Cargo.toml");
 
     let mut build_cmd = Command::new("cargo");
-    build_cmd.arg("build").current_dir(&output_path);
+    build_cmd
+        .arg("build")
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .current_dir(&output_path);
     assert!(
         build_cmd.status().unwrap().success(),
         "Failed to build workspace for example policies"

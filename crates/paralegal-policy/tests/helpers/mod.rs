@@ -5,36 +5,17 @@ use std::{
     fs::{self, File},
     path::{Path, PathBuf},
     process::Command,
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 
 use anyhow::anyhow;
 pub use anyhow::{ensure, Result};
 
 use paralegal_policy::{GraphLocation, RootContext};
+use paralegal_spdg::utils::{prepare_analyzer_command, CommandFactory};
 
-lazy_static::lazy_static! {
-    static ref TOOL_BUILT: PathBuf = {
-        let dir = std::env::current_dir().unwrap();
-        let flow_dir = dir.parent().unwrap().join("paralegal-flow");
-        assert!(flow_dir.exists(), "{}", flow_dir.display());
-        let mut build_cmd = Command::new("cargo");
-        build_cmd.args(["build", "--release"]);
-        build_cmd.current_dir(flow_dir);
-        let stat = build_cmd.status().unwrap();
-        assert!(stat.success());
-        let tool_path = dir
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("target")
-            .join("release")
-            .join("cargo-paralegal-flow");
-        assert!(tool_path.exists(), "{}", tool_path.display());
-        tool_path
-    };
-}
+static ANALYZER_COMMAND: LazyLock<CommandFactory> =
+    LazyLock::new(|| prepare_analyzer_command(Path::new("../..")).unwrap());
 
 fn temporary_directory() -> Result<PathBuf> {
     let tmpdir = env::temp_dir();
@@ -57,7 +38,6 @@ pub struct Test {
     context_config: paralegal_policy::Config,
     external_annotations: Option<String>,
     deps: Vec<Vec<OsString>>,
-    tool_path: &'static Path,
     external_ann_file_name: PathBuf,
     cleanup: bool,
     expect_fail: bool,
@@ -81,7 +61,6 @@ impl Test {
             paralegal_args: vec![],
             context_config: Default::default(),
             external_annotations: None,
-            tool_path: &*TOOL_BUILT,
             deps: Default::default(),
             cleanup: true,
             expect_fail: false,
@@ -199,8 +178,7 @@ impl Test {
     pub fn try_compile(&self) -> Result<()> {
         self.populate_test_crate()?;
 
-        let mut paralegal_cmd = Command::new(self.tool_path);
-        paralegal_cmd.arg("paralegal-flow");
+        let mut paralegal_cmd = ANALYZER_COMMAND.make();
         if self.external_annotations.is_some() {
             paralegal_cmd.args([
                 OsStr::new("--external-annotations"),

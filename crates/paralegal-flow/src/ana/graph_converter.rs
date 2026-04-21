@@ -24,6 +24,7 @@ use rustc_middle::{
 use either::Either;
 use flowistry::mir::FlowistryInput;
 use petgraph::visit::{IntoNodeReferences, NodeRef};
+use tracing::{debug, trace};
 
 fn dep_edge_kind_to_edge_kind(kind: DepEdgeKind) -> EdgeKind {
     match kind {

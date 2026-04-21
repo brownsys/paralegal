@@ -15,6 +15,7 @@ use rustc_middle::{
     mir,
     ty::{self, TypingEnv},
 };
+use tracing::trace;
 
 use std::borrow::Cow;
 

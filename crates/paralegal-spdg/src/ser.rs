@@ -92,16 +92,4 @@ impl ProgramDescription {
     }
 }
 
-impl AnalyzerStats {
-    /// Read the stats from a file using the default encoding (json)
-    pub fn canonical_read(path: impl AsRef<Path>) -> Result<Self> {
-        let reader = BufReader::new(File::open(path.as_ref())?);
-        Ok(serde_json::from_reader(reader)?)
-    }
-
-    /// Write the stats to a file using the default encoding (json)
-    pub fn canonical_write(&self, path: impl AsRef<Path>) -> Result<()> {
-        let file = BufWriter::new(File::create(path)?);
-        Ok(serde_json::to_writer(file, self)?)
-    }
-}
+paralegal_non_rustc_utils::fs_storable_default!(AnalyzerStats);
