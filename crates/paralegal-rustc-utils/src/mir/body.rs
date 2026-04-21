@@ -7,13 +7,12 @@ use std::{
 };
 
 use anyhow::{ensure, Result};
-use pretty::PrettyPrintMirOptions;
 use rustc_data_structures::fx::FxHashMap as HashMap;
 use rustc_hir::{def_id::DefId, CoroutineDesugaring, CoroutineKind, HirId};
 use rustc_middle::{
     mir::{
-        pretty, pretty::write_mir_fn, BasicBlock, Body, Local, Location, Place, SourceInfo,
-        TerminatorKind, VarDebugInfoContents,
+        pretty, BasicBlock, Body, Local, Location, Place, SourceInfo, TerminatorKind,
+        VarDebugInfoContents,
     },
     ty::{Region, Ty, TyCtxt},
 };
@@ -115,15 +114,7 @@ impl<'tcx> BodyExt<'tcx> for Body<'tcx> {
 
     fn to_string(&self, tcx: TyCtxt<'tcx>) -> Result<String> {
         let mut buffer = Vec::new();
-        write_mir_fn(
-            tcx,
-            self,
-            &mut |_, _| Ok(()),
-            &mut buffer,
-            PrettyPrintMirOptions {
-                include_extra_comments: false,
-            },
-        )?;
+        pretty::MirWriter::new(tcx).write_mir_fn(self, &mut buffer)?;
         Ok(String::from_utf8(buffer)?)
     }
 
@@ -134,7 +125,7 @@ impl<'tcx> BodyExt<'tcx> for Body<'tcx> {
 
     fn source_info_to_hir_id(&self, info: &SourceInfo) -> HirId {
         let scope = &self.source_scopes[info.scope];
-        let local_data = scope.local_data.as_ref().assert_crate_local();
+        let local_data = scope.local_data.as_ref().unwrap_crate_local();
         local_data.lint_root
     }
 

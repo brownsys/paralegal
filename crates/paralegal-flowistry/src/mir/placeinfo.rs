@@ -137,7 +137,7 @@ impl<'tcx> PlaceInfo<'tcx> {
                     if let Some((place, _)) = place.refs_in_projection(&self.body, self.tcx).last()
                     {
                         let ty = place.ty(self.body.local_decls(), self.tcx).ty;
-                        if ty.is_box() || ty.is_unsafe_ptr() {
+                        if ty.is_box() || ty.is_raw_ptr() {
                             return true;
                         }
                     }
@@ -181,7 +181,7 @@ impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for LoanCollector<'_, 'tcx> {
                 self.stack.pop();
                 return ControlFlow::Break(());
             }
-            _ if ty.is_box() || ty.is_unsafe_ptr() => {
+            _ if ty.is_box() || ty.is_raw_ptr() => {
                 self.visit_region(self.unknown_region);
             }
             _ => {}

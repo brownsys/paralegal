@@ -6,8 +6,7 @@
     box_patterns,
     let_chains,
     exact_size_is_empty,
-    impl_trait_in_assoc_type,
-    doc_auto_cfg
+    impl_trait_in_assoc_type
 )]
 #![warn(clippy::pedantic)]
 #![allow(
@@ -29,6 +28,7 @@
 )]
 
 extern crate either;
+extern crate rustc_abi;
 extern crate rustc_borrowck;
 extern crate rustc_data_structures;
 extern crate rustc_driver;

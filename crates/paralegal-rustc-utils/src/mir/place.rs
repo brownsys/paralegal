@@ -3,21 +3,17 @@
 use std::{borrow::Cow, collections::VecDeque};
 
 use log::{trace, warn};
+use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_data_structures::fx::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rustc_hir::def_id::DefId;
-use rustc_infer::infer::TyCtxtInferExt;
 use rustc_middle::{
     mir::{
         visit::{PlaceContext, Visitor},
         Body, HasLocalDecls, Local, Location, Mutability, Place, PlaceElem, PlaceRef,
         ProjectionElem, VarDebugInfo, VarDebugInfoContents, RETURN_PLACE,
     },
-    traits::ObligationCause,
     ty::{self, AdtKind, Region, RegionKind, RegionVid, Ty, TyCtxt, TyKind, TypeVisitor},
 };
-use rustc_target::abi::{FieldIdx, VariantIdx};
-use rustc_trait_selection::traits::NormalizeExt;
-use rustc_type_ir::TypingMode;
 
 use crate::AdtDefExt;
 
@@ -331,15 +327,8 @@ impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
     }
 
     fn normalize(&self, tcx: TyCtxt<'tcx>, def_id: DefId) -> Place<'tcx> {
-        let param_env = tcx.param_env(def_id);
-        let place = tcx.erase_regions(*self);
-        //let typing_mode = TypingMode::post_borrowck_analysis(tcx, def_id.expect_local());
-        let typing_mode = TypingMode::PostAnalysis;
-        let infcx = tcx.infer_ctxt().build(typing_mode);
-        let place = infcx
-            .at(&ObligationCause::dummy(), param_env)
-            .normalize(place)
-            .value;
+        let typing_env = ty::TypingEnv::post_analysis(tcx, def_id);
+        let place = tcx.normalize_erasing_regions(typing_env, ty::Unnormalized::new_wip(*self));
 
         let projection = place
             .projection

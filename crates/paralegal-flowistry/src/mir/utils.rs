@@ -7,7 +7,7 @@ use rustc_middle::{
     mir::*,
     ty::{GenericArgKind, RegionKind, RegionVid, Ty, TyCtxt},
 };
-use rustc_span::source_map::Spanned;
+use rustc_span::Spanned;
 
 /// An unordered collections of MIR [`Place`]s.
 ///
@@ -78,7 +78,7 @@ impl<'a, 'tcx> AsyncHack<'a, 'tcx> {
         match self.context_ty {
             Some(context_ty) => context_ty
                 .walk()
-                .filter_map(|part| match part.unpack() {
+                .filter_map(|part| match part.kind() {
                     GenericArgKind::Lifetime(r) => match r.kind() {
                         RegionKind::ReVar(rv) => Some(rv),
                         _ => None,
@@ -94,8 +94,8 @@ impl<'a, 'tcx> AsyncHack<'a, 'tcx> {
         match self.context_ty {
             Some(context_ty) => {
                 self.tcx
-                    .erase_regions(place.ty(&self.body.local_decls, self.tcx).ty)
-                    == self.tcx.erase_regions(context_ty)
+                    .erase_and_anonymize_regions(place.ty(&self.body.local_decls, self.tcx).ty)
+                    == self.tcx.erase_and_anonymize_regions(context_ty)
             }
             None => false,
         }
