@@ -1,7 +1,7 @@
 use std::{borrow::Cow, collections::HashSet, fmt::Display, hash::Hash, iter};
 
 use either::Either;
-use flowistry::mir::{placeinfo::PlaceInfo, FlowistryInput};
+use paralegal_flowistry::mir::{placeinfo::PlaceInfo, FlowistryInput};
 use flowistry_pdg::RichLocation;
 use itertools::Itertools;
 use log::{debug, log_enabled, trace, Level};
@@ -23,7 +23,7 @@ use rustc_middle::{
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 use rustc_span::{source_map::Spanned, DesugaringKind, Span};
-use rustc_utils::{mir::control_dependencies::ControlDependencies, AdtDefExt, BodyExt, PlaceExt};
+use paralegal_rustc_utils::{mir::control_dependencies::ControlDependencies, AdtDefExt, BodyExt, PlaceExt};
 
 use crate::{
     analysis::global::Use,

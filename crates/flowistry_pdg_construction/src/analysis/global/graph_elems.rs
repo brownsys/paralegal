@@ -14,7 +14,7 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 use rustc_span::Span;
-use rustc_utils::PlaceExt;
+use paralegal_rustc_utils::PlaceExt;
 
 pub use super::partial_graph::PartialGraph;
 use crate::{analysis::global::partial_graph::NodeKey, constants::PlaceOrConst};

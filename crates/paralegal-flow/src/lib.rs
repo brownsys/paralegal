@@ -36,7 +36,7 @@ use paralegal_spdg::{AnalyzerStats, ProgramDescription, FLOW_GRAPH_EXT, STAT_FIL
 use rustc_borrowck::consumers::BodyWithBorrowckFacts;
 use rustc_middle::{mir::BorrowCheckResult, ty::TyCtxt};
 use rustc_span::ErrorGuaranteed;
-use rustc_utils::cache::Cache;
+use paralegal_rustc_utils::cache::Cache;
 use tracing::{debug, error, info};
 
 pub use std::collections::{HashMap, HashSet};

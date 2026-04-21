@@ -22,7 +22,7 @@ use rustc_middle::{
 };
 
 use either::Either;
-use flowistry::mir::FlowistryInput;
+use paralegal_flowistry::mir::FlowistryInput;
 use petgraph::visit::{IntoNodeReferences, NodeRef};
 use tracing::{debug, trace};
 

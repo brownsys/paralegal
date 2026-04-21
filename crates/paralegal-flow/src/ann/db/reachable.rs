@@ -3,7 +3,7 @@ use crate::{
     utils::{func_of_term, type_for_constructor},
     HashSet,
 };
-use flowistry::mir::FlowistryInput;
+use paralegal_flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
     determine_async,
     utils::{handle_shims, try_monomorphize, try_resolve_function, ShimResult},
@@ -90,7 +90,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         let body = self.db().body_cache.get(res.def_id());
 
         if self.db().config.dbg().dump_mir() {
-            use rustc_utils::BodyExt;
+            use paralegal_rustc_utils::BodyExt;
             use std::io::Write;
             let path = self.tcx().def_path_str(res.def_id()) + ".mir";
             let mut f = std::fs::File::create(path.as_str()).unwrap();

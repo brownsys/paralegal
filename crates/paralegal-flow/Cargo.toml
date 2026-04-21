@@ -9,7 +9,7 @@ description = "Extractor for precise semantic PDGs from rust code."
 rustc_private = true
 
 [features]
-test = ["rustc_utils/test"]
+test = ["paralegal-rustc-utils/test"]
 
 [dependencies]
 paralegal-spdg = { path = "../paralegal-spdg", features = ["rustc"] }
@@ -18,9 +18,9 @@ paralegal-non-rustc-utils.path = "../paralegal-non-rustc-utils"
 
 flowistry_pdg_construction = { path = "../flowistry_pdg_construction" }
 flowistry_pdg = { path = "../flowistry_pdg" }
-flowistry = { workspace = true }
+paralegal-flowistry = { path = "../paralegal-flowistry" }
 
-rustc_utils = { workspace = true }
+paralegal-rustc-utils = { path = "../paralegal-rustc-utils" }
 indexical = { version = "0.3.1", default-features = false, features = [
     "rustc",
 ] }

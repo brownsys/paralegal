@@ -6,7 +6,7 @@ use std::{
 
 use log::debug;
 
-use flowistry::mir::FlowistryInput;
+use paralegal_flowistry::mir::FlowistryInput;
 
 use polonius_engine::FactTypes;
 use rustc_borrowck::consumers::{BodyWithBorrowckFacts, ConsumerOptions, RustcFacts};
@@ -25,7 +25,7 @@ use rustc_middle::{
 };
 
 use rustc_type_ir::RegionVid;
-use rustc_utils::cache::Cache;
+use paralegal_rustc_utils::cache::Cache;
 
 mod encoder;
 

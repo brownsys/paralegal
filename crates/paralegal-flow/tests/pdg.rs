@@ -8,7 +8,7 @@ extern crate rustc_span;
 use std::{collections::HashSet, rc::Rc};
 
 use either::Either;
-use flowistry::mir::FlowistryInput;
+use paralegal_flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
     source_access::BodyCache, CallChangeCallback, CallChangeCallbackFn, CallChanges,
     MemoPdgConstructor, SkipCall,
@@ -22,7 +22,7 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 use rustc_span::Symbol;
-use rustc_utils::{source_map::find_bodies::find_bodies, test_utils::CompileResult, PlaceExt};
+use paralegal_rustc_utils::{source_map::find_bodies::find_bodies, test_utils::CompileResult, PlaceExt};
 
 fn get_main(tcx: TyCtxt<'_>) -> LocalDefId {
     find_bodies(tcx)
@@ -61,7 +61,7 @@ fn pdg(
     tests: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &BodyCache<'tcx>, SPDG) + Send,
 ) {
     let _ = env_logger::try_init();
-    rustc_utils::test_utils::CompileBuilder::new(input).expect_compile(
+    paralegal_rustc_utils::test_utils::CompileBuilder::new(input).expect_compile(
         move |CompileResult { tcx, .. }| {
             let def_id = get_main(tcx);
             let mut memo = MemoPdgConstructor::new(tcx);

@@ -22,7 +22,7 @@ use crate::{
     },
     Either, HashMap,
 };
-use flowistry::mir::FlowistryInput;
+use paralegal_flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::source_access::{
     local_or_remote_paths, BodyCache, ParalegalDecoder,
 };
@@ -40,7 +40,7 @@ use rustc_middle::{
 };
 use rustc_serialize::Decodable;
 use rustc_span::Span;
-use rustc_utils::cache::Cache;
+use paralegal_rustc_utils::cache::Cache;
 
 use anyhow::Context;
 use serde::Deserialize;
