@@ -13,7 +13,7 @@ use rustc_middle::{
     mir::{visit::Visitor, AggregateKind, Location, Place, Rvalue, Terminator, TerminatorKind},
     ty::{Instance, TyCtxt, TypingEnv},
 };
-use rustc_mir_dataflow::{self as df, Results};
+use rustc_mir_dataflow as df;
 
 use super::{
     async_support::*,
@@ -255,19 +255,18 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> MemoPdgConstructor<'tcx, K> {
     }
 }
 
-type LocalAnalysisResults<'tcx, 'mir, K> = Results<'tcx, &'mir LocalAnalysis<'tcx, 'mir, K>>;
-
 impl<'mir, 'tcx, K: Hash + Eq + Clone>
-    ResultsVisitor<'mir, 'tcx, &'mir LocalAnalysis<'tcx, 'mir, K>> for PartialGraph<'tcx, K>
+    ResultsVisitor<'tcx, &'mir LocalAnalysis<'tcx, 'mir, K>> for PartialGraph<'tcx, K>
 {
     fn visit_after_early_statement_effect(
         &mut self,
-        results: &mut LocalAnalysisResults<'tcx, 'mir, K>,
+        analysis: &&'mir LocalAnalysis<'tcx, 'mir, K>,
         state: &InstructionState<'tcx>,
-        statement: &'mir rustc_middle::mir::Statement<'tcx>,
+        statement: &rustc_middle::mir::Statement<'tcx>,
         location: Location,
     ) {
-        let mut vis = self.modular_mutation_visitor(results, state, results.analysis.strict());
+        let analysis = *analysis;
+        let mut vis = self.modular_mutation_visitor(analysis, state, analysis.strict());
 
         vis.visit_statement(statement, location)
     }
@@ -290,15 +289,16 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
     /// call site.
     fn visit_after_early_terminator_effect(
         &mut self,
-        results: &mut LocalAnalysisResults<'tcx, 'mir, K>,
+        analysis: &&'mir LocalAnalysis<'tcx, 'mir, K>,
         state: &InstructionState<'tcx>,
-        terminator: &'mir rustc_middle::mir::Terminator<'tcx>,
+        terminator: &rustc_middle::mir::Terminator<'tcx>,
         location: Location,
     ) {
+        let analysis = *analysis;
         if let TerminatorKind::SwitchInt { discr, .. } = &terminator.kind {
             if let Some(place) = discr.place() {
                 self.register_mutation(
-                    results,
+                    analysis,
                     state,
                     &[Input::Unresolved { place, use_: None }],
                     Either::Left(place),
@@ -309,24 +309,25 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
             return;
         }
 
-        if self.handle_as_inline(results, state, terminator, location) {
+        if self.handle_as_inline(analysis, state, terminator, location) {
             return;
         }
         trace!("Handling terminator {:?} as not inlined", terminator.kind);
-        let mut arg_vis = self.modular_mutation_visitor(results, state, results.analysis.strict());
+        let mut arg_vis = self.modular_mutation_visitor(analysis, state, analysis.strict());
         arg_vis.set_time(Time::Before);
         arg_vis.visit_terminator(terminator, location);
     }
 
     fn visit_after_primary_terminator_effect(
         &mut self,
-        results: &mut LocalAnalysisResults<'tcx, 'mir, K>,
+        analysis: &&'mir LocalAnalysis<'tcx, 'mir, K>,
         state: &InstructionState<'tcx>,
-        terminator: &'mir rustc_middle::mir::Terminator<'tcx>,
+        terminator: &rustc_middle::mir::Terminator<'tcx>,
         location: Location,
     ) {
+        let analysis = *analysis;
         if let TerminatorKind::Call { func, args, .. } = &terminator.kind {
-            let handling = results.analysis.determine_call_handling(
+            let handling = analysis.determine_call_handling(
                 location,
                 Cow::Borrowed(func),
                 Cow::Borrowed(args),
@@ -343,7 +344,7 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
         }
 
         trace!("Handling terminator {:?} as not inlined", terminator.kind);
-        let mut arg_vis = self.modular_mutation_visitor(results, state, results.analysis.strict());
+        let mut arg_vis = self.modular_mutation_visitor(analysis, state, analysis.strict());
         arg_vis.set_time(Time::After);
         arg_vis.visit_terminator(terminator, location);
     }
@@ -352,7 +353,7 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
 impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
     fn modular_mutation_visitor<'a, 'mir>(
         &'a mut self,
-        results: &'a LocalAnalysisResults<'tcx, 'mir, K>,
+        analysis: &'a LocalAnalysis<'tcx, 'mir, K>,
         state: &'a InstructionState<'tcx>,
         strict: bool,
     ) -> ModularMutationVisitor<
@@ -361,27 +362,27 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         impl FnMut(Location, Mutation<'tcx>) + use<'a, 'tcx, 'mir, K>,
     > {
         ModularMutationVisitor::new(
-            &results.analysis.place_info,
-            results.analysis.param_env,
+            &analysis.place_info,
+            analysis.param_env,
             move |location, mutation| {
-                let place = results.analysis.normalize_place(&mutation.mutated);
+                let place = analysis.normalize_place(&mutation.mutated);
                 let inputs = mutation
                     .inputs
                     .into_iter()
                     .map(|(place, o)| match place {
                         PlaceOrConst::Place(place) => Input::Unresolved {
-                            place: results.analysis.normalize_place(&place),
+                            place: analysis.normalize_place(&place),
                             use_: o,
                         },
                         PlaceOrConst::Const(const_) => Input::Const {
                             const_,
-                            span: results.analysis.place_info.body.source_info(location).span,
+                            span: analysis.place_info.body.source_info(location).span,
                             is_arg: o,
                         },
                     })
                     .collect::<Box<_>>();
                 self.register_mutation(
-                    results,
+                    analysis,
                     state,
                     &inputs,
                     Either::Left(place),
@@ -396,7 +397,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
     /// returns whether we were able to successfully handle this as inline
     fn handle_as_inline<'a>(
         &mut self,
-        results: &LocalAnalysisResults<'tcx, 'a, K>,
+        analysis: &LocalAnalysis<'tcx, 'a, K>,
         state: &InstructionState<'tcx>,
         terminator: &Terminator<'tcx>,
         location: Location,
@@ -410,7 +411,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
         else {
             return false;
         };
-        let constructor = &results.analysis;
+        let constructor = analysis;
         let strict = constructor.strict();
         let Some(handling) = constructor.determine_call_handling(
             location,
@@ -442,14 +443,14 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                     IndexVec::from_iter(args.iter().map(|op| op.node.clone())),
                 );
 
-                self.modular_mutation_visitor(results, state, strict)
+                self.modular_mutation_visitor(analysis, state, strict)
                     .visit_assign(destination, &rvalue, location);
                 return false;
             }
             CallHandling::ApproxAsyncSM(how) => {
                 how(
                     constructor,
-                    &mut self.modular_mutation_visitor(results, state, strict),
+                    &mut self.modular_mutation_visitor(analysis, state, strict),
                     args,
                     *destination,
                     location,
@@ -499,7 +500,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
             );
             if let Some(translation) = translator.translate_to_parent(child_place) {
                 self.register_mutation(
-                    results,
+                    analysis,
                     state,
                     &[Input::Unresolved {
                         place: translation,
@@ -529,7 +530,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
             );
             if let Some(parent_place) = translator.translate_to_parent(child_place) {
                 self.register_mutation(
-                    results,
+                    analysis,
                     state,
                     &[Input::Resolved { node: child_node }],
                     Either::Left(parent_place),
@@ -544,7 +545,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
 
     fn register_mutation(
         &mut self,
-        results: &LocalAnalysisResults<'tcx, '_, K>,
+        analysis: &LocalAnalysis<'tcx, '_, K>,
         state: &InstructionState<'tcx>,
         inputs: &[Input<'tcx>],
         mutated: Either<Place<'tcx>, Node>,
@@ -555,7 +556,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
     {
         //println!("Mutation on {mutated:?}");
         trace!("Registering mutation to {mutated:?} with inputs {inputs:?} at {location:?}");
-        let constructor = &results.analysis;
+        let constructor = analysis;
         let ctrl_inputs = constructor.find_control_inputs(location);
 
         trace!("  Found control inputs {ctrl_inputs:?}");
@@ -602,8 +603,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
 
         let outputs = match mutated {
             Either::Right(node) => vec![node],
-            Either::Left(place) => results
-                .analysis
+            Either::Left(place) => analysis
                 .find_outputs(place, location)
                 .into_iter()
                 .map(|(place, at)| {

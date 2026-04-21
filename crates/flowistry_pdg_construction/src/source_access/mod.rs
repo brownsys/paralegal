@@ -10,22 +10,20 @@ use paralegal_flowistry::mir::FlowistryInput;
 
 use polonius_engine::FactTypes;
 use rustc_borrowck::consumers::{BodyWithBorrowckFacts, ConsumerOptions, RustcFacts};
-use rustc_data_structures::{steal::Steal, sync::RwLock};
-use rustc_hash::FxHashMap;
+use rustc_data_structures::{fx::FxHashMap, steal::Steal, sync::RwLock};
 use rustc_hir::{
     def_id::{CrateNum, DefId, DefIndex, LocalDefId, LOCAL_CRATE},
     intravisit::{self},
 };
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
-    dep_graph::DepContext,
     hir::nested_filter::OnlyBodies,
     mir::{Body, ClearCrossCrate, StatementKind},
     ty::TyCtxt,
 };
 
-use rustc_type_ir::RegionVid;
 use paralegal_rustc_utils::cache::Cache;
+use rustc_type_ir::RegionVid;
 
 mod encoder;
 
@@ -71,11 +69,12 @@ impl<'tcx> CachedBody<'tcx> {
         if is_stolen(tcx.mir_promoted(local_def_id).0) {
             return None;
         }
-        let body_with_facts = rustc_borrowck::consumers::get_body_with_borrowck_facts(
+        let body_with_facts = rustc_borrowck::consumers::get_bodies_with_borrowck_facts(
             tcx,
             local_def_id,
             ConsumerOptions::PoloniusInputFacts,
         );
+        let body_with_facts = body_with_facts.get(&local_def_id)?;
 
         Some(Self::from_body(&body_with_facts))
     }
@@ -139,7 +138,7 @@ pub fn std_crates(tcx: TyCtxt<'_>) -> impl Iterator<Item = CrateNum> + use<'_> {
             && tcx
                 .crate_extern_paths(c)
                 .iter()
-                .all(|p| p.starts_with(&tcx.sess().sysroot))
+                .all(|p| p.starts_with(tcx.sess.opts.sysroot.path()))
     })
 }
 
@@ -227,15 +226,16 @@ fn clean_undecodable_data_from_body(body: &mut Body) {
         .flat_map(|bb| bb.statements.iter_mut())
     {
         if matches!(stmt.kind, StatementKind::FakeRead(_)) {
-            stmt.make_nop()
+            stmt.make_nop(false)
         }
     }
 }
 
 impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
     type NestedFilter = OnlyBodies;
-    fn nested_visit_map(&mut self) -> Self::Map {
-        self.tcx.hir()
+
+    fn maybe_tcx(&mut self) -> Self::MaybeTyCtxt {
+        self.tcx
     }
 
     fn visit_fn(
@@ -276,7 +276,7 @@ pub fn dump_mir_and_borrowck_facts_with_cache<'a, 'tcx: 'a>(
         tcx,
         targets: vec![],
     };
-    tcx.hir().visit_all_item_likes_in_crate(&mut vis);
+    tcx.hir_visit_all_item_likes_in_crate(&mut vis);
 
     let tc_start = Instant::now();
     let bodies: BodyMap<'tcx> = vis

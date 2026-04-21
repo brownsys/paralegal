@@ -6,20 +6,20 @@ use itertools::Itertools;
 use log::trace;
 
 use rustc_borrowck::consumers::PlaceConflictBias;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::{self as hir, def_id::DefId, Defaultness};
 use rustc_middle::{
     mir::{
-        tcx::PlaceTy, Body, HasLocalDecls, Local, Location, Operand, Place, PlaceElem, PlaceRef,
+        Body, HasLocalDecls, Local, Location, Operand, Place, PlaceElem, PlaceRef, PlaceTy,
         ProjectionElem, Statement, StatementKind, Terminator, TerminatorKind,
     },
     ty::{
-        self, AssocItemContainer, Binder, EarlyBinder, GenericArg, GenericArgsRef, Instance,
+        self, AssocContainer, Binder, EarlyBinder, GenericArg, GenericArgsRef, Instance,
         InstanceKind, Region, Ty, TyCtxt, TyKind, TypeVisitable, TypeVisitor, TypingEnv,
     },
 };
-use rustc_span::{source_map::Spanned, ErrorGuaranteed, Span};
-use rustc_type_ir::{fold::TypeFoldable, AliasTyKind, PredicatePolarity, RegionKind};
+use rustc_span::{ErrorGuaranteed, Span, Spanned};
+use rustc_type_ir::{AliasTyKind, PredicatePolarity, RegionKind, TypeFoldable};
 use paralegal_rustc_utils::{BodyExt, PlaceExt};
 
 mod two_level_cache;
@@ -66,7 +66,7 @@ pub fn is_virtual(tcx: TyCtxt, function: DefId) -> bool {
     tcx.opt_associated_item(function).is_some_and(|assoc_item| {
         matches!(
             assoc_item.container,
-            AssocItemContainer::Trait
+            AssocContainer::Trait
             if !matches!(
                 assoc_item.defaultness(tcx),
                 Defaultness::Default { has_value: true })
@@ -88,7 +88,7 @@ where
     inst.try_instantiate_mir_and_normalize_erasing_regions(
         tcx,
         typing_env,
-        EarlyBinder::bind(tcx.erase_regions(t.clone())),
+        EarlyBinder::bind(t.clone()),
     )
     .map_err(|e| {
         tcx.dcx().span_err(
@@ -193,7 +193,8 @@ pub fn retype_place<'tcx>(
         ty = ty.projection_ty_core(
             tcx,
             &elem,
-            |_, field, _| match ty.ty.kind() {
+            |ty| ty,
+            |self_ty, variant_index, field, _| match self_ty.kind() {
                 TyKind::Closure(_, args) => {
                     let upvar_tys = args.as_closure().upvar_tys();
                     upvar_tys.iter().nth(field.as_usize()).unwrap()
@@ -202,9 +203,9 @@ pub fn retype_place<'tcx>(
                     let upvar_tys = args.as_coroutine().upvar_tys();
                     upvar_tys.iter().nth(field.as_usize()).unwrap()
                 }
-                _ => ty.field_ty(tcx, field),
+                _ => PlaceTy::field_ty(tcx, self_ty, variant_index, field),
             },
-            |_, ty| ty,
+            |ty| ty,
         );
         let elem = match elem {
             ProjectionElem::Field(field, _) => ProjectionElem::Field(field, ty.ty),
@@ -269,7 +270,9 @@ pub fn find_body_assignments(body: &Body<'_>) -> BodyAssignments {
 
 pub fn ty_resolve<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
     match ty.kind() {
-        TyKind::Alias(AliasTyKind::Opaque, alias_ty) => tcx.type_of(alias_ty.def_id).skip_binder(),
+        TyKind::Alias(alias_ty) if matches!(alias_ty.kind, AliasTyKind::Opaque { .. }) => {
+            tcx.type_of(alias_ty.kind.def_id()).skip_binder()
+        }
         _ => ty,
     }
 }
@@ -278,118 +281,29 @@ pub fn manufacture_substs_for(
     tcx: TyCtxt<'_>,
     function: DefId,
 ) -> Result<GenericArgsRef<'_>, ErrorGuaranteed> {
-    use rustc_middle::ty::{
-        DynKind, ExistentialPredicate, ExistentialProjection, ExistentialTraitRef,
-        GenericParamDefKind, ParamTy, TraitPredicate,
-    };
+    use rustc_middle::ty::GenericParamDefKind;
 
     trace!("Manufacturing for {function:?}");
 
     let generics = tcx.generics_of(function);
     trace!("Found generics {generics:?}");
-    let predicates = tcx.predicates_of(function).instantiate_identity(tcx);
-    trace!("Found predicates {predicates:?}");
-    let lang_items = tcx.lang_items();
-    let types = (0..generics.count()).map(|gidx| {
-        let param = generics.param_at(gidx, tcx);
-        if let Some(default_val) = param.default_value(tcx) {
-            return Ok(default_val.instantiate_identity());
-        }
-        match param.kind {
-            // I'm not sure this is correct. We could probably return also "erased" or "static" here.
-            GenericParamDefKind::Lifetime => {
-                return Ok(GenericArg::from(Region::new_from_kind(
-                    tcx,
-                    RegionKind::ReErased,
-                )))
-            }
-            GenericParamDefKind::Const { .. } => {
-                return Err(tcx.dcx().span_err(
+    let args = (0..generics.count())
+        .map(|gidx| {
+            let param = generics.param_at(gidx, tcx);
+            match param.kind {
+                GenericParamDefKind::Lifetime => {
+                    Ok(GenericArg::from(Region::new_from_kind(tcx, RegionKind::ReErased)))
+                }
+                GenericParamDefKind::Const { .. } => Err(tcx.dcx().span_err(
                     tcx.def_span(param.def_id),
                     "Cannot use constants as generic parameters in controllers",
-                ))
+                )),
+                GenericParamDefKind::Type { .. } => Ok(GenericArg::from(tcx.types.unit)),
             }
-            GenericParamDefKind::Type { .. } => (),
-        };
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
-        let param_as_ty = ParamTy::for_def(param);
-        let constraints = predicates.predicates.iter().filter_map(|clause| {
-            let pred = if let Some(trait_ref) = clause.as_trait_clause() {
-                if trait_ref.polarity() != PredicatePolarity::Positive {
-                    return None;
-                };
-                let Some(TraitPredicate { trait_ref, .. }) = trait_ref.no_bound_vars() else {
-                    return Some(Err(tcx.dcx().span_err(
-                        tcx.def_span(param.def_id),
-                        format!("Trait ref had binder {trait_ref:?}"),
-                    )));
-                };
-                if !matches!(trait_ref.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
-                    return None;
-                };
-                if Some(trait_ref.def_id) == lang_items.sized_trait()
-                    || tcx.trait_is_auto(trait_ref.def_id)
-                {
-                    trace!("    bailing because trait is auto trait");
-                    return None;
-                }
-                Some(ExistentialPredicate::Trait(
-                    ExistentialTraitRef::erase_self_ty(tcx, trait_ref),
-                ))
-            } else if let Some(pred) = clause.as_projection_clause() {
-                trace!("    is projection clause");
-                let Some(pred) = pred.no_bound_vars() else {
-                    return Some(Err(tcx.dcx().span_err(
-                        tcx.def_span(param.def_id),
-                        "Predicate has a bound variable",
-                    )));
-                };
-                if !matches!(pred.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
-                    return None;
-                };
-                Some(ExistentialPredicate::Projection(
-                    ExistentialProjection::erase_self_ty(tcx, pred),
-                ))
-            } else {
-                None
-            }?;
-
-            Some(Ok(Binder::dummy(pred)))
-        });
-        let mut predicates = constraints.collect::<Result<Vec<_>, _>>()?;
-        trace!("  collected predicates {predicates:?}");
-        let no_args: [GenericArg; 0] = [];
-        match predicates.len() {
-            0 => predicates.push(Binder::dummy(ExistentialPredicate::Trait(
-                ExistentialTraitRef::new(
-                    tcx,
-                    tcx.get_diagnostic_item(rustc_span::sym::Any)
-                        .expect("The `Any` item is not defined."),
-                    no_args,
-                ),
-            ))),
-            1 => (),
-            _ => {
-                return Err(tcx.dcx().span_err(
-                    tcx.def_span(param.def_id),
-                    format!(
-                        "can only synthesize a trait object for one non-auto trait, got {}",
-                        predicates.len()
-                    ),
-                ));
-            }
-        };
-        let poly_predicate = tcx.mk_poly_existential_predicates_from_iter(predicates.into_iter());
-        trace!("  poly predicate {poly_predicate:?}");
-        let ty = Ty::new_dynamic(
-            tcx,
-            poly_predicate,
-            Region::new_from_kind(tcx, RegionKind::ReErased),
-            DynKind::Dyn,
-        );
-        Ok(GenericArg::from(ty))
-    });
-    tcx.mk_args_from_iter(types)
+    Ok(tcx.mk_args(&args))
 }
 
 #[derive(Clone, Copy, Debug, strum::AsRefStr)]
@@ -616,7 +530,7 @@ pub fn places_conflict<'tcx>(
                 | (ProjectionElem::ConstantIndex { .. }, _)
                 | (ProjectionElem::Subslice { .. }, _)
                 | (ProjectionElem::OpaqueCast { .. }, _)
-                | (ProjectionElem::Subtype(_), _)
+                | (ProjectionElem::UnwrapUnsafeBinder(_), _)
                 | (ProjectionElem::Downcast { .. }, _) => {
                     // Recursive case. This can still be disjoint on a
                     // further iteration if this a shallow access and
@@ -655,6 +569,9 @@ fn place_projection_conflict<'tcx>(
         }
         (ProjectionElem::OpaqueCast(_), ProjectionElem::OpaqueCast(_)) => {
             // casts to other types may always conflict irrespective of the type being cast to.
+            Overlap::EqualOrDisjoint
+        }
+        (ProjectionElem::UnwrapUnsafeBinder(_), ProjectionElem::UnwrapUnsafeBinder(_)) => {
             Overlap::EqualOrDisjoint
         }
         (ProjectionElem::Field(f1, _), ProjectionElem::Field(f2, _)) => {
@@ -929,8 +846,8 @@ fn place_projection_conflict<'tcx>(
             | ProjectionElem::Index(..)
             | ProjectionElem::ConstantIndex { .. }
             | ProjectionElem::OpaqueCast { .. }
+            | ProjectionElem::UnwrapUnsafeBinder(_)
             | ProjectionElem::Subslice { .. }
-            | ProjectionElem::Subtype(_)
             | ProjectionElem::Downcast(..),
             _,
         ) => panic!(

@@ -45,6 +45,9 @@ impl<'tcx> PlaceOrConst<'tcx> {
             mir::Operand::Constant(constant) => {
                 Self::Const(constant_from_const(tcx, &constant.const_, ty_env, span)?)
             }
+            mir::Operand::RuntimeChecks(_) => {
+                panic!("runtime checks operand is not expected in PDG construction")
+            }
         })
     }
 
@@ -166,7 +169,7 @@ pub fn constant_from_const<'tcx>(
 fn constant_from_const_value<'tcx>(
     tcx: ty::TyCtxt<'tcx>,
     ty: ty::Ty<'tcx>,
-    ct: &mir::ConstValue<'tcx>,
+    ct: &mir::ConstValue,
 ) -> Result<Constant, ConstConversionError<'tcx>> {
     // largely from rustc_middle/mir/pretty.rs:1952-1962
     match (ct, ty.kind()) {

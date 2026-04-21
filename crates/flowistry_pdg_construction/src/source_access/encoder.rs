@@ -25,16 +25,16 @@ use rustc_ast::AttrId;
 use rustc_const_eval::interpret::AllocId;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::{CrateNum, DefId, DefIndex};
+use rustc_middle::ty::codec::{TyDecoder, TyEncoder};
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_serialize::{
     opaque::{FileEncoder, MemDecoder},
     Decodable, Decoder, Encodable, Encoder,
 };
 use rustc_span::{
-    BytePos, ExpnId, FileName, RealFileName, SourceFile, Span, SpanData, SpanDecoder, SpanEncoder,
-    Symbol, SyntaxContext, DUMMY_SP,
+    BlobDecoder, BytePos, ByteSymbol, ExpnId, FileName, RealFileName, SourceFile, Span, SpanData,
+    SpanDecoder, SpanEncoder, Symbol, SyntaxContext, DUMMY_SP,
 };
-use rustc_type_ir::{PredicateKind, TyDecoder, TyEncoder};
 
 macro_rules! encoder_methods {
     ($($name:ident($ty:ty);)*) => {
@@ -103,25 +103,22 @@ impl Encoder for ParalegalEncoder<'_> {
     }
 }
 
-impl<'tcx> TyEncoder for ParalegalEncoder<'tcx> {
-    type I = TyCtxt<'tcx>;
+impl<'tcx> TyEncoder<'tcx> for ParalegalEncoder<'tcx> {
     const CLEAR_CROSS_CRATE: bool = CLEAR_CROSS_CRATE;
 
     fn position(&self) -> usize {
         self.file_encoder.position()
     }
 
-    fn type_shorthands(
-        &mut self,
-    ) -> &mut FxHashMap<<Self::I as rustc_type_ir::Interner>::Ty, usize> {
+    fn type_shorthands(&mut self) -> &mut FxHashMap<Ty<'tcx>, usize> {
         &mut self.type_shorthands
     }
 
-    fn predicate_shorthands(&mut self) -> &mut FxHashMap<PredicateKind<Self::I>, usize> {
+    fn predicate_shorthands(&mut self) -> &mut FxHashMap<ty::PredicateKind<'tcx>, usize> {
         &mut self.predicate_shorthands
     }
 
-    fn encode_alloc_id(&mut self, alloc_id: &<Self::I as rustc_type_ir::Interner>::AllocId) {
+    fn encode_alloc_id(&mut self, alloc_id: &AllocId) {
         u64::from(alloc_id.0).encode(self)
     }
 }
@@ -158,22 +155,16 @@ pub fn decode_from_file<'tcx, V: for<'a> Decodable<ParalegalDecoder<'tcx, 'a>>>(
     Ok(V::decode(&mut decoder))
 }
 
-impl<'tcx> TyDecoder for ParalegalDecoder<'tcx, '_> {
+impl<'tcx> TyDecoder<'tcx> for ParalegalDecoder<'tcx, '_> {
     const CLEAR_CROSS_CRATE: bool = CLEAR_CROSS_CRATE;
 
-    type I = TyCtxt<'tcx>;
-
-    fn interner(&self) -> Self::I {
+    fn interner(&self) -> TyCtxt<'tcx> {
         self.tcx
     }
 
-    fn cached_ty_for_shorthand<F>(
-        &mut self,
-        shorthand: usize,
-        or_insert_with: F,
-    ) -> <Self::I as ty::Interner>::Ty
+    fn cached_ty_for_shorthand<F>(&mut self, shorthand: usize, or_insert_with: F) -> Ty<'tcx>
     where
-        F: FnOnce(&mut Self) -> <Self::I as ty::Interner>::Ty,
+        F: FnOnce(&mut Self) -> Ty<'tcx>,
     {
         if let Some(ty) = self.shorthand_map.get(&shorthand) {
             return *ty;
@@ -183,7 +174,7 @@ impl<'tcx> TyDecoder for ParalegalDecoder<'tcx, '_> {
         ty
     }
 
-    fn decode_alloc_id(&mut self) -> <Self::I as ty::Interner>::AllocId {
+    fn decode_alloc_id(&mut self) -> AllocId {
         AllocId(NonZeroU64::new(u64::decode(self)).unwrap())
     }
 
@@ -234,14 +225,26 @@ impl Decoder for ParalegalDecoder<'_, '_> {
     }
 }
 
+impl BlobDecoder for ParalegalDecoder<'_, '_> {
+    fn decode_symbol(&mut self) -> Symbol {
+        Symbol::intern(self.mem_decoder.read_str())
+    }
+
+    fn decode_byte_symbol(&mut self) -> ByteSymbol {
+        ByteSymbol::intern(self.mem_decoder.read_byte_str())
+    }
+
+    fn decode_def_index(&mut self) -> DefIndex {
+        DefIndex::from_u32(u32::decode(self))
+    }
+}
+
 impl SpanDecoder for ParalegalDecoder<'_, '_> {
     fn decode_crate_num(&mut self) -> CrateNum {
         self.tcx
             .stable_crate_id_to_crate_num(Decodable::decode(self))
     }
-    fn decode_def_index(&mut self) -> DefIndex {
-        DefIndex::from_u32(u32::decode(self))
-    }
+
     fn decode_span(&mut self) -> Span {
         SpanData::decode(self).span()
     }
@@ -259,10 +262,6 @@ impl SpanDecoder for ParalegalDecoder<'_, '_> {
 
     fn decode_expn_id(&mut self) -> ExpnId {
         unimplemented!()
-    }
-
-    fn decode_symbol(&mut self) -> Symbol {
-        Symbol::intern(&String::decode(self))
     }
 
     fn decode_attr_id(&mut self) -> AttrId {
@@ -292,8 +291,13 @@ impl SpanEncoder for ParalegalEncoder<'_> {
     fn encode_expn_id(&mut self, _expn_id: ExpnId) {
         unimplemented!()
     }
+
     fn encode_symbol(&mut self, symbol: Symbol) {
         symbol.as_str().encode(self)
+    }
+
+    fn encode_byte_symbol(&mut self, byte_sym: ByteSymbol) {
+        self.file_encoder.emit_byte_str(byte_sym.as_byte_str())
     }
 }
 
@@ -317,10 +321,7 @@ impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for SpanData {
         }
         TAG_VALID_SPAN_FULL.encode(s);
         source_file.cnum.encode(s);
-        let mut name = source_file.name.clone();
-        if let FileName::Real(RealFileName::Remapped { local_path, .. }) = &mut name {
-            local_path.take();
-        }
+        let name = source_file.name.clone();
         s.encode_file_name(&name);
 
         let lo = self.lo - source_file.start_pos;
@@ -377,23 +378,21 @@ impl ParalegalDecoder<'_, '_> {
         let matching_source_files = source_map
             .files()
             .iter()
-            .filter(|f| {
-                f.cnum == crate_num && (file_name == f.name || matches!((&file_name, &f.name), (FileName::Real(r), FileName::Real(other)) if {
-                    let before = path_in_real_path(r);
-                    let after = path_in_real_path(other);
-                    after.ends_with(before)
-                }))
-            })
+            .filter(|f| f.cnum == crate_num && file_name == f.name)
             .cloned()
             .collect::<Box<[_]>>();
         match matching_source_files.as_ref() {
             [sf] => Some(sf.clone()),
             [] => match &file_name {
-                FileName::Real(RealFileName::LocalPath(local)) if source_map.file_exists(local) => {
-                    Some(source_map.load_file(local).unwrap())
+                FileName::Real(real)
+                    if real
+                        .local_path()
+                        .is_some_and(|local| source_map.file_exists(local)) =>
+                {
+                    Some(source_map.load_file(real.local_path().unwrap()).unwrap())
                 }
                 _ => {
-                    log::error!("Could not load file {}", file_name.prefer_local());
+                    log::error!("Could not load file {file_name:?}");
                     None
                 }
             },
@@ -407,14 +406,6 @@ impl ParalegalDecoder<'_, '_> {
 
 const TAG_ENCODE_REMOTE: u8 = 0;
 const TAG_ENCODE_LOCAL: u8 = 1;
-
-/// Which path in a [`RealFileName`] do we care about?
-fn path_in_real_path(r: &RealFileName) -> &PathBuf {
-    match r {
-        RealFileName::LocalPath(p) => p,
-        RealFileName::Remapped { virtual_name, .. } => virtual_name,
-    }
-}
 
 /// Partially uses code similar to `DecodeContext`. But we fully encode file
 /// names. We then map them back by searching the currently loaded files. If the

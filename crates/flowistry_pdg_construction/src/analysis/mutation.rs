@@ -4,12 +4,12 @@ use either::Either;
 use flowistry_pdg::rustc_portable::Place;
 use itertools::Itertools;
 use log::trace;
+use rustc_abi::FieldIdx;
 use rustc_middle::{
     mir::{self, visit::Visitor, *},
     ty::{self, AdtKind, CoroutineArgsExt, TyKind},
 };
-use rustc_span::source_map::Spanned;
-use rustc_target::abi::FieldIdx;
+use rustc_span::Spanned;
 
 use paralegal_rustc_utils::{AdtDefExt, OperandExt, PlaceExt};
 

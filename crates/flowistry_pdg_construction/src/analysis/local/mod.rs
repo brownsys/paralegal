@@ -6,8 +6,8 @@ use flowistry_pdg::RichLocation;
 use itertools::Itertools;
 use log::{debug, log_enabled, trace, Level};
 
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_errors::DiagCtxtHandle;
-use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
 use rustc_middle::{
@@ -22,7 +22,7 @@ use rustc_middle::{
     },
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
-use rustc_span::{source_map::Spanned, DesugaringKind, Span};
+use rustc_span::{DesugaringKind, Span, Spanned};
 use paralegal_rustc_utils::{mir::control_dependencies::ControlDependencies, AdtDefExt, BodyExt, PlaceExt};
 
 use crate::{
@@ -224,21 +224,21 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
     }
 
     pub fn normalize_place(&self, place: &Place<'tcx>) -> Place<'tcx> {
-        let place = self.tcx().erase_regions(*place);
+        let place = *place;
         // Normalize the place to remove regions and other things that are not
         // needed for the PDG.
         self.tcx()
-            .try_instantiate_and_normalize_erasing_regions(
-                self.generic_args(),
-                self.param_env,
-                EarlyBinder::bind(place),
-            )
-            .unwrap_or_else(|err| {
-                panic!(
-                    "Failed to normalize place {place:?} in {}: {err:?}",
-                    self.tcx().def_path_str(self.def_id)
+                .try_instantiate_and_normalize_erasing_regions(
+                    self.generic_args(),
+                    self.param_env,
+                    EarlyBinder::bind(place),
                 )
-            })
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "Failed to normalize place {place:?} in {}: {err:?}",
+                        self.tcx().def_path_str(self.def_id)
+                    )
+                })
     }
 
     pub(crate) fn tcx(&self) -> TyCtxt<'tcx> {
@@ -460,7 +460,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
         else {
             let dynamics = generic_args.iter()
                 .flat_map(|g| g.walk())
-                .filter(|arg| matches!(arg.unpack(), GenericArgKind::Type(t) if matches!(t.kind(), TyKind::Dynamic(..))))
+                .filter(|arg| arg.as_type().is_some_and(|t| matches!(t.kind(), TyKind::Dynamic(..))))
                 .collect::<Box<[_]>>();
             let mut msg = format!(
                 "instance resolution for call to function {} failed.",
@@ -737,7 +737,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
             self.k.clone(),
         );
 
-        analysis.visit_reachable_with(&self.mono_body, &mut final_state);
+            df::visit_reachable_results(&self.mono_body, &analysis, &mut final_state);
 
         let all_returns = self
             .mono_body
@@ -874,7 +874,7 @@ impl<'a, 'tcx, K: Hash + Eq + Clone> df::Analysis<'tcx> for &'a LocalAnalysis<'t
 
     fn initialize_start_block(&self, _body: &Body<'tcx>, _state: &mut Self::Domain) {}
     fn apply_primary_statement_effect(
-        &mut self,
+        &self,
         state: &mut Self::Domain,
         statement: &Statement<'tcx>,
         location: Location,
@@ -884,7 +884,7 @@ impl<'a, 'tcx, K: Hash + Eq + Clone> df::Analysis<'tcx> for &'a LocalAnalysis<'t
     }
 
     fn apply_primary_terminator_effect<'mir>(
-        &mut self,
+        &self,
         state: &mut Self::Domain,
         terminator: &'mir Terminator<'tcx>,
         location: Location,
@@ -894,7 +894,7 @@ impl<'a, 'tcx, K: Hash + Eq + Clone> df::Analysis<'tcx> for &'a LocalAnalysis<'t
     }
 
     fn apply_call_return_effect(
-        &mut self,
+        &self,
         _state: &mut Self::Domain,
         _block: BasicBlock,
         _return_places: rustc_middle::mir::CallReturnPlaces<'_, 'tcx>,
