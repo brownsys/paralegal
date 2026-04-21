@@ -24,8 +24,8 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 
-use rustc_type_ir::RegionVid;
 use paralegal_rustc_utils::cache::Cache;
+use rustc_type_ir::RegionVid;
 
 mod encoder;
 

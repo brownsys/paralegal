@@ -94,18 +94,18 @@ impl CompileBuilder {
             &format!("{}", temp_dir.display()),
         ]
         .into_iter()
-        .map(|s| s.to_owned())
+        .map(std::borrow::ToOwned::to_owned)
         .chain(self.arguments.iter().cloned())
         .collect::<Box<_>>();
 
         let mut callbacks = TestCallbacks {
-            callback: Some(move |tcx: TyCtxt<'_>| f(CompileResult { crate_name, tcx })),
+            callback: Some(move |tcx: TyCtxt<'_>| f(CompileResult { tcx, crate_name })),
         };
 
         rustc_driver::catch_fatal_errors(|| {
             let mut compiler = rustc_driver::RunCompiler::new(&args, &mut callbacks);
             compiler.set_file_loader(Some(Box::new(StringLoader(self.input.clone()))));
-            compiler.run()
+            compiler.run();
         })
     }
 
@@ -121,7 +121,7 @@ pub fn compile_body(
     CompileBuilder::new(input).expect_compile(|res| {
         let (body_id, body_with_facts) = res.as_body();
         f(res.tcx, body_id, body_with_facts);
-    })
+    });
 }
 thread_local! {
     static BODY_CACHE: Cache<LocalDefId, BodyWithBorrowckFacts<'static>> = Cache::default();
@@ -170,10 +170,10 @@ impl<Cb> rustc_driver::Callbacks for TestCallbacks<Cb>
 where
     Cb: FnOnce(TyCtxt<'_>),
 {
-    fn after_expansion<'tcx>(
+    fn after_expansion(
         &mut self,
         _compiler: &interface::Compiler,
-        tcx: TyCtxt<'tcx>,
+        tcx: TyCtxt<'_>,
     ) -> rustc_driver::Compilation {
         let callback = self.callback.take().unwrap();
         callback(tcx);

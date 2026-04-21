@@ -5,6 +5,7 @@ use either::Either;
 use itertools::Itertools;
 use log::trace;
 
+use paralegal_rustc_utils::{BodyExt, PlaceExt};
 use rustc_borrowck::consumers::PlaceConflictBias;
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::{self as hir, def_id::DefId, Defaultness};
@@ -20,7 +21,6 @@ use rustc_middle::{
 };
 use rustc_span::{source_map::Spanned, ErrorGuaranteed, Span};
 use rustc_type_ir::{fold::TypeFoldable, AliasTyKind, PredicatePolarity, RegionKind};
-use paralegal_rustc_utils::{BodyExt, PlaceExt};
 
 mod two_level_cache;
 pub use two_level_cache::TwoLevelCache;

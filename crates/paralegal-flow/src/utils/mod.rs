@@ -1,9 +1,9 @@
 //! Utility functions, general purpose structs and extension traits
 
 extern crate smallvec;
-use paralegal_flowistry::mir::FlowistryInput;
 use flowistry_pdg::RichLocation;
 use flowistry_pdg_construction::{is_async_trait_fn, source_access::BodyCache, utils::type_as_fn};
+use paralegal_flowistry::mir::FlowistryInput;
 use thiserror::Error;
 use tracing::info;
 

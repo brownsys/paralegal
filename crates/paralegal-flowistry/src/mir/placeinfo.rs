@@ -134,8 +134,7 @@ impl<'tcx> PlaceInfo<'tcx> {
                 .into_iter()
                 .chain([place])
                 .filter(|place| {
-                    if let Some((place, _)) = place.refs_in_projection(&self.body, self.tcx).last()
-                    {
+                    if let Some((place, _)) = place.refs_in_projection(self.body, self.tcx).last() {
                         let ty = place.ty(self.body.local_decls(), self.tcx).ty;
                         if ty.is_box() || ty.is_unsafe_ptr() {
                             return true;

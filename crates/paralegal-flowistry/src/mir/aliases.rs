@@ -314,7 +314,7 @@ impl<'tcx> Aliases<'tcx> {
         }
 
         // place = after[*ptr]
-        let Some((ptr, after)) = place.refs_in_projection(&self.body, self.tcx).last() else {
+        let Some((ptr, after)) = place.refs_in_projection(self.body, self.tcx).last() else {
             // This is a direct place
             aliases.insert(place);
             return aliases;

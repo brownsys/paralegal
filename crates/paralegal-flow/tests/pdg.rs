@@ -8,13 +8,16 @@ extern crate rustc_span;
 use std::{collections::HashSet, rc::Rc};
 
 use either::Either;
-use paralegal_flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
     source_access::BodyCache, CallChangeCallback, CallChangeCallbackFn, CallChanges,
     MemoPdgConstructor, SkipCall,
 };
 use itertools::Itertools;
 use paralegal_flow::{Args, Pctx};
+use paralegal_flowistry::mir::FlowistryInput;
+use paralegal_rustc_utils::{
+    source_map::find_bodies::find_bodies, test_utils::CompileResult, PlaceExt,
+};
 use paralegal_spdg::{NodeKind, SPDG};
 use rustc_hir::def_id::LocalDefId;
 use rustc_middle::{
@@ -22,7 +25,6 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 use rustc_span::Symbol;
-use paralegal_rustc_utils::{source_map::find_bodies::find_bodies, test_utils::CompileResult, PlaceExt};
 
 fn get_main(tcx: TyCtxt<'_>) -> LocalDefId {
     find_bodies(tcx)

@@ -1,11 +1,14 @@
 use std::{borrow::Cow, collections::HashSet, fmt::Display, hash::Hash, iter};
 
 use either::Either;
-use paralegal_flowistry::mir::{placeinfo::PlaceInfo, FlowistryInput};
 use flowistry_pdg::RichLocation;
 use itertools::Itertools;
 use log::{debug, log_enabled, trace, Level};
+use paralegal_flowistry::mir::{placeinfo::PlaceInfo, FlowistryInput};
 
+use paralegal_rustc_utils::{
+    mir::control_dependencies::ControlDependencies, AdtDefExt, BodyExt, PlaceExt,
+};
 use rustc_errors::DiagCtxtHandle;
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
@@ -23,7 +26,6 @@ use rustc_middle::{
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 use rustc_span::{source_map::Spanned, DesugaringKind, Span};
-use paralegal_rustc_utils::{mir::control_dependencies::ControlDependencies, AdtDefExt, BodyExt, PlaceExt};
 
 use crate::{
     analysis::global::Use,

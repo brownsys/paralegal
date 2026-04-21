@@ -3,11 +3,11 @@ use crate::{
     utils::{func_of_term, type_for_constructor},
     HashSet,
 };
-use paralegal_flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
     determine_async,
     utils::{handle_shims, try_monomorphize, try_resolve_function, ShimResult},
 };
+use paralegal_flowistry::mir::FlowistryInput;
 use paralegal_spdg::Identifier;
 
 use rustc_data_structures::fx::FxHashSet;

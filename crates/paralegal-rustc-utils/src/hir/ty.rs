@@ -60,7 +60,7 @@ mod test {
     use rustc_middle::ty::TypingEnv;
 
     use super::TyExt;
-    use crate::{mir::body, test_utils, BodyExt};
+    use crate::{test_utils, BodyExt};
 
     #[test]
     fn test_ty_ext() {
