@@ -23,3 +23,9 @@ polonius-engine = "0.13.0"
 paralegal-rustc-utils = { path = "../paralegal-rustc-utils", features = [
     "indexical",
 ] }
+
+[dev-dependencies]
+paralegal-rustc-utils = { path = "../paralegal-rustc-utils", features = [
+    "indexical",
+    "test",
+] }

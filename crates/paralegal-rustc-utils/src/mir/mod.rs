@@ -2,7 +2,6 @@
 
 pub mod adt_def;
 pub mod body;
-pub mod borrowck_facts;
 pub mod control_dependencies;
 pub mod location_or_arg;
 pub mod mutability;

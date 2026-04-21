@@ -1,31 +1,31 @@
 #![feature(
-  rustc_private,
-  negative_impls,
-  min_specialization,
-  type_alias_impl_trait,
-  box_patterns,
-  let_chains,
-  exact_size_is_empty,
-  impl_trait_in_assoc_type,
-  doc_auto_cfg,
+    rustc_private,
+    negative_impls,
+    min_specialization,
+    type_alias_impl_trait,
+    box_patterns,
+    let_chains,
+    exact_size_is_empty,
+    impl_trait_in_assoc_type,
+    doc_auto_cfg
 )]
 #![warn(clippy::pedantic)]
 #![allow(
-  clippy::len_zero,
-  clippy::len_without_is_empty,
-  clippy::must_use_candidate,
-  clippy::return_self_not_must_use,
-  clippy::missing_panics_doc,
-  clippy::missing_errors_doc,
-  clippy::doc_markdown,
-  clippy::single_match_else,
-  clippy::if_not_else,
-  clippy::match_on_vec_items,
-  clippy::map_unwrap_or,
-  clippy::match_wildcard_for_single_variants,
-  clippy::items_after_statements,
-  clippy::implicit_hasher,
-  clippy::wildcard_imports
+    clippy::len_zero,
+    clippy::len_without_is_empty,
+    clippy::must_use_candidate,
+    clippy::return_self_not_must_use,
+    clippy::missing_panics_doc,
+    clippy::missing_errors_doc,
+    clippy::doc_markdown,
+    clippy::single_match_else,
+    clippy::if_not_else,
+    clippy::match_on_vec_items,
+    clippy::map_unwrap_or,
+    clippy::match_wildcard_for_single_variants,
+    clippy::items_after_statements,
+    clippy::implicit_hasher,
+    clippy::wildcard_imports
 )]
 
 extern crate either;
@@ -56,15 +56,13 @@ pub mod mir;
 pub mod source_map;
 #[cfg(feature = "test")]
 pub mod test_utils;
-pub mod timer;
 
 pub use crate::{
-  hir::ty::TyExt,
-  mir::{
-    adt_def::AdtDefExt, body::BodyExt, mutability::MutabilityExt, operand::OperandExt,
-    place::PlaceExt,
-  },
-  source_map::span::{SpanDataExt, SpanExt},
+    hir::ty::TyExt,
+    mir::{
+        adt_def::AdtDefExt, body::BodyExt, mutability::MutabilityExt, operand::OperandExt,
+        place::PlaceExt,
+    },
 };
 
 #[macro_export]
