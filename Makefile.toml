@@ -19,6 +19,13 @@ CARGO_TERM_VERBOSE = { condition = { env_true = ["CI"] }, value = "true" }
 default_to_workspace = false
 
 [tasks.install]
+dependencies = ["install-cargo-wrapper", "install-rustc-wrapper"]
+
+[tasks.install-cargo-wrapper]
+command = "cargo"
+args = ["install", "--locked", "-f", "--path", "crates/cargo-paralegal-flow"]
+
+[tasks.install-rustc-wrapper]
 command = "cargo"
 args = ["install", "--locked", "-f", "--path", "crates/paralegal-flow"]
 
@@ -67,7 +74,13 @@ args = ["test", "-pparalegal-policy"]
 description = "Build and run the policy from the guide."
 cwd = "guide/deletion-policy"
 command = "cargo"
-args = ["run", "--", "../file-db-example", "--external-annotations", "external-annotations.toml"]
+args = [
+    "run",
+    "--",
+    "../file-db-example",
+    "--external-annotations",
+    "external-annotations.toml",
+]
 dependencies = ["install"]
 
 [tasks.doc-check]
