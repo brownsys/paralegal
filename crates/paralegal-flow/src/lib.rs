@@ -33,10 +33,10 @@ use flowistry_pdg_construction::source_access::{
 };
 use paralegal_spdg::{AnalyzerStats, ProgramDescription, FLOW_GRAPH_EXT, STAT_FILE_EXT};
 
+use paralegal_rustc_utils::cache::Cache;
 use rustc_borrowck::consumers::BodyWithBorrowckFacts;
 use rustc_middle::{mir::BorrowCheckResult, ty::TyCtxt};
 use rustc_span::ErrorGuaranteed;
-use paralegal_rustc_utils::cache::Cache;
 use tracing::{debug, error, info};
 
 pub use std::collections::{HashMap, HashSet};
