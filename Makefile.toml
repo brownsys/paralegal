@@ -39,6 +39,8 @@ command = "cargo"
 args = [
     "test",
     "--test",
+    "pdg",
+    "--test",
     "non_transitive_graph_tests",
     "--test",
     "async_tests",

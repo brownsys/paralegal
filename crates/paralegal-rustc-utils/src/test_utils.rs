@@ -1,20 +1,28 @@
 //! Running rustc and Flowistry in tests.
 
-use std::{fmt::Debug, fs, hash::Hash, io, panic, path::Path, process::Command, sync::LazyLock};
+use std::{
+    fmt::Debug,
+    fs,
+    hash::Hash,
+    io, panic,
+    path::Path,
+    process::Command,
+    sync::{Arc, LazyLock},
+};
 
 use anyhow::Result;
 use log::debug;
+use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_borrowck::consumers::{get_bodies_with_borrowck_facts, BodyWithBorrowckFacts};
 use rustc_data_structures::fx::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rustc_errors::FatalError;
 use rustc_hir::{def_id::LocalDefId, BodyId, ItemKind};
 use rustc_interface::interface;
 use rustc_middle::{
-    mir::{Body, HasLocalDecls, Local, Place},
+    mir::{Body, HasLocalDecls, Local, Place, PlaceTy},
     ty::TyCtxt,
 };
 use rustc_span::source_map::FileLoader;
-use rustc_target::abi::{FieldIdx, VariantIdx};
 
 use crate::{cache::Cache, BodyExt, PlaceExt};
 
@@ -28,8 +36,12 @@ impl FileLoader for StringLoader {
         Ok(self.0.clone())
     }
 
-    fn read_binary_file(&self, path: &Path) -> io::Result<Lrc<[u8]>> {
+    fn read_binary_file(&self, path: &Path) -> io::Result<Arc<[u8]>> {
         Ok(fs::read(path)?.into())
+    }
+
+    fn current_directory(&self) -> io::Result<std::path::PathBuf> {
+        std::env::current_dir()
     }
 }
 
@@ -97,13 +109,10 @@ impl CompileBuilder {
 
         let mut callbacks = TestCallbacks {
             callback: Some(move |tcx: TyCtxt<'_>| f(CompileResult { crate_name, tcx })),
+            input: Some(self.input.clone()),
         };
 
-        rustc_driver::catch_fatal_errors(|| {
-            let mut compiler = rustc_driver::RunCompiler::new(&args, &mut callbacks);
-            compiler.set_file_loader(Some(Box::new(StringLoader(self.input.clone()))));
-            compiler.run()
-        })
+        rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut callbacks))
     }
 
     pub fn expect_compile(&self, f: impl for<'tcx> FnOnce(CompileResult<'tcx>) + Send) {
@@ -132,11 +141,11 @@ pub struct CompileResult<'tcx> {
 impl<'tcx> CompileResult<'tcx> {
     pub fn as_body(&self) -> (BodyId, &'tcx BodyWithBorrowckFacts<'tcx>) {
         let tcx = self.tcx;
-        let hir = tcx.hir();
-        let body_id = hir
-            .items()
-            .filter_map(|id| match hir.item(id).kind {
-                ItemKind::Fn(_, _, body) => Some(body),
+        let body_id = tcx
+            .hir_crate_items(())
+            .definitions()
+            .filter_map(|id| match tcx.hir_expect_item(id).kind {
+                ItemKind::Fn { body, .. } => Some(body),
                 _ => None,
             })
             .next()
@@ -145,11 +154,13 @@ impl<'tcx> CompileResult<'tcx> {
         let def_id = tcx.hir_body_owner_def_id(body_id);
         let body_with_facts = BODY_CACHE.with(|cache| {
             let val = cache.get(&def_id, move |_| {
-                let body = get_body_with_borrowck_facts(
+                let mut bodies = get_bodies_with_borrowck_facts(
                     tcx,
                     def_id,
                     rustc_borrowck::consumers::ConsumerOptions::PoloniusInputFacts,
                 );
+                assert_eq!(bodies.len(), 1);
+                let body = bodies.drain().next().unwrap().1;
                 unsafe { std::mem::transmute::<_, BodyWithBorrowckFacts<'static>>(body) }
             });
             unsafe { std::mem::transmute::<&_, &'tcx BodyWithBorrowckFacts<'tcx>>(val) }
@@ -161,6 +172,7 @@ impl<'tcx> CompileResult<'tcx> {
 
 struct TestCallbacks<Cb> {
     callback: Option<Cb>,
+    input: Option<String>,
 }
 
 impl<Cb> rustc_driver::Callbacks for TestCallbacks<Cb>
@@ -175,6 +187,12 @@ where
         let callback = self.callback.take().unwrap();
         callback(tcx);
         rustc_driver::Compilation::Stop
+    }
+
+    fn config(&mut self, config: &mut interface::Config) {
+        config.file_loader = Some(Box::new(StringLoader(
+            self.input.take().expect("cannot take input twice"),
+        )) as Box<_>)
     }
 }
 
@@ -213,10 +231,8 @@ pub struct PlaceBuilder<'a, 'tcx> {
 impl<'tcx> PlaceBuilder<'_, 'tcx> {
     pub fn field(mut self, i: usize) -> Self {
         let f = FieldIdx::from_usize(i);
-        let ty = self
-            .place
-            .ty(self.body.local_decls(), self.tcx)
-            .field_ty(self.tcx, f);
+        let ty = self.place.ty(self.body.local_decls(), self.tcx);
+        let ty = PlaceTy::field_ty(self.tcx, ty.ty, ty.variant_index, f);
         self.place = self.tcx.mk_place_field(self.place, f, ty);
         self
     }

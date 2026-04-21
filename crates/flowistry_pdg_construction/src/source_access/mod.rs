@@ -226,7 +226,7 @@ fn clean_undecodable_data_from_body(body: &mut Body) {
         .flat_map(|bb| bb.statements.iter_mut())
     {
         if matches!(stmt.kind, StatementKind::FakeRead(_)) {
-            stmt.make_nop(false)
+            stmt.make_nop(true)
         }
     }
 }
