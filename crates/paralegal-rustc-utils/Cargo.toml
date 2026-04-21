@@ -13,7 +13,6 @@ serde = ["dep:serde"]
 test = ["dep:textwrap"]
 graphviz = ["dep:regex"]
 ts-rs = ["dep:ts-rs"]
-indexical = ["dep:indexical"]
 default = []
 
 [dependencies]
@@ -25,9 +24,6 @@ serde = { version = "1", features = ["derive"], optional = true }
 textwrap = { version = "0.16", optional = true }
 regex = { version = "1", optional = true }
 ts-rs = { version = "7", optional = true }
-indexical = { version = "0.3.1", default-features = false, features = [
-    "rustc",
-], optional = true }
 rand = "0.8"
 
 [dev-dependencies]

@@ -24,19 +24,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "512761e0bb2578dd7380c6baaa0f4ce03e84f95e960231d1dec8bf4d7d6e2627"
 
 [[package]]
-name = "ahash"
-version = "0.8.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e89da841a80418a9b391ebaea17f5c112ffaaa96f621d2c285b5174da76b9011"
-dependencies = [
- "cfg-if",
- "getrandom",
- "once_cell",
- "version_check",
- "zerocopy",
-]
-
-[[package]]
 name = "aho-corasick"
 version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -630,7 +617,6 @@ dependencies = [
  "env_logger 0.11.6",
  "flowistry_pdg",
  "fluid-let",
- "indexical 0.6.1",
  "internment",
  "itertools 0.13.0",
  "log",
@@ -740,15 +726,6 @@ dependencies = [
  "pin-project-lite",
  "pin-utils",
  "slab",
-]
-
-[[package]]
-name = "fxhash"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c31b6d751ae2c7f11320402d34e41349dd1016f8d5d45e48c4312bc8625af50c"
-dependencies = [
- "byteorder",
 ]
 
 [[package]]
@@ -883,36 +860,6 @@ name = "indent_write"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0cfe9645a18782869361d9c8732246be7b410ad4e919d3609ebabdac00ba12c3"
-
-[[package]]
-name = "index_vec"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44faf5bb8861a9c72e20d3fb0fdbd59233e43056e2b80475ab0aacdc2e781355"
-
-[[package]]
-name = "indexical"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "467e4f95baab3c675f5e42553f822b34e176aa13c322ec8c258743825deaafb6"
-dependencies = [
- "fxhash",
- "index_vec",
- "splitmut",
-]
-
-[[package]]
-name = "indexical"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "549dc3e190943cebb4f2588444a067130cfbf2c9c6d6dda3212f4fa3993833c2"
-dependencies = [
- "ahash",
- "bitvec",
- "index_vec",
- "splitmut",
- "take_mut",
-]
 
 [[package]]
 name = "indexmap"
@@ -1200,7 +1147,6 @@ dependencies = [
  "flowistry_pdg",
  "flowistry_pdg_construction",
  "humantime",
- "indexical 0.3.1",
  "itertools 0.13.0",
  "lazy_static",
  "nom",
@@ -1232,7 +1178,6 @@ name = "paralegal-flowistry"
 version = "0.1.0"
 dependencies = [
  "fluid-let",
- "indexical 0.3.1",
  "log",
  "paralegal-rustc-utils",
  "polonius-engine",
@@ -1259,7 +1204,6 @@ dependencies = [
  "bitvec",
  "colored",
  "fixedbitset 0.5.7",
- "indexical 0.6.1",
  "indexmap",
  "itertools 0.12.1",
  "lazy_static",
@@ -1280,7 +1224,6 @@ dependencies = [
  "anyhow",
  "cfg-if",
  "env_logger 0.9.3",
- "indexical 0.3.1",
  "intervaltree",
  "log",
  "rand",
@@ -1301,7 +1244,6 @@ dependencies = [
  "cfg-if",
  "dot",
  "flowistry_pdg",
- "indexical 0.6.1",
  "internment",
  "itertools 0.13.0",
  "log",
@@ -1761,12 +1703,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7c388c1b5e93756d0c740965c41e8822f866621d41acbdf6336a6a168f8840c"
 
 [[package]]
-name = "splitmut"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c85070f382340e8b23a75808e83573ddf65f9ad9143df9573ca37c1ed2ee956a"
-
-[[package]]
 name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1840,12 +1776,6 @@ dependencies = [
  "quote",
  "unicode-ident",
 ]
-
-[[package]]
-name = "take_mut"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f764005d11ee5f36500a149ace24e00e3da98b0158b3e2d53a7495660d3f4d60"
 
 [[package]]
 name = "tap"

@@ -17,7 +17,6 @@ paralegal-non-rustc-utils = { path = "../paralegal-non-rustc-utils" }
 serde = { workspace = true, features = ["derive"] }
 log = "0.4"
 internment = { version = "0.8.6", features = ["serde"] }
-indexical = { workspace = true }
 itertools = "0.13.0"
 strum = { workspace = true }
 cfg-if = "1"

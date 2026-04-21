@@ -2,16 +2,9 @@
 
 use std::{ops::ControlFlow, rc::Rc};
 
-use indexical::ToIndex;
 use paralegal_rustc_utils::{
     cache::{Cache, CopyCache},
-    mir::{
-        location_or_arg::{
-            index::{LocationOrArgDomain, LocationOrArgIndex},
-            LocationOrArg,
-        },
-        place::UNKNOWN_REGION,
-    },
+    mir::{location_or_arg::LocationOrArg, place::UNKNOWN_REGION},
     BodyExt, MutabilityExt, PlaceExt,
 };
 use rustc_hir::def_id::DefId;
@@ -27,7 +20,6 @@ pub struct PlaceInfo<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub body: &'tcx Body<'tcx>,
     pub def_id: DefId,
-    location_domain: Rc<LocationOrArgDomain>,
 
     // Core computed data structure
     aliases: Aliases<'tcx>,
@@ -40,13 +32,6 @@ pub struct PlaceInfo<'tcx> {
 }
 
 impl<'tcx> PlaceInfo<'tcx> {
-    fn build_location_arg_domain(body: &Body) -> Rc<LocationOrArgDomain> {
-        let all_locations = body.all_locations().map(LocationOrArg::Location);
-        let all_locals = body.args_iter().map(LocationOrArg::Arg);
-        let domain = all_locations.chain(all_locals).collect();
-        Rc::new(LocationOrArgDomain::new(domain))
-    }
-
     /// Computes all the metadata about places used within the infoflow analysis.
     pub fn build<'a>(
         tcx: TyCtxt<'tcx>,
@@ -62,7 +47,6 @@ impl<'tcx> PlaceInfo<'tcx> {
         input: impl FlowistryInput<'tcx, 'a>,
     ) -> Self {
         let body = input.body();
-        let location_domain = Self::build_location_arg_domain(body);
         let aliases = Aliases::build(tcx, def_id, input);
 
         PlaceInfo {
@@ -70,7 +54,6 @@ impl<'tcx> PlaceInfo<'tcx> {
             tcx,
             body,
             def_id,
-            location_domain,
             aliases_cache: Cache::default(),
             normalized_cache: CopyCache::default(),
             conflicts_cache: Cache::default(),
@@ -174,31 +157,6 @@ impl<'tcx> PlaceInfo<'tcx> {
         };
         collector.visit_ty(ty);
         collector.loans
-    }
-
-    /// Returns all [direct](PlaceExt::is_direct) places reachable from arguments
-    /// to the current body.
-    pub fn all_args(&self) -> impl Iterator<Item = (Place<'tcx>, LocationOrArgIndex)> + '_ {
-        self.body.args_iter().flat_map(|local| {
-            let location = local.to_index(&self.location_domain);
-            let place = Place::from_local(local, self.tcx);
-            let ptrs = place
-                .interior_pointers(self.tcx, self.body, self.def_id)
-                .into_values()
-                .flat_map(|ptrs| {
-                    ptrs.into_iter()
-                        .filter(|(ptr, _)| ptr.projection.len() <= 2)
-                        .map(|(ptr, _)| self.tcx.mk_place_deref(ptr))
-                });
-            ptrs.chain([place])
-                .flat_map(|place| place.interior_places(self.tcx, self.body, self.def_id))
-                .map(move |place| (place, location))
-        })
-    }
-
-    /// Returns the [`LocationOrArgDomain`] for the current body.
-    pub fn location_domain(&self) -> &Rc<LocationOrArgDomain> {
-        &self.location_domain
     }
 }
 
