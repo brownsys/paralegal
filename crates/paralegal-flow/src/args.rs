@@ -163,7 +163,7 @@ impl From<DumpOption> for DumpArgs {
 
 impl From<ParseableDumpArgs> for DumpArgs {
     fn from(value: ParseableDumpArgs) -> Self {
-        value.dump.into_iter().map(|opt| opt.into()).collect()
+        value.dump.into_iter().collect()
     }
 }
 

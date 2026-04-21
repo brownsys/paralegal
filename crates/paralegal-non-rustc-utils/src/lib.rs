@@ -7,7 +7,7 @@ use std::process::Command;
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 use tracing::Level;
-use tracing_subscriber::filter::{Directive, Targets};
+use tracing_subscriber::filter::Targets;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -258,7 +258,7 @@ pub fn prepare_analyzer_command(paralegal_root: &Path) -> anyhow::Result<Command
         .unwrap()
         .success();
     ensure!(success, "cargo command failed");
-    let path = std::env::var_os("PATH").unwrap_or_else(|| Default::default());
+    let path = std::env::var_os("PATH").unwrap_or_default();
     let bin_dir = paralegal_root.join("target").join("debug");
     let cargo_paralegal_flow_path = bin_dir.join("cargo-paralegal-flow");
     ensure!(cargo_paralegal_flow_path.exists());

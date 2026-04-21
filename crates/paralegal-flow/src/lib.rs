@@ -35,7 +35,7 @@ use paralegal_spdg::{AnalyzerStats, ProgramDescription, FLOW_GRAPH_EXT, STAT_FIL
 
 use rustc_borrowck::consumers::BodyWithBorrowckFacts;
 use rustc_middle::{mir::BorrowCheckResult, ty::TyCtxt};
-use rustc_span::{sym::plugin, ErrorGuaranteed};
+use rustc_span::ErrorGuaranteed;
 use rustc_utils::cache::Cache;
 use tracing::{debug, error, info};
 

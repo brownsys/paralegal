@@ -208,7 +208,7 @@ impl GraphLocation {
     }
 
     /// Get the path where the analyzzer wrote statistics to. Use this path to
-    /// read a [paralegal_spdg::AnalyzerStats::canonical_read].
+    /// read a [paralegal_spdg::AnalyzerStats::load].
     pub fn stats_path(&self) -> PathBuf {
         self.path.with_extension(STAT_FILE_EXT)
     }

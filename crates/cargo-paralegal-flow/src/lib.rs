@@ -69,13 +69,10 @@ impl ClapArgs {
 
     pub fn get_build_config(&self) -> Option<&Path> {
         const DEFAULT_BUILD_CONFIG_PATH: &str = "Paralegal.toml";
-        self.build_config
-            .as_ref()
-            .map(PathBuf::as_path)
-            .or_else(|| {
-                let path = Path::new(DEFAULT_BUILD_CONFIG_PATH);
-                path.exists().then_some(path)
-            })
+        self.build_config.as_deref().or_else(|| {
+            let path = Path::new(DEFAULT_BUILD_CONFIG_PATH);
+            path.exists().then_some(path)
+        })
     }
 }
 

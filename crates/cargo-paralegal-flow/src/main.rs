@@ -1,11 +1,10 @@
 #![feature(exit_status_error)]
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hasher};
-use std::path::Path;
 use std::process::{Command, Stdio};
 
 use anyhow::Context;
-use cargo_metadata::diagnostic::{Diagnostic, DiagnosticLevel};
+use cargo_metadata::diagnostic::DiagnosticLevel;
 use cargo_metadata::{CompilerMessage, Message};
 use clap::Parser;
 use tracing::{debug, error, trace};
@@ -65,7 +64,7 @@ fn main() -> anyhow::Result<()> {
         .exec()?;
 
     let mut cmd = Command::new("cargo");
-    cmd.args(&["check", "--message-format=json"]) // or "build"
+    cmd.args(["check", "--message-format=json"]) // or "build"
         .arg("--target-dir")
         .arg(metadata.target_directory.join("paralegal"))
         .stdout(Stdio::piped())

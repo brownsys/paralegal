@@ -235,7 +235,7 @@ impl InlineTestBuilder {
     /// test predicate.
     pub fn check_ctrl(&self, check: impl FnOnce(CtrlRef) + Send) {
         self.run(|graph| {
-            let cref = graph.ctrl(&self.ctrl_name.as_ref().unwrap());
+            let cref = graph.ctrl(self.ctrl_name.as_ref().unwrap());
             check(cref);
         })
         .unwrap()
