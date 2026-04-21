@@ -13,10 +13,7 @@ anyhow = "1"
 log = "0.4"
 fluid-let = "1.0"
 cfg-if = "1.0"
-paralegal-rustc-utils = { path = "../paralegal-rustc-utils", features = [
-    "indexical",
-] }
-indexical = { workspace = true }
+paralegal-rustc-utils = { path = "../paralegal-rustc-utils" }
 itertools = "0.13.0"
 petgraph = { version = "0.6.4" }
 internment = { workspace = true }
@@ -30,7 +27,6 @@ strum = { workspace = true }
 
 [dev-dependencies]
 paralegal-rustc-utils = { path = "../paralegal-rustc-utils", features = [
-    "indexical",
     "test",
 ] }
 env_logger = "0.11.3"

@@ -6,7 +6,7 @@ publish = false
 description = "Utilities and constants for Paralegal that do not depend on rustc"
 
 [dependencies]
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 anyhow.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
