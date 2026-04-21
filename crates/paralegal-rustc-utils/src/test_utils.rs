@@ -4,11 +4,8 @@ use std::{fmt::Debug, fs, hash::Hash, io, panic, path::Path, process::Command, s
 
 use anyhow::Result;
 use log::debug;
-use rustc_borrowck::consumers::{get_body_with_borrowck_facts, BodyWithBorrowckFacts};
-use rustc_data_structures::{
-    fx::{FxHashMap as HashMap, FxHashSet as HashSet},
-    sync::Lrc,
-};
+use rustc_borrowck::consumers::{get_bodies_with_borrowck_facts, BodyWithBorrowckFacts};
+use rustc_data_structures::fx::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rustc_errors::FatalError;
 use rustc_hir::{def_id::LocalDefId, BodyId, ItemKind};
 use rustc_interface::interface;
@@ -145,7 +142,7 @@ impl<'tcx> CompileResult<'tcx> {
             .next()
             .unwrap();
 
-        let def_id = tcx.hir().body_owner_def_id(body_id);
+        let def_id = tcx.hir_body_owner_def_id(body_id);
         let body_with_facts = BODY_CACHE.with(|cache| {
             let val = cache.get(&def_id, move |_| {
                 let body = get_body_with_borrowck_facts(

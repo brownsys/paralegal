@@ -14,21 +14,21 @@ use super::{
     ExceptionAnnotation, MarkerAnnotation, MarkerRefinement, MarkerRefinementKind, VerificationHash,
 };
 use crate::{
-    utils::{resolve::def_path_res, TinyBitSet},
     Symbol,
+    utils::{TinyBitSet, resolve::def_path_res},
 };
 use either::Either;
 use nom_supreme::{
-    error::ErrorTree,
-    final_parser::{final_parser, RecreateContext},
     ParserExt,
+    error::ErrorTree,
+    final_parser::{RecreateContext, final_parser},
 };
 use paralegal_spdg::Identifier;
 
 use rustc_ast::{
-    self as ast,
+    self as ast, ExprKind,
     token::{self, Delimiter, Lit, LitKind, Token, TokenKind},
-    tokenstream, ExprKind,
+    tokenstream,
 };
 use rustc_hir as hir;
 use rustc_hir::def_id::DefId;
@@ -40,8 +40,8 @@ use tokenstream::*;
 pub extern crate nom;
 
 use nom::{
-    error::{ErrorKind, FromExternalError, ParseError},
     Parser,
+    error::{ErrorKind, FromExternalError, ParseError},
 };
 
 pub struct Symbols {
@@ -430,7 +430,7 @@ pub fn arguments<'a, 'b>(
             })
             .ok_or(RefinementOnNonFunctionErr)?;
         let sig_info = match body {
-            hir::TraitFn::Provided(id) => Either::Left(tcx.hir().body(id).params),
+            hir::TraitFn::Provided(id) => Either::Left(tcx.hir_body(id).params),
             hir::TraitFn::Required(idents) => Either::Right(idents),
         };
 

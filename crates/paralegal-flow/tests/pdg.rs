@@ -9,14 +9,14 @@ use std::{collections::HashSet, rc::Rc};
 
 use either::Either;
 use flowistry_pdg_construction::{
-    source_access::BodyCache, CallChangeCallback, CallChangeCallbackFn, CallChanges,
-    MemoPdgConstructor, SkipCall,
+    CallChangeCallback, CallChangeCallbackFn, CallChanges, MemoPdgConstructor, SkipCall,
+    source_access::BodyCache,
 };
 use itertools::Itertools;
 use paralegal_flow::{Args, Pctx};
 use paralegal_flowistry::mir::FlowistryInput;
 use paralegal_rustc_utils::{
-    source_map::find_bodies::find_bodies, test_utils::CompileResult, PlaceExt,
+    PlaceExt, source_map::find_bodies::find_bodies, test_utils::CompileResult,
 };
 use paralegal_spdg::{NodeKind, SPDG};
 use rustc_hir::def_id::LocalDefId;
@@ -29,7 +29,7 @@ use rustc_span::Symbol;
 fn get_main(tcx: TyCtxt<'_>) -> LocalDefId {
     find_bodies(tcx)
         .into_iter()
-        .map(|(_, body_id)| tcx.hir().body_owner_def_id(body_id))
+        .map(|(_, body_id)| tcx.hir_body_owner_def_id(body_id))
         .find(|def_id| match tcx.opt_item_name(def_id.to_def_id()) {
             Some(name) => name.as_str() == "main",
             None => false,

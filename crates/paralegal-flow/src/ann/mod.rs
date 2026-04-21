@@ -1,7 +1,7 @@
 use std::fmt::{Display, Write};
 
 use either::Either;
-use flowistry_pdg_construction::source_access::{intermediate_out_dir, ParalegalEncoder};
+use flowistry_pdg_construction::source_access::{ParalegalEncoder, intermediate_out_dir};
 use rustc_ast::Attribute;
 
 use rustc_hir::{
@@ -14,7 +14,7 @@ use rustc_serialize::Encodable;
 use serde::{Deserialize, Serialize};
 
 use paralegal_spdg::{
-    rustc_proxies, tiny_bitset_pretty, utils::write_sep, Identifier, TinyBitSet, TypeId,
+    Identifier, TinyBitSet, TypeId, rustc_proxies, tiny_bitset_pretty, utils::write_sep,
 };
 
 pub mod db;
@@ -254,8 +254,8 @@ struct VisitFilter;
 impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
     type NestedFilter = VisitFilter;
 
-    fn nested_visit_map(&mut self) -> Self::Map {
-        self.tcx.hir()
+    fn maybe_tcx(&mut self) -> Self::MaybeTyCtxt {
+        self.tcx
     }
 
     fn visit_id(&mut self, hir_id: rustc_hir::HirId) {
@@ -307,7 +307,9 @@ impl DumpingVisitor<'_> {
                 a.span,
             )?))
         } else if let Some(i) = a.match_get_ref(&consts.label_marker) {
-            warn!("The `paralegal_flow::label` annotation is deprecated, use `paralegal_flow::marker` instead");
+            warn!(
+                "The `paralegal_flow::label` annotation is deprecated, use `paralegal_flow::marker` instead"
+            );
             one(Annotation::Marker(ann_match_fn(
                 self.tcx,
                 &self.symbols,
@@ -337,7 +339,7 @@ pub fn dump_markers(tcx: TyCtxt) {
         markers: Markers::default(),
         symbols: Default::default(),
     };
-    tcx.hir().visit_all_item_likes_in_crate(&mut vis);
+    tcx.hir_visit_all_item_likes_in_crate(&mut vis);
     let path = intermediate_out_dir(tcx, MARKER_META_EXT);
     let mut encoder = ParalegalEncoder::new(&path, tcx);
     vis.annotations.encode(&mut encoder);

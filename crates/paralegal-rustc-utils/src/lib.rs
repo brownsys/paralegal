@@ -4,7 +4,6 @@
     min_specialization,
     type_alias_impl_trait,
     box_patterns,
-    let_chains,
     exact_size_is_empty,
     impl_trait_in_assoc_type
 )]

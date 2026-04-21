@@ -753,7 +753,7 @@ fn main() {
             body_with_facts: &BodyWithBorrowckFacts<'tcx>,
         ) {
             let body = &body_with_facts.body;
-            let def_id = tcx.hir().body_owner_def_id(body_id).to_def_id();
+            let def_id = tcx.hir_body_owner_def_id(body_id).to_def_id();
             let p = Placer::new(tcx, body);
 
             let y = p.local("y").mk();

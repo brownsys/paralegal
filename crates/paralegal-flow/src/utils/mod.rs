@@ -542,7 +542,7 @@ impl<'hir> NodeExt<'hir> for hir::Node<'hir> {
                 ..
             }) => Some((
                 Ident::from_str("closure"),
-                tcx.hir().body_owner_def_id(*body_id),
+                tcx.hir_body_owner_def_id(*body_id),
                 *body_id,
             )),
             _ => None,
@@ -566,7 +566,7 @@ impl IntoLocalDefId for LocalDefId {
 impl IntoLocalDefId for BodyId {
     #[inline]
     fn into_local_def_id(self, tcx: TyCtxt) -> LocalDefId {
-        tcx.hir().body_owner_def_id(self)
+        tcx.hir_body_owner_def_id(self)
     }
 }
 
@@ -636,7 +636,7 @@ impl<D: Copy + IntoDefId> IntoDefId for &'_ D {
 impl IntoDefId for BodyId {
     #[inline]
     fn into_def_id(self, tcx: TyCtxt) -> DefId {
-        tcx.hir().body_owner_def_id(self).into_def_id(tcx)
+        tcx.hir_body_owner_def_id(self).into_def_id(tcx)
     }
 }
 

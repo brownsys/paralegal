@@ -1,7 +1,7 @@
 [package]
 name = "paralegal-flow"
 version = "0.0.1"
-edition = "2021"
+edition = "2024"
 publish = false
 description = "Extractor for precise semantic PDGs from rust code."
 
