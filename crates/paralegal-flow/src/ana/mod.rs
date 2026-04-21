@@ -27,7 +27,7 @@ use flowistry_pdg_construction::{
 use inline_judge::{InlineJudgement, K};
 use itertools::Itertools;
 
-use rustc_hash::FxHashSet;
+use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::{
     self as hir, def,
     def_id::{DefId, LOCAL_CRATE},
@@ -36,7 +36,7 @@ use rustc_middle::{
     mir::{self, Location},
     ty::{Instance, TyCtxt, TypingEnv},
 };
-use rustc_span::{ErrorGuaranteed, FileNameDisplayPreference, Span as RustSpan, Symbol};
+use rustc_span::{ErrorGuaranteed, Span as RustSpan, Symbol};
 use tracing::{debug, info};
 
 mod graph_converter;
@@ -418,7 +418,7 @@ fn src_loc_for_span(span: RustSpan, tcx: TyCtxt) -> Span {
         tcx.sess.source_map().span_to_location_info(span);
     let file_path = source_file.map_or_else(
         || "<unknown>".to_string(),
-        |f| f.name.display(FileNameDisplayPreference::Local).to_string(),
+        |f| f.name.prefer_local_unconditionally().to_string(),
     );
     let abs_file_path = if !file_path.starts_with('/') {
         std::env::current_dir()
@@ -605,11 +605,11 @@ impl Stub {
         let calling_convention = if expect_indirect {
             let clj = match arguments {
                 [clj] => clj,
-                [gen, _]
+                [r#gen, _]
                     if tcx.def_kind(function.def_id()) == hir::def::DefKind::AssocFn
-                        && tcx.associated_item(function.def_id()).trait_item_def_id == poll =>
+                        && tcx.associated_item(function.def_id()).trait_item_def_id() == poll =>
                 {
-                    gen
+                    r#gen
                 }
                 _ => {
                     return Err(tcx.dcx().span_err(

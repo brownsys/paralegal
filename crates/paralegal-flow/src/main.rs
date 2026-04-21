@@ -125,7 +125,10 @@ fn main() -> anyhow::Result<()> {
     let early_dcx = EarlyDiagCtxt::new(ErrorOutputType::default());
     rustc_driver::init_rustc_env_logger(&early_dcx);
 
-    std::process::exit(rustc_driver::catch_with_exit_code(move || {
-        paralegal_flow::run(args, plugin_args)
-    }))
+    let code = rustc_driver::catch_with_exit_code(move || paralegal_flow::run(args, plugin_args));
+    std::process::exit(if code == std::process::ExitCode::SUCCESS {
+        0
+    } else {
+        1
+    })
 }

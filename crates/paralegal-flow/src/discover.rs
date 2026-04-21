@@ -107,7 +107,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
     /// Does the function named by this id have the `paralegal_flow::analyze` annotation
     fn should_analyze_function(&self, ident: LocalDefId) -> bool {
         let attrs = self.tcx.hir_attrs(self.tcx.local_def_id_to_hir_id(ident));
-        let should_analyze = attrs.iter().any(|a| a.matches_path(&self.analyze_marker));
+        let should_analyze = attrs.iter().any(|a| a.path_matches(&self.analyze_marker));
         trace!(
             name = self.tcx.def_path_str(ident),
             should_analyze,
@@ -120,10 +120,6 @@ impl<'tcx> CollectingVisitor<'tcx> {
 
 impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
     type NestedFilter = OnlyBodies;
-
-    fn nested_visit_map(&mut self) -> Self::Map {
-        self.tcx.hir()
-    }
 
     /// Finds the functions that have been marked as targets.
     fn visit_fn(

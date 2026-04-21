@@ -13,7 +13,6 @@ extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_error_messages;
 extern crate rustc_errors;
-extern crate rustc_hash;
 extern crate rustc_hir;
 extern crate rustc_index;
 extern crate rustc_interface;
@@ -21,7 +20,7 @@ extern crate rustc_macros;
 extern crate rustc_middle;
 extern crate rustc_mir_dataflow;
 extern crate rustc_parse;
-extern crate rustc_query_system;
+extern crate rustc_driver_impl;
 extern crate rustc_serialize;
 extern crate rustc_session;
 extern crate rustc_span;
@@ -35,7 +34,7 @@ use paralegal_spdg::{AnalyzerStats, ProgramDescription, FLOW_GRAPH_EXT, STAT_FIL
 
 use paralegal_rustc_utils::cache::Cache;
 use rustc_borrowck::consumers::BodyWithBorrowckFacts;
-use rustc_middle::{mir::BorrowCheckResult, ty::TyCtxt};
+use rustc_middle::ty::TyCtxt;
 use rustc_span::ErrorGuaranteed;
 use tracing::{debug, error, info};
 
@@ -196,24 +195,6 @@ thread_local! {
     static BODY_CACHE: Cache<rustc_hir::def_id::LocalDefId, BodyWithBorrowckFacts<'static>> = Cache::default();
 }
 
-fn mir_borrowck(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::LocalDefId) -> &BorrowCheckResult<'_> {
-    use rustc_borrowck::consumers::{get_body_with_borrowck_facts, ConsumerOptions};
-    let body_with_facts =
-        get_body_with_borrowck_facts(tcx, def_id, ConsumerOptions::PoloniusInputFacts);
-
-    // SAFETY: The reader casts the 'static lifetime to 'tcx before using it.
-    let body_with_facts: BodyWithBorrowckFacts<'static> =
-        unsafe { std::mem::transmute(body_with_facts) };
-    BODY_CACHE.with(|cache| {
-        cache.get(&def_id, |_| body_with_facts);
-    });
-
-    let mut providers = rustc_middle::util::Providers::default();
-    rustc_borrowck::provide(&mut providers);
-    let original_mir_borrowck = providers.mir_borrowck;
-    original_mir_borrowck(tcx, def_id)
-}
-
 fn dump_mir_and_update_stats(tcx: TyCtxt, timer: &mut DumpStats) {
     let (tycheck_time, dump_time) = dump_mir_and_borrowck_facts_with_cache(tcx, |i| {
         BODY_CACHE.with(|cache| unsafe {
@@ -229,7 +210,7 @@ fn dump_mir_and_update_stats(tcx: TyCtxt, timer: &mut DumpStats) {
 
 impl rustc_driver::Callbacks for DumpOnlyCallbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
-        config.override_queries = Some(|_session, local| local.mir_borrowck = mir_borrowck);
+        let _ = config;
     }
 
     fn after_expansion(
@@ -261,7 +242,7 @@ impl FinalizingCallbacks for DumpOnlyCallbacks {
 
 impl rustc_driver::Callbacks for Callbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
-        config.override_queries = Some(|_session, local| local.mir_borrowck = mir_borrowck);
+        let _ = config;
     }
 
     fn after_expansion<'tcx>(
@@ -509,7 +490,7 @@ pub fn run(mut compiler_args: Vec<String>, plugin_args: Args) -> Result<(), Erro
 
     let upcasted_callback = callbacks.upcast_mut();
 
-    rustc_driver::RunCompiler::new(&compiler_args, upcasted_callback).run();
+    rustc_driver_impl::run_compiler(&compiler_args, upcasted_callback);
 
     callbacks.finalize();
     Ok(())

@@ -243,7 +243,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for BodyAnalyzer<'tcx, '_> {
         if matches!(projection_elem, mir::ProjectionElem::Deref) {
             let ty = place_ref.ty(self.body, self.tcx).ty;
 
-            if ty.is_mutable_ptr() && ty.is_unsafe_ptr() {
+            if ty.is_mutable_ptr() {
                 self.found_markers
                     .insert(self.auto_markers.side_effect_raw_ptr);
             }
@@ -282,7 +282,7 @@ fn contains_mut_ref<'tcx>(ty: ty::Ty<'tcx>, tcx: ty::TyCtxt<'tcx>) -> bool {
                 trace!("Found mut ref in {t:?}");
                 self.has_mut_ref = true;
             }
-            t.super_visit_with(self)
+            let _ = t.super_visit_with(self);
         }
     }
 

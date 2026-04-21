@@ -212,10 +212,11 @@ impl<'tcx> MarkerCtx<'tcx> {
         // we are provided the id of the function that creates the
         // future. As such we can't just monomorphize and traverse,
         // we have to find the generator first.
-        if let ty::TyKind::Alias(ty::AliasTyKind::Opaque, alias) =
-            local_decls[mir::RETURN_PLACE].ty.kind()
+        if let ty::TyKind::Alias(alias) = local_decls[mir::RETURN_PLACE].ty.kind()
+            && matches!(alias.kind, ty::AliasTyKind::Opaque { .. })
+            && let ty::AliasTyKind::Opaque { def_id, .. } = alias.kind
             && let ty::TyKind::Coroutine(closure_fn, substs) =
-                self.tcx().type_of(alias.def_id).skip_binder().kind()
+                self.tcx().type_of(def_id).skip_binder().kind()
         {
             trace!("    fits opaque type");
             let async_closure_fn =

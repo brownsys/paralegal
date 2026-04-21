@@ -162,7 +162,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         let start = self.defid_rewrite(start);
         let tcx = self.tcx();
         let parent_maybe = matches!(tcx.def_kind(start), DefKind::AssocFn | DefKind::AssocTy)
-            .then(|| tcx.associated_item(start).trait_item_def_id)
+            .then(|| tcx.associated_item(start).trait_item_def_id())
             .flatten();
         [start].into_iter().chain(parent_maybe)
     }
@@ -317,7 +317,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             .into_iter()
             .chain(
                 matches!(self.tcx().def_kind(def_id), DefKind::AssocFn)
-                    .then(|| self.tcx().associated_item(def_id).trait_item_def_id)
+                    .then(|| self.tcx().associated_item(def_id).trait_item_def_id())
                     .flatten(),
             )
             .find_map(|def_id| self.0.stubs.get(&def_id))
@@ -406,7 +406,7 @@ pub struct MarkerDatabase<'tcx> {
     config: &'static Args,
     type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,
     body_cache: Rc<BodyCache<'tcx>>,
-    included_crates: Rc<dyn Fn(CrateNum) -> bool>,
+    included_crates: Rc<dyn Fn(CrateNum) -> bool + 'tcx>,
     stubs: FxHashMap<DefId, &'static Stub>,
     marker_statistics: RefCell<HashMap<MaybeMonomorphized<'tcx>, FunctionMarkerStat<'tcx>>>,
     auto_markers: AutoMarkers,
@@ -670,7 +670,7 @@ fn load_annotations(
     tcx: TyCtxt,
     included_crates: impl IntoIterator<Item = CrateNum>,
 ) -> FxHashMap<DefId, Vec<Annotation>> {
-    let sysroot = &tcx.sess.sysroot;
+    let sysroot = tcx.sess.opts.sysroot.path();
     included_crates
         .into_iter()
         .flat_map(|krate| {

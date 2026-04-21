@@ -6,13 +6,13 @@ use hir::{
     def_id::CrateNum,
     def_id::LocalDefId,
     def_id::LOCAL_CRATE,
-    ImplItemRef, ItemKind, Node, PrimTy, TraitItemRef,
+    ItemKind, Node, PrimTy,
 };
 use rustc_ast::{self as ast, token::TokenKind, ExprKind, PathSegment, QSelf, Ty, TyKind};
 use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_hir::{self as hir, def_id::DefId};
 use rustc_middle::ty::{self, fast_reject::SimplifiedType, FloatTy, IntTy, TyCtxt, UintTy};
-use rustc_parse::new_parser_from_source_str;
+use rustc_parse::{lexer::StripTokens, new_parser_from_source_str};
 use rustc_span::Symbol;
 
 #[derive(Debug, Clone, Copy)]
@@ -142,6 +142,7 @@ pub fn resolve_string_to_def_id(tcx: TyCtxt, path: &str) -> Result<Res> {
         &tcx.sess.psess,
         rustc_span::FileName::Anon(hasher.finish()),
         path.to_string(),
+        StripTokens::Nothing,
     )
     .unwrap();
     let qpath = parser.parse_expr().map_err(|e| {
@@ -197,13 +198,10 @@ fn local_item_children_by_name(
     local_id: LocalDefId,
     name: Symbol,
 ) -> Option<Result<Res>> {
-    use crate::rustc_hir::intravisit::Map;
-    let hir = tcx.hir();
-
     let root_mod;
-    let item_kind = match hir.hir_node_by_def_id(local_id) {
+    let item_kind = match tcx.hir_node_by_def_id(local_id) {
         Node::Crate(r#mod) => {
-            root_mod = ItemKind::Mod(r#mod);
+            root_mod = ItemKind::Mod(rustc_span::Ident::dummy(), r#mod);
             &root_mod
         }
         Node::Item(item) => &item.kind,
@@ -213,20 +211,20 @@ fn local_item_children_by_name(
     let res = |def_id: LocalDefId| Ok(Res::Def(tcx.def_kind(def_id), def_id.to_def_id()));
 
     match item_kind {
-        ItemKind::Mod(r#mod) => r#mod
+        ItemKind::Mod(_, r#mod) => r#mod
             .item_ids
             .iter()
-            .find(|&item_id| hir.item(*item_id).ident.name == name)
+            .find(|&item_id| tcx.item_name(item_id.owner_id.def_id.to_def_id()) == name)
             .map(|&item_id| res(item_id.owner_id.def_id)),
         ItemKind::Impl(r#impl) => r#impl
             .items
             .iter()
-            .find(|item| item.ident.name == name)
-            .map(|&ImplItemRef { id, .. }| res(id.owner_id.def_id)),
+            .find(|item| tcx.item_name(item.owner_id.def_id.to_def_id()) == name)
+            .map(|item| res(item.owner_id.def_id)),
         ItemKind::Trait(.., trait_item_refs) => trait_item_refs
             .iter()
-            .find(|item| item.ident.name == name)
-            .map(|&TraitItemRef { id, .. }| res(id.owner_id.def_id)),
+            .find(|item| tcx.item_name(item.owner_id.def_id.to_def_id()) == name)
+            .map(|item| res(item.owner_id.def_id)),
         _ => None,
     }
 }
@@ -249,9 +247,9 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
                     PrimTy::Bool => tcx.types.bool,
                     PrimTy::Char => tcx.types.char,
                     PrimTy::Str => tcx.types.str_,
-                    PrimTy::Int(i) => ty::Ty::new_int(tcx, ty::int_ty(i)),
-                    PrimTy::Uint(u) => ty::Ty::new_uint(tcx, ty::uint_ty(u)),
-                    PrimTy::Float(f) => ty::Ty::new_float(tcx, ty::float_ty(f)),
+                    PrimTy::Int(i) => ty::Ty::new_int(tcx, i),
+                    PrimTy::Uint(u) => ty::Ty::new_uint(tcx, u),
+                    PrimTy::Float(f) => ty::Ty::new_float(tcx, f),
                 },
             })
         }
@@ -307,7 +305,7 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
                     .map(Res::PrimTy)
                     .ok_or(ResolutionError::CannotResolvePrimitiveType(sym));
             }
-            [base, ref path @ ..] => {
+            [base, path @ ..] => {
                 /* This is relevant for issue 2 */
                 no_generics_supported(base);
                 let base_name = base.ident.name;

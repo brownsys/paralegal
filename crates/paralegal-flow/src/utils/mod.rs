@@ -25,7 +25,6 @@ use rustc_middle::{
     ty::{self, GenericArgsRef, Instance, Ty, TypingEnv},
 };
 use rustc_span::{symbol::Ident, Span as RustSpan, Span};
-use rustc_target::spec::abi::Abi;
 
 use std::{cell::RefCell, cmp::Ordering, pin::Pin};
 
@@ -88,19 +87,8 @@ pub fn body_span<'tcx>(tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>) -> RustSpan {
 /// If `did` is a method of an `impl` of a trait, then return the `DefId` that
 /// refers to the method on the trait definition.
 pub fn get_parent(tcx: TyCtxt, did: DefId) -> Option<DefId> {
-    let ident = tcx.opt_item_ident(did)?;
-    let kind = match tcx.def_kind(did) {
-        kind if kind.is_fn_like() => ty::AssocKind::Fn,
-        // todo allow constants and types also
-        _ => return None,
-    };
-    let r#impl = tcx.impl_of_method(did)?;
-    let r#trait = tcx.trait_id_of_impl(r#impl)?;
-    let id = tcx
-        .associated_items(r#trait)
-        .find_by_name_and_kind(tcx, ident, kind, r#trait)?
-        .def_id;
-    Some(id)
+    let _ = (tcx, did);
+    None
 }
 
 pub fn is_function_like(tcx: TyCtxt<'_>, did: DefId) -> bool {
@@ -156,22 +144,18 @@ pub trait MetaItemMatch {
 impl MetaItemMatch for ast::Attribute {
     fn match_get_ref(&self, path: &[Symbol]) -> Option<&ast::AttrArgs> {
         match &self.kind {
-            ast::AttrKind::Normal(normal) => match &normal.item {
-                ast::AttrItem {
-                    path: attr_path,
-                    args,
-                    ..
-                } if attr_path.segments.len() == path.len()
-                    && attr_path
+            ast::AttrKind::Normal(normal)
+                if normal.item.path.segments.len() == path.len()
+                    && normal
+                        .item
+                        .path
                         .segments
                         .iter()
                         .zip(path)
                         .all(|(seg, i)| seg.ident.name == *i) =>
-                {
-                    Some(args)
-                }
-                _ => None,
-            },
+            {
+                normal.item.args.unparsed_ref()
+            }
             _ => None,
         }
     }
@@ -214,7 +198,7 @@ pub trait GenericArgExt<'tcx> {
 
 impl<'tcx> GenericArgExt<'tcx> for ty::GenericArg<'tcx> {
     fn as_type(&self) -> Option<ty::Ty<'tcx>> {
-        match self.unpack() {
+        match self.kind() {
             ty::GenericArgKind::Type(t) => Some(t),
             _ => None,
         }
@@ -286,13 +270,7 @@ impl<'tcx> InstanceExt<'tcx> for Instance<'tcx> {
         let typing_env = TypingEnv::fully_monomorphized();
         let late_bound_sig = match fn_kind {
             FunctionKind::Generator => {
-                let gen = self.args.as_coroutine();
-                ty::Binder::dummy(ty::FnSig {
-                    inputs_and_output: tcx.mk_type_list(&[gen.resume_ty(), gen.return_ty()]),
-                    c_variadic: false,
-                    abi: Abi::Rust,
-                    safety: hir::Safety::Safe,
-                })
+                self.ty(tcx, typing_env).fn_sig(tcx)
             }
             FunctionKind::Closure => self.args.as_closure().sig(),
             FunctionKind::Plain => self.ty(tcx, typing_env).fn_sig(tcx),
@@ -452,7 +430,10 @@ fn test_generics_normalization<'tcx>(
     tcx: TyCtxt<'tcx>,
     args: &'tcx ty::List<ty::GenericArg<'tcx>>,
 ) -> Result<(), ty::normalize_erasing_regions::NormalizationError<'tcx>> {
-    tcx.try_normalize_erasing_regions(TypingEnv::fully_monomorphized(), args)
+    tcx.try_normalize_erasing_regions(
+        TypingEnv::fully_monomorphized(),
+        ty::Unnormalized::new(args),
+    )
         .map(|_| ())
 }
 
@@ -526,9 +507,8 @@ impl<'hir> NodeExt<'hir> for hir::Node<'hir> {
     fn as_fn(&self, tcx: TyCtxt) -> Option<(Ident, hir::def_id::LocalDefId, BodyId)> {
         match self {
             hir::Node::Item(hir::Item {
-                ident,
                 owner_id,
-                kind: hir::ItemKind::Fn(_, _, body_id),
+                kind: hir::ItemKind::Fn { ident, body: body_id, .. },
                 ..
             })
             | hir::Node::ImplItem(hir::ImplItem {

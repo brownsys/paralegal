@@ -14,7 +14,7 @@ use flowistry_pdg_construction::{
 };
 use paralegal_spdg::Node;
 
-use rustc_hash::FxHashSet;
+use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir,
@@ -302,7 +302,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     fn handle_node_types_helper(
         &mut self,
         node: GNode,
-        mut base_ty: mir::tcx::PlaceTy<'tcx>,
+        mut base_ty: mir::PlaceTy<'tcx>,
         projections: &[mir::PlaceElem<'tcx>],
     ) {
         trace!("Has place type {base_ty:?}");
@@ -318,7 +318,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             self.types.entry(node).or_default().extend(
                 node_types
                     .iter()
-                    .filter(|t| !tcx.is_coroutine(**t) && !tcx.def_kind(*t).is_fn_like()),
+                    .filter(|t| !tcx.is_coroutine(**t) && !tcx.def_kind(**t).is_fn_like()),
             )
         }
         trace!("Found marked node types {node_types:?}",);
@@ -327,7 +327,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     /// Return the (sub)types of this type that are marked.
     fn type_is_marked(
         &'a self,
-        typ: mir::tcx::PlaceTy<'tcx>,
+        typ: mir::PlaceTy<'tcx>,
         deep: bool,
     ) -> impl Iterator<Item = TypeId> + use<'a, 'tcx> {
         if deep {
@@ -566,9 +566,9 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             None,
         );
 
-        let mono_ty = |local| {
-            let decl = &base_body.local_decls[local];
-            mir::tcx::PlaceTy::from_ty(
+        let mono_ty = |local: mir::Local| {
+            let decl: &mir::LocalDecl<'tcx> = &base_body.local_decls[local];
+            mir::PlaceTy::from_ty(
                 try_monomorphize(
                     instance,
                     tcx,

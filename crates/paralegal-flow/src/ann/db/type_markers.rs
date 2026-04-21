@@ -31,7 +31,12 @@ impl<'tcx> MarkerCtx<'tcx> {
         use ty::*;
         let def_id = match key.kind() {
             Adt(def, _) => Some(def.did()),
-            Alias(_, inner) => Some(inner.def_id),
+            Alias(inner) => match inner.kind {
+                ty::AliasTyKind::Projection { def_id }
+                | ty::AliasTyKind::Opaque { def_id, .. }
+                | ty::AliasTyKind::Free { def_id }
+                | ty::AliasTyKind::Inherent { def_id } => Some(def_id),
+            },
             _ => None,
         };
         def_id
@@ -68,7 +73,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                     Tuple(tys) => {
                         markers.extend(tys.iter().flat_map(|ty| self.deep_type_markers(ty)))
                     }
-                    Alias(_, _) => {
+                    Alias(_) => {
                         dcx.warn(format!("Alias type {key:?} remains. Was not normalized."));
                         return Box::new([]);
                     }
@@ -80,6 +85,9 @@ impl<'tcx> MarkerCtx<'tcx> {
                         markers.extend(self.deep_type_markers(*inner))
                     }
                     RawPtr(ty, _) | Ref(_, ty, _) => markers.extend(self.deep_type_markers(*ty)),
+                    UnsafeBinder(inner) => {
+                        markers.extend(self.deep_type_markers(inner.skip_binder()))
+                    }
                     Param(_) | Dynamic { .. } => {
                         dcx.warn(format!("Cannot determine markers for type {key:?}"))
                     }

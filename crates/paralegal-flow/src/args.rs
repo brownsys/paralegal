@@ -16,7 +16,7 @@
 use anyhow::Error;
 use clap::ValueEnum;
 use rustc_data_structures::fx::FxHashSet;
-use rustc_hash::FxHashMap;
+use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Symbol;
