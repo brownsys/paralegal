@@ -29,6 +29,7 @@ rand = "0.8"
 [dev-dependencies]
 test-log = "0.2"
 env_logger = { version = "0.9", default-features = false }
+textwrap = { version = "0.16" }
 
 [build-dependencies]
 paralegal-non-rustc-utils = { path = "../paralegal-non-rustc-utils" }

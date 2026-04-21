@@ -54,7 +54,7 @@ pub mod cache;
 pub mod hir;
 pub mod mir;
 pub mod source_map;
-#[cfg(feature = "test")]
+#[cfg(any(feature = "test", test))]
 pub mod test_utils;
 
 pub use crate::{
