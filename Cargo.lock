@@ -1228,6 +1228,7 @@ dependencies = [
  "env_logger 0.9.3",
  "intervaltree",
  "log",
+ "paralegal-non-rustc-utils",
  "rand",
  "regex",
  "serde",
