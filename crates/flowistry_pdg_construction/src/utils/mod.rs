@@ -437,6 +437,7 @@ pub fn manufacture_substs_for<'tcx>(
     });
     let new = tcx.mk_args_from_iter(types)?;
     trace!(?new, "finished manufacturing");
+    assert_eq!(new.len(), generics.count());
     Ok(new)
 }
 

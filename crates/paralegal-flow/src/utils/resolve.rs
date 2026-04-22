@@ -2,16 +2,16 @@ use std::hash::Hash;
 
 use ast::Mutability;
 use hir::{
+    ItemKind, Node, PrimTy,
     def::{self, DefKind},
     def_id::CrateNum,
-    def_id::LocalDefId,
     def_id::LOCAL_CRATE,
-    ItemKind, Node, PrimTy,
+    def_id::LocalDefId,
 };
-use rustc_ast::{self as ast, token::TokenKind, ExprKind, PathSegment, QSelf, Ty, TyKind};
+use rustc_ast::{self as ast, ExprKind, PathSegment, QSelf, Ty, TyKind, token::TokenKind};
 use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_hir::{self as hir, def_id::DefId};
-use rustc_middle::ty::{self, fast_reject::SimplifiedType, FloatTy, IntTy, TyCtxt, UintTy};
+use rustc_middle::ty::{self, FloatTy, IntTy, TyCtxt, UintTy, fast_reject::SimplifiedType};
 use rustc_parse::{lexer::StripTokens, new_parser_from_source_str};
 use rustc_span::Symbol;
 
@@ -210,20 +210,22 @@ fn local_item_children_by_name(
 
     let res = |def_id: LocalDefId| Ok(Res::Def(tcx.def_kind(def_id), def_id.to_def_id()));
 
+    let item_matches_name = |did| tcx.opt_item_name(did).is_some_and(|n| n == name);
+
     match item_kind {
         ItemKind::Mod(_, r#mod) => r#mod
             .item_ids
             .iter()
-            .find(|&item_id| tcx.item_name(item_id.owner_id.def_id.to_def_id()) == name)
+            .find(|&item_id| item_matches_name(item_id.owner_id.def_id.to_def_id()))
             .map(|&item_id| res(item_id.owner_id.def_id)),
         ItemKind::Impl(r#impl) => r#impl
             .items
             .iter()
-            .find(|item| tcx.item_name(item.owner_id.def_id.to_def_id()) == name)
+            .find(|item| item_matches_name(item.owner_id.def_id.to_def_id()))
             .map(|item| res(item.owner_id.def_id)),
         ItemKind::Trait(.., trait_item_refs) => trait_item_refs
             .iter()
-            .find(|item| tcx.item_name(item.owner_id.def_id.to_def_id()) == name)
+            .find(|item| item_matches_name(item.owner_id.def_id.to_def_id()))
             .map(|item| res(item.owner_id.def_id)),
         _ => None,
     }

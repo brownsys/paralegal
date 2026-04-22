@@ -44,11 +44,14 @@ fn get_bodies_associated_with<'tcx>(
     def_id: LocalDefId,
 ) -> Option<(CachedBody<'tcx>, Vec<(LocalDefId, CachedBody<'tcx>)>)> {
     let mut root_id = def_id;
-    while let Some(p) = tcx.opt_parent(root_id.into()) {
-        if !tcx.def_kind(p).is_fn_like() || !p.is_local() {
-            break;
-        }
-        root_id = p.expect_local();
+    // while let Some(p) = tcx.opt_parent(root_id.into()) {
+    //     if !tcx.def_kind(p).is_fn_like() || !p.is_local() {
+    //         break;
+    //     }
+    //     root_id = p.expect_local();
+    // }
+    while tcx.is_closure_like(root_id.into()) {
+        root_id = tcx.parent(root_id.into()).expect_local();
     }
     if tcx.mir_promoted(root_id).0.is_stolen() {
         return None;
@@ -61,7 +64,13 @@ fn get_bodies_associated_with<'tcx>(
     let slf = CachedBody::from_body(
         bodies
             .remove(&def_id)
-            .expect("searched key not in result")
+            .unwrap_or_else(|| {
+                panic!(
+                    "Retrieving body of {} via borrowchecking {} failed",
+                    tcx.def_path_str(def_id),
+                    tcx.def_path_str(root_id)
+                )
+            })
             .into(),
     );
     Some((

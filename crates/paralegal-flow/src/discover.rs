@@ -121,6 +121,10 @@ impl<'tcx> CollectingVisitor<'tcx> {
 impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
     type NestedFilter = OnlyBodies;
 
+    fn maybe_tcx(&mut self) -> Self::MaybeTyCtxt {
+        self.tcx
+    }
+
     /// Finds the functions that have been marked as targets.
     fn visit_fn(
         &mut self,
