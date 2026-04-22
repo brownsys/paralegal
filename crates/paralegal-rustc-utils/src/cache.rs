@@ -136,6 +136,7 @@ where
     pub fn is_in_cache(&self, key: &In) -> bool {
         self.0.borrow().contains_key(key)
     }
+    #[allow(dead_code)]
     /// Safety: Invalidates all references
     pub(crate) unsafe fn clear(&self) {
         self.0.borrow_mut().clear();

@@ -1,6 +1,6 @@
 //! Alias analysis to determine the points-to set of a reference.
 
-use std::{hash::Hash, time::Instant};
+use std::hash::Hash;
 
 use log::{debug, info};
 use paralegal_rustc_utils::{mir::place::UNKNOWN_REGION, PlaceExt};
@@ -77,7 +77,6 @@ impl<'tcx> Aliases<'tcx> {
         def_id: DefId,
         input: impl FlowistryInput<'tcx, 'a>,
     ) -> LoanMap<'tcx> {
-        let start = Instant::now();
         let body = input.body();
         let static_region = RegionVid::from_usize(0);
 
