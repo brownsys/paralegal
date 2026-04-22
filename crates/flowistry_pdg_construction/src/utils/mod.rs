@@ -115,6 +115,14 @@ impl<'tcx> TypeFolder<TyCtxt<'tcx>> for VarEraser<'tcx> {
     }
 }
 
+pub fn erase_regions<'tcx, T>(tcx: TyCtxt<'tcx>, t: T) -> T
+where
+    T: TypeFoldable<TyCtxt<'tcx>> + std::fmt::Debug,
+{
+    let mut eraser = VarEraser { tcx };
+    t.fold_with(&mut eraser)
+}
+
 /// The "canonical" way we monomorphize
 pub fn try_monomorphize<'tcx, 'a, T>(
     inst: Instance<'tcx>,
@@ -126,8 +134,7 @@ pub fn try_monomorphize<'tcx, 'a, T>(
 where
     T: TypeFoldable<TyCtxt<'tcx>> + std::fmt::Debug,
 {
-    let mut eraser = VarEraser { tcx };
-    let t = t.fold_with(&mut eraser);
+    let t = erase_regions(tcx, t);
 
     inst.try_instantiate_mir_and_normalize_erasing_regions(tcx, typing_env, EarlyBinder::bind(t))
         .map_err(|e| {
