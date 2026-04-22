@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     cell::RefCell,
     path::PathBuf,
     time::{Duration, Instant},
@@ -10,7 +11,7 @@ use paralegal_flowistry::mir::FlowistryInput;
 
 use polonius_engine::FactTypes;
 use rustc_borrowck::consumers::{BodyWithBorrowckFacts, ConsumerOptions, RustcFacts};
-use rustc_data_structures::{fx::FxHashMap, steal::Steal, sync::RwLock};
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::{
     def_id::{CrateNum, DefId, DefIndex, LocalDefId, LOCAL_CRATE},
     intravisit::{self},
@@ -39,48 +40,43 @@ pub struct CachedBody<'tcx> {
     input_facts: FlowistryFacts,
 }
 
-/// Mega yikes. Makes up for the fact that our current rustc version does not
-/// expose Steal::is_stolen
-fn is_stolen<'a, T>(val: &'a Steal<T>) -> bool {
-    struct StealProxy<T> {
-        value: RwLock<Option<T>>,
+fn get_bodies_associated_with<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: LocalDefId,
+) -> Option<(CachedBody<'tcx>, Vec<(LocalDefId, CachedBody<'tcx>)>)> {
+    let mut root_id = def_id;
+    while let Some(p) = tcx.opt_parent(root_id.into()) {
+        if !tcx.def_kind(p).is_fn_like() || !p.is_local() {
+            break;
+        }
+        root_id = p.expect_local();
     }
-
-    assert_eq!(
-        std::mem::size_of::<Steal<T>>(),
-        std::mem::size_of::<StealProxy<T>>()
+    if tcx.mir_promoted(root_id).0.is_stolen() {
+        return None;
+    }
+    let mut bodies = rustc_borrowck::consumers::get_bodies_with_borrowck_facts(
+        tcx,
+        root_id,
+        ConsumerOptions::PoloniusInputFacts,
     );
-
-    let as_proxy = unsafe { std::mem::transmute::<&'a Steal<T>, &'a StealProxy<T>>(val) };
-
-    as_proxy.value.borrow().is_none()
+    let slf = CachedBody::from_body(
+        bodies
+            .remove(&def_id)
+            .expect("searched key not in result")
+            .into(),
+    );
+    Some((
+        slf,
+        bodies
+            .drain()
+            .map(|(id, b)| (id, CachedBody::from_body(b.into())))
+            .collect(),
+    ))
 }
 
 impl<'tcx> CachedBody<'tcx> {
-    /// Retrieve a body and the necessary facts for a local item.
-    ///
-    /// Ensure this is called early enough in the compiler
-    /// (like `after_expansion`) so that the body has not been stolen yet.
-    fn retrieve(tcx: TyCtxt<'tcx>, local_def_id: LocalDefId) -> Self {
-        Self::try_retrieve(tcx, local_def_id).expect("Reading stolen body")
-    }
-
-    fn try_retrieve(tcx: TyCtxt<'tcx>, local_def_id: LocalDefId) -> Option<Self> {
-        if is_stolen(tcx.mir_promoted(local_def_id).0) {
-            return None;
-        }
-        let body_with_facts = rustc_borrowck::consumers::get_bodies_with_borrowck_facts(
-            tcx,
-            local_def_id,
-            ConsumerOptions::PoloniusInputFacts,
-        );
-        let body_with_facts = body_with_facts.get(&local_def_id)?;
-
-        Some(Self::from_body(&body_with_facts))
-    }
-
-    fn from_body(body_with_facts: &BodyWithBorrowckFacts<'tcx>) -> Self {
-        let mut body = body_with_facts.body.clone();
+    fn from_body(body_with_facts: BodyWithBorrowckFacts<'tcx>) -> Self {
+        let mut body = body_with_facts.body;
         clean_undecodable_data_from_body(&mut body);
 
         Self {
@@ -169,12 +165,20 @@ impl<'tcx> BodyCache<'tcx> {
     /// Serve the body from the cache or read it from the disk.
     pub fn try_get(&self, key: DefId) -> Option<&'tcx CachedBody<'tcx>> {
         let body = if let Some(local) = key.as_local() {
-            self.local_cache.get(&local.local_def_index, |_| {
-                let start = Instant::now();
-                let res = CachedBody::retrieve(self.tcx, local);
-                *self.timer.borrow_mut() += start.elapsed();
-                res
-            })
+            self.local_cache
+                .try_retrieve_many(&local.local_def_index, true, |_| {
+                    let start = Instant::now();
+                    let (res, others) = get_bodies_associated_with(self.tcx, local)?;
+                    *self.timer.borrow_mut() += start.elapsed();
+                    Some((
+                        res,
+                        others
+                            .into_iter()
+                            .map(|(id, b)| (id.local_def_index, b))
+                            .collect(),
+                    ))
+                })
+                .as_success()?
         } else if self.std_crates.contains(&key.krate) || self.tcx.is_foreign_item(key) {
             return None;
         } else {
@@ -265,13 +269,6 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
 /// Ensure this gets called early in the compiler before the unoptimized mir
 /// bodies are stolen.
 pub fn dump_mir_and_borrowck_facts(tcx: TyCtxt<'_>) -> (Duration, Duration) {
-    dump_mir_and_borrowck_facts_with_cache(tcx, |_| None)
-}
-
-pub fn dump_mir_and_borrowck_facts_with_cache<'a, 'tcx: 'a>(
-    tcx: TyCtxt<'tcx>,
-    cache: impl Fn(LocalDefId) -> Option<&'a BodyWithBorrowckFacts<'tcx>>,
-) -> (Duration, Duration) {
     let mut vis = DumpingVisitor {
         tcx,
         targets: vec![],
@@ -279,21 +276,22 @@ pub fn dump_mir_and_borrowck_facts_with_cache<'a, 'tcx: 'a>(
     tcx.hir_visit_all_item_likes_in_crate(&mut vis);
 
     let tc_start = Instant::now();
-    let bodies: BodyMap<'tcx> = vis
-        .targets
-        .iter()
-        .filter_map(|local_def_id| {
-            let to_write = cache(*local_def_id)
-                .map(CachedBody::from_body)
-                .or_else(|| CachedBody::try_retrieve(tcx, *local_def_id));
+    let mut targets = vis.targets.into_iter().collect::<FxHashSet<LocalDefId>>();
 
-            if to_write.is_none() {
-                log::error!("Body for {local_def_id:?} was stolen");
-            }
+    let mut bodies: BodyMap = Default::default();
 
-            Some((local_def_id.local_def_index, to_write?))
-        })
-        .collect();
+    while let Some(id) = targets.iter().next().copied() {
+        targets.remove(&id);
+        let Some((slf, others)) = get_bodies_associated_with(tcx, id) else {
+            log::error!("Body for {id:?} was stolen");
+            continue;
+        };
+        bodies.insert(id.local_def_index, slf);
+        bodies.extend(others.into_iter().map(|(id, b)| {
+            targets.remove(&id);
+            (id.local_def_index, b)
+        }))
+    }
     let tc_time = tc_start.elapsed();
     let dump_time = Instant::now();
     let path = intermediate_out_dir(tcx, INTERMEDIATE_ARTIFACT_EXT);

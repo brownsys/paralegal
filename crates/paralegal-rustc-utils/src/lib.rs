@@ -1,12 +1,4 @@
-#![feature(
-    rustc_private,
-    negative_impls,
-    min_specialization,
-    type_alias_impl_trait,
-    box_patterns,
-    exact_size_is_empty,
-    impl_trait_in_assoc_type
-)]
+#![feature(rustc_private, min_specialization)]
 #![warn(clippy::pedantic)]
 #![allow(
     clippy::len_zero,

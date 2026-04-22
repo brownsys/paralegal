@@ -11,6 +11,7 @@ extern crate rustc_ast;
 extern crate rustc_borrowck;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
+extern crate rustc_driver_impl;
 extern crate rustc_error_messages;
 extern crate rustc_errors;
 extern crate rustc_hir;
@@ -20,7 +21,6 @@ extern crate rustc_macros;
 extern crate rustc_middle;
 extern crate rustc_mir_dataflow;
 extern crate rustc_parse;
-extern crate rustc_driver_impl;
 extern crate rustc_serialize;
 extern crate rustc_session;
 extern crate rustc_span;
@@ -28,9 +28,9 @@ extern crate rustc_target;
 extern crate rustc_type_ir;
 
 use flowistry_pdg_construction::source_access::{
-    dump_mir_and_borrowck_facts_with_cache, intermediate_out_dir,
+    dump_mir_and_borrowck_facts, intermediate_out_dir,
 };
-use paralegal_spdg::{AnalyzerStats, ProgramDescription, FLOW_GRAPH_EXT, STAT_FILE_EXT};
+use paralegal_spdg::{AnalyzerStats, FLOW_GRAPH_EXT, ProgramDescription, STAT_FILE_EXT};
 
 use paralegal_rustc_utils::cache::Cache;
 use rustc_borrowck::consumers::BodyWithBorrowckFacts;
@@ -196,12 +196,7 @@ thread_local! {
 }
 
 fn dump_mir_and_update_stats(tcx: TyCtxt, timer: &mut DumpStats) {
-    let (tycheck_time, dump_time) = dump_mir_and_borrowck_facts_with_cache(tcx, |i| {
-        BODY_CACHE.with(|cache| unsafe {
-            // SAFETY: The cache is guaranteed to outlive the returned reference.
-            std::mem::transmute::<Option<&'static _>, Option<&'_ _>>(cache.get_if_present(&i))
-        })
-    });
+    let (tycheck_time, dump_time) = dump_mir_and_borrowck_facts(tcx);
     let dump_marker_start = Instant::now();
     dump_markers(tcx);
     timer.dump_time = dump_marker_start.elapsed() + dump_time;
@@ -346,10 +341,11 @@ impl Callbacks {
 
     fn run_the_analyzer(&mut self, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
         let abort = (|| {
-            assert!(self
-                .output_location
-                .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
-                .is_none());
+            assert!(
+                self.output_location
+                    .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
+                    .is_none()
+            );
             let (desc, mut stats) = self.run_in_context_without_writing_stats(tcx)?;
             self.stats.measure(TimedStat::Serialization, || {
                 desc.canonical_write(self.opts.result_path()).unwrap()
@@ -497,7 +493,7 @@ pub fn run(mut compiler_args: Vec<String>, plugin_args: Args) -> Result<(), Erro
 }
 
 fn attach_debugger(debugger: Debugger) {
-    use std::process::{id, Command};
+    use std::process::{Command, id};
     use std::thread::sleep;
 
     match debugger {

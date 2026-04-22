@@ -1,12 +1,4 @@
-#![feature(
-    rustc_private,
-    box_patterns,
-    associated_type_defaults,
-    min_specialization,
-    type_alias_impl_trait,
-    trait_alias,
-    negative_impls
-)]
+#![feature(rustc_private, min_specialization)]
 #![allow(
     clippy::single_match,
     clippy::needless_lifetimes,
