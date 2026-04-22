@@ -3,8 +3,8 @@ use std::{borrow::Cow, collections::HashSet, fmt::Display, hash::Hash, iter};
 use either::Either;
 use flowistry_pdg::RichLocation;
 use itertools::Itertools;
-use log::{debug, log_enabled, trace, Level};
 use paralegal_flowistry::mir::{placeinfo::PlaceInfo, FlowistryInput};
+use tracing::{debug, trace};
 
 use paralegal_rustc_utils::{
     mir::control_dependencies::ControlDependencies, AdtDefExt, BodyExt, PlaceExt,
@@ -520,9 +520,12 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
             }
         };
         let resolved_def_id = resolved_fn.def_id();
-        if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {
-            let (called, resolved) = (self.fmt_fn(called_def_id), self.fmt_fn(resolved_def_id));
-            trace!("  `{called}` monomorphized to `{resolved}`",);
+        if called_def_id != resolved_def_id {
+            trace!(
+                called = self.fmt_fn(called_def_id),
+                resolved = self.fmt_fn(resolved_def_id),
+                "  monomorphized"
+            );
         }
 
         if let Some(handler) = self.can_approximate_async_functions(resolved_def_id, span) {
@@ -971,7 +974,7 @@ fn is_split<'tcx>(ty: Ty<'tcx>, context: DefId, tcx: TyCtxt<'tcx>) -> bool {
 
         _ if ty.is_primitive_ty() => false,
         _ => {
-            log::warn!("unimplemented {ty:?} ({:?})", ty.kind());
+            tracing::warn!("unimplemented {ty:?} ({:?})", ty.kind());
             false
         }
     }

@@ -1,11 +1,10 @@
 use std::{
-    borrow::Cow,
     cell::RefCell,
     path::PathBuf,
     time::{Duration, Instant},
 };
 
-use log::debug;
+use tracing::debug;
 
 use paralegal_flowistry::mir::FlowistryInput;
 
@@ -186,7 +185,7 @@ impl<'tcx> BodyCache<'tcx> {
                 .cache
                 .get(&key.krate, |_| {
                     let result = load_body_and_facts(self.tcx, key.krate);
-                    log::debug!(
+                    debug!(
                         "Loaded {} bodies from {}",
                         result.len(),
                         self.tcx.crate_name(key.krate)
@@ -283,7 +282,7 @@ pub fn dump_mir_and_borrowck_facts(tcx: TyCtxt<'_>) -> (Duration, Duration) {
     while let Some(id) = targets.iter().next().copied() {
         targets.remove(&id);
         let Some((slf, others)) = get_bodies_associated_with(tcx, id) else {
-            log::error!("Body for {id:?} was stolen");
+            tracing::error!("Body for {id:?} was stolen");
             continue;
         };
         bodies.insert(id.local_def_index, slf);

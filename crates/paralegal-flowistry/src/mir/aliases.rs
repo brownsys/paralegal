@@ -3,7 +3,7 @@
 use std::{hash::Hash, time::Instant};
 
 use log::{debug, info};
-use paralegal_rustc_utils::{mir::place::UNKNOWN_REGION, PlaceExt};
+use paralegal_rustc_utils::{PlaceExt, mir::place::UNKNOWN_REGION};
 use rustc_data_structures::{
     fx::{FxHashMap as HashMap, FxHashSet as HashSet},
     graph::{iterate::reverse_post_order, scc::Sccs, vec_graph::VecGraph},
@@ -11,8 +11,8 @@ use rustc_data_structures::{
 };
 use rustc_hir::def_id::DefId;
 use rustc_index::{
-    bit_set::{ChunkedBitSet, SparseBitMatrix},
     IndexVec,
+    bit_set::{ChunkedBitSet, SparseBitMatrix},
 };
 use rustc_middle::{
     mir::{visit::Visitor, *},
@@ -175,16 +175,6 @@ impl<'tcx> Aliases<'tcx> {
             }
         }
 
-        info!(
-            "Initial places in loan set: {}, total regions {}, definite regions: {}",
-            contains.values().map(|set| set.len()).sum::<usize>(),
-            contains.len(),
-            definite.len()
-        );
-
-        debug!("Initial contains: {contains:#?}");
-        debug!("Definite: {definite:#?}");
-
         // Compute a topological sort of the subset relation.
         let edge_pairs = subset
             .rows()
@@ -278,13 +268,6 @@ impl<'tcx> Aliases<'tcx> {
             }
         }
 
-        info!(
-            "Final places in loan set: {}",
-            contains.values().map(|set| set.len()).sum::<usize>()
-        );
-
-        log::trace!("contains: {contains:#?}");
-
         contains
     }
 
@@ -363,7 +346,7 @@ impl<'tcx> Aliases<'tcx> {
 mod test {
     use paralegal_rustc_utils::{
         hashset,
-        test_utils::{self, compare_sets, Placer},
+        test_utils::{self, Placer, compare_sets},
     };
 
     use super::*;

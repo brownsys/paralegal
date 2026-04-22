@@ -392,7 +392,7 @@ impl ParalegalDecoder<'_, '_> {
                     Some(source_map.load_file(real.local_path().unwrap()).unwrap())
                 }
                 _ => {
-                    log::error!("Could not load file {file_name:?}");
+                    tracing::error!("Could not load file {file_name:?}");
                     None
                 }
             },

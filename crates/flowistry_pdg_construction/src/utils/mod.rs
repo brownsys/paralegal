@@ -3,7 +3,7 @@ use std::{collections::hash_map::Entry, fmt::Formatter, hash::Hash};
 use either::Either;
 
 use itertools::Itertools;
-use log::trace;
+use tracing::trace;
 
 use paralegal_rustc_utils::{BodyExt, PlaceExt};
 use rustc_borrowck::consumers::PlaceConflictBias;
@@ -19,7 +19,7 @@ use rustc_middle::{
         InstanceKind, Region, Ty, TyCtxt, TyKind, TypeVisitable, TypeVisitor, TypingEnv,
     },
 };
-use rustc_span::{ErrorGuaranteed, Span, Spanned};
+use rustc_span::{ErrorGuaranteed, Span, Spanned, Symbol};
 use rustc_type_ir::{
     AliasTyKind, PredicatePolarity, RegionKind, RegionVid, TypeFoldable, TypeFolder,
 };
@@ -317,34 +317,127 @@ pub fn ty_resolve<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
     }
 }
 
-pub fn manufacture_substs_for(
-    tcx: TyCtxt<'_>,
+pub fn manufacture_substs_for<'tcx>(
+    tcx: TyCtxt<'tcx>,
     function: DefId,
 ) -> Result<GenericArgsRef<'_>, ErrorGuaranteed> {
-    use rustc_middle::ty::GenericParamDefKind;
+    use rustc_middle::ty::{
+        ExistentialPredicate, ExistentialProjection, ExistentialTraitRef, GenericParamDefKind,
+        ParamTy, TraitPredicate,
+    };
 
-    trace!("Manufacturing for {function:?}");
+    trace!(?function, "Manufacturing for");
+
+    let tenv = TypingEnv::post_analysis(tcx, function);
+    let any_sym = Symbol::intern("Any");
 
     let generics = tcx.generics_of(function);
     trace!("Found generics {generics:?}");
-    let args = (0..generics.count())
-        .map(|gidx| {
-            let param = generics.param_at(gidx, tcx);
-            match param.kind {
-                GenericParamDefKind::Lifetime => Ok(GenericArg::from(Region::new_from_kind(
+    let predicates = tcx.predicates_of(function).instantiate_identity(tcx);
+    trace!("Found predicates {predicates:?}");
+    let lang_items = tcx.lang_items();
+    let types = (0..generics.count()).map(|gidx| -> Result<GenericArg<'tcx>, _> {
+        let param = generics.param_at(gidx, tcx);
+        if let Some(default_val) = param.default_value(tcx) {
+            return Ok(tcx.normalize_erasing_regions(tenv, default_val.instantiate_identity()));
+        }
+        match param.kind {
+            // I'm not sure this is correct. We could probably return also "erased" or "static" here.
+            GenericParamDefKind::Lifetime => {
+                return Ok(GenericArg::from(Region::new_from_kind(
                     tcx,
                     RegionKind::ReErased,
-                ))),
-                GenericParamDefKind::Const { .. } => Err(tcx.dcx().span_err(
+                )))
+            }
+            GenericParamDefKind::Const { .. } => {
+                return Err(tcx.dcx().span_err(
                     tcx.def_span(param.def_id),
                     "Cannot use constants as generic parameters in controllers",
-                )),
-                GenericParamDefKind::Type { .. } => Ok(GenericArg::from(tcx.types.unit)),
+                ))
             }
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+            GenericParamDefKind::Type { .. } => (),
+        };
 
-    Ok(tcx.mk_args(&args))
+        let param_as_ty = ParamTy::for_def(param);
+        let constraints = predicates.predicates.iter().filter_map(|clause| {
+            let clause = tcx.normalize_erasing_regions(tenv, clause.clone());
+            let pred = if let Some(trait_ref) = clause.as_trait_clause() {
+                if trait_ref.polarity() != PredicatePolarity::Positive {
+                    return None;
+                };
+                let Some(TraitPredicate { trait_ref, .. }) = trait_ref.no_bound_vars() else {
+                    return Some(Err(tcx.dcx().span_err(
+                        tcx.def_span(param.def_id),
+                        format!("Trait ref had binder {trait_ref:?}"),
+                    )));
+                };
+                if !matches!(trait_ref.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
+                    return None;
+                };
+                if Some(trait_ref.def_id) == lang_items.sized_trait()
+                    || tcx.trait_is_auto(trait_ref.def_id)
+                {
+                    trace!("    bailing because trait is auto trait");
+                    return None;
+                }
+                Some(ExistentialPredicate::Trait(
+                    ExistentialTraitRef::erase_self_ty(tcx, trait_ref),
+                ))
+            } else if let Some(pred) = clause.as_projection_clause() {
+                trace!("    is projection clause");
+                let Some(pred) = pred.no_bound_vars() else {
+                    return Some(Err(tcx.dcx().span_err(
+                        tcx.def_span(param.def_id),
+                        "Predicate has a bound variable",
+                    )));
+                };
+                if !matches!(pred.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
+                    return None;
+                };
+                Some(ExistentialPredicate::Projection(
+                    ExistentialProjection::erase_self_ty(tcx, pred),
+                ))
+            } else {
+                None
+            }?;
+
+            Some(Ok(Binder::dummy(pred)))
+        });
+        let mut predicates = constraints.collect::<Result<Vec<_>, _>>()?;
+        trace!("  collected predicates {predicates:?}");
+        let no_args: [GenericArg; 0] = [];
+        match predicates.len() {
+            0 => predicates.push(Binder::dummy(ExistentialPredicate::Trait(
+                ExistentialTraitRef::new(
+                    tcx,
+                    tcx.get_diagnostic_item(any_sym)
+                        .expect("The `Any` item is not defined."),
+                    no_args,
+                ),
+            ))),
+            1 => (),
+            _ => {
+                return Err(tcx.dcx().span_err(
+                    tcx.def_span(param.def_id),
+                    format!(
+                        "can only synthesize a trait object for one non-auto trait, got {}",
+                        predicates.len()
+                    ),
+                ));
+            }
+        };
+        let poly_predicate = tcx.mk_poly_existential_predicates_from_iter(predicates.into_iter());
+        trace!("  poly predicate {poly_predicate:?}");
+        let ty = Ty::new_dynamic(
+            tcx,
+            poly_predicate,
+            Region::new_from_kind(tcx, RegionKind::ReErased),
+        );
+        Ok(GenericArg::from(ty))
+    });
+    let new = tcx.mk_args_from_iter(types)?;
+    trace!(?new, "finished manufacturing");
+    Ok(new)
 }
 
 #[derive(Clone, Copy, Debug, strum::AsRefStr)]

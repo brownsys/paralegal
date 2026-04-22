@@ -15,6 +15,7 @@ use flowistry_pdg_construction::{
 use itertools::Itertools;
 use paralegal_flow::{Args, Pctx};
 use paralegal_flowistry::mir::FlowistryInput;
+use paralegal_non_rustc_utils::setup_logging;
 use paralegal_rustc_utils::{
     PlaceExt, source_map::find_bodies::find_bodies, test_utils::CompileResult,
 };
@@ -62,7 +63,7 @@ fn pdg(
     configure: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &mut MemoPdgConstructor<'tcx, u32>) + Send,
     tests: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &BodyCache<'tcx>, SPDG) + Send,
 ) {
-    let _ = env_logger::try_init();
+    let _ = setup_logging();
     paralegal_rustc_utils::test_utils::CompileBuilder::new(input).expect_compile(
         move |CompileResult { tcx, .. }| {
             let def_id = get_main(tcx);

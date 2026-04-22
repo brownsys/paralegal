@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
 use flowistry_pdg::rustc_portable::DefId;
-use log::trace;
 use rustc_abi::FieldIdx;
+use tracing::trace;
 
 use rustc_middle::{
     mir::{Body, HasLocalDecls, Operand, Place, PlaceElem, RETURN_PLACE},
@@ -169,8 +169,7 @@ impl<'a, 'tcx> PlaceTranslator<'a, 'tcx> {
                     self.tcx,
                 );
                 let field_idx = self.async_info.poll_ready_field_idx;
-                let child_inner_return_type = in_poll
-                    .ty(self.parent_body.local_decls(), self.tcx);
+                let child_inner_return_type = in_poll.ty(self.parent_body.local_decls(), self.tcx);
                 let child_inner_return_type = rustc_middle::mir::PlaceTy::field_ty(
                     self.tcx,
                     child_inner_return_type.ty,

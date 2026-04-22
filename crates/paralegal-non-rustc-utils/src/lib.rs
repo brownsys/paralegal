@@ -218,12 +218,12 @@ pub fn setup_logging() -> anyhow::Result<()> {
                 .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
                 .from_env()?,
         )
-        .with(
-            Targets::new()
-                .with_target("flowistry", Level::ERROR)
-                .with_target("rustc_utils", Level::ERROR)
-                .with_default(Level::TRACE),
-        )
+        // .with(
+        //     Targets::new()
+        //         .with_target("flowistry", Level::ERROR)
+        //         .with_target("rustc_utils", Level::ERROR)
+        //         .with_default(Level::TRACE),
+        // )
         .try_init()?;
     Ok(())
 }

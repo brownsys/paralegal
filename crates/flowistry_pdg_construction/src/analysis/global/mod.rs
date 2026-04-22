@@ -1,7 +1,7 @@
 use std::{borrow::Cow, fmt, hash::Hash, rc::Rc};
 
 use either::Either;
-use log::trace;
+use tracing::trace;
 
 use flowistry_pdg::{Constant, GlobalLocation};
 
@@ -255,8 +255,8 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> MemoPdgConstructor<'tcx, K> {
     }
 }
 
-impl<'mir, 'tcx, K: Hash + Eq + Clone>
-    ResultsVisitor<'tcx, &'mir LocalAnalysis<'tcx, 'mir, K>> for PartialGraph<'tcx, K>
+impl<'mir, 'tcx, K: Hash + Eq + Clone> ResultsVisitor<'tcx, &'mir LocalAnalysis<'tcx, 'mir, K>>
+    for PartialGraph<'tcx, K>
 {
     fn visit_after_early_statement_effect(
         &mut self,
@@ -280,12 +280,12 @@ impl<'mir, 'tcx, K: Hash + Eq + Clone>
     /// handled in two steps. Before the primary effects we generate edges from
     /// the dependencies to the input arguments. After the primary effect we
     /// insert edges from each argument to each modified location. It is cleaner
-    /// to do this afterwards, because the logic that resolves a place to a
+    /// to do this afterwards, because the tracinic that resolves a place to a
     /// graph node assumes that you are reading all of your inputs from the
     /// "last_modification". In the "before" state that map contains the
     /// "original" dependencies of each argument, e.g. we haven't combined them
     /// with the reachable places yet. So this ordering means we can reuse the
-    /// same logic but just have to run it twice for every non-inlined function
+    /// same tracinic but just have to run it twice for every non-inlined function
     /// call site.
     fn visit_after_early_terminator_effect(
         &mut self,
