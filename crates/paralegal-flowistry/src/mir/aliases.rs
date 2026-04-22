@@ -3,7 +3,7 @@
 use std::{hash::Hash, time::Instant};
 
 use log::{debug, info};
-use paralegal_rustc_utils::{PlaceExt, mir::place::UNKNOWN_REGION};
+use paralegal_rustc_utils::{mir::place::UNKNOWN_REGION, PlaceExt};
 use rustc_data_structures::{
     fx::{FxHashMap as HashMap, FxHashSet as HashSet},
     graph::{iterate::reverse_post_order, scc::Sccs, vec_graph::VecGraph},
@@ -11,8 +11,8 @@ use rustc_data_structures::{
 };
 use rustc_hir::def_id::DefId;
 use rustc_index::{
-    IndexVec,
     bit_set::{ChunkedBitSet, SparseBitMatrix},
+    IndexVec,
 };
 use rustc_middle::{
     mir::{visit::Visitor, *},
@@ -346,7 +346,7 @@ impl<'tcx> Aliases<'tcx> {
 mod test {
     use paralegal_rustc_utils::{
         hashset,
-        test_utils::{self, Placer, compare_sets},
+        test_utils::{self, compare_sets, Placer},
     };
 
     use super::*;

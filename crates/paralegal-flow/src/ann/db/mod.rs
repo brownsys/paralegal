@@ -11,24 +11,24 @@
 //! All interactions happen through the central database object: [`MarkerCtx`].
 
 use crate::{
-    ann::{side_effect_detection, Annotation, ExceptionAnnotation, MarkerAnnotation},
+    Either, HashMap,
+    ann::{Annotation, ExceptionAnnotation, MarkerAnnotation, side_effect_detection},
     args::{Args, Stub},
     utils::{
-        self, is_function_like,
+        self, IntoDefId, is_function_like,
         resolve::{
             expect_resolve_string_to_def_id, report_resolution_err, resolve_string_to_def_id,
         },
-        IntoDefId,
     },
-    Either, HashMap,
 };
-use paralegal_flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::source_access::{
-    local_or_remote_paths, BodyCache, ParalegalDecoder,
+    BodyCache, ParalegalDecoder, local_or_remote_paths,
 };
 use itertools::Itertools;
+use paralegal_flowistry::mir::FlowistryInput;
 use paralegal_spdg::{Identifier, TypeId};
 
+use paralegal_rustc_utils::cache::Cache;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_errors::DiagMessage;
@@ -40,7 +40,6 @@ use rustc_middle::{
 };
 use rustc_serialize::Decodable;
 use rustc_span::Span;
-use paralegal_rustc_utils::cache::Cache;
 
 use anyhow::Context;
 use serde::Deserialize;
@@ -54,7 +53,7 @@ use std::{
     rc::Rc,
 };
 
-use super::{MarkerMeta, MarkerRefinement, MARKER_META_EXT};
+use super::{MARKER_META_EXT, MarkerMeta, MarkerRefinement};
 
 mod reachable;
 mod type_markers;
@@ -764,7 +763,9 @@ fn check_format(from_toml: &toml::Value) -> anyhow::Result<()> {
                     && k != "_internal_on_all_module_children"
                     && k != "_internal_can_fail_resolve_silently"
                 {
-                    bail!("External annotation entry for `{key}.[{i}]` may only have `marker`, `markers`, `on_argument`, `on_return` or `refinements` fields");
+                    bail!(
+                        "External annotation entry for `{key}.[{i}]` may only have `marker`, `markers`, `on_argument`, `on_return` or `refinements` fields"
+                    );
                 }
             }
         }

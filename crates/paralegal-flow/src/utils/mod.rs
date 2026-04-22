@@ -1,30 +1,29 @@
 //! Utility functions, general purpose structs and extension traits
 
 extern crate smallvec;
-use paralegal_flowistry::mir::FlowistryInput;
 use flowistry_pdg::RichLocation;
 use flowistry_pdg_construction::{is_async_trait_fn, source_access::BodyCache, utils::type_as_fn};
+use paralegal_flowistry::mir::FlowistryInput;
 use thiserror::Error;
 use tracing::info;
 
-use crate::{desc::Identifier, rustc_span::ErrorGuaranteed, Either, Symbol, TyCtxt};
+use crate::{Either, Symbol, TyCtxt, desc::Identifier, rustc_span::ErrorGuaranteed};
 pub use flowistry_pdg_construction::utils::is_virtual;
 pub use paralegal_spdg::{ShortHash, TinyBitSet};
 
 use rustc_ast as ast;
 use rustc_data_structures::{fx::FxHashSet, intern::Interned};
 use rustc_hir::{
-    self as hir,
+    self as hir, BodyId,
     def::{DefKind, Res},
     def_id::{DefId, LocalDefId},
     hir_id::HirId,
-    BodyId,
 };
 use rustc_middle::{
     mir::{self, ConstOperand, Location, Place, ProjectionElem, Terminator},
     ty::{self, GenericArgsRef, Instance, Ty, TypingEnv},
 };
-use rustc_span::{symbol::Ident, Span as RustSpan, Span};
+use rustc_span::{Span as RustSpan, Span, symbol::Ident};
 
 use std::{cell::RefCell, cmp::Ordering, pin::Pin};
 
@@ -269,9 +268,7 @@ impl<'tcx> InstanceExt<'tcx> for Instance<'tcx> {
         let fn_kind = FunctionKind::for_def_id(tcx, def_id)?;
         let typing_env = TypingEnv::fully_monomorphized();
         let late_bound_sig = match fn_kind {
-            FunctionKind::Generator => {
-                self.ty(tcx, typing_env).fn_sig(tcx)
-            }
+            FunctionKind::Generator => self.ty(tcx, typing_env).fn_sig(tcx),
             FunctionKind::Closure => self.args.as_closure().sig(),
             FunctionKind::Plain => self.ty(tcx, typing_env).fn_sig(tcx),
         };
@@ -434,7 +431,7 @@ fn test_generics_normalization<'tcx>(
         TypingEnv::fully_monomorphized(),
         ty::Unnormalized::new(args),
     )
-        .map(|_| ())
+    .map(|_| ())
 }
 
 /// A struct that can be used to apply a `FnMut` to every `Place` in a MIR
@@ -508,7 +505,12 @@ impl<'hir> NodeExt<'hir> for hir::Node<'hir> {
         match self {
             hir::Node::Item(hir::Item {
                 owner_id,
-                kind: hir::ItemKind::Fn { ident, body: body_id, .. },
+                kind:
+                    hir::ItemKind::Fn {
+                        ident,
+                        body: body_id,
+                        ..
+                    },
                 ..
             })
             | hir::Node::ImplItem(hir::ImplItem {

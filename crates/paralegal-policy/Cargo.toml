@@ -26,6 +26,7 @@ rand = "0.8.5"
 
 [build-dependencies]
 autocfg = "1"
+paralegal-non-rustc-utils = { path = "../paralegal-non-rustc-utils" }
 
 [features]
 post-rust-175 = []

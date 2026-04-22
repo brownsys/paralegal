@@ -35,43 +35,22 @@ dependencies = ["cargo-tests", "guide-project"]
 
 [tasks.fast-test]
 description = "A small selection of tests to check that things work. Mean for fast iteration."
-dependencies = [
-    "test-pdg",
-    "test-basic-flow",
-    "test-async",
-    "test-cross-crate",
-    "test-adaptive-depth",
-    "test-markers",
-    "test-websubmit",
+command = "cargo"
+args = [
+    "test",
+    "--test",
+    "non_transitive_graph_tests",
+    "--test",
+    "async_tests",
+    "--test",
+    "cross-crate",
+    "--test",
+    "adaptive-depth",
+    "--test",
+    "websubmit",
+    "--test",
+    "markers",
 ]
-
-[tasks.test-pdg]
-command = "cargo"
-args = ["test", "--test", "pdg"]
-
-[tasks.test-basic-flow]
-command = "cargo"
-args = ["test", "--test", "non_transitive_graph_tests"]
-
-[tasks.test-async]
-command = "cargo"
-args = ["test", "--test", "async_tests"]
-
-[tasks.test-cross-crate]
-command = "cargo"
-args = ["test", "--test", "cross-crate"]
-
-[tasks.test-adaptive-depth]
-command = "cargo"
-args = ["test", "--test", "adaptive-depth"]
-
-[tasks.test-markers]
-command = "cargo"
-args = ["test", "--test", "markers"]
-
-[tasks.test-websubmit]
-command = "cargo"
-args = ["test", "--test", "websubmit"]
 
 [tasks.check-all]
 description = "Perform all formatting-like checks. This is the same set that runs in the CI."

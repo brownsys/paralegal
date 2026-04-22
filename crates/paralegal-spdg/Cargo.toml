@@ -31,3 +31,4 @@ allocative = { workspace = true }
 
 [build-dependencies]
 anyhow = "1"
+paralegal-non-rustc-utils = { path = "../paralegal-non-rustc-utils" }

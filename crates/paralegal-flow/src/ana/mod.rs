@@ -5,27 +5,27 @@
 //! [`analyze`](SPDGGenerator::analyze).
 
 use crate::{
+    DumpStats, HashMap, HashSet, INTERMEDIATE_STAT_EXT, MarkerCtx, Pctx,
     ann::{Annotation, MarkerAnnotation},
     args::Stub,
     desc::*,
     discover::FnToAnalyze,
     stats::{Stats, TimedStat},
     utils::*,
-    DumpStats, HashMap, HashSet, MarkerCtx, Pctx, INTERMEDIATE_STAT_EXT,
 };
 
 use std::{fs::File, io::BufReader, rc::Rc, time::Instant};
 
 use anyhow::Result;
-use paralegal_flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    source_access::local_or_remote_paths,
-    utils::{is_async, type_as_fn, ArgSlice},
     CallChangeCallback, CallChanges, CallInfo, CallingConvention, InlineMissReason,
     MemoPdgConstructor, SkipCall,
+    source_access::local_or_remote_paths,
+    utils::{ArgSlice, is_async, type_as_fn},
 };
 use inline_judge::{InlineJudgement, K};
 use itertools::Itertools;
+use paralegal_flowistry::mir::FlowistryInput;
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::{
@@ -571,7 +571,7 @@ impl Stub {
                         return Err(tcx.dcx().span_err(
                             at,
                             format!("Expected `fn` or `closure` def kind, got {kind:?}"),
-                        ))
+                        ));
                     }
                 }
             }
@@ -619,7 +619,7 @@ impl Stub {
                             function.def_id(),
                             arguments.len()
                         ),
-                    ))
+                    ));
                 }
             };
             CallingConvention::Indirect {

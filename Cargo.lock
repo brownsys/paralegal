@@ -1179,6 +1179,7 @@ version = "0.1.0"
 dependencies = [
  "fluid-let",
  "log",
+ "paralegal-non-rustc-utils",
  "paralegal-rustc-utils",
  "polonius-engine",
  "serde",
@@ -1209,6 +1210,7 @@ dependencies = [
  "lazy_static",
  "log",
  "paralegal-flow",
+ "paralegal-non-rustc-utils",
  "paralegal-spdg",
  "petgraph",
  "rand",
@@ -1226,6 +1228,7 @@ dependencies = [
  "env_logger 0.9.3",
  "intervaltree",
  "log",
+ "paralegal-non-rustc-utils",
  "rand",
  "regex",
  "serde",
