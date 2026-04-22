@@ -3,7 +3,7 @@
 //! While this is technically a "library", it only is so for the purposes of
 //! being able to reference the same code in the two executables `paralegal_flow` and
 //! `cargo-paralegal-flow` (a structure suggested by [rustc_plugin]).
-#![feature(rustc_private, min_specialization, let_chains)]
+#![feature(rustc_private, min_specialization)]
 
 extern crate rustc_abi;
 extern crate rustc_arena;
