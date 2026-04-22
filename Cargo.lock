@@ -3,6 +3,12 @@
 version = 4
 
 [[package]]
+name = "Inflector"
+version = "0.11.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe438c63458706e03479442743baae6c88256498e6431708f6dfc520a26515d3"
+
+[[package]]
 name = "addr2line"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16,19 +22,6 @@ name = "adler2"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "512761e0bb2578dd7380c6baaa0f4ce03e84f95e960231d1dec8bf4d7d6e2627"
-
-[[package]]
-name = "ahash"
-version = "0.8.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e89da841a80418a9b391ebaea17f5c112ffaaa96f621d2c285b5174da76b9011"
-dependencies = [
- "cfg-if",
- "getrandom",
- "once_cell",
- "version_check",
- "zerocopy",
-]
 
 [[package]]
 name = "aho-corasick"
@@ -455,6 +448,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "datafrog"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0afaad2b26fa326569eb264b1363e8ae3357618c43982b3f285f0774ce76b69"
+
+[[package]]
 name = "deranged"
 version = "0.3.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -547,6 +546,15 @@ dependencies = [
 
 [[package]]
 name = "env_logger"
+version = "0.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a12e6657c4c97ebab115a42dcee77225f7f482cdd841cf7088c657a42e9e00e7"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "env_logger"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4cd405aab171cb85d6735e5c8d9db038c17d3ca007a4d2c25f337935c3d90580"
@@ -590,21 +598,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
-name = "flowistry"
-version = "0.5.43"
-source = "git+https://github.com/brownsys/flowistry?rev=f271637d65a21a2785b87ef52ede8bdeb560948c#f271637d65a21a2785b87ef52ede8bdeb560948c"
-dependencies = [
- "anyhow",
- "cfg-if",
- "fluid-let",
- "indexical 0.3.1",
- "itertools 0.12.1",
- "log",
- "rustc_utils 0.12.0-nightly-2024-12-15 (registry+https://github.com/rust-lang/crates.io-index)",
- "serde",
-]
-
-[[package]]
 name = "flowistry_pdg"
 version = "0.1.0"
 dependencies = [
@@ -622,15 +615,14 @@ dependencies = [
  "anyhow",
  "cfg-if",
  "env_logger 0.11.6",
- "flowistry",
  "flowistry_pdg",
  "fluid-let",
- "indexical 0.6.1",
  "internment",
  "itertools 0.13.0",
  "log",
+ "paralegal-flowistry",
+ "paralegal-rustc-utils",
  "petgraph",
- "rustc_utils 0.12.0-nightly-2024-12-15 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "strum 0.25.0",
 ]
@@ -737,15 +729,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fxhash"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c31b6d751ae2c7f11320402d34e41349dd1016f8d5d45e48c4312bc8625af50c"
-dependencies = [
- "byteorder",
-]
-
-[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -799,7 +782,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.9",
 ]
 
 [[package]]
@@ -877,36 +860,6 @@ name = "indent_write"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0cfe9645a18782869361d9c8732246be7b410ad4e919d3609ebabdac00ba12c3"
-
-[[package]]
-name = "index_vec"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44faf5bb8861a9c72e20d3fb0fdbd59233e43056e2b80475ab0aacdc2e781355"
-
-[[package]]
-name = "indexical"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "467e4f95baab3c675f5e42553f822b34e176aa13c322ec8c258743825deaafb6"
-dependencies = [
- "fxhash",
- "index_vec",
- "splitmut",
-]
-
-[[package]]
-name = "indexical"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "549dc3e190943cebb4f2588444a067130cfbf2c9c6d6dda3212f4fa3993833c2"
-dependencies = [
- "ahash",
- "bitvec",
- "index_vec",
- "splitmut",
- "take_mut",
-]
 
 [[package]]
 name = "indexmap"
@@ -1191,11 +1144,9 @@ dependencies = [
  "dot",
  "enum-map",
  "env_logger 0.10.2",
- "flowistry",
  "flowistry_pdg",
  "flowistry_pdg_construction",
  "humantime",
- "indexical 0.3.1",
  "itertools 0.13.0",
  "lazy_static",
  "nom",
@@ -1204,21 +1155,34 @@ dependencies = [
  "num-traits",
  "ordermap",
  "paralegal-flow",
+ "paralegal-flowistry",
  "paralegal-non-rustc-utils",
+ "paralegal-rustc-utils",
  "paralegal-spdg",
  "petgraph",
  "pretty",
- "rustc_utils 0.12.0-nightly-2024-12-15 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_bare",
  "serde_json",
  "serial_test",
  "strum 0.25.0",
- "thiserror",
+ "thiserror 2.0.9",
  "toml",
  "tracing",
  "tracing-subscriber",
  "trait_enum",
+]
+
+[[package]]
+name = "paralegal-flowistry"
+version = "0.1.0"
+dependencies = [
+ "fluid-let",
+ "log",
+ "paralegal-non-rustc-utils",
+ "paralegal-rustc-utils",
+ "polonius-engine",
+ "serde",
 ]
 
 [[package]]
@@ -1241,18 +1205,36 @@ dependencies = [
  "bitvec",
  "colored",
  "fixedbitset 0.5.7",
- "indexical 0.6.1",
  "indexmap",
  "itertools 0.12.1",
  "lazy_static",
  "log",
  "paralegal-flow",
+ "paralegal-non-rustc-utils",
  "paralegal-spdg",
  "petgraph",
  "rand",
  "serde_json",
  "simple_logger",
  "strum 0.25.0",
+]
+
+[[package]]
+name = "paralegal-rustc-utils"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cfg-if",
+ "env_logger 0.9.3",
+ "intervaltree",
+ "log",
+ "paralegal-non-rustc-utils",
+ "rand",
+ "regex",
+ "serde",
+ "test-log",
+ "textwrap",
+ "ts-rs",
 ]
 
 [[package]]
@@ -1265,7 +1247,6 @@ dependencies = [
  "cfg-if",
  "dot",
  "flowistry_pdg",
- "indexical 0.6.1",
  "internment",
  "itertools 0.13.0",
  "log",
@@ -1307,7 +1288,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1db05f56d34358a8b1066f67cbb203ee3e7ed2ba674a6263a1d5ec6db2204323"
 dependencies = [
  "memchr",
- "thiserror",
+ "thiserror 2.0.9",
  "ucd-trie",
 ]
 
@@ -1367,6 +1348,17 @@ name = "pin-utils"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
+
+[[package]]
+name = "polonius-engine"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4e8e505342045d397d0b6674dcb82d6faf5cf40484d30eeb88fc82ef14e903f"
+dependencies = [
+ "datafrog",
+ "log",
+ "rustc-hash",
+]
 
 [[package]]
 name = "powerfmt"
@@ -1528,25 +1520,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "719b953e2095829ee67db738b3bfa9fa368c94900df327b3f07fe6e794d2fe1f"
 
 [[package]]
-name = "rustc_utils"
-version = "0.12.0-nightly-2024-12-15"
+name = "rustc-hash"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a82a375e5df4530b4c5e94ab8251c754c92c3e593efaf8214e572ea422bf3a0"
-replace = "rustc_utils 0.12.0-nightly-2024-12-15 (git+https://github.com/JustusAdam/rustc_plugin?rev=34379c9f1df773a10ecdbc5053896092c7a15c01)"
-
-[[package]]
-name = "rustc_utils"
-version = "0.12.0-nightly-2024-12-15"
-source = "git+https://github.com/JustusAdam/rustc_plugin?rev=34379c9f1df773a10ecdbc5053896092c7a15c01#34379c9f1df773a10ecdbc5053896092c7a15c01"
-dependencies = [
- "anyhow",
- "cfg-if",
- "indexical 0.3.1",
- "intervaltree",
- "log",
- "rand",
- "textwrap",
-]
+checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
 name = "rustversion"
@@ -1729,12 +1706,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7c388c1b5e93756d0c740965c41e8822f866621d41acbdf6336a6a168f8840c"
 
 [[package]]
-name = "splitmut"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c85070f382340e8b23a75808e83573ddf65f9ad9143df9573ca37c1ed2ee956a"
-
-[[package]]
 name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1810,12 +1781,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "take_mut"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f764005d11ee5f36500a149ace24e00e3da98b0158b3e2d53a7495660d3f4d60"
-
-[[package]]
 name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1831,6 +1796,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-log"
+version = "0.2.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f46bf474f0a4afebf92f076d54fd5e63423d9438b8c278a3d2ccb0f47f7cdb3"
+dependencies = [
+ "env_logger 0.11.6",
+ "test-log-macros",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "test-log-core"
+version = "0.2.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37d4d41320b48bc4a211a9021678fcc0c99569b594ea31c93735b8e517102b4c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.91",
+]
+
+[[package]]
+name = "test-log-macros"
+version = "0.2.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9beb9249a81e430dffd42400a49019bcf548444f1968ff23080a625de0d4d320"
+dependencies = [
+ "syn 2.0.91",
+ "test-log-core",
+]
+
+[[package]]
 name = "textwrap"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1843,11 +1840,31 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
+dependencies = [
+ "thiserror-impl 1.0.69",
+]
+
+[[package]]
+name = "thiserror"
 version = "2.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f072643fd0190df67a8bab670c20ef5d8737177d6ac6b2e9a236cb096206b2cc"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 2.0.9",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.91",
 ]
 
 [[package]]
@@ -2005,6 +2022,29 @@ name = "trait_enum"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "130dd741d3c71f76d031e58caffff3624eaaa2db9bd8c4b05406a71885300fc7"
+
+[[package]]
+name = "ts-rs"
+version = "7.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc2cae1fc5d05d47aa24b64f9a4f7cba24cdc9187a2084dd97ac57bef5eccae6"
+dependencies = [
+ "thiserror 1.0.69",
+ "ts-rs-macros",
+]
+
+[[package]]
+name = "ts-rs-macros"
+version = "7.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73f7f9b821696963053a89a7bd8b292dc34420aea8294d7b225274d488f3ec92"
+dependencies = [
+ "Inflector",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.91",
+ "termcolor",
+]
 
 [[package]]
 name = "typed-arena"

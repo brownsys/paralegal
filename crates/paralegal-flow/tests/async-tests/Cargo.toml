@@ -8,5 +8,5 @@ edition = "2021"
 [dependencies]
 #async-std = "1"
 paralegal = { path = "../../../paralegal" }
-tracing = { version = "0.1", feaures = ["attributes"] }
+tracing = { version = "0.1", features = ["attributes"] }
 async-trait = "0.1"

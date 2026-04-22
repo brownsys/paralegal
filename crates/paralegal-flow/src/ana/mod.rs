@@ -17,7 +17,6 @@ use crate::{
 use std::{fs::File, io::BufReader, rc::Rc, time::Instant};
 
 use anyhow::Result;
-use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
     source_access::local_or_remote_paths,
     utils::{is_async, type_as_fn, ArgSlice},
@@ -26,6 +25,7 @@ use flowistry_pdg_construction::{
 };
 use inline_judge::{InlineJudgement, K};
 use itertools::Itertools;
+use paralegal_flowistry::mir::FlowistryInput;
 
 use rustc_hash::FxHashSet;
 use rustc_hir::{

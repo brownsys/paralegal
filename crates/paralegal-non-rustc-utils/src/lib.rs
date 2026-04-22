@@ -277,3 +277,17 @@ pub fn prepare_analyzer_command(paralegal_root: &Path) -> anyhow::Result<Command
         bin: cargo_paralegal_flow_path,
     })
 }
+
+pub fn linux_workaround_for_llvm_lib() {
+    // Original linux-specific code
+    if cfg!(target_os = "linux") {
+        let rustup_home = std::env::var("RUSTUP_HOME").unwrap();
+        let rustup_tc = std::env::var("RUSTUP_TOOLCHAIN").unwrap();
+        let mut rustup_lib: PathBuf = [&rustup_home, "toolchains", &rustup_tc]
+            .into_iter()
+            .collect();
+
+        rustup_lib.push("lib");
+        println!("cargo:rustc-link-search=native={}", rustup_lib.display());
+    }
+}

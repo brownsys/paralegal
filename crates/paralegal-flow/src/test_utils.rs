@@ -276,7 +276,7 @@ impl InlineTestBuilder {
 
         let _ = args.setup_logging();
 
-        rustc_utils::test_utils::CompileBuilder::new(&self.input)
+        paralegal_rustc_utils::test_utils::CompileBuilder::new(&self.input)
             .with_args(EXTRA_RUSTC_ARGS.iter().copied().map(ToOwned::to_owned))
             .with_args(["-Ztrack-diagnostics".to_string()])
             .compile(move |result| {

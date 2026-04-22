@@ -11,9 +11,9 @@ use rustc_middle::{
 use rustc_span::source_map::Spanned;
 use rustc_target::abi::FieldIdx;
 
-use rustc_utils::{AdtDefExt, OperandExt, PlaceExt};
+use paralegal_rustc_utils::{AdtDefExt, OperandExt, PlaceExt};
 
-use flowistry::mir::{placeinfo::PlaceInfo, utils::AsyncHack};
+use paralegal_flowistry::mir::{placeinfo::PlaceInfo, utils::AsyncHack};
 
 use crate::{constants::PlaceOrConst, utils::ty_resolve, Use};
 
