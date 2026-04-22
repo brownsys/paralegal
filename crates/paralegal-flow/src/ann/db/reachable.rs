@@ -1,13 +1,13 @@
 use crate::{
+    HashSet,
     ann::side_effect_detection,
     utils::{func_of_term, type_for_constructor},
-    HashSet,
 };
-use paralegal_flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
     determine_async,
-    utils::{handle_shims, try_monomorphize, try_resolve_function, ShimResult},
+    utils::{ShimResult, handle_shims, try_monomorphize, try_resolve_function},
 };
+use paralegal_flowistry::mir::FlowistryInput;
 use paralegal_spdg::Identifier;
 
 use rustc_data_structures::fx::FxHashSet;
@@ -105,7 +105,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                     res,
                     self.tcx(),
                     param_env,
-                    body.body(),
+                    body.body().clone(),
                     self.tcx().def_span(res.def_id()),
                 )
                 .unwrap(),

@@ -1,11 +1,14 @@
 use std::{borrow::Cow, collections::HashSet, fmt::Display, hash::Hash, iter};
 
 use either::Either;
-use paralegal_flowistry::mir::{placeinfo::PlaceInfo, FlowistryInput};
 use flowistry_pdg::RichLocation;
 use itertools::Itertools;
 use log::{debug, log_enabled, trace, Level};
+use paralegal_flowistry::mir::{placeinfo::PlaceInfo, FlowistryInput};
 
+use paralegal_rustc_utils::{
+    mir::control_dependencies::ControlDependencies, AdtDefExt, BodyExt, PlaceExt,
+};
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_errors::DiagCtxtHandle;
 use rustc_hir::def_id::DefId;
@@ -23,7 +26,6 @@ use rustc_middle::{
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 use rustc_span::{DesugaringKind, Span, Spanned};
-use paralegal_rustc_utils::{mir::control_dependencies::ControlDependencies, AdtDefExt, BodyExt, PlaceExt};
 
 use crate::{
     analysis::global::Use,
@@ -228,17 +230,17 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
         // Normalize the place to remove regions and other things that are not
         // needed for the PDG.
         self.tcx()
-                .try_instantiate_and_normalize_erasing_regions(
-                    self.generic_args(),
-                    self.param_env,
-                    EarlyBinder::bind(place),
+            .try_instantiate_and_normalize_erasing_regions(
+                self.generic_args(),
+                self.param_env,
+                EarlyBinder::bind(place),
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to normalize place {place:?} in {}: {err:?}",
+                    self.tcx().def_path_str(self.def_id)
                 )
-                .unwrap_or_else(|err| {
-                    panic!(
-                        "Failed to normalize place {place:?} in {}: {err:?}",
-                        self.tcx().def_path_str(self.def_id)
-                    )
-                })
+            })
     }
 
     pub(crate) fn tcx(&self) -> TyCtxt<'tcx> {
@@ -388,7 +390,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
             root,
             tcx,
             param_env,
-            body_with_facts.body(),
+            body_with_facts.body().clone(),
             tcx.def_span(def_id),
         )
         .unwrap();
@@ -458,9 +460,13 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
         let Some(mut resolved_fn) =
             utils::try_resolve_function(self.tcx(), called_def_id, typing_env, generic_args)
         else {
-            let dynamics = generic_args.iter()
+            let dynamics = generic_args
+                .iter()
                 .flat_map(|g| g.walk())
-                .filter(|arg| arg.as_type().is_some_and(|t| matches!(t.kind(), TyKind::Dynamic(..))))
+                .filter(|arg| {
+                    arg.as_type()
+                        .is_some_and(|t| matches!(t.kind(), TyKind::Dynamic(..)))
+                })
                 .collect::<Box<[_]>>();
             let mut msg = format!(
                 "instance resolution for call to function {} failed.",
@@ -737,7 +743,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
             self.k.clone(),
         );
 
-            df::visit_reachable_results(&self.mono_body, &analysis, &mut final_state);
+        df::visit_reachable_results(&self.mono_body, &analysis, &mut final_state);
 
         let all_returns = self
             .mono_body

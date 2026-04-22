@@ -1,16 +1,15 @@
 use super::{path_for_item, src_loc_for_span};
 use crate::{
+    HashMap, HashSet, MarkerCtx, Pctx,
     ann::{db::AutoMarkers, side_effect_detection},
     desc::*,
     utils::*,
-    HashMap, HashSet, MarkerCtx, Pctx,
 };
 use flowistry_pdg::rustc_portable::Location;
 use flowistry_pdg_construction::{
-    determine_async,
-    utils::{handle_shims, try_monomorphize, try_resolve_function, type_as_fn, ShimResult},
     DepEdge, DepEdgeKind, DepNode, DepNodeKind, MemoPdgConstructor, OneHopLocation, PartialGraph,
-    Use, VisitDriver, Visitor,
+    Use, VisitDriver, Visitor, determine_async,
+    utils::{ShimResult, handle_shims, try_monomorphize, try_resolve_function, type_as_fn},
 };
 use paralegal_spdg::Node;
 
@@ -288,7 +287,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             resolution,
             tcx,
             TypingEnv::fully_monomorphized(),
-            &raw_ty,
+            raw_ty,
             span,
         )
         .unwrap();
@@ -410,8 +409,14 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             term.kind
         );
         let param_env = TypingEnv::post_analysis(self.tcx(), function.def_id());
-        let func =
-            try_monomorphize(function, self.tcx(), param_env, func, term.source_info.span).unwrap();
+        let func = try_monomorphize(
+            function,
+            self.tcx(),
+            param_env,
+            func.clone(),
+            term.source_info.span,
+        )
+        .unwrap();
         let Some(funcc) = func.constant() else {
             self.pctx.maybe_span_err(
                 weight.span,
@@ -573,7 +578,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     instance,
                     tcx,
                     TypingEnv::fully_monomorphized(),
-                    &decl.ty,
+                    decl.ty,
                     decl.source_info.span,
                 )
                 .unwrap(),

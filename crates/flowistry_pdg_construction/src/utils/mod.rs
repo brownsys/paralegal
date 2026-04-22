@@ -5,6 +5,7 @@ use either::Either;
 use itertools::Itertools;
 use log::trace;
 
+use paralegal_rustc_utils::{BodyExt, PlaceExt};
 use rustc_borrowck::consumers::PlaceConflictBias;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::{self as hir, def_id::DefId, Defaultness};
@@ -19,8 +20,9 @@ use rustc_middle::{
     },
 };
 use rustc_span::{ErrorGuaranteed, Span, Spanned};
-use rustc_type_ir::{AliasTyKind, PredicatePolarity, RegionKind, TypeFoldable};
-use paralegal_rustc_utils::{BodyExt, PlaceExt};
+use rustc_type_ir::{
+    AliasTyKind, PredicatePolarity, RegionKind, RegionVid, TypeFoldable, TypeFolder,
+};
 
 mod two_level_cache;
 pub use two_level_cache::TwoLevelCache;
@@ -74,28 +76,66 @@ pub fn is_virtual(tcx: TyCtxt, function: DefId) -> bool {
     })
 }
 
+struct VarDetector<'tcx> {
+    detected: Vec<RegionVid>,
+    cx: TyCtxt<'tcx>,
+}
+
+impl<'tcx> VarDetector<'tcx> {
+    fn new(tcx: TyCtxt<'tcx>) -> Self {
+        Self {
+            detected: vec![],
+            cx: tcx,
+        }
+    }
+}
+
+impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for VarDetector<'tcx> {
+    fn visit_region(&mut self, r: Region<'tcx>) -> () {
+        if let RegionKind::ReVar(v) = *r.0 {
+            self.detected.push(v);
+        }
+    }
+}
+
+struct VarEraser<'tcx> {
+    tcx: TyCtxt<'tcx>,
+}
+
+impl<'tcx> TypeFolder<TyCtxt<'tcx>> for VarEraser<'tcx> {
+    fn cx(&self) -> TyCtxt<'tcx> {
+        self.tcx
+    }
+
+    fn fold_region(&mut self, mut r: Region<'tcx>) -> Region<'tcx> {
+        if r.is_var() {
+            r = Region::new_from_kind(self.tcx, RegionKind::ReErased)
+        }
+        r
+    }
+}
+
 /// The "canonical" way we monomorphize
 pub fn try_monomorphize<'tcx, 'a, T>(
     inst: Instance<'tcx>,
     tcx: TyCtxt<'tcx>,
     typing_env: TypingEnv<'tcx>,
-    t: &'a T,
+    t: T,
     span: Span,
 ) -> Result<T, ErrorGuaranteed>
 where
-    T: TypeFoldable<TyCtxt<'tcx>> + Clone + std::fmt::Debug,
+    T: TypeFoldable<TyCtxt<'tcx>> + std::fmt::Debug,
 {
-    inst.try_instantiate_mir_and_normalize_erasing_regions(
-        tcx,
-        typing_env,
-        EarlyBinder::bind(t.clone()),
-    )
-    .map_err(|e| {
-        tcx.dcx().span_err(
-            span,
-            format!("failed to monomorphize with instance {inst:?} due to {e:?}"),
-        )
-    })
+    let mut eraser = VarEraser { tcx };
+    let t = t.fold_with(&mut eraser);
+
+    inst.try_instantiate_mir_and_normalize_erasing_regions(tcx, typing_env, EarlyBinder::bind(t))
+        .map_err(|e| {
+            tcx.dcx().span_err(
+                span,
+                format!("failed to monomorphize with instance {inst:?} due to {e:?}"),
+            )
+        })
 }
 
 pub enum TyAsFnResult<'tcx> {
@@ -291,9 +331,10 @@ pub fn manufacture_substs_for(
         .map(|gidx| {
             let param = generics.param_at(gidx, tcx);
             match param.kind {
-                GenericParamDefKind::Lifetime => {
-                    Ok(GenericArg::from(Region::new_from_kind(tcx, RegionKind::ReErased)))
-                }
+                GenericParamDefKind::Lifetime => Ok(GenericArg::from(Region::new_from_kind(
+                    tcx,
+                    RegionKind::ReErased,
+                ))),
                 GenericParamDefKind::Const { .. } => Err(tcx.dcx().span_err(
                     tcx.def_span(param.def_id),
                     "Cannot use constants as generic parameters in controllers",
