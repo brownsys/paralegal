@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["PROPAGATE_STABILITY"],"fn":["merge_stability","propagate_stability"],"struct":["StabilityPropagator"]};

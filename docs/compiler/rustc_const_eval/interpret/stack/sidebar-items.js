@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["LocalValue","StackPopCleanup"],"struct":["Frame","FrameInfo","LocalState","SpanGuard","StackPopInfo"]};

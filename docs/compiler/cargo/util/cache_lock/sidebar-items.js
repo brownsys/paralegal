@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CACHE_LOCK_NAME","DOWNLOAD_EXCLUSIVE_DESCR","MUTATE_EXCLUSIVE_DESCR","MUTATE_NAME","SHARED_DESCR"],"enum":["BlockingMode","CacheLockMode","LockingResult"],"fn":["maybe_readonly"],"struct":["CacheLock","CacheLocker","CacheState","RecursiveLock"]};

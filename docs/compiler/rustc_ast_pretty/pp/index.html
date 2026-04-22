@@ -1,0 +1,106 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="This pretty-printer is a direct reimplementation of Philip Karlton’s Mesa pretty-printer, as described in the appendix to Derek C. Oppen, “Pretty Printing” (1979), Stanford Computer Science Department STAN-CS-79-770, http://i.stanford.edu/pub/cstr/reports/cs/tr/79/770/CS-TR-79-770.pdf."><title>rustc_ast_pretty::pp - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_ast_pretty" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button><a class="logo-container" href="../../rustc_ast_pretty/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt=""></a></nav><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../rustc_ast_pretty/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt="logo"></a><h2><a href="../../rustc_ast_pretty/index.html">rustc_<wbr>ast_<wbr>pretty</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module pp</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#explanation" title="Explanation">Explanation</a></li></ul><h3><a href="#modules">Module Items</a></h3><ul class="block"><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#constants" title="Constants">Constants</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate rustc_<wbr>ast_<wbr>pretty</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">rustc_ast_pretty</a></span><h1>Module <span>pp</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustc_ast_pretty/pp.rs.html#1-450">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>This pretty-printer is a direct reimplementation of Philip Karlton’s
+Mesa pretty-printer, as described in the appendix to
+Derek C. Oppen, “Pretty Printing” (1979),
+Stanford Computer Science Department STAN-CS-79-770,
+<a href="http://i.stanford.edu/pub/cstr/reports/cs/tr/79/770/CS-TR-79-770.pdf">http://i.stanford.edu/pub/cstr/reports/cs/tr/79/770/CS-TR-79-770.pdf</a>.</p>
+<p>The algorithm’s aim is to break a stream into as few lines as possible
+while respecting the indentation-consistency requirements of the enclosing
+block, and avoiding breaking at silly places on block boundaries, for
+example, between “x” and “)” in “x)”.</p>
+<p>I am implementing this algorithm because it comes with 20 pages of
+documentation explaining its theory, and because it addresses the set of
+concerns I’ve seen other pretty-printers fall down on. Weirdly. Even though
+it’s 32 years old. What can I say?</p>
+<p>Despite some redundancies and quirks in the way it’s implemented in that
+paper, I’ve opted to keep the implementation here as similar as I can,
+changing only what was blatantly wrong, a typo, or sufficiently
+non-idiomatic rust that it really stuck out.</p>
+<p>In particular you’ll see a certain amount of churn related to INTEGER vs.
+CARDINAL in the Mesa implementation. Mesa apparently interconverts the two
+somewhat readily? In any case, I’ve used usize for indices-in-buffers and
+ints for character-sizes-and-indentation-offsets. This respects the need
+for ints to “go negative” while carrying a pending-calculation balance, and
+helps differentiate all the numbers flying around internally (slightly).</p>
+<p>I also inverted the indentation arithmetic used in the print stack, since
+the Mesa implementation (somewhat randomly) stores the offset on the print
+stack in terms of margin-col rather than col itself. I store col.</p>
+<p>I also implemented a small change in the String token, in that I store an
+explicit length for the string. For most tokens this is just the length of
+the accompanying string. But it’s necessary to permit it to differ, for
+encoding things that are supposed to “go on their own line” – certain
+classes of comment and blank-line – where relying on adjacent
+hardbreak-like Break tokens with long blankness indication doesn’t actually
+work. To see why, consider when there is a “thing that should be on its own
+line” between two long blocks, say functions. If you put a hardbreak after
+each function (or before each) and the breaking algorithm decides to break
+there anyways (because the functions themselves are long) you wind up with
+extra blank lines. If you don’t put hardbreaks you can wind up with the
+“thing which should be on its own line” not getting its own line in the
+rare case of “really small functions” or such. This re-occurs with comments
+and explicit blank lines. So in those cases we use a string with a payload
+we want isolated to a line and an explicit length that’s huge, surrounded
+by two zero-length breaks. The algorithm will try its best to fit it on a
+line (which it can’t) and so naturally place the content on its own line to
+avoid combining it with other lines and making matters even worse.</p>
+<h2 id="explanation"><a class="doc-anchor" href="#explanation">§</a>Explanation</h2>
+<p>In case you do not have the paper, here is an explanation of what’s going
+on.</p>
+<p>There is a stream of input tokens flowing through this printer.</p>
+<p>The printer buffers up to 3N tokens inside itself, where N is linewidth.
+Yes, linewidth is chars and tokens are multi-char, but in the worst
+case every token worth buffering is 1 char long, so it’s ok.</p>
+<p>Tokens are String, Break, and Begin/End to delimit blocks.</p>
+<p>Begin tokens can carry an offset, saying “how far to indent when you break
+inside here”, as well as a flag indicating “consistent” or “inconsistent”
+breaking. Consistent breaking means that after the first break, no attempt
+will be made to flow subsequent breaks together onto lines. Inconsistent
+is the opposite. Inconsistent breaking example would be, say:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>foo(hello, there, good, friends)</code></pre></div>
+<p>breaking inconsistently to become</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>foo(hello, there,
+    good, friends);</code></pre></div>
+<p>whereas a consistent breaking would yield:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>foo(hello,
+    there,
+    good,
+    friends);</code></pre></div>
+<p>That is, in the consistent-break blocks we value vertical alignment
+more than the ability to cram stuff onto a line. But in all cases if it
+can make a block a one-liner, it’ll do so.</p>
+<p>Carrying on with high-level logic:</p>
+<p>The buffered tokens go through a ring-buffer, ‘tokens’. The ‘left’ and
+‘right’ indices denote the active portion of the ring buffer as well as
+describing hypothetical points-in-the-infinite-stream at most 3N tokens
+apart (i.e., “not wrapped to ring-buffer boundaries”). The paper will switch
+between using ‘left’ and ‘right’ terms to denote the wrapped-to-ring-buffer
+and point-in-infinite-stream senses freely.</p>
+<p>There is a parallel ring buffer, <code>size</code>, that holds the calculated size of
+each token. Why calculated? Because for Begin/End pairs, the “size”
+includes everything between the pair. That is, the “size” of Begin is
+actually the sum of the sizes of everything between Begin and the paired
+End that follows. Since that is arbitrarily far in the future, <code>size</code> is
+being rewritten regularly while the printer runs; in fact most of the
+machinery is here to work out <code>size</code> entries on the fly (and give up when
+they’re so obviously over-long that “infinity” is a good enough
+approximation for purposes of line breaking).</p>
+<p>The “input side” of the printer is managed as an abstract process called
+SCAN, which uses <code>scan_stack</code>, to manage calculating <code>size</code>. SCAN is, in
+other words, the process of calculating ‘size’ entries.</p>
+<p>The “output side” of the printer is managed by an abstract process called
+PRINT, which uses <code>print_stack</code>, <code>margin</code> and <code>space</code> to figure out what to
+do with each token/size pair it consumes as it goes. It’s trying to consume
+the entire buffered window, but can’t output anything until the size is &gt;=
+0 (sizes are set to negative while they’re pending calculation).</p>
+<p>So SCAN takes input and buffers tokens and pending calculations, while
+PRINT gobbles up completed calculations and tokens from the buffer. The
+theory is that the two can never get more than 3N tokens apart, because
+once there’s “obviously” too much data to fit on a line, in a size
+calculation, SCAN will write “infinity” to the size and let PRINT consume
+it.</p>
+<p>In this implementation (following the paper, again) the SCAN process is the
+methods called <code>Printer::scan_*</code>, and the ‘PRINT’ process is the
+method called <code>Printer::print</code>.</p>
+</div></details><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="mod" href="convenience/index.html" title="mod rustc_ast_pretty::pp::convenience">convenience</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="mod" href="ring/index.html" title="mod rustc_ast_pretty::pp::ring">ring</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.BeginToken.html" title="struct rustc_ast_pretty::pp::BeginToken">Begin<wbr>Token</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="struct" href="struct.BreakToken.html" title="struct rustc_ast_pretty::pp::BreakToken">Break<wbr>Token</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="struct" href="struct.BufEntry.html" title="struct rustc_ast_pretty::pp::BufEntry">BufEntry</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="struct" href="struct.Printer.html" title="struct rustc_ast_pretty::pp::Printer">Printer</a></div></li></ul><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="enum" href="enum.Breaks.html" title="enum rustc_ast_pretty::pp::Breaks">Breaks</a></div><div class="desc docblock-short">How to break. Described in more detail in the module docs.</div></li><li><div class="item-name"><a class="enum" href="enum.IndentStyle.html" title="enum rustc_ast_pretty::pp::IndentStyle">Indent<wbr>Style</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="enum" href="enum.PrintFrame.html" title="enum rustc_ast_pretty::pp::PrintFrame">Print<wbr>Frame</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="enum" href="enum.Token.html" title="enum rustc_ast_pretty::pp::Token">Token</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="constant" href="constant.MARGIN.html" title="constant rustc_ast_pretty::pp::MARGIN">MARGIN</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Target line width.</div></li><li><div class="item-name"><a class="constant" href="constant.MIN_SPACE.html" title="constant rustc_ast_pretty::pp::MIN_SPACE">MIN_<wbr>SPACE</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Every line is allowed at least this much space, even if highly indented.</div></li><li><div class="item-name"><a class="constant" href="constant.SIZE_INFINITY.html" title="constant rustc_ast_pretty::pp::SIZE_INFINITY">SIZE_<wbr>INFINITY</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul></section></div></main></body></html>

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["LocalsStateAtExit","TwoPhaseActivation"],"struct":["BorrowData","BorrowSet","GatherBorrows"]};

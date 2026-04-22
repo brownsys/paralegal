@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ImplTraitParam"],"fn":["create_config","new_dcx","run_global_ctxt"],"struct":["DocContext","EmitIgnoredResolutionErrors","Options","UnstableOptions"]};

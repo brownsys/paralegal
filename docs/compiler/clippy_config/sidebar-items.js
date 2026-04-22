@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["get_configuration_metadata","lookup_conf_file","sanitize_explanation"],"mod":["conf","metadata","types"],"struct":["ClippyConfiguration","Conf"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check_tail_calls","op_trait_as_method_name"],"struct":["TailCallCkVisitor"]};

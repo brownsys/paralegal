@@ -1,0 +1,48 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Checks the method’s receiver (the `self` argument) can be dispatched on when `Self` is a trait object. We require that `DispatchableFromDyn` be implemented for the receiver type in the following way:"><title>receiver_is_dispatchable in rustc_trait_selection::traits::dyn_compatibility - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustc_trait_selection" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc fn"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button><a class="logo-container" href="../../../rustc_trait_selection/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-9a9549ea.svg" alt=""></a></nav><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../../rustc_trait_selection/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-9a9549ea.svg" alt="logo"></a><h2><a href="../../../rustc_trait_selection/index.html">rustc_<wbr>trait_<wbr>selection</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><div id="rustdoc-modnav"><h2><a href="index.html">In rustc_<wbr>trait_<wbr>selection::<wbr>traits::<wbr>dyn_<wbr>compatibility</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../index.html">rustc_trait_selection</a>::<wbr><a href="../index.html">traits</a>::<wbr><a href="index.html">dyn_compatibility</a></span><h1>Function <span class="fn">receiver_is_dispatchable</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/rustc_trait_selection/traits/dyn_compatibility.rs.html#661-721">Source</a> </span></div><pre class="rust item-decl"><code>fn receiver_is_dispatchable&lt;'tcx&gt;(
+    tcx: <a class="struct" href="../../../rustc_middle/ty/context/struct.TyCtxt.html" title="struct rustc_middle::ty::context::TyCtxt">TyCtxt</a>&lt;'tcx&gt;,
+    method: <a class="struct" href="../../../rustc_middle/ty/assoc/struct.AssocItem.html" title="struct rustc_middle::ty::assoc::AssocItem">AssocItem</a>,
+    receiver_ty: <a class="struct" href="../../../rustc_middle/ty/struct.Ty.html" title="struct rustc_middle::ty::Ty">Ty</a>&lt;'tcx&gt;,
+) -&gt; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a></code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Checks the method’s receiver (the <code>self</code> argument) can be dispatched on when <code>Self</code> is a
+trait object. We require that <code>DispatchableFromDyn</code> be implemented for the receiver type
+in the following way:</p>
+<ul>
+<li>
+<p>let <code>Receiver</code> be the type of the <code>self</code> argument, i.e <code>Self</code>, <code>&amp;Self</code>, <code>Rc&lt;Self&gt;</code>,</p>
+</li>
+<li>
+<p>require the following bound:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>Receiver[<span class="self">Self </span>=&gt; T]: DispatchFromDyn&lt;Receiver[<span class="self">Self </span>=&gt; <span class="kw">dyn </span>Trait]&gt;</code></pre></div>
+<p>where <code>Foo[X =&gt; Y]</code> means “the same type as <code>Foo</code>, but with <code>X</code> replaced with <code>Y</code>”
+(instantiation notation).</p>
+</li>
+</ul>
+<p>Some examples of receiver types and their required obligation:</p>
+<ul>
+<li><code>&amp;'a mut self</code> requires <code>&amp;'a mut Self: DispatchFromDyn&lt;&amp;'a mut dyn Trait&gt;</code>,</li>
+<li><code>self: Rc&lt;Self&gt;</code> requires <code>Rc&lt;Self&gt;: DispatchFromDyn&lt;Rc&lt;dyn Trait&gt;&gt;</code>,</li>
+<li><code>self: Pin&lt;Box&lt;Self&gt;&gt;</code> requires <code>Pin&lt;Box&lt;Self&gt;&gt;: DispatchFromDyn&lt;Pin&lt;Box&lt;dyn Trait&gt;&gt;&gt;</code>.</li>
+</ul>
+<p>The only case where the receiver is not dispatchable, but is still a valid receiver
+type (just not object-safe), is when there is more than one level of pointer indirection.
+E.g., <code>self: &amp;&amp;Self</code>, <code>self: &amp;Rc&lt;Self&gt;</code>, <code>self: Box&lt;Box&lt;Self&gt;&gt;</code>. In these cases, there
+is no way, or at least no inexpensive way, to coerce the receiver from the version where
+<code>Self = dyn Trait</code> to the version where <code>Self = T</code>, where <code>T</code> is the unknown erased type
+contained by the trait object, because the object that needs to be coerced is behind
+a pointer.</p>
+<p>In practice, we cannot use <code>dyn Trait</code> explicitly in the obligation because it would result in
+a new check that <code>Trait</code> is dyn-compatible, creating a cycle (until dyn_compatible_for_dispatch
+is stabilized, see tracking issue <a href="https://github.com/rust-lang/rust/issues/43561">https://github.com/rust-lang/rust/issues/43561</a>).
+Instead, we fudge a little by introducing a new type parameter <code>U</code> such that
+<code>Self: Unsize&lt;U&gt;</code> and <code>U: Trait + ?Sized</code>, and use <code>U</code> in place of <code>dyn Trait</code>.
+Written as a chalk-style query:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>forall (U: Trait + <span class="question-mark">?</span>Sized) {
+    <span class="kw">if </span>(<span class="self">Self</span>: Unsize&lt;U&gt;) {
+        Receiver: DispatchFromDyn&lt;Receiver[<span class="self">Self </span>=&gt; U]&gt;
+    }
+}</code></pre></div>
+<p>for <code>self: &amp;'a mut Self</code>, this means <code>&amp;'a mut Self: DispatchFromDyn&lt;&amp;'a mut U&gt;</code>
+for <code>self: Rc&lt;Self&gt;</code>, this means <code>Rc&lt;Self&gt;: DispatchFromDyn&lt;Rc&lt;U&gt;&gt;</code>
+for <code>self: Pin&lt;Box&lt;Self&gt;&gt;</code>, this means <code>Pin&lt;Box&lt;Self&gt;&gt;: DispatchFromDyn&lt;Pin&lt;Box&lt;U&gt;&gt;&gt;</code></p>
+</div></details></section></div></main></body></html>

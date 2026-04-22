@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["conditional","for_each","gclause","l1_clause","l1_clauses","l2_clause","l2_clauses","l3_clause","l3_clauses","l4_clause","l4_clauses","only_via","there_is"]};

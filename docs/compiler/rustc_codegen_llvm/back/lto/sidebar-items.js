@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["THIN_LTO_KEYS_INCR_COMP_FILE_NAME"],"fn":["crate_type_allows_lto","fat_lto","get_bitcode_slice_from_object_data","module_name_to_str","optimize_thin_module","parse_module","prepare_lto","prepare_thin","run_fat","run_pass_manager","run_thin","thin_lto"],"struct":["Linker","ModuleBuffer","ThinBuffer","ThinData","ThinLTOKeysMap"]};

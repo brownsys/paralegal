@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ALLOWED_INTRINSICS"],"fn":["allowed_intrinsics","analyze_body","analyze_statement","contains_mut_ref","is_allowed_as_clone_unit_instance"],"struct":["BodyAnalyzer"]};

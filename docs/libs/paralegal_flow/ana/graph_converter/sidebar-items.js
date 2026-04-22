@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["assemble_pdg","dep_edge_kind_to_edge_kind","globalize_edge","globalize_node"],"struct":["GNode","GraphAssembler"]};

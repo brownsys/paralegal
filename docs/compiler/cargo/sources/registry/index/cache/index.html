@@ -1,0 +1,55 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="A layer of on-disk index cache for performance."><title>cargo::sources::registry::index::cache - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../../../" data-static-root-path="../../../../../static.files/" data-current-crate="cargo" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../../../static.files/storage-59e33391.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../../../cargo/index.html">cargo</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module cache</a></h2><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#constants" title="Constants">Constants</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In cargo::<wbr>sources::<wbr>registry::<wbr>index</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../../../index.html">cargo</a>::<wbr><a href="../../../index.html">sources</a>::<wbr><a href="../../index.html">registry</a>::<wbr><a href="../index.html">index</a></span><h1>Module <span>cache</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../../../src/cargo/sources/registry/index/cache.rs.html#1-281">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>A layer of on-disk index cache for performance.</p>
+<p>One important aspect of the index is that we want to optimize the “happy
+path” as much as possible. Whenever you type <code>cargo build</code> Cargo will
+<em>always</em> reparse the registry and learn about dependency information. This
+is done because Cargo needs to learn about the upstream crates.io crates
+that you’re using and ensure that the preexisting <code>Cargo.lock</code> still matches
+the current state of the world.</p>
+<p>Consequently, Cargo “null builds” (the index that Cargo adds to each build
+itself) need to be fast when accessing the index. The primary performance
+optimization here is to avoid parsing JSON blobs from the registry if we
+don’t need them. Most secondary optimizations are centered around removing
+allocations and such, but avoiding parsing JSON is the #1 optimization.</p>
+<p>When we get queries from the resolver we’re given a <a href="../../../../core/dependency/struct.Dependency.html" title="struct cargo::core::dependency::Dependency"><code>Dependency</code></a>. This
+dependency in turn has a version requirement, and with lock files that
+already exist these version requirements are exact version requirements
+<code>=a.b.c</code>. This means that we in theory only need to parse one line of JSON
+per query in the registry, the one that matches version <code>a.b.c</code>.</p>
+<p>The crates.io index, however, is not amenable to this form of query. Instead
+the crates.io index simply is a file where each line is a JSON blob, aka
+<a href="../struct.IndexPackage.html" title="struct cargo::sources::registry::index::IndexPackage"><code>IndexPackage</code></a>. To learn about the versions in each JSON blob we would
+need to parse the JSON via <a href="../enum.IndexSummary.html#method.parse" title="associated function cargo::sources::registry::index::IndexSummary::parse"><code>IndexSummary::parse</code></a>, defeating the purpose
+of trying to parse as little as possible.</p>
+<blockquote>
+<p>Note that as a small aside even <em>loading</em> the JSON from the registry is
+actually pretty slow. For crates.io and <a href="../../remote/struct.RemoteRegistry.html" title="struct cargo::sources::registry::remote::RemoteRegistry"><code>RemoteRegistry</code></a> we don’t
+actually check out the git index on disk because that takes quite some
+time and is quite large. Instead we use <code>libgit2</code> to read the JSON from
+the raw git objects. This in turn can be slow (aka show up high in
+profiles) because libgit2 has to do deflate decompression and such.</p>
+</blockquote>
+<p>To solve all these issues a strategy is employed here where Cargo basically
+creates an index into the index. The first time a package is queried about
+(first time being for an entire computer) Cargo will load the contents
+(slowly via libgit2) from the registry. It will then (slowly) parse every
+single line to learn about its versions. Afterwards, however, Cargo will
+emit a new file (a cache, representing as <a href="struct.SummariesCache.html" title="struct cargo::sources::registry::index::cache::SummariesCache"><code>SummariesCache</code></a>) which is
+amenable for speedily parsing in future invocations.</p>
+<p>This cache file is currently organized by basically having the semver
+version extracted from each JSON blob. That way Cargo can quickly and
+easily parse all versions contained and which JSON blob they’re associated
+with. The JSON blob then doesn’t actually need to get parsed unless the
+version is parsed.</p>
+<p>Altogether the initial measurements of this shows a massive improvement for
+Cargo null build performance. It’s expected that the improvements earned
+here will continue to grow over time in the sense that the previous
+implementation (parse all lines each time) actually continues to slow down
+over time as new versions of a crate are published. In any case when first
+implemented a null build of Cargo itself would parse 3700 JSON blobs from
+the registry and load 150 blobs from git. Afterwards it parses 150 JSON
+blobs and loads 0 files git. Removing 200ms or more from Cargo’s startup
+time is certainly nothing to sneeze at!</p>
+<p>Note that this is just a high-level overview, there’s of course lots of
+details like invalidating caches and whatnot which are handled below, but
+hopefully those are more obvious inline in the code itself.</p>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.CacheManager.html" title="struct cargo::sources::registry::index::cache::CacheManager">Cache<wbr>Manager</a></div><div class="desc docblock-short">Manages the on-disk index caches.</div></li><li><div class="item-name"><a class="struct" href="struct.SummariesCache.html" title="struct cargo::sources::registry::index::cache::SummariesCache">Summaries<wbr>Cache</a></div><div class="desc docblock-short">A representation of the cache on disk that Cargo maintains of summaries.</div></li></ul><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="constant" href="constant.CURRENT_CACHE_VERSION.html" title="constant cargo::sources::registry::index::cache::CURRENT_CACHE_VERSION">CURRENT_<wbr>CACHE_<wbr>VERSION</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">The current version of <a href="struct.SummariesCache.html" title="struct cargo::sources::registry::index::cache::SummariesCache"><code>SummariesCache</code></a>.</div></li></ul></section></div></main></body></html>

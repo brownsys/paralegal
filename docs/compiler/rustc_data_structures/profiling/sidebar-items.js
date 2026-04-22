@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["EVENT_FILTERS_BY_NAME"],"enum":["TimePassesFormat"],"fn":["duration_to_secs_str","get_resident_set_size","get_thread_id","print_time_passes_entry"],"struct":["EventArgRecorder","EventFilter","EventId","JsonTimePassesEntry","QueryInvocationId","SelfProfiler","SelfProfilerRef","TimingGuard","VerboseInfo","VerboseTimingGuard"]};

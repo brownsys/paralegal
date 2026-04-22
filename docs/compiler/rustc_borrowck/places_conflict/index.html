@@ -1,0 +1,45 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="The borrowck rules for proving disjointness are applied from the “root” of the borrow forwards, iterating over “similar” projections in lockstep until we can prove overlap one way or another. Essentially, we treat `Overlap` as a monoid and report a conflict if the product ends up not being `Disjoint`."><title>rustc_borrowck::places_conflict - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_borrowck" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button><a class="logo-container" href="../../rustc_borrowck/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt=""></a></nav><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../rustc_borrowck/index.html"><img class="rust-logo" src="../../static.files/rust-logo-9a9549ea.svg" alt="logo"></a><h2><a href="../../rustc_borrowck/index.html">rustc_<wbr>borrowck</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module places_<wbr>conflict</a></h2><h3><a href="#enums">Module Items</a></h3><ul class="block"><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate rustc_<wbr>borrowck</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">rustc_borrowck</a></span><h1>Module <span>places_conflict</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustc_borrowck/places_conflict.rs.html#1-523">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The borrowck rules for proving disjointness are applied from the “root” of the
+borrow forwards, iterating over “similar” projections in lockstep until
+we can prove overlap one way or another. Essentially, we treat <code>Overlap</code> as
+a monoid and report a conflict if the product ends up not being <code>Disjoint</code>.</p>
+<p>On each step, if we didn’t run out of borrow or place, we know that our elements
+have the same type, and that they only overlap if they are the identical.</p>
+<p>For example, if we are comparing these:</p>
+<div class="example-wrap"><pre class="language-text"><code>BORROW:  (*x1[2].y).z.a
+ACCESS:  (*x1[i].y).w.b</code></pre></div>
+<p>Then our steps are:</p>
+<div class="example-wrap"><pre class="language-text"><code>      x1         |   x1          -- places are the same
+      x1[2]      |   x1[i]       -- equal or disjoint (disjoint if indexes differ)
+      x1[2].y    |   x1[i].y     -- equal or disjoint
+     *x1[2].y    |  *x1[i].y     -- equal or disjoint
+    (*x1[2].y).z | (*x1[i].y).w  -- we are disjoint and don&#39;t need to check more!</code></pre></div>
+<p>Because <code>zip</code> does potentially bad things to the iterator inside, this loop
+also handles the case where the access might be a <em>prefix</em> of the borrow, e.g.</p>
+<div class="example-wrap"><pre class="language-text"><code>BORROW:  (*x1[2].y).z.a
+ACCESS:  x1[i].y</code></pre></div>
+<p>Then our steps are:</p>
+<div class="example-wrap"><pre class="language-text"><code>      x1         |   x1          -- places are the same
+      x1[2]      |   x1[i]       -- equal or disjoint (disjoint if indexes differ)
+      x1[2].y    |   x1[i].y     -- equal or disjoint</code></pre></div>
+<p>– here we run out of access - the borrow can access a part of it. If this
+is a full deep access, then we <em>know</em> the borrow conflicts with it. However,
+if the access is shallow, then we can proceed:</p>
+<div class="example-wrap"><pre class="language-text"><code>      x1[2].y    | (*x1[i].y)    -- a deref! the access can&#39;t get past this, so we
+                                    are disjoint</code></pre></div>
+<p>Our invariant is, that at each step of the iteration:</p>
+<ul>
+<li>If we didn’t run out of access to match, our borrow and access are comparable
+and either equal or disjoint.</li>
+<li>If we did run out of access, the borrow can access a part of it.</li>
+</ul>
+</div></details><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="enum" href="enum.PlaceConflictBias.html" title="enum rustc_borrowck::places_conflict::PlaceConflictBias">Place<wbr>Conflict<wbr>Bias</a></div><div class="desc docblock-short">When checking if a place conflicts with another place, this enum is used to influence decisions
+where a place might be equal or disjoint with another place, such as if <code>a[i] == a[j]</code>.
+<code>PlaceConflictBias::Overlap</code> would bias toward assuming that <code>i</code> might equal <code>j</code> and that these
+places overlap. <code>PlaceConflictBias::NoOverlap</code> assumes that for the purposes of the predicate
+being run in the calling context, the conservative choice is to assume the compared indices
+are disjoint (and therefore, do not overlap).</div></li></ul><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.borrow_conflicts_with_place.html" title="fn rustc_borrowck::places_conflict::borrow_conflicts_with_place">borrow_<wbr>conflicts_<wbr>with_<wbr>place</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Checks whether the <code>borrow_place</code> conflicts with the <code>access_place</code> given a borrow kind and
+access depth. The <code>bias</code> parameter is used to determine how the unknowable (comparing runtime
+array indices, for example) should be interpreted - this depends on what the caller wants in
+order to make the conservative choice and preserve soundness.</div></li><li><div class="item-name"><a class="fn" href="fn.place_components_conflict.html" title="fn rustc_borrowck::places_conflict::place_components_conflict">place_<wbr>components_<wbr>conflict</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.place_projection_conflict.html" title="fn rustc_borrowck::places_conflict::place_projection_conflict">place_<wbr>projection_<wbr>conflict</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.places_conflict.html" title="fn rustc_borrowck::places_conflict::places_conflict">places_<wbr>conflict</a></div><div class="desc docblock-short">Helper function for checking if places conflict with a mutable borrow and deep access depth.
+This is used to check for places conflicting outside of the borrow checking code (such as in
+dataflow).</div></li></ul></section></div></main></body></html>

@@ -1,0 +1,32 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Tidy check to enforce rules about platform-specific code in std."><title>tidy::pal - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="tidy" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../tidy/index.html">tidy</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module pal</a></h2><h3><a href="#constants">Module Items</a></h3><ul class="block"><li><a href="#constants" title="Constants">Constants</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate tidy</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">tidy</a></span><h1>Module <span>pal</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/tidy/pal.rs.html#1-212">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Tidy check to enforce rules about platform-specific code in std.</p>
+<p>This is intended to maintain existing standards of code
+organization in hopes that the standard library will continue to
+be refactored to isolate platform-specific bits, making porting
+easier; where “standard library” roughly means “all the
+dependencies of the std and test crates”.</p>
+<p>This generally means placing restrictions on where <code>cfg(unix)</code>,
+<code>cfg(windows)</code>, <code>cfg(target_os)</code> and <code>cfg(target_env)</code> may appear,
+the basic objective being to isolate platform-specific code to the
+platform-specific <code>std::sys</code> modules, and to the allocation,
+unwinding, and libc crates.</p>
+<p>Following are the basic rules, though there are currently
+exceptions:</p>
+<ul>
+<li>core may not have platform-specific code.</li>
+<li>libpanic_abort may have platform-specific code.</li>
+<li>libpanic_unwind may have platform-specific code.</li>
+<li>libunwind may have platform-specific code.</li>
+<li>other crates in the std facade may not.</li>
+<li>std may have platform-specific code in the following places:
+<ul>
+<li><code>sys/</code></li>
+<li><code>os/</code></li>
+</ul>
+</li>
+</ul>
+<p><code>std/sys_common</code> should <em>not</em> contain platform-specific code.
+Finally, because std contains tests with platform-specific
+<code>ignore</code> attributes, once the parser encounters <code>mod tests</code>,
+platform-specific cfgs are allowed. Not sure yet how to deal with
+this in the long term.</p>
+</div></details><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="constant" href="constant.EXCEPTION_PATHS.html" title="constant tidy::pal::EXCEPTION_PATHS">EXCEPTION_<wbr>PATHS</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.check.html" title="fn tidy::pal::check">check</a></div></li><li><div class="item-name"><a class="fn" href="fn.check_cfgs.html" title="fn tidy::pal::check_cfgs">check_<wbr>cfgs</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.parse_cfgs.html" title="fn tidy::pal::parse_cfgs">parse_<wbr>cfgs</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul></section></div></main></body></html>

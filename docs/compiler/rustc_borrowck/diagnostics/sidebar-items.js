@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["BorrowedContentSource","CallKind","UseSpans"],"mod":["bound_region_errors","conflict_errors","explain_borrow","find_all_local_uses","find_use","move_errors","mutability_errors","opaque_suggestions","outlives_suggestion","region_errors","region_name","var_name"],"struct":["CapturedMessageOpt","DescribePlaceOpt","IncludingTupleField"]};

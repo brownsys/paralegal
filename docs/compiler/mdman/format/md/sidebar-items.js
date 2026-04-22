@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["trim_tags"],"struct":["MdFormatter"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["TestKind"],"fn":["cmd_builds","compile_tests","display_no_run_information","fail_fast_code","no_fail_fast_err","report_test_error","run_benches","run_doc_tests","run_tests","run_unit_tests"],"struct":["TestOptions","UnitTestError"]};

@@ -1,0 +1,1 @@
+searchState.loadedDescShard("rustc_fs_util", 0, "Returns the argument unchanged.\nCalls <code>U::from(self)</code>.\nCopies <code>p</code> into <code>q</code>, preferring to use hard-linking if …")

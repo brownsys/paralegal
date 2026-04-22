@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Applicability"],"struct":["Diagnostic","DiagnosticCode","DiagnosticSpan","DiagnosticSpanLine","DiagnosticSpanMacroExpansion"]};

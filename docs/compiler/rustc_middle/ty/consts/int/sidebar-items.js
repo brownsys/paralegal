@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"macro":["from_scalar_int_for_x","from_x_for_scalar_int"],"struct":["CharTryFromScalarInt","ConstInt","ScalarInt"]};

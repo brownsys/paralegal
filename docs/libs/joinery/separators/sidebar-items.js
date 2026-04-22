@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["Comma","CommaSpace","Dash","Dot","Newline","NoSeparator","Slash","Space","Tab","Underscore"]};

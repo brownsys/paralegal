@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check_fn","check_lang_start_fn","check_panic_info_fn"]};

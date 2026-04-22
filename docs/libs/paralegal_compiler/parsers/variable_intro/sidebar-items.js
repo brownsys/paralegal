@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["nodes","roots","variable_def","variable_intro","variable_marked","variable_source_of","variable_type_marked"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["existing_vcs_repo"],"struct":["FossilRepo","GitRepo","HgRepo","PijulRepo"]};

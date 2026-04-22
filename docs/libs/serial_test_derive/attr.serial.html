@@ -1,0 +1,47 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Allows for the creation of serialised Rust tests"><title>serial in serial_test_derive - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="serial_test_derive" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc attr"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../serial_test_derive/index.html">serial_<wbr>test_<wbr>derive</a><span class="version">2.0.0</span></h2></div><div class="sidebar-elems"><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="index.html">serial_test_derive</a></span><h1>Attribute Macro <span class="attr">serial</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/serial_test_derive/lib.rs.html#66-68">Source</a> </span></div><pre class="rust item-decl"><code>#[serial]</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Allows for the creation of serialised Rust tests</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="attr">#[test]
+#[serial]
+</span><span class="kw">fn </span>test_serial_one() {
+  <span class="comment">// Do things
+</span>}
+
+<span class="attr">#[test]
+#[serial]
+</span><span class="kw">fn </span>test_serial_another() {
+  <span class="comment">// Do things
+</span>}</code></pre></div>
+<p>Multiple tests with the <a href="attr.serial.html" title="attr serial_test_derive::serial">serial</a> attribute are guaranteed to be executed in serial. Ordering
+of the tests is not guaranteed however. If you have other tests that can be run in parallel, but would clash
+if run at the same time as the <a href="attr.serial.html" title="attr serial_test_derive::serial">serial</a> tests, you can use the <a href="attr.parallel.html" title="attr serial_test_derive::parallel">parallel</a> attribute.</p>
+<p>If you want different subsets of tests to be serialised with each
+other, but not depend on other subsets, you can add an argument to <a href="attr.serial.html" title="attr serial_test_derive::serial">serial</a>, and all calls
+with identical arguments will be called in serial. e.g.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="attr">#[test]
+#[serial(something)]
+</span><span class="kw">fn </span>test_serial_one() {
+  <span class="comment">// Do things
+</span>}
+
+<span class="attr">#[test]
+#[serial(something)]
+</span><span class="kw">fn </span>test_serial_another() {
+  <span class="comment">// Do things
+</span>}
+
+<span class="attr">#[test]
+#[serial(other)]
+</span><span class="kw">fn </span>test_serial_third() {
+  <span class="comment">// Do things
+</span>}
+
+<span class="attr">#[test]
+#[serial(other)]
+</span><span class="kw">fn </span>test_serial_fourth() {
+  <span class="comment">// Do things
+</span>}</code></pre></div>
+<p><code>test_serial_one</code> and <code>test_serial_another</code> will be executed in serial, as will <code>test_serial_third</code> and <code>test_serial_fourth</code>
+but neither sequence will be blocked by the other</p>
+<p>Nested serialised tests (i.e. a <a href="attr.serial.html" title="attr serial_test_derive::serial">serial</a> tagged test calling another) are supported</p>
+</div></details></section></div></main></body></html>

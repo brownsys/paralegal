@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["STRIP_ALIASED_NON_LOCAL"],"fn":["strip_aliased_non_local"],"struct":["AliasedNonLocalStripper","NonLocalStripper"]};

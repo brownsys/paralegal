@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEF_PATH","SYMBOL_NAME"],"fn":["report_symbol_names"],"struct":["SymbolNamesTest"]};

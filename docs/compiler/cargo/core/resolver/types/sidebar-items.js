@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ConflictReason","ResolveBehavior","SemverCompatibility"],"struct":["ActivationsKey","DepsFrame","RcVecIter","RemainingDeps","ResolveOpts","ResolverProgress"],"type":["ConflictMap","DepInfo","FeaturesSet"]};

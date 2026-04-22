@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["UnusedDelimsCtx"],"static":["PATH_STATEMENTS","UNUSED_ALLOCATION","UNUSED_BRACES","UNUSED_IMPORT_BRACES","UNUSED_MUST_USE","UNUSED_PARENS","UNUSED_RESULTS"],"struct":["PathStatements","UnusedAllocation","UnusedBraces","UnusedImportBraces","UnusedParens","UnusedResults"],"trait":["UnusedDelimLint"]};

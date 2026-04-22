@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["MaybePackage","QueryKind"],"struct":["SourceMap"],"trait":["Source"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["dyn_trait_in_self","get_vtable","load_vtable"],"struct":["VirtualIndex"]};

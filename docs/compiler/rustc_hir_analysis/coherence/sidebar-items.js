@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check_impl","check_object_overlap","coherent_trait","enforce_empty_impls_for_marker_traits","enforce_trait_manually_implementable","provide"],"mod":["builtin","inherent_impls","inherent_impls_overlap","orphan","unsafety"]};

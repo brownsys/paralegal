@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FILE_MAGIC","HEADER_FORMAT_VERSION"],"fn":["read_file","report_format_mismatch","rustc_version","save_in","write_file_header"]};

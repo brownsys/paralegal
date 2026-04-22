@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["record_var_lifetime","region_scope_tree","resolve_arm","resolve_block","resolve_expr","resolve_local","resolve_pat","resolve_stmt"],"struct":["Context","RegionResolutionVisitor"]};

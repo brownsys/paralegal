@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["create"],"struct":["CreateResult","UniversalRegionRelations","UniversalRegionRelationsBuilder"],"type":["NormalizedInputsAndOutput"]};

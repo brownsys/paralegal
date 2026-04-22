@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["extra_c_flags","extra_cxx_flags"]};

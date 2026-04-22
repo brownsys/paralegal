@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["detect_sysroot_src_path","generate_roots","generate_std_roots","resolve_std","std_crates"]};

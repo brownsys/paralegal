@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"attr":["config_type","nightly_only_test","rustfmt_only_ci_test","stable_only_test"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["INDENT_UNIT"],"enum":["AnnNode","MacHeader"],"fn":["all_whitespace","binop_to_string","doc_comment_to_string","gather_comments","literal_to_string","print_crate","space_between","split_block_comment_into_lines","trim_whitespace_prefix"],"mod":["expr","fixup","item"],"struct":["Comments","NoAnn","State"],"trait":["PpAnn","PrintState"]};

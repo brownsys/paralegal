@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["fmt_diff"],"struct":["DebugDiffWithAdapter","DebugWithAdapter"],"trait":["DebugWithContext"]};

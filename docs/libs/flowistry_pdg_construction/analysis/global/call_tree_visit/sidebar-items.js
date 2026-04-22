@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["with_pushed_stack"],"struct":["VisitDriver"],"trait":["Visitor"]};

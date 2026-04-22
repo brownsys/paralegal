@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["_list_files","discover_gix_repo","first_package","has_manifest","last_modified_file","list_files","list_files_gix","list_files_walk","nested_paths","read_nested_packages","read_packages","walk"],"struct":["PathSource","RecursivePathSource"]};

@@ -1,0 +1,9 @@
+(function() {
+    var implementors = Object.fromEntries([["rustc_abi",[["impl <a class=\"trait\" href=\"rustc_data_structures/stable_hasher/trait.StableOrd.html\" title=\"trait rustc_data_structures::stable_hasher::StableOrd\">StableOrd</a> for <a class=\"struct\" href=\"rustc_abi/struct.Size.html\" title=\"struct rustc_abi::Size\">Size</a>"]]],["rustc_data_structures",[]],["rustc_hir",[["impl <a class=\"trait\" href=\"rustc_data_structures/stable_hasher/trait.StableOrd.html\" title=\"trait rustc_data_structures::stable_hasher::StableOrd\">StableOrd</a> for <a class=\"struct\" href=\"rustc_hir/hir_id/struct.ItemLocalId.html\" title=\"struct rustc_hir::hir_id::ItemLocalId\">ItemLocalId</a>"]]],["rustc_query_system",[["impl <a class=\"trait\" href=\"rustc_data_structures/stable_hasher/trait.StableOrd.html\" title=\"trait rustc_data_structures::stable_hasher::StableOrd\">StableOrd</a> for <a class=\"struct\" href=\"rustc_query_system/dep_graph/dep_node/struct.WorkProductId.html\" title=\"struct rustc_query_system::dep_graph::dep_node::WorkProductId\">WorkProductId</a>"]]],["rustc_session",[["impl <a class=\"trait\" href=\"rustc_data_structures/stable_hasher/trait.StableOrd.html\" title=\"trait rustc_data_structures::stable_hasher::StableOrd\">StableOrd</a> for <a class=\"enum\" href=\"rustc_session/config/enum.OutputType.html\" title=\"enum rustc_session::config::OutputType\">OutputType</a>"]]],["rustc_span",[["impl <a class=\"trait\" href=\"rustc_data_structures/stable_hasher/trait.StableOrd.html\" title=\"trait rustc_data_structures::stable_hasher::StableOrd\">StableOrd</a> for <a class=\"struct\" href=\"rustc_span/def_id/struct.DefPathHash.html\" title=\"struct rustc_span::def_id::DefPathHash\">DefPathHash</a>"]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":57,"fragment_lengths":[289,29,326,384,329,329]}

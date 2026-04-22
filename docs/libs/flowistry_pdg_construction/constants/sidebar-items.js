@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ConstConversionError","PlaceOrConst"],"fn":["constant_from_const","constant_from_const_value"]};

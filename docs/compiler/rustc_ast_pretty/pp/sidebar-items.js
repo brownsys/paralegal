@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MARGIN","MIN_SPACE","SIZE_INFINITY"],"enum":["Breaks","IndentStyle","PrintFrame","Token"],"mod":["convenience","ring"],"struct":["BeginToken","BreakToken","BufEntry","Printer"]};

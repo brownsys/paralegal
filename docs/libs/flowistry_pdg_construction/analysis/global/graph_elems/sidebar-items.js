@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DepEdgeKind","DepNodeKind","Use"],"struct":["DepEdge","DepNode","DepNodePlaceKind","DisplayNodeKind","OneHopLocation"]};

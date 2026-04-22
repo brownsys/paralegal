@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["default_paths_to_vendor"],"struct":["Vendor"]};

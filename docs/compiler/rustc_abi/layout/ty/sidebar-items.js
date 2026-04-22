@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FIRST_VARIANT"],"struct":["FieldIdx","Layout","TyAndLayout","VariantIdx"],"trait":["TyAbiInterface"]};

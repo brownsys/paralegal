@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["pare_down"],"struct":["Edge","Index","TransitiveRelation","TransitiveRelationBuilder"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["analyze_match","expand_or_pat","would_print_as_wildcard"],"mod":["print"],"struct":["RevealedTy","RustcPatCtxt"],"type":["Constructor","ConstructorSet","DeconstructedPat","MatchArm","RedundancyExplanation","Usefulness","UsefulnessReport","WitnessPat"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"static":["MULTIPLE_SUPERTRAIT_UPCASTABLE"],"struct":["MultipleSupertraitUpcastable"]};

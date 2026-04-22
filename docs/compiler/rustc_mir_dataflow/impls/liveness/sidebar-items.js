@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DefUse"],"struct":["MaybeLiveLocals","MaybeTransitiveLiveLocals","TransferFunction","YieldResumeEffect"]};

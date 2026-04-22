@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["fill_cell","fill_row","split_chunks"],"struct":["Table","TextFormatter","TextRenderer"]};

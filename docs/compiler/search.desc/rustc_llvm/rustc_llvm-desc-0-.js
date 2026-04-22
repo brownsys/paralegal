@@ -1,0 +1,1 @@
+searchState.loadedDescShard("rustc_llvm", 0, "Appends the contents of a byte slice to a <code>RustString</code>.\nOpaque type that allows C++ code to write bytes to a …\nUnderlying implementation of <code>RustString</code>.\nReturns the argument unchanged.\nInitialize targets enabled by the build script via …\nCalls <code>U::from(self)</code>.")

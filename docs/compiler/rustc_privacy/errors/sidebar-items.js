@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FieldIsPrivateLabel"],"struct":["FieldIsPrivate","FromPrivateDependencyInPublicInterface","InPublicInterface","ItemIsPrivate","PrivateInterfacesOrBoundsLint","ReportEffectiveVisibility","UnnameableTypesLint","UnnamedItemIsPrivate"]};

@@ -1,0 +1,195 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Mono Item Collection"><title>rustc_monomorphize::collector - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_monomorphize" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../rustc_monomorphize/index.html">rustc_<wbr>monomorphize</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module collector</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#mono-item-collection" title="Mono Item Collection">Mono Item Collection</a><ul><li><a href="#general-algorithm" title="General Algorithm">General Algorithm</a></li><li><a href="#interaction-with-cross-crate-inlining" title="Interaction with Cross-Crate Inlining">Interaction with Cross-Crate Inlining</a></li><li><a href="#eager-and-lazy-collection-strategy" title="Eager and Lazy Collection Strategy">Eager and Lazy Collection Strategy</a></li><li><a href="#collection-time-const-evaluation-and-mentioned-items" title="Collection-time const evaluation and “mentioned” items">Collection-time const evaluation and “mentioned” items</a></li><li><a href="#open-issues" title="Open Issues">Open Issues</a></li></ul></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate rustc_<wbr>monomorphize</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">rustc_monomorphize</a></span><h1>Module <span>collector</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustc_monomorphize/collector.rs.html#1-1646">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><h2 id="mono-item-collection"><a class="doc-anchor" href="#mono-item-collection">§</a>Mono Item Collection</h2>
+<p>This module is responsible for discovering all items that will contribute
+to code generation of the crate. The important part here is that it not only
+needs to find syntax-level items (functions, structs, etc) but also all
+their monomorphized instantiations. Every non-generic, non-const function
+maps to one LLVM artifact. Every generic function can produce
+from zero to N artifacts, depending on the sets of type arguments it
+is instantiated with.
+This also applies to generic items from other crates: A generic definition
+in crate X might produce monomorphizations that are compiled into crate Y.
+We also have to collect these here.</p>
+<p>The following kinds of “mono items” are handled here:</p>
+<ul>
+<li>Functions</li>
+<li>Methods</li>
+<li>Closures</li>
+<li>Statics</li>
+<li>Drop glue</li>
+</ul>
+<p>The following things also result in LLVM artifacts, but are not collected
+here, since we instantiate them locally on demand when needed in a given
+codegen unit:</p>
+<ul>
+<li>Constants</li>
+<li>VTables</li>
+<li>Object Shims</li>
+</ul>
+<p>The main entry point is <code>collect_crate_mono_items</code>, at the bottom of this file.</p>
+<h3 id="general-algorithm"><a class="doc-anchor" href="#general-algorithm">§</a>General Algorithm</h3>
+<p>Let’s define some terms first:</p>
+<ul>
+<li>
+<p>A “mono item” is something that results in a function or global in
+the LLVM IR of a codegen unit. Mono items do not stand on their
+own, they can use other mono items. For example, if function
+<code>foo()</code> calls function <code>bar()</code> then the mono item for <code>foo()</code>
+uses the mono item for function <code>bar()</code>. In general, the
+definition for mono item A using a mono item B is that
+the LLVM artifact produced for A uses the LLVM artifact produced
+for B.</p>
+</li>
+<li>
+<p>Mono items and the uses between them form a directed graph,
+where the mono items are the nodes and uses form the edges.
+Let’s call this graph the “mono item graph”.</p>
+</li>
+<li>
+<p>The mono item graph for a program contains all mono items
+that are needed in order to produce the complete LLVM IR of the program.</p>
+</li>
+</ul>
+<p>The purpose of the algorithm implemented in this module is to build the
+mono item graph for the current crate. It runs in two phases:</p>
+<ol>
+<li>Discover the roots of the graph by traversing the HIR of the crate.</li>
+<li>Starting from the roots, find uses by inspecting the MIR
+representation of the item corresponding to a given node, until no more
+new nodes are found.</li>
+</ol>
+<h4 id="discovering-roots"><a class="doc-anchor" href="#discovering-roots">§</a>Discovering roots</h4>
+<p>The roots of the mono item graph correspond to the public non-generic
+syntactic items in the source code. We find them by walking the HIR of the
+crate, and whenever we hit upon a public function, method, or static item,
+we create a mono item consisting of the items DefId and, since we only
+consider non-generic items, an empty type-parameters set. (In eager
+collection mode, during incremental compilation, all non-generic functions
+are considered as roots, as well as when the <code>-Clink-dead-code</code> option is
+specified. Functions marked <code>#[no_mangle]</code> and functions called by inlinable
+functions also always act as roots.)</p>
+<h4 id="finding-uses"><a class="doc-anchor" href="#finding-uses">§</a>Finding uses</h4>
+<p>Given a mono item node, we can discover uses by inspecting its MIR. We walk
+the MIR to find other mono items used by each mono item. Since the mono
+item we are currently at is always monomorphic, we also know the concrete
+type arguments of its used mono items. The specific forms a use can take in
+MIR are quite diverse. Here is an overview:</p>
+<h5 id="calling-functionsmethods"><a class="doc-anchor" href="#calling-functionsmethods">§</a>Calling Functions/Methods</h5>
+<p>The most obvious way for one mono item to use another is a
+function or method call (represented by a CALL terminator in MIR). But
+calls are not the only thing that might introduce a use between two
+function mono items, and as we will see below, they are just a
+specialization of the form described next, and consequently will not get any
+special treatment in the algorithm.</p>
+<h5 id="taking-a-reference-to-a-function-or-method"><a class="doc-anchor" href="#taking-a-reference-to-a-function-or-method">§</a>Taking a reference to a function or method</h5>
+<p>A function does not need to actually be called in order to be used by
+another function. It suffices to just take a reference in order to introduce
+an edge. Consider the following example:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">fn </span>print_val&lt;T: Display&gt;(x: T) {
+    <span class="macro">println!</span>(<span class="string">"{}"</span>, x);
+}
+
+<span class="kw">fn </span>call_fn(f: <span class="kw-2">&amp;</span><span class="kw">dyn </span>Fn(i32), x: i32) {
+    f(x);
+}
+
+<span class="kw">fn </span>main() {
+    <span class="kw">let </span>print_i32 = print_val::&lt;i32&gt;;
+    call_fn(<span class="kw-2">&amp;</span>print_i32, <span class="number">0</span>);
+}</code></pre></div>
+<p>The MIR of none of these functions will contain an explicit call to
+<code>print_val::&lt;i32&gt;</code>. Nonetheless, in order to mono this program, we need
+an instance of this function. Thus, whenever we encounter a function or
+method in operand position, we treat it as a use of the current
+mono item. Calls are just a special case of that.</p>
+<h5 id="drop-glue"><a class="doc-anchor" href="#drop-glue">§</a>Drop glue</h5>
+<p>Drop glue mono items are introduced by MIR drop-statements. The
+generated mono item will have additional drop-glue item uses if the
+type to be dropped contains nested values that also need to be dropped. It
+might also have a function item use for the explicit <code>Drop::drop</code>
+implementation of its type.</p>
+<h5 id="unsizing-casts"><a class="doc-anchor" href="#unsizing-casts">§</a>Unsizing Casts</h5>
+<p>A subtle way of introducing use edges is by casting to a trait object.
+Since the resulting wide-pointer contains a reference to a vtable, we need to
+instantiate all dyn-compatible methods of the trait, as we need to store
+pointers to these functions even if they never get called anywhere. This can
+be seen as a special case of taking a function reference.</p>
+<h3 id="interaction-with-cross-crate-inlining"><a class="doc-anchor" href="#interaction-with-cross-crate-inlining">§</a>Interaction with Cross-Crate Inlining</h3>
+<p>The binary of a crate will not only contain machine code for the items
+defined in the source code of that crate. It will also contain monomorphic
+instantiations of any extern generic functions and of functions marked with
+<code>#[inline]</code>.
+The collection algorithm handles this more or less mono. If it is
+about to create a mono item for something with an external <code>DefId</code>,
+it will take a look if the MIR for that item is available, and if so just
+proceed normally. If the MIR is not available, it assumes that the item is
+just linked to and no node is created; which is exactly what we want, since
+no machine code should be generated in the current crate for such an item.</p>
+<h3 id="eager-and-lazy-collection-strategy"><a class="doc-anchor" href="#eager-and-lazy-collection-strategy">§</a>Eager and Lazy Collection Strategy</h3>
+<p>Mono item collection can be performed with one of two strategies:</p>
+<ul>
+<li>
+<p>Lazy strategy means that items will only be instantiated when actually
+used. The goal is to produce the least amount of machine code
+possible.</p>
+</li>
+<li>
+<p>Eager strategy is meant to be used in conjunction with incremental compilation
+where a stable set of mono items is more important than a minimal
+one. Thus, eager strategy will instantiate drop-glue for every drop-able type
+in the crate, even if no drop call for that type exists (yet). It will
+also instantiate default implementations of trait methods, something that
+otherwise is only done on demand.</p>
+</li>
+</ul>
+<h3 id="collection-time-const-evaluation-and-mentioned-items"><a class="doc-anchor" href="#collection-time-const-evaluation-and-mentioned-items">§</a>Collection-time const evaluation and “mentioned” items</h3>
+<p>One important role of collection is to evaluate all constants that are used by all the items
+which are being collected. Codegen can then rely on only encountering constants that evaluate
+successfully, and if a constant fails to evaluate, the collector has much better context to be
+able to show where this constant comes up.</p>
+<p>However, the exact set of “used” items (collected as described above), and therefore the exact
+set of used constants, can depend on optimizations. Optimizing away dead code may optimize away
+a function call that uses a failing constant, so an unoptimized build may fail where an
+optimized build succeeds. This is undesirable.</p>
+<p>To avoid this, the collector has the concept of “mentioned” items. Some time during the MIR
+pipeline, before any optimization-level-dependent optimizations, we compute a list of all items
+that syntactically appear in the code. These are considered “mentioned”, and even if they are in
+dead code and get optimized away (which makes them no longer “used”), they are still
+“mentioned”. For every used item, the collector ensures that all mentioned items, recursively,
+do not use a failing constant. This is reflected via the <a href="../../rustc_middle/mir/mono/enum.CollectionMode.html" title="enum rustc_middle::mir::mono::CollectionMode"><code>CollectionMode</code></a>, which determines
+whether we are visiting a used item or merely a mentioned item.</p>
+<p>The collector and “mentioned items” gathering (which lives in <code>rustc_mir_transform::mentioned_items</code>)
+need to stay in sync in the following sense:</p>
+<ul>
+<li>For every item that the collector gather that could eventually lead to build failure (most
+likely due to containing a constant that fails to evaluate), a corresponding mentioned item
+must be added. This should use the exact same strategy as the ecollector to make sure they are
+in sync. However, while the collector works on monomorphized types, mentioned items are
+collected on generic MIR – so any time the collector checks for a particular type (such as
+<code>ty::FnDef</code>), we have to just onconditionally add this as a mentioned item.</li>
+<li>In <code>visit_mentioned_item</code>, we then do with that mentioned item exactly what the collector
+would have done during regular MIR visiting. Basically you can think of the collector having
+two stages, a pre-monomorphization stage and a post-monomorphization stage (usually quite
+literally separated by a call to <code>self.monomorphize</code>); the pre-monomorphizationn stage is
+duplicated in mentioned items gathering and the post-monomorphization stage is duplicated in
+<code>visit_mentioned_item</code>.</li>
+<li>Finally, as a performance optimization, the collector should fill <code>used_mentioned_item</code> during
+its MIR traversal with exactly what mentioned item gathering would have added in the same
+situation. This detects mentioned items that have <em>not</em> been optimized away and hence don’t
+need a dedicated traversal.</li>
+</ul>
+<h3 id="open-issues"><a class="doc-anchor" href="#open-issues">§</a>Open Issues</h3>
+<p>Some things are not yet fully implemented in the current version of this
+module.</p>
+<h4 id="const-fns"><a class="doc-anchor" href="#const-fns">§</a>Const Fns</h4>
+<p>Ideally, no mono item should be generated for const fns unless there
+is a call to them that cannot be evaluated at compile time. At the moment
+this is not implemented however: a mono item will be produced
+regardless of whether it is actually needed or not.</p>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.MirUsedCollector.html" title="struct rustc_monomorphize::collector::MirUsedCollector">MirUsed<wbr>Collector</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="struct" href="struct.MonoItems.html" title="struct rustc_monomorphize::collector::MonoItems">Mono<wbr>Items</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="struct" href="struct.RootCollector.html" title="struct rustc_monomorphize::collector::RootCollector">Root<wbr>Collector</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="struct" href="struct.SharedState.html" title="struct rustc_monomorphize::collector::SharedState">Shared<wbr>State</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">The state that is shared across the concurrent threads that are doing collection.</div></li><li><div class="item-name"><a class="struct" href="struct.UsageMap.html" title="struct rustc_monomorphize::collector::UsageMap">Usage<wbr>Map</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="enum" href="enum.MonoItemCollectionStrategy.html" title="enum rustc_monomorphize::collector::MonoItemCollectionStrategy">Mono<wbr>Item<wbr>Collection<wbr>Strategy</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.check_recursion_limit.html" title="fn rustc_monomorphize::collector::check_recursion_limit">check_<wbr>recursion_<wbr>limit</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.collect_alloc.html" title="fn rustc_monomorphize::collector::collect_alloc">collect_<wbr>alloc</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Scans the CTFE alloc in order to find function pointers and statics that must be monomorphized.</div></li><li><div class="item-name"><a class="fn" href="fn.collect_const_value.html" title="fn rustc_monomorphize::collector::collect_const_value">collect_<wbr>const_<wbr>value</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.collect_crate_mono_items.html" title="fn rustc_monomorphize::collector::collect_crate_mono_items">collect_<wbr>crate_<wbr>mono_<wbr>items</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.collect_items_of_instance.html" title="fn rustc_monomorphize::collector::collect_items_of_instance">collect_<wbr>items_<wbr>of_<wbr>instance</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Scans the MIR in order to find function calls, closures, and drop-glue.</div></li><li><div class="item-name"><a class="fn" href="fn.collect_items_rec.html" title="fn rustc_monomorphize::collector::collect_items_rec">collect_<wbr>items_<wbr>rec</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Collect all monomorphized items reachable from <code>starting_point</code>, and emit a note diagnostic if a
+post-monomorphization error is encountered during a collection step.</div></li><li><div class="item-name"><a class="fn" href="fn.collect_roots.html" title="fn rustc_monomorphize::collector::collect_roots">collect_<wbr>roots</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.create_fn_mono_item.html" title="fn rustc_monomorphize::collector::create_fn_mono_item">create_<wbr>fn_<wbr>mono_<wbr>item</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.create_mono_items_for_default_impls.html" title="fn rustc_monomorphize::collector::create_mono_items_for_default_impls">create_<wbr>mono_<wbr>items_<wbr>for_<wbr>default_<wbr>impls</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.create_mono_items_for_vtable_methods.html" title="fn rustc_monomorphize::collector::create_mono_items_for_vtable_methods">create_<wbr>mono_<wbr>items_<wbr>for_<wbr>vtable_<wbr>methods</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Creates a <code>MonoItem</code> for each method that is referenced by the vtable for
+the given trait/impl pair.</div></li><li><div class="item-name"><a class="fn" href="fn.find_vtable_types_for_unsizing.html" title="fn rustc_monomorphize::collector::find_vtable_types_for_unsizing">find_<wbr>vtable_<wbr>types_<wbr>for_<wbr>unsizing</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">For a given pair of source and target type that occur in an unsizing coercion,
+this function finds the pair of types that determines the vtable linking
+them.</div></li><li><div class="item-name"><a class="fn" href="fn.items_of_instance.html" title="fn rustc_monomorphize::collector::items_of_instance">items_<wbr>of_<wbr>instance</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.provide.html" title="fn rustc_monomorphize::collector::provide">provide</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.should_codegen_locally.html" title="fn rustc_monomorphize::collector::should_codegen_locally">should_<wbr>codegen_<wbr>locally</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Returns <code>true</code> if we should codegen an instance in the local crate, or returns <code>false</code> if we
+can just link to the upstream crate and therefore don’t need a mono item.</div></li><li><div class="item-name"><a class="fn" href="fn.visit_drop_use.html" title="fn rustc_monomorphize::collector::visit_drop_use">visit_<wbr>drop_<wbr>use</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.visit_fn_use.html" title="fn rustc_monomorphize::collector::visit_fn_use">visit_<wbr>fn_<wbr>use</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">For every call of this function in the visitor, make sure there is a matching call in the
+<code>mentioned_items</code> pass!</div></li><li><div class="item-name"><a class="fn" href="fn.visit_instance_use.html" title="fn rustc_monomorphize::collector::visit_instance_use">visit_<wbr>instance_<wbr>use</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.visit_mentioned_item.html" title="fn rustc_monomorphize::collector::visit_mentioned_item">visit_<wbr>mentioned_<wbr>item</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short"><code>item</code> must be already monomorphized.</div></li></ul></section></div></main></body></html>

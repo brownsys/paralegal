@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["provide","resolve_associated_item","resolve_instance_raw"]};

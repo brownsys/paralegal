@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["add_unused_function_coverage","add_unused_functions","finalize","generate_covmap_record","prepare_usage_sets","span_file_name"],"mod":["covfun"],"struct":["GlobalFileId","GlobalFileTable","LocalFileId","UsageSets","VirtualFileMapping"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["borrowed_locals"],"struct":["MaybeBorrowedLocals","TransferFunction"]};

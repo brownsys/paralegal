@@ -1,0 +1,197 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="API documentation for the Rust `EvalContextExt` trait in crate `miri`."><title>EvalContextExt in miri::shims::unix::sync - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="miri" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc trait"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../../miri/index.html">miri</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Eval<wbr>Context<wbr>Ext</a></h2><h3><a href="#provided-methods">Provided Methods</a></h3><ul class="block"><li><a href="#method.pthread_cond_broadcast" title="pthread_cond_broadcast">pthread_cond_broadcast</a></li><li><a href="#method.pthread_cond_destroy" title="pthread_cond_destroy">pthread_cond_destroy</a></li><li><a href="#method.pthread_cond_init" title="pthread_cond_init">pthread_cond_init</a></li><li><a href="#method.pthread_cond_signal" title="pthread_cond_signal">pthread_cond_signal</a></li><li><a href="#method.pthread_cond_timedwait" title="pthread_cond_timedwait">pthread_cond_timedwait</a></li><li><a href="#method.pthread_cond_wait" title="pthread_cond_wait">pthread_cond_wait</a></li><li><a href="#method.pthread_condattr_destroy" title="pthread_condattr_destroy">pthread_condattr_destroy</a></li><li><a href="#method.pthread_condattr_getclock" title="pthread_condattr_getclock">pthread_condattr_getclock</a></li><li><a href="#method.pthread_condattr_init" title="pthread_condattr_init">pthread_condattr_init</a></li><li><a href="#method.pthread_condattr_setclock" title="pthread_condattr_setclock">pthread_condattr_setclock</a></li><li><a href="#method.pthread_mutex_destroy" title="pthread_mutex_destroy">pthread_mutex_destroy</a></li><li><a href="#method.pthread_mutex_init" title="pthread_mutex_init">pthread_mutex_init</a></li><li><a href="#method.pthread_mutex_lock" title="pthread_mutex_lock">pthread_mutex_lock</a></li><li><a href="#method.pthread_mutex_trylock" title="pthread_mutex_trylock">pthread_mutex_trylock</a></li><li><a href="#method.pthread_mutex_unlock" title="pthread_mutex_unlock">pthread_mutex_unlock</a></li><li><a href="#method.pthread_mutexattr_destroy" title="pthread_mutexattr_destroy">pthread_mutexattr_destroy</a></li><li><a href="#method.pthread_mutexattr_init" title="pthread_mutexattr_init">pthread_mutexattr_init</a></li><li><a href="#method.pthread_mutexattr_settype" title="pthread_mutexattr_settype">pthread_mutexattr_settype</a></li><li><a href="#method.pthread_rwlock_destroy" title="pthread_rwlock_destroy">pthread_rwlock_destroy</a></li><li><a href="#method.pthread_rwlock_rdlock" title="pthread_rwlock_rdlock">pthread_rwlock_rdlock</a></li><li><a href="#method.pthread_rwlock_tryrdlock" title="pthread_rwlock_tryrdlock">pthread_rwlock_tryrdlock</a></li><li><a href="#method.pthread_rwlock_trywrlock" title="pthread_rwlock_trywrlock">pthread_rwlock_trywrlock</a></li><li><a href="#method.pthread_rwlock_unlock" title="pthread_rwlock_unlock">pthread_rwlock_unlock</a></li><li><a href="#method.pthread_rwlock_wrlock" title="pthread_rwlock_wrlock">pthread_rwlock_wrlock</a></li></ul><h3><a href="#implementors">Implementors</a></h3></section><div id="rustdoc-modnav"><h2><a href="index.html">In miri::<wbr>shims::<wbr>unix::<wbr>sync</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../../index.html">miri</a>::<wbr><a href="../../index.html">shims</a>::<wbr><a href="../index.html">unix</a>::<wbr><a href="index.html">sync</a></span><h1>Trait <span class="trait">EvalContextExt</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../../src/miri/shims/unix/sync.rs.html#426-908">Source</a> </span></div><pre class="rust item-decl"><code>pub trait EvalContextExt&lt;'tcx&gt;: <a class="trait" href="../../../machine/trait.MiriInterpCxExt.html" title="trait miri::machine::MiriInterpCxExt">MiriInterpCxExt</a>&lt;'tcx&gt; {
+<details class="toggle type-contents-toggle"><summary class="hideme"><span>Show 24 methods</span></summary>    // Provided methods
+    fn <a href="#method.pthread_mutexattr_init" class="fn">pthread_mutexattr_init</a>(
+        &amp;mut self,
+        attr_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_mutexattr_settype" class="fn">pthread_mutexattr_settype</a>(
+        &amp;mut self,
+        attr_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+        kind_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="type" href="../../../type.Scalar.html" title="type miri::Scalar">Scalar</a>&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_mutexattr_destroy" class="fn">pthread_mutexattr_destroy</a>(
+        &amp;mut self,
+        attr_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_mutex_init" class="fn">pthread_mutex_init</a>(
+        &amp;mut self,
+        mutex_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+        attr_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_mutex_lock" class="fn">pthread_mutex_lock</a>(
+        &amp;mut self,
+        mutex_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+        dest: &amp;<a class="type" href="../../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_mutex_trylock" class="fn">pthread_mutex_trylock</a>(
+        &amp;mut self,
+        mutex_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="type" href="../../../type.Scalar.html" title="type miri::Scalar">Scalar</a>&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_mutex_unlock" class="fn">pthread_mutex_unlock</a>(
+        &amp;mut self,
+        mutex_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="type" href="../../../type.Scalar.html" title="type miri::Scalar">Scalar</a>&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_mutex_destroy" class="fn">pthread_mutex_destroy</a>(
+        &amp;mut self,
+        mutex_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_rwlock_rdlock" class="fn">pthread_rwlock_rdlock</a>(
+        &amp;mut self,
+        rwlock_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+        dest: &amp;<a class="type" href="../../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_rwlock_tryrdlock" class="fn">pthread_rwlock_tryrdlock</a>(
+        &amp;mut self,
+        rwlock_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="type" href="../../../type.Scalar.html" title="type miri::Scalar">Scalar</a>&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_rwlock_wrlock" class="fn">pthread_rwlock_wrlock</a>(
+        &amp;mut self,
+        rwlock_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+        dest: &amp;<a class="type" href="../../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_rwlock_trywrlock" class="fn">pthread_rwlock_trywrlock</a>(
+        &amp;mut self,
+        rwlock_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="type" href="../../../type.Scalar.html" title="type miri::Scalar">Scalar</a>&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_rwlock_unlock" class="fn">pthread_rwlock_unlock</a>(
+        &amp;mut self,
+        rwlock_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_rwlock_destroy" class="fn">pthread_rwlock_destroy</a>(
+        &amp;mut self,
+        rwlock_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_condattr_init" class="fn">pthread_condattr_init</a>(
+        &amp;mut self,
+        attr_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_condattr_setclock" class="fn">pthread_condattr_setclock</a>(
+        &amp;mut self,
+        attr_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+        clock_id_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="type" href="../../../type.Scalar.html" title="type miri::Scalar">Scalar</a>&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_condattr_getclock" class="fn">pthread_condattr_getclock</a>(
+        &amp;mut self,
+        attr_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+        clk_id_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_condattr_destroy" class="fn">pthread_condattr_destroy</a>(
+        &amp;mut self,
+        attr_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_cond_init" class="fn">pthread_cond_init</a>(
+        &amp;mut self,
+        cond_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+        attr_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_cond_signal" class="fn">pthread_cond_signal</a>(
+        &amp;mut self,
+        cond_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_cond_broadcast" class="fn">pthread_cond_broadcast</a>(
+        &amp;mut self,
+        cond_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_cond_wait" class="fn">pthread_cond_wait</a>(
+        &amp;mut self,
+        cond_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+        mutex_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+        dest: &amp;<a class="type" href="../../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_cond_timedwait" class="fn">pthread_cond_timedwait</a>(
+        &amp;mut self,
+        cond_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+        mutex_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+        abstime_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+        dest: &amp;<a class="type" href="../../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.pthread_cond_destroy" class="fn">pthread_cond_destroy</a>(
+        &amp;mut self,
+        cond_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    ) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt; { ... }
+</details>}</code></pre><h2 id="provided-methods" class="section-header">Provided Methods<a href="#provided-methods" class="anchor">§</a></h2><div class="methods"><section id="method.pthread_mutexattr_init" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#427-433">Source</a><h4 class="code-header">fn <a href="#method.pthread_mutexattr_init" class="fn">pthread_mutexattr_init</a>(
+    &amp;mut self,
+    attr_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;</h4></section><section id="method.pthread_mutexattr_settype" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#435-457">Source</a><h4 class="code-header">fn <a href="#method.pthread_mutexattr_settype" class="fn">pthread_mutexattr_settype</a>(
+    &amp;mut self,
+    attr_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    kind_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="type" href="../../../type.Scalar.html" title="type miri::Scalar">Scalar</a>&gt;</h4></section><section id="method.pthread_mutexattr_destroy" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#459-482">Source</a><h4 class="code-header">fn <a href="#method.pthread_mutexattr_destroy" class="fn">pthread_mutexattr_destroy</a>(
+    &amp;mut self,
+    attr_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;</h4></section><section id="method.pthread_mutex_init" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#484-501">Source</a><h4 class="code-header">fn <a href="#method.pthread_mutex_init" class="fn">pthread_mutex_init</a>(
+    &amp;mut self,
+    mutex_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    attr_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;</h4></section><section id="method.pthread_mutex_lock" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#503-542">Source</a><h4 class="code-header">fn <a href="#method.pthread_mutex_lock" class="fn">pthread_mutex_lock</a>(
+    &amp;mut self,
+    mutex_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    dest: &amp;<a class="type" href="../../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt;</h4></section><section id="method.pthread_mutex_trylock" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#544-568">Source</a><h4 class="code-header">fn <a href="#method.pthread_mutex_trylock" class="fn">pthread_mutex_trylock</a>(
+    &amp;mut self,
+    mutex_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="type" href="../../../type.Scalar.html" title="type miri::Scalar">Scalar</a>&gt;</h4></section><section id="method.pthread_mutex_unlock" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#570-595">Source</a><h4 class="code-header">fn <a href="#method.pthread_mutex_unlock" class="fn">pthread_mutex_unlock</a>(
+    &amp;mut self,
+    mutex_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="type" href="../../../type.Scalar.html" title="type miri::Scalar">Scalar</a>&gt;</h4></section><section id="method.pthread_mutex_destroy" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#597-615">Source</a><h4 class="code-header">fn <a href="#method.pthread_mutex_destroy" class="fn">pthread_mutex_destroy</a>(
+    &amp;mut self,
+    mutex_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;</h4></section><section id="method.pthread_rwlock_rdlock" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#617-634">Source</a><h4 class="code-header">fn <a href="#method.pthread_rwlock_rdlock" class="fn">pthread_rwlock_rdlock</a>(
+    &amp;mut self,
+    rwlock_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    dest: &amp;<a class="type" href="../../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt;</h4></section><section id="method.pthread_rwlock_tryrdlock" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#636-647">Source</a><h4 class="code-header">fn <a href="#method.pthread_rwlock_tryrdlock" class="fn">pthread_rwlock_tryrdlock</a>(
+    &amp;mut self,
+    rwlock_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="type" href="../../../type.Scalar.html" title="type miri::Scalar">Scalar</a>&gt;</h4></section><section id="method.pthread_rwlock_wrlock" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#649-678">Source</a><h4 class="code-header">fn <a href="#method.pthread_rwlock_wrlock" class="fn">pthread_rwlock_wrlock</a>(
+    &amp;mut self,
+    rwlock_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    dest: &amp;<a class="type" href="../../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt;</h4></section><section id="method.pthread_rwlock_trywrlock" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#680-691">Source</a><h4 class="code-header">fn <a href="#method.pthread_rwlock_trywrlock" class="fn">pthread_rwlock_trywrlock</a>(
+    &amp;mut self,
+    rwlock_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="type" href="../../../type.Scalar.html" title="type miri::Scalar">Scalar</a>&gt;</h4></section><section id="method.pthread_rwlock_unlock" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#693-703">Source</a><h4 class="code-header">fn <a href="#method.pthread_rwlock_unlock" class="fn">pthread_rwlock_unlock</a>(
+    &amp;mut self,
+    rwlock_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;</h4></section><section id="method.pthread_rwlock_destroy" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#705-723">Source</a><h4 class="code-header">fn <a href="#method.pthread_rwlock_destroy" class="fn">pthread_rwlock_destroy</a>(
+    &amp;mut self,
+    rwlock_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;</h4></section><section id="method.pthread_condattr_init" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#725-738">Source</a><h4 class="code-header">fn <a href="#method.pthread_condattr_init" class="fn">pthread_condattr_init</a>(
+    &amp;mut self,
+    attr_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;</h4></section><section id="method.pthread_condattr_setclock" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#740-758">Source</a><h4 class="code-header">fn <a href="#method.pthread_condattr_setclock" class="fn">pthread_condattr_setclock</a>(
+    &amp;mut self,
+    attr_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    clock_id_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="type" href="../../../type.Scalar.html" title="type miri::Scalar">Scalar</a>&gt;</h4></section><section id="method.pthread_condattr_getclock" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#760-771">Source</a><h4 class="code-header">fn <a href="#method.pthread_condattr_getclock" class="fn">pthread_condattr_getclock</a>(
+    &amp;mut self,
+    attr_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    clk_id_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;</h4></section><section id="method.pthread_condattr_destroy" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#773-789">Source</a><h4 class="code-header">fn <a href="#method.pthread_condattr_destroy" class="fn">pthread_condattr_destroy</a>(
+    &amp;mut self,
+    attr_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;</h4></section><section id="method.pthread_cond_init" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#791-810">Source</a><h4 class="code-header">fn <a href="#method.pthread_cond_init" class="fn">pthread_cond_init</a>(
+    &amp;mut self,
+    cond_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    attr_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;</h4></section><section id="method.pthread_cond_signal" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#812-817">Source</a><h4 class="code-header">fn <a href="#method.pthread_cond_signal" class="fn">pthread_cond_signal</a>(
+    &amp;mut self,
+    cond_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;</h4></section><section id="method.pthread_cond_broadcast" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#819-824">Source</a><h4 class="code-header">fn <a href="#method.pthread_cond_broadcast" class="fn">pthread_cond_broadcast</a>(
+    &amp;mut self,
+    cond_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;</h4></section><section id="method.pthread_cond_wait" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#826-847">Source</a><h4 class="code-header">fn <a href="#method.pthread_cond_wait" class="fn">pthread_cond_wait</a>(
+    &amp;mut self,
+    cond_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    mutex_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    dest: &amp;<a class="type" href="../../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt;</h4></section><section id="method.pthread_cond_timedwait" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#849-890">Source</a><h4 class="code-header">fn <a href="#method.pthread_cond_timedwait" class="fn">pthread_cond_timedwait</a>(
+    &amp;mut self,
+    cond_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    mutex_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    abstime_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+    dest: &amp;<a class="type" href="../../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt;</h4></section><section id="method.pthread_cond_destroy" class="method"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#892-907">Source</a><h4 class="code-header">fn <a href="#method.pthread_cond_destroy" class="fn">pthread_cond_destroy</a>(
+    &amp;mut self,
+    cond_op: &amp;<a class="type" href="../../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;,
+) -&gt; <a class="type" href="../../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx, <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;</h4></section></div><h2 id="implementors" class="section-header">Implementors<a href="#implementors" class="anchor">§</a></h2><div id="implementors-list"><section id="impl-EvalContextExt%3C'tcx%3E-for-InterpCx%3C'tcx,+MiriMachine%3C'tcx%3E%3E" class="impl"><a class="src rightside" href="../../../../src/miri/shims/unix/sync.rs.html#425">Source</a><a href="#impl-EvalContextExt%3C'tcx%3E-for-InterpCx%3C'tcx,+MiriMachine%3C'tcx%3E%3E" class="anchor">§</a><h3 class="code-header">impl&lt;'tcx&gt; <a class="trait" href="trait.EvalContextExt.html" title="trait miri::shims::unix::sync::EvalContextExt">EvalContextExt</a>&lt;'tcx&gt; for <a class="type" href="../../../machine/type.MiriInterpCx.html" title="type miri::machine::MiriInterpCx">MiriInterpCx</a>&lt;'tcx&gt;</h3></section></div><script src="../../../../trait.impl/miri/shims/unix/sync/trait.EvalContextExt.js" async></script></section></div></main></body></html>

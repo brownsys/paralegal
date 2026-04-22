@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SurfaceDropKind"],"fn":["build_async_destructor_ctor_shim"],"struct":["AsyncDestructorCtorShimBuilder"]};

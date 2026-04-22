@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FileLinesError","FileName"],"fn":["canonicalize_path_string","normalize_ranges"],"struct":["FileLines","Files","JsonSpan","LineRange","Range"]};

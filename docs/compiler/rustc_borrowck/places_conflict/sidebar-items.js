@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["PlaceConflictBias"],"fn":["borrow_conflicts_with_place","place_components_conflict","place_projection_conflict","places_conflict"]};

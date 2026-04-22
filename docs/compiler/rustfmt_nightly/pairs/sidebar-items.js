@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["is_ident","rewrite_all_pairs","rewrite_pair","rewrite_pairs_multiline","rewrite_pairs_one_line"],"struct":["PairList","PairParts"],"trait":["FlattenPair"]};

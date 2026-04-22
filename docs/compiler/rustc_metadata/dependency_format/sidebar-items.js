@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["activate_injected_dep","add_library","attempt_static","calculate","calculate_type","verify_ok"]};

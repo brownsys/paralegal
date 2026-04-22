@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["VarContextType"],"fn":["remove_from_env","verify_definitions_scope","verify_relation_scope","verify_scope","verify_var_in_scope","verify_var_not_in_scope","verify_variable_intro_scope"],"struct":["VarContext"],"type":["Environment"]};

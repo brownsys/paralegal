@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["InspectCandidate","InspectConfig","InspectGoal","NormalizesToTermHack"],"trait":["ProofTreeInferCtxtExt","ProofTreeVisitor"]};

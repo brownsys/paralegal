@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Quantifier"],"fn":["and","or"],"mod":["query_context","rustc"],"struct":["MaybeTransmutableQuery"]};

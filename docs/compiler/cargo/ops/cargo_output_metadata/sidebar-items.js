@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["VERSION"],"fn":["build_resolve_graph","build_resolve_graph_r","output_metadata"],"struct":["Dep","DepKindInfo","ExportInfo","MetadataResolve","MetadataResolveNode","OutputMetadataOptions"]};

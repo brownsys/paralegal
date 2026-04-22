@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["implied_outlives_bounds","implied_outlives_bounds_compat","provide"]};

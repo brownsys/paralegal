@@ -1,0 +1,109 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Checks whether a trait-ref is potentially implementable by a crate."><title>orphan_check_trait_ref in rustc_trait_selection::traits::coherence - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustc_trait_selection" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc fn"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button><a class="logo-container" href="../../../rustc_trait_selection/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-9a9549ea.svg" alt=""></a></nav><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../../rustc_trait_selection/index.html"><img class="rust-logo" src="../../../static.files/rust-logo-9a9549ea.svg" alt="logo"></a><h2><a href="../../../rustc_trait_selection/index.html">rustc_<wbr>trait_<wbr>selection</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><div id="rustdoc-modnav"><h2><a href="index.html">In rustc_<wbr>trait_<wbr>selection::<wbr>traits::<wbr>coherence</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../index.html">rustc_trait_selection</a>::<wbr><a href="../index.html">traits</a>::<wbr><a href="index.html">coherence</a></span><h1>Function <span class="fn">orphan_check_trait_ref</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/rustc_next_trait_solver/coherence.rs.html#216">Source</a> </span></div><pre class="rust item-decl"><code>pub fn orphan_check_trait_ref&lt;Infcx, I, E&gt;(
+    infcx: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.reference.html">&amp;Infcx</a>,
+    trait_ref: <a class="struct" href="../../infer/canonical/ir/struct.TraitRef.html" title="struct rustc_trait_selection::infer::canonical::ir::TraitRef">TraitRef</a>&lt;I&gt;,
+    in_crate: <a class="enum" href="../enum.InCrate.html" title="enum rustc_trait_selection::traits::InCrate">InCrate</a>,
+    lazily_normalize_ty: impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/ops/function/trait.FnMut.html" title="trait core::ops::function::FnMut">FnMut</a>(&lt;I as <a class="trait" href="../../infer/canonical/ir/trait.Interner.html" title="trait rustc_trait_selection::infer::canonical::ir::Interner">Interner</a>&gt;::<a class="associatedtype" href="../../infer/canonical/ir/trait.Interner.html#associatedtype.Ty" title="type rustc_trait_selection::infer::canonical::ir::Interner::Ty">Ty</a>) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;&lt;I as <a class="trait" href="../../infer/canonical/ir/trait.Interner.html" title="trait rustc_trait_selection::infer::canonical::ir::Interner">Interner</a>&gt;::<a class="associatedtype" href="../../infer/canonical/ir/trait.Interner.html#associatedtype.Ty" title="type rustc_trait_selection::infer::canonical::ir::Interner::Ty">Ty</a>, E&gt;,
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>, <a class="enum" href="../enum.OrphanCheckErr.html" title="enum rustc_trait_selection::traits::OrphanCheckErr">OrphanCheckErr</a>&lt;I, &lt;I as <a class="trait" href="../../infer/canonical/ir/trait.Interner.html" title="trait rustc_trait_selection::infer::canonical::ir::Interner">Interner</a>&gt;::<a class="associatedtype" href="../../infer/canonical/ir/trait.Interner.html#associatedtype.Ty" title="type rustc_trait_selection::infer::canonical::ir::Interner::Ty">Ty</a>&gt;&gt;, E&gt;<div class="where">where
+    E: <a class="trait" href="https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html" title="trait core::fmt::Debug">Debug</a>,
+    Infcx: <a class="trait" href="../../infer/canonical/ir/trait.InferCtxtLike.html" title="trait rustc_trait_selection::infer::canonical::ir::InferCtxtLike">InferCtxtLike</a>&lt;Interner = I&gt;,
+    I: <a class="trait" href="../../infer/canonical/ir/trait.Interner.html" title="trait rustc_trait_selection::infer::canonical::ir::Interner">Interner</a>,</div></code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Checks whether a trait-ref is potentially implementable by a crate.</p>
+<p>The current rule is that a trait-ref orphan checks in a crate C:</p>
+<ol>
+<li>Order the parameters in the trait-ref in generic parameters order</li>
+</ol>
+<ul>
+<li>Self first, others linearly (e.g., <code>&lt;U as Foo&lt;V, W&gt;&gt;</code> is U &lt; V &lt; W).</li>
+</ul>
+<ol start="2">
+<li>Of these type parameters, there is at least one type parameter
+in which, walking the type as a tree, you can reach a type local
+to C where all types in-between are fundamental types. Call the
+first such parameter the “local key parameter”.
+<ul>
+<li>e.g., <code>Box&lt;LocalType&gt;</code> is OK, because you can visit LocalType
+going through <code>Box</code>, which is fundamental.</li>
+<li>similarly, <code>FundamentalPair&lt;Vec&lt;()&gt;, Box&lt;LocalType&gt;&gt;</code> is OK for
+the same reason.</li>
+<li>but (knowing that <code>Vec&lt;T&gt;</code> is non-fundamental, and assuming it’s
+not local), <code>Vec&lt;LocalType&gt;</code> is bad, because <code>Vec&lt;-&gt;</code> is between
+the local type and the type parameter.</li>
+</ul>
+</li>
+<li>Before this local type, no generic type parameter of the impl must
+be reachable through fundamental types.
+<ul>
+<li>e.g. <code>impl&lt;T&gt; Trait&lt;LocalType&gt; for Vec&lt;T&gt;</code> is fine, as <code>Vec</code> is not fundamental.</li>
+<li>while <code>impl&lt;T&gt; Trait&lt;LocalType&gt; for Box&lt;T&gt;</code> results in an error, as <code>T</code> is
+reachable through the fundamental type <code>Box</code>.</li>
+</ul>
+</li>
+<li>Every type in the local key parameter not known in C, going
+through the parameter’s type tree, must appear only as a subtree of
+a type local to C, with only fundamental types between the type
+local to C and the local key parameter.
+<ul>
+<li>e.g., <code>Vec&lt;LocalType&lt;T&gt;&gt;&gt;</code> (or equivalently <code>Box&lt;Vec&lt;LocalType&lt;T&gt;&gt;&gt;</code>)
+is bad, because the only local type with <code>T</code> as a subtree is
+<code>LocalType&lt;T&gt;</code>, and <code>Vec&lt;-&gt;</code> is between it and the type parameter.</li>
+<li>similarly, <code>FundamentalPair&lt;LocalType&lt;T&gt;, T&gt;</code> is bad, because
+the second occurrence of <code>T</code> is not a subtree of <em>any</em> local type.</li>
+<li>however, <code>LocalType&lt;Vec&lt;T&gt;&gt;</code> is OK, because <code>T</code> is a subtree of
+<code>LocalType&lt;Vec&lt;T&gt;&gt;</code>, which is local and has no types between it and
+the type parameter.</li>
+</ul>
+</li>
+</ol>
+<p>The orphan rules actually serve several different purposes:</p>
+<ol>
+<li>
+<p>They enable link-safety - i.e., 2 mutually-unknowing crates (where
+every type local to one crate is unknown in the other) can’t implement
+the same trait-ref. This follows because it can be seen that no such
+type can orphan-check in 2 such crates.</p>
+<p>To check that a local impl follows the orphan rules, we check it in
+InCrate::Local mode, using type parameters for the “generic” types.</p>
+<p>In InCrate::Local mode the orphan check succeeds if the current crate
+is definitely allowed to implement the given trait (no false positives).</p>
+</li>
+<li>
+<p>They ground negative reasoning for coherence. If a user wants to
+write both a conditional blanket impl and a specific impl, we need to
+make sure they do not overlap. For example, if we write</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">impl</span>&lt;T&gt; IntoIterator <span class="kw">for </span>Vec&lt;T&gt;
+<span class="kw">impl</span>&lt;T: Iterator&gt; IntoIterator <span class="kw">for </span>T</code></pre></div>
+<p>We need to be able to prove that <code>Vec&lt;$0&gt;: !Iterator</code> for every type $0.
+We can observe that this holds in the current crate, but we need to make
+sure this will also hold in all unknown crates (both “independent” crates,
+which we need for link-safety, and also child crates, because we don’t want
+child crates to get error for impl conflicts in a <em>dependency</em>).</p>
+<p>For that, we only allow negative reasoning if, for every assignment to the
+inference variables, every unknown crate would get an orphan error if they
+try to implement this trait-ref. To check for this, we use InCrate::Remote
+mode. That is sound because we already know all the impls from known crates.</p>
+<p>In InCrate::Remote mode the orphan check succeeds if a foreign crate
+<em>could</em> implement the given trait (no false negatives).</p>
+</li>
+<li>
+<p>For non-<code>#[fundamental]</code> traits, they guarantee that parent crates can
+add “non-blanket” impls without breaking negative reasoning in dependent
+crates. This is the “rebalancing coherence” (RFC 1023) restriction.</p>
+<p>For that, we only allow a crate to perform negative reasoning on
+non-local-non-<code>#[fundamental]</code> if there’s a local key parameter as per (2).</p>
+<p>Because we never perform negative reasoning generically (coherence does
+not involve type parameters), this can be interpreted as doing the full
+orphan check (using InCrate::Local mode), instantiating non-local known
+types for all inference variables.</p>
+<p>This allows for crates to future-compatibly add impls as long as they
+can’t apply to types with a key parameter in a child crate - applying
+the rules, this basically means that every type parameter in the impl
+must appear behind a non-fundamental type (because this is not a
+type-system requirement, crate owners might also go for “semantic
+future-compatibility” involving things such as sealed traits, but
+the above requirement is sufficient, and is necessary in “open world”
+cases).</p>
+</li>
+</ol>
+<p>Note that this function is never called for types that have both type
+parameters and inference variables.</p>
+</div></details></section></div></main></body></html>

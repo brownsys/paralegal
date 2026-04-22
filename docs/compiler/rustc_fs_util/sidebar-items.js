@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["LinkOrCopy"],"fn":["fix_windows_verbatim_for_gcc","link_or_copy","path_to_c_string","try_canonicalize"]};

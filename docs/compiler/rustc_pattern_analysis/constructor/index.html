@@ -1,0 +1,130 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="As explained in `crate::usefulness`, values and patterns are made from constructors applied to fields. This file defines a `Constructor` enum and various operations to manipulate them."><title>rustc_pattern_analysis::constructor - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_pattern_analysis" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../rustc_pattern_analysis/index.html">rustc_<wbr>pattern_<wbr>analysis</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module constructor</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#constructor-grouping-and-splitting" title="Constructor grouping and splitting">Constructor grouping and splitting</a></li><li><a href="#the-missing-constructor" title="The `Missing` constructor">The <code>Missing</code> constructor</a><ul><li><a href="#empty-types-empty-constructors-and-the-exhaustive_patterns-feature" title="Empty types, empty constructors, and the `exhaustive_patterns` feature">Empty types, empty constructors, and the <code>exhaustive_patterns</code> feature</a></li><li><a href="#unions" title="Unions">Unions</a></li><li><a href="#opaque-patterns" title="Opaque patterns">Opaque patterns</a></li></ul></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate rustc_<wbr>pattern_<wbr>analysis</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">rustc_pattern_analysis</a></span><h1>Module <span>constructor</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustc_pattern_analysis/constructor.rs.html#1-1198">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>As explained in <a href="../usefulness/index.html" title="mod rustc_pattern_analysis::usefulness"><code>crate::usefulness</code></a>, values and patterns are made from constructors applied to
+fields. This file defines a <code>Constructor</code> enum and various operations to manipulate them.</p>
+<p>There are two important bits of core logic in this file: constructor inclusion and constructor
+splitting. Constructor inclusion, i.e. whether a constructor is included in/covered by another,
+is straightforward and defined in <a href="enum.Constructor.html#method.is_covered_by" title="method rustc_pattern_analysis::constructor::Constructor::is_covered_by"><code>Constructor::is_covered_by</code></a>.</p>
+<p>Constructor splitting is mentioned in <a href="../usefulness/index.html" title="mod rustc_pattern_analysis::usefulness"><code>crate::usefulness</code></a> but not detailed. We describe it
+precisely here.</p>
+<h2 id="constructor-grouping-and-splitting"><a class="doc-anchor" href="#constructor-grouping-and-splitting">§</a>Constructor grouping and splitting</h2>
+<p>As explained in the corresponding section in <a href="../usefulness/index.html" title="mod rustc_pattern_analysis::usefulness"><code>crate::usefulness</code></a>, to make usefulness tractable
+we need to group together constructors that have the same effect when they are used to
+specialize the matrix.</p>
+<p>Example:</p>
+
+<div class="example-wrap compile_fail"><a href="#" class="tooltip" title="This example deliberately fails to compile">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">match </span>(<span class="number">0</span>, <span class="bool-val">false</span>) {
+    (<span class="number">0 </span>..=<span class="number">100</span>, <span class="bool-val">true</span>) =&gt; {}
+    (<span class="number">50</span>..=<span class="number">150</span>, <span class="bool-val">false</span>) =&gt; {}
+    (<span class="number">0 </span>..=<span class="number">200</span>, <span class="kw">_</span>) =&gt; {}
+}</code></pre></div>
+<p>In this example we can restrict specialization to 5 cases: <code>0..50</code>, <code>50..=100</code>, <code>101..=150</code>,
+<code>151..=200</code> and <code>200..</code>.</p>
+<p>In <a href="../usefulness/index.html" title="mod rustc_pattern_analysis::usefulness"><code>crate::usefulness</code></a>, we had said that <code>specialize</code> only takes value-only constructors. We
+now relax this restriction: we allow <code>specialize</code> to take constructors like <code>0..50</code> as long as
+we’re careful to only do that with constructors that make sense. For example, <code>specialize(0..50, (0..=100, true))</code> is sensible, but <code>specialize(50..=200, (0..=100, true))</code> is not.</p>
+<p>Constructor splitting looks at the constructors in the first column of the matrix and constructs
+such a sensible set of constructors. Formally, we want to find a smallest disjoint set of
+constructors:</p>
+<ul>
+<li>Whose union covers the whole type, and</li>
+<li>That have no non-trivial intersection with any of the constructors in the column (i.e. they’re
+each either disjoint with or covered by any given column constructor).</li>
+</ul>
+<p>We compute this in two steps: first <a href="../trait.PatCx.html#tymethod.ctors_for_ty" title="method rustc_pattern_analysis::PatCx::ctors_for_ty"><code>PatCx::ctors_for_ty</code></a> determines the
+set of all possible constructors for the type. Then <a href="enum.ConstructorSet.html#method.split" title="method rustc_pattern_analysis::constructor::ConstructorSet::split"><code>ConstructorSet::split</code></a> looks at the
+column of constructors and splits the set into groups accordingly. The precise invariants of
+<a href="enum.ConstructorSet.html#method.split" title="method rustc_pattern_analysis::constructor::ConstructorSet::split"><code>ConstructorSet::split</code></a> is described in <a href="struct.SplitConstructorSet.html" title="struct rustc_pattern_analysis::constructor::SplitConstructorSet"><code>SplitConstructorSet</code></a>.</p>
+<p>Constructor splitting has two interesting special cases: integer range splitting (see
+<a href="struct.IntRange.html#method.split" title="method rustc_pattern_analysis::constructor::IntRange::split"><code>IntRange::split</code></a>) and slice splitting (see <a href="struct.Slice.html#method.split" title="method rustc_pattern_analysis::constructor::Slice::split"><code>Slice::split</code></a>).</p>
+<h2 id="the-missing-constructor"><a class="doc-anchor" href="#the-missing-constructor">§</a>The <code>Missing</code> constructor</h2>
+<p>We detail a special case of constructor splitting that is a bit subtle. Take the following:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">enum </span>Direction { North, South, East, West }
+<span class="kw">match </span>wind {
+    (Direction::North, <span class="number">50</span>..) =&gt; {}
+    (<span class="kw">_</span>, <span class="kw">_</span>) =&gt; {}
+}</code></pre></div>
+<p>Here we expect constructor splitting to output two cases: <code>North</code>, and “everything else”. This
+“everything else” is represented by <a href="enum.Constructor.html#variant.Missing" title="variant rustc_pattern_analysis::constructor::Constructor::Missing"><code>Constructor::Missing</code></a>. Unlike other constructors, it’s a
+bit contextual: to know the exact list of constructors it represents we have to look at the
+column. In practice however we don’t need to, because by construction it only matches rows that
+have wildcards. This is how this constructor is special: the only constructor that covers it is
+<code>Wildcard</code>.</p>
+<p>The only place where we care about which constructors <code>Missing</code> represents is in diagnostics
+(see <code>crate::usefulness::WitnessMatrix::apply_constructor</code>).</p>
+<p>We choose whether to specialize with <code>Missing</code> in
+<code>crate::usefulness::compute_exhaustiveness_and_usefulness</code>.</p>
+<h3 id="empty-types-empty-constructors-and-the-exhaustive_patterns-feature"><a class="doc-anchor" href="#empty-types-empty-constructors-and-the-exhaustive_patterns-feature">§</a>Empty types, empty constructors, and the <code>exhaustive_patterns</code> feature</h3>
+<p>An empty type is a type that has no valid value, like <code>!</code>, <code>enum Void {}</code>, or <code>Result&lt;!, !&gt;</code>.
+They require careful handling.</p>
+<p>First, for soundness reasons related to the possible existence of invalid values, by default we
+don’t treat empty types as empty. We force them to be matched with wildcards. Except if the
+<code>exhaustive_patterns</code> feature is turned on, in which case we do treat them as empty. And also
+except if the type has no constructors (like <code>enum Void {}</code> but not like <code>Result&lt;!, !&gt;</code>), we
+specifically allow <code>match void {}</code> to be exhaustive. There are additionally considerations of
+place validity that are handled in <code>crate::usefulness</code>. Yes this is a bit tricky.</p>
+<p>The second thing is that regardless of the above, it is always allowed to use all the
+constructors of a type. For example, all the following is ok:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">fn </span>foo(x: <span class="prelude-ty">Option</span>&lt;!&gt;) {
+  <span class="kw">match </span>x {
+    <span class="prelude-val">None </span>=&gt; {}
+    <span class="prelude-val">Some</span>(<span class="kw">_</span>) =&gt; {}
+  }
+}
+<span class="kw">fn </span>bar(x: <span class="kw-2">&amp;</span>[!]) -&gt; u32 {
+  <span class="kw">match </span>x {
+    [] =&gt; <span class="number">1</span>,
+    [<span class="kw">_</span>] =&gt; <span class="number">2</span>,
+    [<span class="kw">_</span>, <span class="kw">_</span>] =&gt; <span class="number">3</span>,
+  }
+}</code></pre></div>
+<p>Moreover, take the following:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">match </span>x {
+  <span class="prelude-val">None </span>=&gt; {}
+}</code></pre></div>
+<p>On a normal type, we would identify <code>Some</code> as missing and tell the user. If <code>x: Option&lt;!&gt;</code>
+however (and <code>exhaustive_patterns</code> is on), it’s ok to omit <code>Some</code>. When listing the constructors
+of a type, we must therefore track which can be omitted.</p>
+<p>Let’s call “empty” a constructor that matches no valid value for the type, like <code>Some</code> for the
+type <code>Option&lt;!&gt;</code>. What this all means is that <code>ConstructorSet</code> must know which constructors are
+empty. The difference between empty and nonempty constructors is that empty constructors need
+not be present for the match to be exhaustive.</p>
+<p>A final remark: empty constructors of arity 0 break specialization, we must avoid them. The
+reason is that if we specialize by them, nothing remains to witness the emptiness; the rest of
+the algorithm can’t distinguish them from a nonempty constructor. The only known case where this
+could happen is the <code>[..]</code> pattern on <code>[!; N]</code> with <code>N &gt; 0</code> so we must take care to not emit it.</p>
+<p>This is all handled by <a href="../trait.PatCx.html#tymethod.ctors_for_ty" title="method rustc_pattern_analysis::PatCx::ctors_for_ty"><code>PatCx::ctors_for_ty</code></a> and
+<a href="enum.ConstructorSet.html#method.split" title="method rustc_pattern_analysis::constructor::ConstructorSet::split"><code>ConstructorSet::split</code></a>. The invariants of <a href="struct.SplitConstructorSet.html" title="struct rustc_pattern_analysis::constructor::SplitConstructorSet"><code>SplitConstructorSet</code></a> are also of interest.</p>
+<h3 id="unions"><a class="doc-anchor" href="#unions">§</a>Unions</h3>
+<p>Unions allow us to match a value via several overlapping representations at the same time. For
+example, the following is exhaustive because when seeing the value as a boolean we handled all
+possible cases (other cases such as <code>n == 3</code> would trigger UB).</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">union </span>U8AsBool {
+    n: u8,
+    b: bool,
+}
+<span class="kw">let </span>x = U8AsBool { n: <span class="number">1 </span>};
+<span class="kw">unsafe </span>{
+    <span class="kw">match </span>x {
+        U8AsBool { n: <span class="number">2 </span>} =&gt; {}
+        U8AsBool { b: <span class="bool-val">true </span>} =&gt; {}
+        U8AsBool { b: <span class="bool-val">false </span>} =&gt; {}
+    }
+}</code></pre></div>
+<p>Pattern-matching has no knowledge that e.g. <code>false as u8 == 0</code>, so the values we consider in the
+algorithm look like <code>U8AsBool { b: true, n: 2 }</code>. In other words, for the most part a union is
+treated like a struct with the same fields. The difference lies in how we construct witnesses of
+non-exhaustiveness.</p>
+<h3 id="opaque-patterns"><a class="doc-anchor" href="#opaque-patterns">§</a>Opaque patterns</h3>
+<p>Some patterns, such as constants that are not allowed to be matched structurally, cannot be
+inspected, which we handle with <code>Constructor::Opaque</code>. Since we know nothing of these patterns,
+we assume they never cover each other. In order to respect the invariants of
+<a href="struct.SplitConstructorSet.html" title="struct rustc_pattern_analysis::constructor::SplitConstructorSet"><code>SplitConstructorSet</code></a>, we give each <code>Opaque</code> constructor a unique id so we can recognize it.</p>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.IntRange.html" title="struct rustc_pattern_analysis::constructor::IntRange">IntRange</a></div><div class="desc docblock-short">An exclusive interval, used for precise integer exhaustiveness checking. <code>IntRange</code>s always
+store a contiguous range.</div></li><li><div class="item-name"><a class="struct" href="struct.OpaqueId.html" title="struct rustc_pattern_analysis::constructor::OpaqueId">Opaque<wbr>Id</a></div><div class="desc docblock-short">A globally unique id to distinguish <code>Opaque</code> patterns.</div></li><li><div class="item-name"><a class="struct" href="struct.Slice.html" title="struct rustc_pattern_analysis::constructor::Slice">Slice</a></div><div class="desc docblock-short">A constructor for array and slice patterns.</div></li><li><div class="item-name"><a class="struct" href="struct.SplitConstructorSet.html" title="struct rustc_pattern_analysis::constructor::SplitConstructorSet">Split<wbr>Constructor<wbr>Set</a></div><div class="desc docblock-short">Describes the result of analyzing the constructors in a column of a match.</div></li></ul><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="enum" href="enum.Constructor.html" title="enum rustc_pattern_analysis::constructor::Constructor">Constructor</a></div><div class="desc docblock-short">A value can be decomposed into a constructor applied to some fields. This struct represents
+the constructor. See also <code>Fields</code>.</div></li><li><div class="item-name"><a class="enum" href="enum.ConstructorSet.html" title="enum rustc_pattern_analysis::constructor::ConstructorSet">Constructor<wbr>Set</a></div><div class="desc docblock-short">Describes the set of all constructors for a type. For details, in particular about the emptiness
+of constructors, see the top of the file.</div></li><li><div class="item-name"><a class="enum" href="enum.MaybeInfiniteInt.html" title="enum rustc_pattern_analysis::constructor::MaybeInfiniteInt">Maybe<wbr>Infinite<wbr>Int</a></div><div class="desc docblock-short">A possibly infinite integer. Values are encoded such that the ordering on <code>u128</code> matches the
+natural order on the original type. For example, <code>-128i8</code> is encoded as <code>0</code> and <code>127i8</code> as
+<code>255</code>. See <code>signed_bias</code> for details.</div></li><li><div class="item-name"><a class="enum" href="enum.Presence.html" title="enum rustc_pattern_analysis::constructor::Presence">Presence</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Whether we have seen a constructor in the column or not.</div></li><li><div class="item-name"><a class="enum" href="enum.RangeEnd.html" title="enum rustc_pattern_analysis::constructor::RangeEnd">Range<wbr>End</a></div></li><li><div class="item-name"><a class="enum" href="enum.SliceKind.html" title="enum rustc_pattern_analysis::constructor::SliceKind">Slice<wbr>Kind</a></div></li><li><div class="item-name"><a class="enum" href="enum.VariantVisibility.html" title="enum rustc_pattern_analysis::constructor::VariantVisibility">Variant<wbr>Visibility</a></div></li></ul></section></div></main></body></html>

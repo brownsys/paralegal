@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["generate_mergeable_doctest"],"struct":["DocTestRunner"]};

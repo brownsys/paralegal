@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["merge_bounds","move_bounds_to_generic_parameters","sized_bounds","trait_is_same_or_supertrait","where_clauses"]};

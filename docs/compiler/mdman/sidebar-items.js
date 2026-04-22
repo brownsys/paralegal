@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Format"],"fn":["convert","extract_section","join_url","md_parser"],"mod":["format","hbs","util"],"type":["EventIter","ManMap","Section"]};

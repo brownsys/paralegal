@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["INDENT_BUFFER","INDENT_BUFFER_LEN","INFINITE_SHAPE_WIDTH"],"struct":["Indent","Shape"]};

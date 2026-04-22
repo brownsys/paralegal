@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Conflict","InCrate","IsFirstInputType","OrphanCheckEarlyExit","OrphanCheckErr","OrphanCheckMode"],"fn":["orphan_check_trait_ref","trait_ref_is_knowable","trait_ref_is_local_or_fundamental"],"struct":["OrphanChecker","UncoveredTyParams"]};

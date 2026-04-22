@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["adt_def","body","control_dependencies","location_or_arg","mutability","operand","place"]};

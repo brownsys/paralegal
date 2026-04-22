@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["add_drop_of_var_derefs_origin","populate_access_facts"],"struct":["UseFactsExtractor"],"type":["PathPointRelation","VarPointRelation"]};

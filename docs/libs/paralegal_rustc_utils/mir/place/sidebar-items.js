@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["UNKNOWN_REGION"],"enum":["StoppingCondition"],"struct":["PlaceCollector","RegionMemberCollector","RegionVisitor","VisitedPlacesCollector"],"trait":["PlaceExt","RegionVisitorDispatcher"]};

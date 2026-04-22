@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FailureCode","TyCategory"],"fn":["escape_literal"],"mod":["need_type_info","nice_region_error","note_and_explain","region","sub_relations","suggest"],"struct":["ObligationCauseAsDiagArg","SameTypeModuloInfer"],"trait":["ObligationCauseExt"]};

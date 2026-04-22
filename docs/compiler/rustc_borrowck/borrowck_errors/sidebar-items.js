@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["borrowed_data_escapes_closure"]};

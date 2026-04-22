@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["ExclusiveRangeMissingGap","ExclusiveRangeMissingMax","GappedRange","NonExhaustiveOmittedPattern","NonExhaustiveOmittedPatternLintOnArm","Overlap","OverlappingRangeEndpoints","Uncovered"]};

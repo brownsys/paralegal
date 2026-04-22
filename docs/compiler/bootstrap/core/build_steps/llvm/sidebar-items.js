@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["LlvmBuildStatus"],"fn":["check_llvm_version","configure_cmake","configure_llvm","detect_llvm_sha","get_var","is_ci_llvm_available","is_ci_llvm_modified","prebuilt_llvm_config","supported_sanitizers"],"struct":["CrtBeginEnd","Enzyme","LdFlags","Libunwind","Lld","Llvm","LlvmResult","Meta","SanitizerRuntime","Sanitizers"]};

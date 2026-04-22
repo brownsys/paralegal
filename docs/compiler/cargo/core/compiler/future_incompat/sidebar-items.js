@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FUTURE_INCOMPAT_FILE","MAX_REPORTS","ON_DISK_VERSION","REPORT_PREAMBLE"],"fn":["get_updates","render_report","save_and_display_report"],"struct":["Diagnostic","FutureBreakageItem","FutureIncompatReport","FutureIncompatReportPackage","OnDiskReport","OnDiskReports"]};

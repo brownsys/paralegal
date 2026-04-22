@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["AUTO_FIELDS","DEFAULT_EDITION"],"fn":["expand_manifest","expand_manifest_","sanitize_name"],"struct":["ScriptSource"]};

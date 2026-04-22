@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["configure_http_handle","http_handle","http_handle_and_timeout","needs_custom_http_transport"],"struct":["HttpTimeout"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["statement_location","terminator_location","visit_opaque"],"struct":["Location","PlaceContext","PlaceRef"],"trait":["MirVisitor"]};

@@ -1,0 +1,25 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Implement common helpers for command wrappers. This assumes that the command wrapper is a struct containing a `cmd: Command` field. The provided helpers are:"><title>impl_common_helpers in run_make_support::macros - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="run_make_support" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc macro"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../run_make_support/index.html">run_<wbr>make_<wbr>support</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><div id="rustdoc-modnav"><h2><a href="index.html">In run_<wbr>make_<wbr>support::<wbr>macros</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">run_make_support</a>::<wbr><a href="index.html">macros</a></span><h1>Macro <span class="macro">impl_common_helpers</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/run_make_support/macros.rs.html#28-135">Source</a> </span></div><pre class="rust item-decl"><code>macro_rules! impl_common_helpers {
+    ($wrapper: ident) =&gt; { ... };
+}</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Implement common helpers for command wrappers. This assumes that the command wrapper is a struct
+containing a <code>cmd: Command</code> field. The provided helpers are:</p>
+<ol>
+<li>Generic argument acceptors: <code>arg</code> and <code>args</code> (delegated to <a href="../command/struct.Command.html" title="struct run_make_support::command::Command"><code>Command</code></a>). These are intended
+to be <em>fallback</em> argument acceptors, when specific helpers don’t make sense. Prefer to add
+new specific helper methods over relying on these generic argument providers.</li>
+<li>Environment manipulation methods: <code>env</code>, <code>env_remove</code> and <code>env_clear</code>: these delegate to
+methods of the same name on <a href="../command/struct.Command.html" title="struct run_make_support::command::Command"><code>Command</code></a>.</li>
+<li>Output and execution: <code>run</code> and <code>run_fail</code> are provided. These are higher-level convenience
+methods which wait for the command to finish running and assert that the command successfully
+ran or failed as expected. They return <a href="../command/struct.CompletedProcess.html" title="struct run_make_support::command::CompletedProcess"><code>CompletedProcess</code></a>, which can be used to assert the
+stdout/stderr/exit code of the executed process.</li>
+</ol>
+<p>Example usage:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">struct </span>CommandWrapper { cmd: Command } <span class="comment">// &lt;- required `cmd` field
+
+</span><span class="macro">crate::macros::impl_common_helpers!</span>(CommandWrapper);
+
+<span class="kw">impl </span>CommandWrapper {
+    <span class="comment">// ... additional specific helper methods
+</span>}</code></pre></div>
+</div></details></section></div></main></body></html>

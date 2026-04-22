@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_SOCKETPAIR_BUFFER_CAPACITY"],"fn":["anonsocket_read","anonsocket_write"],"struct":["AnonSocket","Buffer"],"trait":["EvalContextExt"]};

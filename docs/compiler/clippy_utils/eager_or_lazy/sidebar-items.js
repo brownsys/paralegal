@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["EagernessSuggestion"],"fn":["expr_eagerness","fn_eagerness","res_has_significant_drop","switch_to_eager_eval","switch_to_lazy_eval"]};

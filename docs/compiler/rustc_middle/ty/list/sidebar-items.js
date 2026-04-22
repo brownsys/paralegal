@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"foreigntype":["OpaqueListContents"],"macro":["impl_list_empty"],"struct":["ListSkeleton","RawList","TypeInfo"],"type":["List","ListWithCachedTypeInfo"]};

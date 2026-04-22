@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["STR_SENTINEL"],"macro":["direct_serialize_impls","peel","tuple"],"trait":["Decodable","Decoder","Encodable","Encoder"]};

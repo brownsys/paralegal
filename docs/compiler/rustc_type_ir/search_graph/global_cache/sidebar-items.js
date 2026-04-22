@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["CacheData","CacheEntry","GlobalCache","Success","WithOverflow"]};

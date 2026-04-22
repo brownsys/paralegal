@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CallConvention","FieldsShape","FloatLength","IntegerLength","PassMode","Primitive","Scalar","TagEncoding","ValueAbi","VariantsShape"],"struct":["AddressSpace","ArgAbi","FnAbi","Layout","LayoutShape","TyAndLayout","WrappingRange"]};

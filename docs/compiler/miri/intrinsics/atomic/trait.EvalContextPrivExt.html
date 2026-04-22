@@ -1,0 +1,106 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="API documentation for the Rust `EvalContextPrivExt` trait in crate `miri`."><title>EvalContextPrivExt in miri::intrinsics::atomic - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="miri" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc trait"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../miri/index.html">miri</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Eval<wbr>Context<wbr>Priv<wbr>Ext</a></h2><h3><a href="#provided-methods">Provided Methods</a></h3><ul class="block"><li><a href="#method.atomic_compare_exchange" title="atomic_compare_exchange">atomic_compare_exchange</a></li><li><a href="#method.atomic_compare_exchange_impl" title="atomic_compare_exchange_impl">atomic_compare_exchange_impl</a></li><li><a href="#method.atomic_compare_exchange_weak" title="atomic_compare_exchange_weak">atomic_compare_exchange_weak</a></li><li><a href="#method.atomic_exchange" title="atomic_exchange">atomic_exchange</a></li><li><a href="#method.atomic_fence_intrinsic" title="atomic_fence_intrinsic">atomic_fence_intrinsic</a></li><li><a href="#method.atomic_load" title="atomic_load">atomic_load</a></li><li><a href="#method.atomic_rmw_op" title="atomic_rmw_op">atomic_rmw_op</a></li><li><a href="#method.atomic_store" title="atomic_store">atomic_store</a></li><li><a href="#method.compiler_fence_intrinsic" title="compiler_fence_intrinsic">compiler_fence_intrinsic</a></li></ul><h3><a href="#implementors">Implementors</a></h3></section><div id="rustdoc-modnav"><h2><a href="index.html">In miri::<wbr>intrinsics::<wbr>atomic</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../index.html">miri</a>::<wbr><a href="../index.html">intrinsics</a>::<wbr><a href="index.html">atomic</a></span><h1>Trait <span class="trait">EvalContextPrivExt</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/miri/intrinsics/atomic.rs.html#125-286">Source</a> </span></div><pre class="rust item-decl"><code>trait EvalContextPrivExt&lt;'tcx&gt;: <a class="trait" href="../../machine/trait.MiriInterpCxExt.html" title="trait miri::machine::MiriInterpCxExt">MiriInterpCxExt</a>&lt;'tcx&gt; {
+    // Provided methods
+    fn <a href="#method.atomic_load" class="fn">atomic_load</a>(
+        &amp;mut self,
+        args: &amp;[<a class="type" href="../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;],
+        dest: &amp;<a class="type" href="../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+        atomic: <a class="enum" href="../../concurrency/data_race/enum.AtomicReadOrd.html" title="enum miri::concurrency::data_race::AtomicReadOrd">AtomicReadOrd</a>,
+    ) -&gt; <a class="type" href="../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.atomic_store" class="fn">atomic_store</a>(
+        &amp;mut self,
+        args: &amp;[<a class="type" href="../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;],
+        atomic: <a class="enum" href="../../concurrency/data_race/enum.AtomicWriteOrd.html" title="enum miri::concurrency::data_race::AtomicWriteOrd">AtomicWriteOrd</a>,
+    ) -&gt; <a class="type" href="../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.compiler_fence_intrinsic" class="fn">compiler_fence_intrinsic</a>(
+        &amp;mut self,
+        args: &amp;[<a class="type" href="../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;],
+        atomic: <a class="enum" href="../../concurrency/data_race/enum.AtomicFenceOrd.html" title="enum miri::concurrency::data_race::AtomicFenceOrd">AtomicFenceOrd</a>,
+    ) -&gt; <a class="type" href="../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.atomic_fence_intrinsic" class="fn">atomic_fence_intrinsic</a>(
+        &amp;mut self,
+        args: &amp;[<a class="type" href="../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;],
+        atomic: <a class="enum" href="../../concurrency/data_race/enum.AtomicFenceOrd.html" title="enum miri::concurrency::data_race::AtomicFenceOrd">AtomicFenceOrd</a>,
+    ) -&gt; <a class="type" href="../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.atomic_rmw_op" class="fn">atomic_rmw_op</a>(
+        &amp;mut self,
+        args: &amp;[<a class="type" href="../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;],
+        dest: &amp;<a class="type" href="../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+        atomic_op: <a class="enum" href="enum.AtomicOp.html" title="enum miri::intrinsics::atomic::AtomicOp">AtomicOp</a>,
+        atomic: <a class="enum" href="../../concurrency/data_race/enum.AtomicRwOrd.html" title="enum miri::concurrency::data_race::AtomicRwOrd">AtomicRwOrd</a>,
+    ) -&gt; <a class="type" href="../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.atomic_exchange" class="fn">atomic_exchange</a>(
+        &amp;mut self,
+        args: &amp;[<a class="type" href="../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;],
+        dest: &amp;<a class="type" href="../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+        atomic: <a class="enum" href="../../concurrency/data_race/enum.AtomicRwOrd.html" title="enum miri::concurrency::data_race::AtomicRwOrd">AtomicRwOrd</a>,
+    ) -&gt; <a class="type" href="../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.atomic_compare_exchange_impl" class="fn">atomic_compare_exchange_impl</a>(
+        &amp;mut self,
+        args: &amp;[<a class="type" href="../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;],
+        dest: &amp;<a class="type" href="../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+        success: <a class="enum" href="../../concurrency/data_race/enum.AtomicRwOrd.html" title="enum miri::concurrency::data_race::AtomicRwOrd">AtomicRwOrd</a>,
+        fail: <a class="enum" href="../../concurrency/data_race/enum.AtomicReadOrd.html" title="enum miri::concurrency::data_race::AtomicReadOrd">AtomicReadOrd</a>,
+        can_fail_spuriously: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>,
+    ) -&gt; <a class="type" href="../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.atomic_compare_exchange" class="fn">atomic_compare_exchange</a>(
+        &amp;mut self,
+        args: &amp;[<a class="type" href="../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;],
+        dest: &amp;<a class="type" href="../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+        success: <a class="enum" href="../../concurrency/data_race/enum.AtomicRwOrd.html" title="enum miri::concurrency::data_race::AtomicRwOrd">AtomicRwOrd</a>,
+        fail: <a class="enum" href="../../concurrency/data_race/enum.AtomicReadOrd.html" title="enum miri::concurrency::data_race::AtomicReadOrd">AtomicReadOrd</a>,
+    ) -&gt; <a class="type" href="../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt; { ... }
+<span class="item-spacer"></span>    fn <a href="#method.atomic_compare_exchange_weak" class="fn">atomic_compare_exchange_weak</a>(
+        &amp;mut self,
+        args: &amp;[<a class="type" href="../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;],
+        dest: &amp;<a class="type" href="../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+        success: <a class="enum" href="../../concurrency/data_race/enum.AtomicRwOrd.html" title="enum miri::concurrency::data_race::AtomicRwOrd">AtomicRwOrd</a>,
+        fail: <a class="enum" href="../../concurrency/data_race/enum.AtomicReadOrd.html" title="enum miri::concurrency::data_race::AtomicReadOrd">AtomicReadOrd</a>,
+    ) -&gt; <a class="type" href="../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt; { ... }
+}</code></pre><h2 id="provided-methods" class="section-header">Provided Methods<a href="#provided-methods" class="anchor">§</a></h2><div class="methods"><section id="method.atomic_load" class="method"><a class="src rightside" href="../../../src/miri/intrinsics/atomic.rs.html#126-142">Source</a><h4 class="code-header">fn <a href="#method.atomic_load" class="fn">atomic_load</a>(
+    &amp;mut self,
+    args: &amp;[<a class="type" href="../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;],
+    dest: &amp;<a class="type" href="../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+    atomic: <a class="enum" href="../../concurrency/data_race/enum.AtomicReadOrd.html" title="enum miri::concurrency::data_race::AtomicReadOrd">AtomicReadOrd</a>,
+) -&gt; <a class="type" href="../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt;</h4></section><section id="method.atomic_store" class="method"><a class="src rightside" href="../../../src/miri/intrinsics/atomic.rs.html#144-155">Source</a><h4 class="code-header">fn <a href="#method.atomic_store" class="fn">atomic_store</a>(
+    &amp;mut self,
+    args: &amp;[<a class="type" href="../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;],
+    atomic: <a class="enum" href="../../concurrency/data_race/enum.AtomicWriteOrd.html" title="enum miri::concurrency::data_race::AtomicWriteOrd">AtomicWriteOrd</a>,
+) -&gt; <a class="type" href="../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt;</h4></section><section id="method.compiler_fence_intrinsic" class="method"><a class="src rightside" href="../../../src/miri/intrinsics/atomic.rs.html#157-166">Source</a><h4 class="code-header">fn <a href="#method.compiler_fence_intrinsic" class="fn">compiler_fence_intrinsic</a>(
+    &amp;mut self,
+    args: &amp;[<a class="type" href="../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;],
+    atomic: <a class="enum" href="../../concurrency/data_race/enum.AtomicFenceOrd.html" title="enum miri::concurrency::data_race::AtomicFenceOrd">AtomicFenceOrd</a>,
+) -&gt; <a class="type" href="../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt;</h4></section><section id="method.atomic_fence_intrinsic" class="method"><a class="src rightside" href="../../../src/miri/intrinsics/atomic.rs.html#168-177">Source</a><h4 class="code-header">fn <a href="#method.atomic_fence_intrinsic" class="fn">atomic_fence_intrinsic</a>(
+    &amp;mut self,
+    args: &amp;[<a class="type" href="../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;],
+    atomic: <a class="enum" href="../../concurrency/data_race/enum.AtomicFenceOrd.html" title="enum miri::concurrency::data_race::AtomicFenceOrd">AtomicFenceOrd</a>,
+) -&gt; <a class="type" href="../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt;</h4></section><section id="method.atomic_rmw_op" class="method"><a class="src rightside" href="../../../src/miri/intrinsics/atomic.rs.html#179-219">Source</a><h4 class="code-header">fn <a href="#method.atomic_rmw_op" class="fn">atomic_rmw_op</a>(
+    &amp;mut self,
+    args: &amp;[<a class="type" href="../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;],
+    dest: &amp;<a class="type" href="../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+    atomic_op: <a class="enum" href="enum.AtomicOp.html" title="enum miri::intrinsics::atomic::AtomicOp">AtomicOp</a>,
+    atomic: <a class="enum" href="../../concurrency/data_race/enum.AtomicRwOrd.html" title="enum miri::concurrency::data_race::AtomicRwOrd">AtomicRwOrd</a>,
+) -&gt; <a class="type" href="../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt;</h4></section><section id="method.atomic_exchange" class="method"><a class="src rightside" href="../../../src/miri/intrinsics/atomic.rs.html#221-236">Source</a><h4 class="code-header">fn <a href="#method.atomic_exchange" class="fn">atomic_exchange</a>(
+    &amp;mut self,
+    args: &amp;[<a class="type" href="../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;],
+    dest: &amp;<a class="type" href="../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+    atomic: <a class="enum" href="../../concurrency/data_race/enum.AtomicRwOrd.html" title="enum miri::concurrency::data_race::AtomicRwOrd">AtomicRwOrd</a>,
+) -&gt; <a class="type" href="../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt;</h4></section><section id="method.atomic_compare_exchange_impl" class="method"><a class="src rightside" href="../../../src/miri/intrinsics/atomic.rs.html#238-265">Source</a><h4 class="code-header">fn <a href="#method.atomic_compare_exchange_impl" class="fn">atomic_compare_exchange_impl</a>(
+    &amp;mut self,
+    args: &amp;[<a class="type" href="../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;],
+    dest: &amp;<a class="type" href="../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+    success: <a class="enum" href="../../concurrency/data_race/enum.AtomicRwOrd.html" title="enum miri::concurrency::data_race::AtomicRwOrd">AtomicRwOrd</a>,
+    fail: <a class="enum" href="../../concurrency/data_race/enum.AtomicReadOrd.html" title="enum miri::concurrency::data_race::AtomicReadOrd">AtomicReadOrd</a>,
+    can_fail_spuriously: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>,
+) -&gt; <a class="type" href="../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt;</h4></section><section id="method.atomic_compare_exchange" class="method"><a class="src rightside" href="../../../src/miri/intrinsics/atomic.rs.html#267-275">Source</a><h4 class="code-header">fn <a href="#method.atomic_compare_exchange" class="fn">atomic_compare_exchange</a>(
+    &amp;mut self,
+    args: &amp;[<a class="type" href="../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;],
+    dest: &amp;<a class="type" href="../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+    success: <a class="enum" href="../../concurrency/data_race/enum.AtomicRwOrd.html" title="enum miri::concurrency::data_race::AtomicRwOrd">AtomicRwOrd</a>,
+    fail: <a class="enum" href="../../concurrency/data_race/enum.AtomicReadOrd.html" title="enum miri::concurrency::data_race::AtomicReadOrd">AtomicReadOrd</a>,
+) -&gt; <a class="type" href="../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt;</h4></section><section id="method.atomic_compare_exchange_weak" class="method"><a class="src rightside" href="../../../src/miri/intrinsics/atomic.rs.html#277-285">Source</a><h4 class="code-header">fn <a href="#method.atomic_compare_exchange_weak" class="fn">atomic_compare_exchange_weak</a>(
+    &amp;mut self,
+    args: &amp;[<a class="type" href="../../type.OpTy.html" title="type miri::OpTy">OpTy</a>&lt;'tcx&gt;],
+    dest: &amp;<a class="type" href="../../type.MPlaceTy.html" title="type miri::MPlaceTy">MPlaceTy</a>&lt;'tcx&gt;,
+    success: <a class="enum" href="../../concurrency/data_race/enum.AtomicRwOrd.html" title="enum miri::concurrency::data_race::AtomicRwOrd">AtomicRwOrd</a>,
+    fail: <a class="enum" href="../../concurrency/data_race/enum.AtomicReadOrd.html" title="enum miri::concurrency::data_race::AtomicReadOrd">AtomicReadOrd</a>,
+) -&gt; <a class="type" href="../../../rustc_middle/mir/interpret/error/type.InterpResult.html" title="type rustc_middle::mir::interpret::error::InterpResult">InterpResult</a>&lt;'tcx&gt;</h4></section></div><h2 id="implementors" class="section-header">Implementors<a href="#implementors" class="anchor">§</a></h2><div id="implementors-list"><section id="impl-EvalContextPrivExt%3C'tcx%3E-for-InterpCx%3C'tcx,+MiriMachine%3C'tcx%3E%3E" class="impl"><a class="src rightside" href="../../../src/miri/intrinsics/atomic.rs.html#124">Source</a><a href="#impl-EvalContextPrivExt%3C'tcx%3E-for-InterpCx%3C'tcx,+MiriMachine%3C'tcx%3E%3E" class="anchor">§</a><h3 class="code-header">impl&lt;'tcx&gt; <a class="trait" href="trait.EvalContextPrivExt.html" title="trait miri::intrinsics::atomic::EvalContextPrivExt">EvalContextPrivExt</a>&lt;'tcx&gt; for <a class="type" href="../../machine/type.MiriInterpCx.html" title="type miri::machine::MiriInterpCx">MiriInterpCx</a>&lt;'tcx&gt;</h3></section></div><script src="../../../trait.impl/miri/intrinsics/atomic/trait.EvalContextPrivExt.js" async></script></section></div></main></body></html>

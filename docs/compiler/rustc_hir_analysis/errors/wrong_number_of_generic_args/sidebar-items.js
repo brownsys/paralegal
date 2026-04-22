@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AngleBrackets","GenericArgsInfo"],"struct":["WrongNumberOfGenericArgs"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["TRACK_INTERN_AS_UNIQUE"],"enum":["Constant","RichLocation"],"fn":["allocative_visit_intern_t","allocative_visit_map_coerce_key","allocative_visit_simple_sized"],"struct":["CallString","GlobalLocation","SimpleSizedAllocativeWrapper"],"type":["CallStringInner"]};

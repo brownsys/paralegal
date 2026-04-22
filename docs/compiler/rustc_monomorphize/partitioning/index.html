@@ -1,0 +1,94 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Partitioning Codegen Units for Incremental Compilation"><title>rustc_monomorphize::partitioning - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_monomorphize" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../rustc_monomorphize/index.html">rustc_<wbr>monomorphize</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module partitioning</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#partitioning-codegen-units-for-incremental-compilation" title="Partitioning Codegen Units for Incremental Compilation">Partitioning Codegen Units for Incremental Compilation</a><ul><li><a href="#a-note-on-inlining" title="A Note on Inlining">A Note on Inlining</a></li></ul></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#functions" title="Functions">Functions</a></li><li><a href="#types" title="Type Aliases">Type Aliases</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate rustc_<wbr>monomorphize</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">rustc_monomorphize</a></span><h1>Module <span>partitioning</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustc_monomorphize/partitioning.rs.html#1-1349">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><h2 id="partitioning-codegen-units-for-incremental-compilation"><a class="doc-anchor" href="#partitioning-codegen-units-for-incremental-compilation">§</a>Partitioning Codegen Units for Incremental Compilation</h2>
+<p>The task of this module is to take the complete set of monomorphizations of
+a crate and produce a set of codegen units from it, where a codegen unit
+is a named set of (mono-item, linkage) pairs. That is, this module
+decides which monomorphization appears in which codegen units with which
+linkage. The following paragraphs describe some of the background on the
+partitioning scheme.</p>
+<p>The most important opportunity for saving on compilation time with
+incremental compilation is to avoid re-codegenning and re-optimizing code.
+Since the unit of codegen and optimization for LLVM is “modules” or, how
+we call them “codegen units”, the particulars of how much time can be saved
+by incremental compilation are tightly linked to how the output program is
+partitioned into these codegen units prior to passing it to LLVM –
+especially because we have to treat codegen units as opaque entities once
+they are created: There is no way for us to incrementally update an existing
+LLVM module and so we have to build any such module from scratch if it was
+affected by some change in the source code.</p>
+<p>From that point of view it would make sense to maximize the number of
+codegen units by, for example, putting each function into its own module.
+That way only those modules would have to be re-compiled that were actually
+affected by some change, minimizing the number of functions that could have
+been re-used but just happened to be located in a module that is
+re-compiled.</p>
+<p>However, since LLVM optimization does not work across module boundaries,
+using such a highly granular partitioning would lead to very slow runtime
+code since it would effectively prohibit inlining and other inter-procedure
+optimizations. We want to avoid that as much as possible.</p>
+<p>Thus we end up with a trade-off: The bigger the codegen units, the better
+LLVM’s optimizer can do its work, but also the smaller the compilation time
+reduction we get from incremental compilation.</p>
+<p>Ideally, we would create a partitioning such that there are few big codegen
+units with few interdependencies between them. For now though, we use the
+following heuristic to determine the partitioning:</p>
+<ul>
+<li>There are two codegen units for every source-level module:</li>
+<li>One for “stable”, that is non-generic, code</li>
+<li>One for more “volatile” code, i.e., monomorphized instances of functions
+defined in that module</li>
+</ul>
+<p>In order to see why this heuristic makes sense, let’s take a look at when a
+codegen unit can get invalidated:</p>
+<ol>
+<li>
+<p>The most straightforward case is when the BODY of a function or global
+changes. Then any codegen unit containing the code for that item has to be
+re-compiled. Note that this includes all codegen units where the function
+has been inlined.</p>
+</li>
+<li>
+<p>The next case is when the SIGNATURE of a function or global changes. In
+this case, all codegen units containing a REFERENCE to that item have to be
+re-compiled. This is a superset of case 1.</p>
+</li>
+<li>
+<p>The final and most subtle case is when a REFERENCE to a generic function
+is added or removed somewhere. Even though the definition of the function
+might be unchanged, a new REFERENCE might introduce a new monomorphized
+instance of this function which has to be placed and compiled somewhere.
+Conversely, when removing a REFERENCE, it might have been the last one with
+that particular set of generic arguments and thus we have to remove it.</p>
+</li>
+</ol>
+<p>From the above we see that just using one codegen unit per source-level
+module is not such a good idea, since just adding a REFERENCE to some
+generic item somewhere else would invalidate everything within the module
+containing the generic item. The heuristic above reduces this detrimental
+side-effect of references a little by at least not touching the non-generic
+code of the module.</p>
+<h3 id="a-note-on-inlining"><a class="doc-anchor" href="#a-note-on-inlining">§</a>A Note on Inlining</h3>
+<p>As briefly mentioned above, in order for LLVM to be able to inline a
+function call, the body of the function has to be available in the LLVM
+module where the call is made. This has a few consequences for partitioning:</p>
+<ul>
+<li>
+<p>The partitioning algorithm has to take care of placing functions into all
+codegen units where they should be available for inlining. It also has to
+decide on the correct linkage for these functions.</p>
+</li>
+<li>
+<p>The partitioning algorithm has to know which functions are likely to get
+inlined, so it can distribute function instantiations accordingly. Since
+there is no way of knowing for sure which functions LLVM will decide to
+inline in the end, we apply a heuristic here: Only functions marked with
+<code>#[inline]</code> are considered for inlining by the partitioner. The current
+implementation will not try to determine if a function is likely to be
+inlined by looking at the functions definition.</p>
+</li>
+</ul>
+<p>Note though that as a side-effect of creating a codegen units per
+source-level module, functions from the same module will be available for
+inlining, even when they are not marked <code>#[inline]</code>.</p>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.PartitioningCx.html" title="struct rustc_monomorphize::partitioning::PartitioningCx">Partitioning<wbr>Cx</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="struct" href="struct.PlacedMonoItems.html" title="struct rustc_monomorphize::partitioning::PlacedMonoItems">Placed<wbr>Mono<wbr>Items</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.assert_symbols_are_distinct.html" title="fn rustc_monomorphize::partitioning::assert_symbols_are_distinct">assert_<wbr>symbols_<wbr>are_<wbr>distinct</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.characteristic_def_id_of_mono_item.html" title="fn rustc_monomorphize::partitioning::characteristic_def_id_of_mono_item">characteristic_<wbr>def_<wbr>id_<wbr>of_<wbr>mono_<wbr>item</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.collect_and_partition_mono_items.html" title="fn rustc_monomorphize::partitioning::collect_and_partition_mono_items">collect_<wbr>and_<wbr>partition_<wbr>mono_<wbr>items</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.compute_codegen_unit_name.html" title="fn rustc_monomorphize::partitioning::compute_codegen_unit_name">compute_<wbr>codegen_<wbr>unit_<wbr>name</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.compute_inlined_overlap.html" title="fn rustc_monomorphize::partitioning::compute_inlined_overlap">compute_<wbr>inlined_<wbr>overlap</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Compute the combined size of all inlined items that appear in both <code>cgu1</code>
+and <code>cgu2</code>.</div></li><li><div class="item-name"><a class="fn" href="fn.debug_dump.html" title="fn rustc_monomorphize::partitioning::debug_dump">debug_<wbr>dump</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.default_visibility.html" title="fn rustc_monomorphize::partitioning::default_visibility">default_<wbr>visibility</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.dump_mono_items_stats.html" title="fn rustc_monomorphize::partitioning::dump_mono_items_stats">dump_<wbr>mono_<wbr>items_<wbr>stats</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Outputs stats about instantiation counts and estimated size, per <code>MonoItem</code>’s
+def, to a file in the given output directory.</div></li><li><div class="item-name"><a class="fn" href="fn.fallback_cgu_name.html" title="fn rustc_monomorphize::partitioning::fallback_cgu_name">fallback_<wbr>cgu_<wbr>name</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.internalize_symbols.html" title="fn rustc_monomorphize::partitioning::internalize_symbols">internalize_<wbr>symbols</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.mark_code_coverage_dead_code_cgu.html" title="fn rustc_monomorphize::partitioning::mark_code_coverage_dead_code_cgu">mark_<wbr>code_<wbr>coverage_<wbr>dead_<wbr>code_<wbr>cgu</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.merge_codegen_units.html" title="fn rustc_monomorphize::partitioning::merge_codegen_units">merge_<wbr>codegen_<wbr>units</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.mono_item_linkage_and_visibility.html" title="fn rustc_monomorphize::partitioning::mono_item_linkage_and_visibility">mono_<wbr>item_<wbr>linkage_<wbr>and_<wbr>visibility</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.mono_item_visibility.html" title="fn rustc_monomorphize::partitioning::mono_item_visibility">mono_<wbr>item_<wbr>visibility</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.partition.html" title="fn rustc_monomorphize::partitioning::partition">partition</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.place_mono_items.html" title="fn rustc_monomorphize::partitioning::place_mono_items">place_<wbr>mono_<wbr>items</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.provide.html" title="fn rustc_monomorphize::partitioning::provide">provide</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.static_visibility.html" title="fn rustc_monomorphize::partitioning::static_visibility">static_<wbr>visibility</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="types" class="section-header">Type Aliases<a href="#types" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="type" href="type.CguNameCache.html" title="type rustc_monomorphize::partitioning::CguNameCache">CguName<wbr>Cache</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul></section></div></main></body></html>

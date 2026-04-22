@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"macro":["region_pat"],"struct":["Aliases","GatherBorrows","RegionSccIndex"],"type":["LoanMap","LoanSet"]};

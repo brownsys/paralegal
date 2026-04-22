@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["TraitSpecializationKind"],"fn":["incoherent_impls_provider","trait_impls_in_crate_provider","trait_impls_of_provider","traits_provider"],"struct":["TraitDef","TraitImpls"]};

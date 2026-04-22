@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["NO_ALLOC_SHIM_IS_UNSTABLE"],"enum":["AllocatorKind","AllocatorTy"],"fn":["alloc_error_handler_name","default_fn_name","global_fn_name"],"static":["ALLOCATOR_METHODS"],"struct":["AllocatorMethod","AllocatorMethodInput"]};

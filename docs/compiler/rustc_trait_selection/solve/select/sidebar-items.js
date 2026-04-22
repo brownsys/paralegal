@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["candidate_should_be_dropped_in_favor_of","to_selection"],"struct":["Select"],"trait":["InferCtxtSelectExt"]};

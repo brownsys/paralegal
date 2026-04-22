@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["check_explicit_predicates","check_inferred_predicates","infer_predicates","insert_required_predicates_to_be_wf"]};

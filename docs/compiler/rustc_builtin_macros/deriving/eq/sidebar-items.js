@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["cs_total_eq_assert","expand_deriving_eq"]};

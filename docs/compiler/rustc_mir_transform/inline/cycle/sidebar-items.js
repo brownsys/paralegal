@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["mir_callgraph_reachable","mir_inliner_callees"]};

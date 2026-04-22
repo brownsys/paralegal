@@ -1,0 +1,53 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="The `never_type_fallback_flowing_into_unsafe` lint detects cases where never type fallback affects unsafe function calls."><title>NEVER_TYPE_FALLBACK_FLOWING_INTO_UNSAFE in rustc_lint_defs::builtin - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_lint_defs" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc static"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../rustc_lint_defs/index.html">rustc_<wbr>lint_<wbr>defs</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">NEVER_<wbr>TYPE_<wbr>FALLBACK_<wbr>FLOWING_<wbr>INTO_<wbr>UNSAFE</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#never-type-fallback" title="Never type fallback">Never type fallback</a></li><li><a href="#example" title="Example">Example</a></li><li><a href="#explanation" title="Explanation">Explanation</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="index.html">In rustc_<wbr>lint_<wbr>defs::<wbr>builtin</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../index.html">rustc_lint_defs</a>::<wbr><a href="index.html">builtin</a></span><h1>Static <span class="static">NEVER_TYPE_FALLBACK_FLOWING_INTO_UNSAFE</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/rustc_lint_defs/builtin.rs.html#4114-4196">Source</a> </span></div><pre class="rust item-decl"><code>pub static NEVER_TYPE_FALLBACK_FLOWING_INTO_UNSAFE: &amp;<a class="struct" href="../struct.Lint.html" title="struct rustc_lint_defs::Lint">Lint</a></code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The <code>never_type_fallback_flowing_into_unsafe</code> lint detects cases where never type fallback
+affects unsafe function calls.</p>
+<h4 id="never-type-fallback"><a class="doc-anchor" href="#never-type-fallback">§</a>Never type fallback</h4>
+<p>When the compiler sees a value of type <a href="https://doc.rust-lang.org/core/primitive.never.html"><code>!</code></a> it implicitly inserts a coercion (if possible),
+to allow type check to infer any type:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="comment">// this
+</span><span class="kw">let </span>x: u8 = <span class="macro">panic!</span>();
+
+<span class="comment">// is (essentially) turned by the compiler into
+</span><span class="kw">let </span>x: u8 = absurd(<span class="macro">panic!</span>());
+
+<span class="comment">// where absurd is a function with the following signature
+// (it's sound, because `!` always marks unreachable code):
+</span><span class="kw">fn </span>absurd&lt;T&gt;(never: !) -&gt; T { ... }</code></pre></div>
+<p>While it’s convenient to be able to use non-diverging code in one of the branches (like
+<code>if a { b } else { return }</code>) this could lead to compilation errors:</p>
+
+<div class="example-wrap compile_fail"><a href="#" class="tooltip" title="This example deliberately fails to compile">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="comment">// this
+</span>{ <span class="macro">panic!</span>() };
+
+<span class="comment">// gets turned into this
+</span>{ absurd(<span class="macro">panic!</span>()) }; <span class="comment">// error: can't infer the type of `absurd`</span></code></pre></div>
+<p>To prevent such errors, compiler remembers where it inserted <code>absurd</code> calls, and if it
+can’t infer their type, it sets the type to fallback. <code>{ absurd::&lt;Fallback&gt;(panic!()) };</code>.
+This is what is known as “never type fallback”.</p>
+<h4 id="example"><a class="doc-anchor" href="#example">§</a>Example</h4>
+<div class="example-wrap compile_fail"><a href="#" class="tooltip" title="This example deliberately fails to compile">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="attr">#![deny(never_type_fallback_flowing_into_unsafe)]
+</span><span class="kw">fn </span>main() {
+    <span class="kw">if </span><span class="bool-val">true </span>{
+        <span class="comment">// return has type `!` which, is some cases, causes never type fallback
+        </span><span class="kw">return
+    </span>} <span class="kw">else </span>{
+        <span class="comment">// `zeroed` is an unsafe function, which returns an unbounded type
+        </span><span class="kw">unsafe </span>{ std::mem::zeroed() }
+    };
+    <span class="comment">// depending on the fallback, `zeroed` may create `()` (which is completely sound),
+    // or `!` (which is instant undefined behavior)
+</span>}</code></pre></div>
+<p>{{produces}}</p>
+<h4 id="explanation"><a class="doc-anchor" href="#explanation">§</a>Explanation</h4>
+<p>Due to historic reasons never type fallback was <code>()</code>, meaning that <code>!</code> got spontaneously
+coerced to <code>()</code>. There are plans to change that, but they may make the code such as above
+unsound. Instead of depending on the fallback, you should specify the type explicitly:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">if </span><span class="bool-val">true </span>{
+    <span class="kw">return
+</span>} <span class="kw">else </span>{
+    <span class="comment">// type is explicitly specified, fallback can't hurt us no more
+    </span><span class="kw">unsafe </span>{ std::mem::zeroed::&lt;()&gt;() }
+};</code></pre></div>
+<p>See <a href="https://github.com/rust-lang/rust/issues/123748">Tracking Issue for making <code>!</code> fall back to <code>!</code></a>.</p>
+</div></details></section></div></main></body></html>

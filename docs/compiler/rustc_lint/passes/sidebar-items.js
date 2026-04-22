@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"macro":["declare_early_lint_pass","declare_late_lint_pass"],"trait":["EarlyLintPass","LateLintPass"],"type":["EarlyLintPassObject","LateLintPassObject"]};

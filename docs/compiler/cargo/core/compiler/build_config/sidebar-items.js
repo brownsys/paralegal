@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CompileMode","MessageFormat","TimingOutput"],"fn":["default_parallelism"],"struct":["BuildConfig"]};

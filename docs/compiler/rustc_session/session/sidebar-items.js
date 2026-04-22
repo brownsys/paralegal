@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CodegenUnits","CtfeBacktrace","IncrCompSession","MetadataKind"],"fn":["build_session","default_emitter","mk_emitter","validate_commandline_args_with_session_available"],"struct":["CompilerIO","EarlyDiagCtxt","Limit","Limits","Session","StableCrateId"],"trait":["LintStoreMarker","RemapFileNameExt"]};

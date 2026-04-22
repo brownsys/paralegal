@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["alphabetic_with_underscores","and","colon","join_nodes","join_variable_intros","l1_bullet","l2_bullet","l3_bullet","l4_bullet","l5_bullet","marker","operator","or","quote","spanned","variable"]};

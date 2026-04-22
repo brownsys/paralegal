@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["DiffActivity","DiffMode"],"fn":["valid_input_activity","valid_ret_activity","valid_ty_for_activity"],"struct":["AutoDiffAttrs","AutoDiffItem"]};

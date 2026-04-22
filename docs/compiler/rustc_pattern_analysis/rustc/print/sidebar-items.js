@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["EnumInfo"],"fn":["start_or_comma","write_ref_like","write_slice_like","write_struct_like"],"struct":["FieldPat"]};

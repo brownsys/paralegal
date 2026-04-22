@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_BACKTRACK","MAX_COST","MAX_PLACES"],"enum":["Polarity","Update"],"fn":["loop_headers","predecessor_count"],"struct":["Condition","ConditionSet","JumpThreading","OpportunitySet","TOFinder","ThreadingOpportunity"]};

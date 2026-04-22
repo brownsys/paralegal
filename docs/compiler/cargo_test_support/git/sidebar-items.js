@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["add","add_submodule","cargo_uses_gitoxide","commit","default_repo_cfg","default_search_path","init","new","new_repo","repo","tag"],"struct":["RepoBuilder","Repository"]};

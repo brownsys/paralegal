@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["arm_comma","block_can_be_flattened","can_flatten_block_around_this","collect_beginning_verts","flatten_arm_body","nop_block_collapse","rewrite_guard","rewrite_match","rewrite_match_arm","rewrite_match_arms","rewrite_match_body","stmt_is_expr_mac"],"struct":["ArmWrapper"]};

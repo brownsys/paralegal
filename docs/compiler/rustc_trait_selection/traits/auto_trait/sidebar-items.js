@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AutoTraitResult","RegionTarget"],"struct":["AutoTraitFinder","AutoTraitInfo","RegionDeps"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["has_back_edge","insert_counter"],"struct":["CtfeLimit"]};

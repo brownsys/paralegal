@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["MacroRulesScope"],"fn":["fast_print_path","registered_tools","soft_custom_inner_attributes_gate","sub_namespace_match"],"struct":["MacroRulesBinding"],"type":["MacroRulesScopeRef","Res"]};

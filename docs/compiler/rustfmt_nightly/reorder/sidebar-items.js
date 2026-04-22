@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ReorderableItemKind"],"fn":["compare_items","contains_macro_use_attr","group_imports","rewrite_reorderable_item","rewrite_reorderable_or_regroupable_items","wrap_reorderable_items"]};

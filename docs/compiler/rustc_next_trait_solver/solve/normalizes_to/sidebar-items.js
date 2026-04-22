@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["anon_const","inherent","opaque_types","weak_types"]};

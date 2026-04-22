@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["proc_macro_decls_static","provide"]};

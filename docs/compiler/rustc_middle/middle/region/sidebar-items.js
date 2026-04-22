@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["RvalueCandidateType","ScopeData"],"struct":["FirstStatementIndex","Scope","ScopeTree","YieldData"],"type":["ScopeDepth"]};

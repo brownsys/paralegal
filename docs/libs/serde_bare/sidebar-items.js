@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["from_reader","from_slice","to_vec","to_writer"],"mod":["de","error","ser"],"struct":["Int","Uint"],"type":["Result"]};

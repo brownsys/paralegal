@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["InitializationType"],"fn":["compute_initialization_typ","compute_lifted_def_initialization_typ","for_each_initialization_typ","there_is_initialization_typ"]};

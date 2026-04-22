@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["save_as_intervals"],"struct":["DenseLocationMap","PointIndex","Visitor"]};

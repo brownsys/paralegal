@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["RI_EXCLUSION_LIST"],"enum":["FilesystemSupport"],"fn":["check","check_filesystem_support","filter_rust_installer_no_so_bins","is_executable"]};

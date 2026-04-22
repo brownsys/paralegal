@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Constructor","ConstructorSet","MaybeInfiniteInt","Presence","RangeEnd","SliceKind","VariantVisibility"],"struct":["IntRange","OpaqueId","Slice","SplitConstructorSet"]};

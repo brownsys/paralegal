@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["COLLECT_TRAIT_IMPLS"],"fn":["collect_trait_impls"],"struct":["BadImplStripper","ItemAndAliasCollector","SyntheticImplCollector"]};

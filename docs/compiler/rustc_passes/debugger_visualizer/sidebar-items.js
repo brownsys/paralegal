@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["debugger_visualizers","provide"],"struct":["DebuggerVisualizerCollector"]};

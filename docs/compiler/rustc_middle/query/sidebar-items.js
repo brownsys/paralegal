@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"macro":["rustc_feedable_queries"],"mod":["cached","descs","erase","keys","on_disk_cache","plumbing","queries"],"struct":["DynamicQueries","ExternProviders","LocalCrate","Providers","QueryArenas","QueryCaches","QueryEngine","QueryStates"],"trait":["AsLocalKey","Key"]};

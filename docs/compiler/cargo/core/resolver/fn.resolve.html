@@ -1,0 +1,42 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Builds the list of all packages required to build the first argument."><title>resolve in cargo::core::resolver - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="cargo" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc fn"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../cargo/index.html">cargo</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><div id="rustdoc-modnav"><h2><a href="index.html">In cargo::<wbr>core::<wbr>resolver</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../index.html">cargo</a>::<wbr><a href="../index.html">core</a>::<wbr><a href="index.html">resolver</a></span><h1>Function <span class="fn">resolve</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/cargo/core/resolver/mod.rs.html#124">Source</a> </span></div><pre class="rust item-decl"><code>pub fn resolve(
+    summaries: &amp;[(<a class="struct" href="../summary/struct.Summary.html" title="struct cargo::core::summary::Summary">Summary</a>, <a class="struct" href="types/struct.ResolveOpts.html" title="struct cargo::core::resolver::types::ResolveOpts">ResolveOpts</a>)],
+    replacements: &amp;[(<a class="struct" href="../struct.PackageIdSpec.html" title="struct cargo::core::PackageIdSpec">PackageIdSpec</a>, <a class="struct" href="../dependency/struct.Dependency.html" title="struct cargo::core::dependency::Dependency">Dependency</a>)],
+    registry: &amp;mut dyn <a class="trait" href="../registry/trait.Registry.html" title="trait cargo::core::registry::Registry">Registry</a>,
+    version_prefs: &amp;<a class="struct" href="version_prefs/struct.VersionPreferences.html" title="struct cargo::core::resolver::version_prefs::VersionPreferences">VersionPreferences</a>,
+    resolve_version: <a class="enum" href="resolve/enum.ResolveVersion.html" title="enum cargo::core::resolver::resolve::ResolveVersion">ResolveVersion</a>,
+    gctx: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;&amp;<a class="struct" href="../../util/context/struct.GlobalContext.html" title="struct cargo::util::context::GlobalContext">GlobalContext</a>&gt;,
+) -&gt; <a class="type" href="../../util/errors/type.CargoResult.html" title="type cargo::util::errors::CargoResult">CargoResult</a>&lt;<a class="struct" href="resolve/struct.Resolve.html" title="struct cargo::core::resolver::resolve::Resolve">Resolve</a>&gt;</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Builds the list of all packages required to build the first argument.</p>
+<ul>
+<li>
+<p><code>summaries</code> - the list of package summaries along with how to resolve
+their features. This is a list of all top-level packages that are intended
+to be part of the lock file (resolve output). These typically are a list
+of all workspace members.</p>
+</li>
+<li>
+<p><code>replacements</code> - this is a list of <code>[replace]</code> directives found in the
+root of the workspace. The list here is a <code>PackageIdSpec</code> of what to
+replace and a <code>Dependency</code> to replace that with. In general it’s not
+recommended to use <code>[replace]</code> any more and use <code>[patch]</code> instead, which
+is supported elsewhere.</p>
+</li>
+<li>
+<p><code>registry</code> - this is the source from which all package summaries are
+loaded. It’s expected that this is extensively configured ahead of time
+and is idempotent with our requests to it (aka returns the same results
+for the same query every time). Typically this is an instance of a
+<code>PackageRegistry</code>.</p>
+</li>
+<li>
+<p><code>version_prefs</code> - this represents a preference for some versions over others,
+based on the lock file or other reasons such as <code>[patch]</code>es.</p>
+</li>
+<li>
+<p><code>resolve_version</code> - this controls how the lockfile will be serialized.</p>
+</li>
+<li>
+<p><code>config</code> - a location to print warnings and such, or <code>None</code> if no warnings
+should be printed</p>
+</li>
+</ul>
+</div></details></section></div></main></body></html>

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["LinkFromSrc"],"fn":["collect_spans_and_sources"],"struct":["SpanMapVisitor"]};

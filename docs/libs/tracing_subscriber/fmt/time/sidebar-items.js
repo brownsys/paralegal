@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["time","uptime"],"struct":["ChronoLocal","ChronoUtc","LocalTime","OffsetTime","SystemTime","Uptime","UtcTime"],"trait":["FormatTime"]};

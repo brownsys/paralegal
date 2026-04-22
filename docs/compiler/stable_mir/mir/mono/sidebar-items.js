@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["InstanceKind","MonoItem"],"struct":["Instance","InstanceDef","StaticDef"]};

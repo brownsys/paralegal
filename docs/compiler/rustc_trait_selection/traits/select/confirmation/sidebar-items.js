@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["pointer_like_goal_for_rpitit"]};

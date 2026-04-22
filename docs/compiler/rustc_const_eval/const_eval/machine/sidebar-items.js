@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["LINT_TERMINATOR_LIMIT","PROGRESS_INDICATOR_START","TINY_LINT_TERMINATOR_LIMIT"],"enum":["CanAccessMutGlobal","CheckAlignment","MemoryKind"],"struct":["CompileTimeMachine"],"type":["CompileTimeInterpCx"]};

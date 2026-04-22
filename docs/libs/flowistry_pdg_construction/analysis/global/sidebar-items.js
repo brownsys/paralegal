@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ConstructionResult","Input"],"mod":["call_tree_visit","graph_elems","partial_graph"],"struct":["GraphSizeEstimator","HumanInt","MemoPdgConstructor"],"type":["LocalAnalysisResults","PdgCache","PdgCacheKey"]};

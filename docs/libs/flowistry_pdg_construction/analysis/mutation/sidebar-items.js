@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["MutationStatus","Time"],"fn":["arg_places"],"struct":["ModularMutationVisitor","Mutation","PlaceAndConstCollector"]};

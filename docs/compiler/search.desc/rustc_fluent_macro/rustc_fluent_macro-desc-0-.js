@@ -1,0 +1,1 @@
+searchState.loadedDescShard("rustc_fluent_macro", 0, "Implements the <code>fluent_messages</code> macro, which performs …")

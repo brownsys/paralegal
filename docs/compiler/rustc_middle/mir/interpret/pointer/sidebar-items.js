@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ALLOC_ID_MASK","IMMUTABLE_MASK","SHARED_REF_MASK"],"struct":["CtfeProvenance","Pointer"],"trait":["PointerArithmetic","Provenance"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["ExtendAnti","ExtendWith","FilterAnti","FilterWith","Iteration","PrefixFilter","Relation","ValueFilter","Variable"],"trait":["JoinInput","Leaper","Leapers","RelationLeaper"]};

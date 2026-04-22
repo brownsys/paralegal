@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["private"],"struct":["DisplayDef","MarkerTargets","RootContext"],"trait":["Context","NodeExt","NodeQueries"],"type":["DefId","FlowsTo","FunctionId","LocalDefId","MarkableId","Marker","MarkerIndex"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["parse"],"mod":["clause","definitions","relations","scope","shared","variable_intro"],"type":["Res"]};

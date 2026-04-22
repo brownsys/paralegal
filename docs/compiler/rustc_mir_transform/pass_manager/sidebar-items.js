@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["PASS_TO_PROFILER_NAMES"],"fn":["c_name","dump_mir_for_pass","dump_mir_for_phase_change","run_passes","run_passes_inner","run_passes_no_validate","should_run_pass","to_profiler_name","validate_body"],"struct":["Lint","WithMinOptLevel"],"trait":["MirLint","MirPass"]};

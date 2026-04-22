@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["STRIP_HIDDEN"],"fn":["strip_hidden"],"struct":["Stripper"]};

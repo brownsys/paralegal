@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ObjectLifetimeDefault","ResolvedArg","Set1"],"struct":["ResolveBoundVars"]};

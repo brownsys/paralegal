@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["GitInfo"],"fn":["read_commit_info_file","write_commit_hash_file","write_commit_info_file"],"struct":["Info"]};

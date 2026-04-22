@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["definition","definition_scope","parse_definitions"]};

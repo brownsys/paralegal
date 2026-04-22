@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["AVG_PART_LENGTH"],"fn":["estimate_item_path_byte_length"],"struct":["UrlPartsBuilder"]};

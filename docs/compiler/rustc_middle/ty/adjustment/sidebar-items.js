@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Adjust","AllowTwoPhase","AutoBorrow","AutoBorrowMutability","CustomCoerceUnsized","PointerCoercion"],"struct":["Adjustment","CoerceUnsizedInfo","OverloadedDeref"]};

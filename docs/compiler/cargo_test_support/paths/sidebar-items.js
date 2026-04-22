@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["TEST_ID"],"fn":["cargo_home","do_op","get_lib_extension","get_lib_filename","get_lib_prefix","global_root","global_root_legacy","home","init_root","root","set_global_root","sysroot"],"static":["CARGO_INTEGRATION_TEST_DIR","GLOBAL_ROOT"],"struct":["TestIdGuard"],"trait":["CargoPathExt"]};

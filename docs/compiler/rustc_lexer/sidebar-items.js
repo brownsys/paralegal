@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["UNICODE_XID_VERSION"],"enum":["Base","DocStyle","LiteralKind","RawStrError","TokenKind"],"fn":["is_id_continue","is_id_start","is_ident","is_whitespace","strip_shebang","tokenize","validate_raw_str"],"mod":["cursor","unescape"],"struct":["Cursor","GuardedStr","Token"]};

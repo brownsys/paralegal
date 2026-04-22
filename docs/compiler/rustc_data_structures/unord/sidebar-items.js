@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["hash_iter_order_independent","to_sorted_vec"],"struct":["UnordBag","UnordItems","UnordMap","UnordSet"],"trait":["ExtendUnord","UnordCollection"]};

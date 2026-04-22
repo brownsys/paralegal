@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["add_constraints_from_crate"],"struct":["Constraint","ConstraintContext","CurrentItem"]};

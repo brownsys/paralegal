@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["identify_constrained_generic_params","parameters_for","parameters_for_impl","setup_constraining_predicates"],"struct":["Parameter","ParameterCollector"]};

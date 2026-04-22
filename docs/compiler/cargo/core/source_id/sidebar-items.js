@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["KeyOf","Precise"],"fn":["is_overridden_crates_io_url","url_display"],"static":["SOURCE_ID_CACHE"],"struct":["SourceId","SourceIdAsUrl","SourceIdInner"]};

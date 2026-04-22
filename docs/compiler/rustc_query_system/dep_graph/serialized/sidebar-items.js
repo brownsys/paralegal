@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEP_NODE_PAD","DEP_NODE_SIZE","DEP_NODE_WIDTH_BITS"],"fn":["mask"],"struct":["EdgeHeader","EncoderState","GraphEncoder","NodeInfo","SerializedDepGraph","SerializedDepNodeIndex","SerializedNodeHeader","Stat","Unpacked"]};

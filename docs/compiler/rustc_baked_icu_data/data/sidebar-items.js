@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"macro":["impl_any_provider","impl_data_provider"],"mod":["fallback_likelysubtags_v1","fallback_parents_v1","fallback_supplement_co_v1","list_and_v1"],"struct":["BakedDataProvider"]};

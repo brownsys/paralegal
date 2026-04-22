@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CURRENT_ENCODED_DEP_INFO_VERSION"],"enum":["ChecksumAlgo","DepInfoPathType","InvalidChecksum"],"fn":["make_absolute_path","parse_dep_info","parse_rustc_dep_info","translate_dep_info"],"struct":["Checksum","EncodedDepInfo","RustcDepInfo"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["NodeKeyKind"],"fn":["as_arg"],"struct":["NodeKey","PartialGraph"],"type":["GraphConnectionPoint","Node"]};

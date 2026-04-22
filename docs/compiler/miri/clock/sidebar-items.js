@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["NANOSECONDS_PER_BASIC_BLOCK"],"enum":["ClockKind","InstantKind"],"struct":["Clock","Instant"]};

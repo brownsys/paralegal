@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["OutlivesBound"],"fn":["implied_outlives_bounds"],"trait":["InferCtxtExt"],"type":["Bounds","BoundsCompat"]};

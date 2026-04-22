@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Stub","UniqueTypeId"],"fn":["build_type_with_children","stub"],"mod":["private"],"struct":["DINodeCreationResult","StubInfo","TypeMap"]};

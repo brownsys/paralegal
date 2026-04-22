@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ArtifactDebuginfo"],"struct":["Artifact","ArtifactProfile","BuildFinished","BuildScript","FromCompiler","TimingInfo"],"trait":["Message"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["is_needs_drop_and_init","variant_needs_drop"],"struct":["RemoveUninitDrops"]};

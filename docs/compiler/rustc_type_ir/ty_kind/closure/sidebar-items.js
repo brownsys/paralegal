@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["ClosureArgs","ClosureArgsParts","CoroutineArgs","CoroutineArgsParts","CoroutineClosureArgs","CoroutineClosureArgsParts","CoroutineClosureSignature","FoldEscapingRegions","GenSig","HasRegionsBoundAt"]};

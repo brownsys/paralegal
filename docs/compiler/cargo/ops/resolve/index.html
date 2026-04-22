@@ -1,0 +1,66 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="High-level APIs for executing the resolver."><title>cargo::ops::resolve - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="cargo" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../cargo/index.html">cargo</a><span class="version">1.85.0-nightly</span></h2></div><div class="version">(0aeaa5eb2	2024-12-14)</div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module resolve</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#data-structures" title="Data Structures">Data Structures</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#constants" title="Constants">Constants</a></li><li><a href="#functions" title="Functions">Functions</a></li><li><a href="#types" title="Type Aliases">Type Aliases</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In cargo::<wbr>ops</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../index.html">cargo</a>::<wbr><a href="../index.html">ops</a></span><h1>Module <span>resolve</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/cargo/ops/resolve.rs.html#1-946">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>High-level APIs for executing the resolver.</p>
+<p>This module provides functions for running the resolver given a workspace, including loading
+the <code>Cargo.lock</code> file and checkinf if it needs updating.</p>
+<p>There are roughly 3 main functions:</p>
+<ul>
+<li><a href="fn.resolve_ws.html" title="fn cargo::ops::resolve::resolve_ws"><code>resolve_ws</code></a>: A simple, high-level function with no options.</li>
+<li><a href="fn.resolve_ws_with_opts.html" title="fn cargo::ops::resolve::resolve_ws_with_opts"><code>resolve_ws_with_opts</code></a>: A medium-level function with options like
+user-provided features. This is the most appropriate function to use in
+most cases.</li>
+<li><a href="fn.resolve_with_previous.html" title="fn cargo::ops::resolve::resolve_with_previous"><code>resolve_with_previous</code></a>: A low-level function for running the resolver,
+providing the most power and flexibility.</li>
+</ul>
+<h4 id="data-structures"><a class="doc-anchor" href="#data-structures">§</a>Data Structures</h4>
+<ul>
+<li><a href="../../core/workspace/struct.Workspace.html" title="struct cargo::core::workspace::Workspace"><code>Workspace</code></a>:
+Usually created by <a href="../../util/command_prelude/trait.ArgMatchesExt.html#method.workspace" title="method cargo::util::command_prelude::ArgMatchesExt::workspace"><code>crate::util::command_prelude::ArgMatchesExt::workspace</code></a> which discovers the root of the
+workspace, and loads all the workspace members as a <a href="../../core/package/index.html" title="mod cargo::core::package"><code>Package</code></a> object
+<ul>
+<li><a href="../../core/package/index.html" title="mod cargo::core::package"><code>Package</code></a>
+Corresponds with <code>Cargo.toml</code> manifest (deserialized as <a href="../../core/manifest/struct.Manifest.html" title="struct cargo::core::manifest::Manifest"><code>Manifest</code></a>) and its associated files.
+<ul>
+<li><a href="../../core/manifest/struct.Target.html" title="struct cargo::core::manifest::Target"><code>Target</code></a>s are crates such as the library, binaries, integration test, or examples.
+They are what is actually compiled by <code>rustc</code>.
+Each <code>Target</code> defines a crate root, like <code>src/lib.rs</code> or <code>examples/foo.rs</code>.</li>
+<li><a href="../../core/package_id/struct.PackageId.html" title="struct cargo::core::package_id::PackageId"><code>PackageId</code></a> — A unique identifier for a package.</li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="../../core/registry/struct.PackageRegistry.html" title="struct cargo::core::registry::PackageRegistry"><code>PackageRegistry</code></a>:
+The primary interface for how the dependency
+resolver finds packages. It contains the <code>SourceMap</code>, and handles things
+like the <code>[patch]</code> table. The dependency resolver
+sends a query to the <code>PackageRegistry</code> to “get me all packages that match
+this dependency declaration”. The <code>Registry</code> trait provides a generic interface
+to the <code>PackageRegistry</code>, but this is only used for providing an alternate
+implementation of the <code>PackageRegistry</code> for testing.</li>
+<li><a href="../../sources/source/struct.SourceMap.html" title="struct cargo::sources::source::SourceMap"><code>SourceMap</code></a>: Map of all available sources.
+<ul>
+<li><a href="../../sources/source/trait.Source.html" title="trait cargo::sources::source::Source"><code>Source</code></a>: An abstraction for something that can fetch packages (a remote
+registry, a git repo, the local filesystem, etc.). Check out the <a href="../../sources/index.html" title="mod cargo::sources">source
+implementations</a> for all the details about registries, indexes, git
+dependencies, etc.
+<ul>
+<li><a href="../../core/source_id/struct.SourceId.html" title="struct cargo::core::source_id::SourceId"><code>SourceId</code></a>: A unique identifier for a source.</li>
+</ul>
+</li>
+<li><a href="../../core/summary/struct.Summary.html" title="struct cargo::core::summary::Summary"><code>Summary</code></a>: A of a <a href="../../core/manifest/struct.Manifest.html" title="struct cargo::core::manifest::Manifest"><code>Manifest</code></a>, and is essentially
+the information that can be found in a registry index. Queries against the
+<code>PackageRegistry</code> yields a <code>Summary</code>. The resolver uses the summary
+information to build the dependency graph.</li>
+</ul>
+</li>
+<li><a href="../../core/package/struct.PackageSet.html" title="struct cargo::core::package::PackageSet"><code>PackageSet</code></a> — Contains all of the <code>Package</code> objects. This works with the
+<a href="../../core/package/struct.Downloads.html" title="struct cargo::core::package::Downloads"><code>Downloads</code></a> struct to coordinate downloading packages. It has a reference
+to the <code>SourceMap</code> to get the <code>Source</code> objects which tell the <code>Downloads</code>
+struct which URLs to fetch.</li>
+</ul>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="struct" href="struct.WorkspaceResolve.html" title="struct cargo::ops::resolve::WorkspaceResolve">Workspace<wbr>Resolve</a></div><div class="desc docblock-short">Result for <code>resolve_ws_with_opts</code>.</div></li></ul><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="constant" href="constant.UNUSED_PATCH_WARNING.html" title="constant cargo::ops::resolve::UNUSED_PATCH_WARNING">UNUSED_<wbr>PATCH_<wbr>WARNING</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li></ul><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="fn" href="fn.add_overrides.html" title="fn cargo::ops::resolve::add_overrides">add_<wbr>overrides</a></div><div class="desc docblock-short">Read the <code>paths</code> configuration variable to discover all path overrides that
+have been configured.</div></li><li><div class="item-name"><a class="fn" href="fn.emit_warnings_of_unused_patches.html" title="fn cargo::ops::resolve::emit_warnings_of_unused_patches">emit_<wbr>warnings_<wbr>of_<wbr>unused_<wbr>patches</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Emits warnings of unused patches case by case.</div></li><li><div class="item-name"><a class="fn" href="fn.get_resolved_packages.html" title="fn cargo::ops::resolve::get_resolved_packages">get_<wbr>resolved_<wbr>packages</a></div></li><li><div class="item-name"><a class="fn" href="fn.lock_replacements.html" title="fn cargo::ops::resolve::lock_replacements">lock_<wbr>replacements</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Locks each <code>[replace]</code> entry to a specific Package ID
+if the lockfile contains any corresponding previous replacement.</div></li><li><div class="item-name"><a class="fn" href="fn.master_branch_git_source.html" title="fn cargo::ops::resolve::master_branch_git_source">master_<wbr>branch_<wbr>git_<wbr>source</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.register_patch_entries.html" title="fn cargo::ops::resolve::register_patch_entries">register_<wbr>patch_<wbr>entries</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Informs <code>registry</code> and <code>version_pref</code> that <code>[patch]</code> entries are available
+and preferable for the dependency resolution.</div></li><li><div class="item-name"><a class="fn" href="fn.register_previous_locks.html" title="fn cargo::ops::resolve::register_previous_locks">register_<wbr>previous_<wbr>locks</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">In this function we’re responsible for informing the <code>registry</code> of all
+locked dependencies from the previous lock file we had, <code>resolve</code>.</div></li><li><div class="item-name"><a class="fn" href="fn.resolve_with_previous.html" title="fn cargo::ops::resolve::resolve_with_previous">resolve_<wbr>with_<wbr>previous</a></div><div class="desc docblock-short">Resolves all dependencies for a package using an optional previous instance
+of resolve to guide the resolution process.</div></li><li><div class="item-name"><a class="fn" href="fn.resolve_with_registry.html" title="fn cargo::ops::resolve::resolve_with_registry">resolve_<wbr>with_<wbr>registry</a><span title="Restricted Visibility">&nbsp;🔒</span> </div></li><li><div class="item-name"><a class="fn" href="fn.resolve_ws.html" title="fn cargo::ops::resolve::resolve_ws">resolve_<wbr>ws</a></div><div class="desc docblock-short">Resolves all dependencies for the workspace using the previous
+lock file as a guide if present.</div></li><li><div class="item-name"><a class="fn" href="fn.resolve_ws_with_opts.html" title="fn cargo::ops::resolve::resolve_ws_with_opts">resolve_<wbr>ws_<wbr>with_<wbr>opts</a></div><div class="desc docblock-short">Resolves dependencies for some packages of the workspace,
+taking into account <code>paths</code> overrides and activated features.</div></li></ul><h2 id="types" class="section-header">Type Aliases<a href="#types" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="type" href="type.Keep.html" title="type cargo::ops::resolve::Keep">Keep</a><span title="Restricted Visibility">&nbsp;🔒</span> </div><div class="desc docblock-short">Filter for keep using Package ID from previous lockfile.</div></li></ul></section></div></main></body></html>

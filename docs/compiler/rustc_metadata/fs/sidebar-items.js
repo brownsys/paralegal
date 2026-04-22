@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["METADATA_FILENAME"],"fn":["copy_to_stdout","emit_wrapper_file","encode_and_write_metadata","non_durable_rename"]};

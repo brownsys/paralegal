@@ -1,0 +1,45 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `compiler/rustc_data_structures/src/stack.rs`."><title>stack.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="rustc_data_structures" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (0aeaa5eb2 2024-12-14)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../../static.files/src-script-56102188.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">rustc_data_structures/</div>stack.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<a href="#1" id="1">1</a>
+<a href="#2" id="2">2</a>
+<a href="#3" id="3">3</a>
+<a href="#4" id="4">4</a>
+<a href="#5" id="5">5</a>
+<a href="#6" id="6">6</a>
+<a href="#7" id="7">7</a>
+<a href="#8" id="8">8</a>
+<a href="#9" id="9">9</a>
+<a href="#10" id="10">10</a>
+<a href="#11" id="11">11</a>
+<a href="#12" id="12">12</a>
+<a href="#13" id="13">13</a>
+<a href="#14" id="14">14</a>
+<a href="#15" id="15">15</a>
+<a href="#16" id="16">16</a>
+<a href="#17" id="17">17</a>
+<a href="#18" id="18">18</a>
+<a href="#19" id="19">19</a>
+<a href="#20" id="20">20</a>
+<a href="#21" id="21">21</a>
+<a href="#22" id="22">22</a></pre></div><pre class="rust"><code><span class="comment">// This is the amount of bytes that need to be left on the stack before increasing the size.
+// It must be at least as large as the stack required by any code that does not call
+// `ensure_sufficient_stack`.
+</span><span class="kw">const </span>RED_ZONE: usize = <span class="number">100 </span>* <span class="number">1024</span>; <span class="comment">// 100k
+
+// Only the first stack that is pushed, grows exponentially (2^n * STACK_PER_RECURSION) from then
+// on. This flag has performance relevant characteristics. Don't set it too high.
+</span><span class="attr">#[cfg(not(target_os = <span class="string">"aix"</span>))]
+</span><span class="kw">const </span>STACK_PER_RECURSION: usize = <span class="number">1024 </span>* <span class="number">1024</span>; <span class="comment">// 1MB
+// LLVM for AIX doesn't feature TCO, increase recursion size for workaround.
+</span><span class="attr">#[cfg(target_os = <span class="string">"aix"</span>)]
+</span><span class="kw">const </span>STACK_PER_RECURSION: usize = <span class="number">16 </span>* <span class="number">1024 </span>* <span class="number">1024</span>; <span class="comment">// 16MB
+
+</span><span class="doccomment">/// Grows the stack on demand to prevent stack overflow. Call this in strategic locations
+/// to "break up" recursive calls. E.g. almost any call to `visit_expr` or equivalent can benefit
+/// from this.
+///
+/// Should not be sprinkled around carelessly, as it causes a little bit of overhead.
+</span><span class="attr">#[inline]
+</span><span class="kw">pub fn </span>ensure_sufficient_stack&lt;R&gt;(f: <span class="kw">impl </span>FnOnce() -&gt; R) -&gt; R {
+    stacker::maybe_grow(RED_ZONE, STACK_PER_RECURSION, f)
+}
+</code></pre></div></section></main></body></html>
