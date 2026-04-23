@@ -38,19 +38,51 @@ define_test!(top_level_inlining_happens : graph -> {
     assert!(!get.output().overlaps(&send.input()))
 });
 
-define_test!(awaiting_works skip "Need to make instruction info more robust. Doesn't monomorphize properly" : graph -> {
-    let get_fn = graph.async_function("async_get_user_data");
-    let get = graph.call_site(&get_fn);
-    let dp_fn = graph.async_function("async_dp_user_data");
-    let dp = graph.call_site(&dp_fn);
-    let send_fn = graph.async_function("async_send_user_data");
-    let send = graph.call_site(&send_fn);
+#[test]
+#[ignore = "Need to make instruction info more robust. Doesn't monomorphize properly"]
+fn awaiting_works() {
+    inline_test! {
 
-    assert!(get.output().flows_to_data(&dp.input()));
-    assert!(dp.output().flows_to_data(&send.input()));
-    assert!(get.output().flows_to_data(&send.input()));
-    assert!(!get.output().is_neighbor_data(&send.input()))
-});
+        #[paralegal_flow::marker(source)]
+        async fn async_get_user_data() -> UserData {
+            return UserData {
+                data: vec![1, 2, 3],
+            };
+        }
+
+        #[paralegal_flow::marker(
+            yey_paralegal_flow_now_needs_this_label_or_it_will_recurse_into_this_function,
+            return
+        )]
+        async fn async_dp_user_data(user_data: &mut UserData) {
+            for i in &mut user_data.data {
+                *i = 2;
+            }
+        }
+        #[paralegal_flow::marker{ sink, arguments = [0] }]
+        fn send_user_data(user_data: &UserData) {}
+
+
+        async fn main() {
+            let mut user_data = async_get_user_data().await;
+            async_dp_user_data(&mut user_data).await;
+            async_send_user_data(&user_data).await;
+        }
+    }
+    .check_ctrl(|graph| {
+        let get_fn = graph.async_function("async_get_user_data");
+        let get = graph.call_site(&get_fn);
+        let dp_fn = graph.async_function("async_dp_user_data");
+        let dp = graph.call_site(&dp_fn);
+        let send_fn = graph.async_function("async_send_user_data");
+        let send = graph.call_site(&send_fn);
+
+        assert!(get.output().flows_to_data(&dp.input()));
+        assert!(dp.output().flows_to_data(&send.input()));
+        assert!(get.output().flows_to_data(&send.input()));
+        assert!(!get.output().is_neighbor_data(&send.input()))
+    });
+}
 
 define_test!(two_data_over_boundary : graph -> {
     let get_fn = graph.function("get_user_data");
@@ -68,23 +100,53 @@ define_test!(two_data_over_boundary : graph -> {
     assert!(!get2.output().flows_to_data(&send.input()));
 });
 
-define_test!(inlining_crate_local_async_fns
-    skip
-    "Odd aliasing behavior with async. See https://github.com/brownsys/paralegal/issues/144"
-    : graph -> {
+#[test]
+#[ignore = "Odd aliasing behavior with async. See https://github.com/brownsys/paralegal/issues/144"]
+fn inlining_crate_local_async_fns() {
+    inline_test! {
+        async fn inlineable_async_dp_user_data(user_data: &mut UserData) {
+            dp_user_data(user_data)
+        }
 
-    let get_fn = graph.function("get_user_data");
-    let get = graph.call_site(&get_fn);
-    let dp_fn = graph.function("dp_user_data");
-    let dp = graph.call_site(&dp_fn);
-    let send_fn = graph.function("send_user_data");
-    let send = graph.call_site(&send_fn);
+        #[paralegal_flow::marker{ sink, arguments = [0] }]
+        fn send_user_data(user_data: &UserData) {}
 
-    assert!(get.output().flows_to_data(&dp.input()));
-    assert!(dp.output().flows_to_data(&send.input()));
-    assert!(get.output().flows_to_data(&send.input()));
-    assert!(!get.output().is_neighbor_data(&send.input()))
-});
+        #[paralegal_flow::marker(source)]
+        fn get_user_data() -> UserData {
+            return UserData {
+                data: vec![1, 2, 3],
+            };
+        }
+        #[paralegal_flow::marker(
+            yey_paralegal_flow_now_needs_this_label_or_it_will_recurse_into_this_function,
+            return
+        )]
+        fn dp_user_data(user_data: &mut UserData) {
+            for i in &mut user_data.data {
+                *i = 2;
+            }
+        }
+
+        async fn main() {
+            let mut user_data = get_user_data();
+            inlineable_async_dp_user_data(&mut user_data).await;
+            send_user_data(&user_data);
+        }
+    }
+    .check_ctrl(|graph| {
+        let get_fn = graph.function("get_user_data");
+        let get = graph.call_site(&get_fn);
+        let dp_fn = graph.function("dp_user_data");
+        let dp = graph.call_site(&dp_fn);
+        let send_fn = graph.function("send_user_data");
+        let send = graph.call_site(&send_fn);
+
+        assert!(get.output().flows_to_data(&dp.input()));
+        assert!(dp.output().flows_to_data(&send.input()));
+        assert!(get.output().flows_to_data(&send.input()));
+        assert!(!get.output().is_neighbor_data(&send.input()))
+    });
+}
 
 // define_test!(arguments_work skip
 //     "arguments are not emitted properly in the graph data structure the test is defined over, making the test fail. When I manually inspected the (visual) graph dump this test case seemed to be correct." : graph -> {
@@ -94,89 +156,243 @@ define_test!(inlining_crate_local_async_fns
 //     assert!(graph.connects_data((data, send.1), send));
 // });
 
-define_test!(no_inlining_overtaint
-    skip
-    "Alias analysis is problematic with async.
-    See https://github.com/willcrichton/flowistry/issues/93"
-    : graph -> {
-    let get_fn = graph.function("get_user_data");
-    let get = graph.call_site(&get_fn);
-    let get2_fn = graph.function("get_user_data2");
-    let get2 = graph.call_site(&get2_fn);
-    let send_fn = graph.function("send_user_data");
-    let send = graph.call_site(&send_fn);
-    let send2_fn = graph.function("send_user_data2");
-    let send2 = graph.call_site(&send2_fn);
-    let dp_fn = graph.function("dp_user_data");
-    let dp = graph.call_site(&dp_fn);
+#[test]
+#[ignore = "Alias analysis is problematic with async.
+    See https://github.com/willcrichton/flowistry/issues/93"]
+fn no_inlining_overtaint() {
+    inline_test! {
+        #[paralegal_flow::marker(source)]
+        fn get_user_data() -> UserData {
+            return UserData {
+                data: vec![1, 2, 3],
+            };
+        }
 
-    assert!(get.output().flows_to_data(&send.input()));
-    assert!(get2.output().flows_to_data(&send2.input()));
-    assert!(get2.output().flows_to_data(&dp.input()));
-    assert!(!get.output().flows_to_data(&dp.input()));
+        #[paralegal_flow::marker(source)]
+        fn get_user_data2() -> UserData {
+            return UserData {
+                data: vec![1, 2, 3],
+            };
+        }
 
-    assert!(!get.output().flows_to_data(&send2.input()));
-    assert!(!get2.output().flows_to_data(&send.input()));
-});
+        #[paralegal_flow::marker(
+            yey_paralegal_flow_now_needs_this_label_or_it_will_recurse_into_this_function,
+            return
+        )]
+        fn dp_user_data(user_data: &mut UserData) {
+            for i in &mut user_data.data {
+                *i = 2;
+            }
+        }
 
-define_test!(no_immutable_inlining_overtaint
-    skip
-    "Odd aliasing behavior with async. See https://github.com/brownsys/paralegal/issues/144"
-    : graph -> {
-    let get_fn = graph.function("get_user_data");
-    let get = graph.call_site(&get_fn);
-    let get2_fn = graph.function("get_user_data2");
-    let get2 = graph.call_site(&get2_fn);
-    let send_fn = graph.function("send_user_data");
-    let send = graph.call_site(&send_fn);
-    let send2_fn = graph.function("send_user_data2");
-    let send2 = graph.call_site(&send2_fn);
+        async fn arity2_inlineable_async_dp_user_data(_: &mut UserData, user_data: &mut UserData) {
+            dp_user_data(user_data)
+        }
 
-    assert!(get.output().flows_to_data(&send.input()));
-    assert!(get2.output().flows_to_data(&send2.input()));
-    assert!(!get.output().flows_to_data(&send2.input()));
-    assert!(!get2.output().flows_to_data(&send.input()));
-});
+        #[paralegal_flow::marker{ sink, arguments = [0] }]
+        fn send_user_data(user_data: &UserData) {}
 
-define_test!(no_mixed_mutability_borrow_inlining_overtaint
-    skip
-    "Alias analysis is problematic with async.
-    See https://github.com/willcrichton/flowistry/issues/93"
-    : graph -> {
-    let get_fn = graph.function("get_user_data");
-    let get = graph.call_site(&get_fn);
-    let get2_fn = graph.function("get_user_data2");
-    let get2 = graph.call_site(&get2_fn);
-    let send_fn = graph.function("send_user_data");
-    let send = graph.call_site(&send_fn);
-    let send2_fn = graph.function("send_user_data2");
-    let send2 = graph.call_site(&send2_fn);
+        #[paralegal_flow::marker{ sink, arguments = [0] }]
+        fn send_user_data2(user_data: &UserData) {}
 
-    assert!(get.output().flows_to_data(&send.input()));
-    assert!(get2.output().flows_to_data(&send2.input()));
-    assert!(!get2.output().flows_to_data(&send.input()));
-    assert!(!get.output().flows_to_data(&send2.input()));
-});
+        async fn main() {
+            let mut ud1 = get_user_data();
+            let mut ud2 = get_user_data2();
+            arity2_inlineable_async_dp_user_data(&mut ud1, &mut ud2).await;
+            send_user_data(&ud1);
+            send_user_data2(&ud2);
+        }
+    }
+    .check_ctrl(|graph| {
+        let get_fn = graph.function("get_user_data");
+        let get = graph.call_site(&get_fn);
+        let get2_fn = graph.function("get_user_data2");
+        let get2 = graph.call_site(&get2_fn);
+        let send_fn = graph.function("send_user_data");
+        let send = graph.call_site(&send_fn);
+        let send2_fn = graph.function("send_user_data2");
+        let send2 = graph.call_site(&send2_fn);
+        let dp_fn = graph.function("dp_user_data");
+        let dp = graph.call_site(&dp_fn);
 
-define_test!(no_mixed_mutability_inlining_overtaint
-    skip
-    "Alias analysis is problematic with async.
-    See https://github.com/willcrichton/flowistry/issues/93"
-    : graph -> {
-    let get_fn = graph.function("get_user_data");
-    let get = graph.call_site(&get_fn);
-    let get2_fn = graph.function("get_user_data2");
-    let get2 = graph.call_site(&get2_fn);
-    let send_fn = graph.function("send_user_data");
-    let send = graph.call_site(&send_fn);
-    let send2_fn = graph.function("send_user_data2");
-    let send2 = graph.call_site(&send2_fn);
+        assert!(get.output().flows_to_data(&send.input()));
+        assert!(get2.output().flows_to_data(&send2.input()));
+        assert!(get2.output().flows_to_data(&dp.input()));
+        assert!(!get.output().flows_to_data(&dp.input()));
 
-    assert!(get.output().flows_to_data(&send.input()));
-    assert!(get2.output().flows_to_data(&send2.input()));
-    assert!(!get2.output().flows_to_data(&send.input()));
-    assert!(!get.output().flows_to_data(&send2.input()));
-});
+        assert!(!get.output().flows_to_data(&send2.input()));
+        assert!(!get2.output().flows_to_data(&send.input()));
+    });
+}
+
+#[test]
+#[ignore = "Odd aliasing behavior with async. See https://github.com/brownsys/paralegal/issues/144"]
+fn no_immutable_inlining_overtaint() {
+    inline_test! {
+        #[paralegal_flow::marker(source)]
+        fn get_user_data() -> UserData {
+            return UserData {
+                data: vec![1, 2, 3],
+            };
+        }
+
+        #[paralegal_flow::marker(source)]
+        fn get_user_data2() -> UserData {
+            return UserData {
+                data: vec![1, 2, 3],
+            };
+        }
+
+        #[paralegal_flow::marker{ sink, arguments = [0] }]
+        fn send_user_data(user_data: &UserData) {}
+
+        #[paralegal_flow::marker{ sink, arguments = [0] }]
+        fn send_user_data2(user_data: &UserData) {}
+
+        async fn send_both(ud1: &UserData, ud2: &UserData) {
+            send_user_data(&ud1);
+            send_user_data2(&ud2);
+        }
+
+        async fn main() {
+            let mut ud1 = get_user_data();
+            let mut ud2 = get_user_data2();
+            send_both(&ud1, &ud2).await;
+        }
+    }
+    .check_ctrl(|graph| {
+        let get_fn = graph.function("get_user_data");
+        let get = graph.call_site(&get_fn);
+        let get2_fn = graph.function("get_user_data2");
+        let get2 = graph.call_site(&get2_fn);
+        let send_fn = graph.function("send_user_data");
+        let send = graph.call_site(&send_fn);
+        let send2_fn = graph.function("send_user_data2");
+        let send2 = graph.call_site(&send2_fn);
+
+        assert!(get.output().flows_to_data(&send.input()));
+        assert!(get2.output().flows_to_data(&send2.input()));
+        assert!(!get.output().flows_to_data(&send2.input()));
+        assert!(!get2.output().flows_to_data(&send.input()));
+    });
+}
+
+#[test]
+#[ignore = "Alias analysis is problematic with async.
+    See https://github.com/willcrichton/flowistry/issues/93"]
+fn no_mixed_mutability_borrow_inlining_overtaint() {
+    inline_test! {
+        #[paralegal_flow::marker(source)]
+        fn get_user_data() -> UserData {
+            return UserData {
+                data: vec![1, 2, 3],
+            };
+        }
+
+        #[paralegal_flow::marker(source)]
+        fn get_user_data2() -> UserData {
+            return UserData {
+                data: vec![1, 2, 3],
+            };
+        }
+
+        #[paralegal_flow::marker(
+            yey_paralegal_flow_now_needs_this_label_or_it_will_recurse_into_this_function,
+            return
+        )]
+        fn dp_user_data(user_data: &mut UserData) {
+            for i in &mut user_data.data {
+                *i = 2;
+            }
+        }
+
+        async fn arity2_inlineable_async_dp_user_data2(_: &UserData, user_data: &mut UserData) {
+            dp_user_data(user_data)
+        }
+
+        #[paralegal_flow::marker{ sink, arguments = [0] }]
+        fn send_user_data(user_data: &UserData) {}
+
+        #[paralegal_flow::marker{ sink, arguments = [0] }]
+        fn send_user_data2(user_data: &UserData) {}
+
+        async fn main() {
+            let mut ud1 = get_user_data();
+            let mut ud2 = get_user_data2();
+            arity2_inlineable_async_dp_user_data2(&ud1, &mut ud2).await;
+            send_user_data(&ud1);
+            send_user_data2(&ud2);
+        }
+    }
+    .check_ctrl(|graph| {
+        let get_fn = graph.function("get_user_data");
+        let get = graph.call_site(&get_fn);
+        let get2_fn = graph.function("get_user_data2");
+        let get2 = graph.call_site(&get2_fn);
+        let send_fn = graph.function("send_user_data");
+        let send = graph.call_site(&send_fn);
+        let send2_fn = graph.function("send_user_data2");
+        let send2 = graph.call_site(&send2_fn);
+
+        assert!(get.output().flows_to_data(&send.input()));
+        assert!(get2.output().flows_to_data(&send2.input()));
+        assert!(!get2.output().flows_to_data(&send.input()));
+        assert!(!get.output().flows_to_data(&send2.input()));
+    });
+}
+
+#[test]
+#[ignore = "Alias analysis is problematic with async.
+    See https://github.com/willcrichton/flowistry/issues/93"]
+fn no_mixed_mutability_inlining_overtaint() {
+    inline_test! {
+        #[paralegal_flow::marker(source)]
+        fn get_user_data() -> UserData {
+            return UserData {
+                data: vec![1, 2, 3],
+            };
+        }
+
+        #[paralegal_flow::marker(source)]
+        fn get_user_data2() -> UserData {
+            return UserData {
+                data: vec![1, 2, 3],
+            };
+        }
+
+        #[paralegal_flow::marker{ sink, arguments = [0] }]
+        fn send_user_data(user_data: &UserData) {}
+
+        #[paralegal_flow::marker{ sink, arguments = [0] }]
+        fn send_user_data2(user_data: &UserData) {}
+
+        async fn send_both2(ud1: &UserData, ud2: &mut UserData) {
+            send_user_data(&ud1);
+            send_user_data2(&ud2);
+        }
+
+        async fn main() {
+            let mut ud1 = get_user_data();
+            let mut ud2 = get_user_data2();
+            send_both2(&ud1, &mut ud2).await;
+        }
+    }
+    .check_ctrl(|graph| {
+        let get_fn = graph.function("get_user_data");
+        let get = graph.call_site(&get_fn);
+        let get2_fn = graph.function("get_user_data2");
+        let get2 = graph.call_site(&get2_fn);
+        let send_fn = graph.function("send_user_data");
+        let send = graph.call_site(&send_fn);
+        let send2_fn = graph.function("send_user_data2");
+        let send2 = graph.call_site(&send2_fn);
+
+        assert!(get.output().flows_to_data(&send.input()));
+        assert!(get2.output().flows_to_data(&send2.input()));
+        assert!(!get2.output().flows_to_data(&send.input()));
+        assert!(!get.output().flows_to_data(&send2.input()));
+    });
+}
 
 define_test!(no_value_inlining_overtaint : graph -> {
     let get_fn = graph.function("get_user_data");
@@ -194,53 +410,115 @@ define_test!(no_value_inlining_overtaint : graph -> {
     assert!(!get2.output().flows_to_data(&send.input()));
 });
 
-define_test!(remove_poll_match
-    skip
-    "We no longer remove the state machine. I preserve this test case
-    if we want to do that removal in the future."
-    : graph -> {
-    let input_fn = graph.function("some_input");
-    let input = graph.call_site(&input_fn);
-    let target_fn = graph.function("target");
-    let target = graph.call_site(&target_fn);
-    let poll_fn = graph.function("poll");
-    let poll = graph.call_site(&poll_fn);
-    let new_unchecked_fn = graph.function("new_unchecked");
-    let new_unchecked = graph.call_site(&new_unchecked_fn);
-    let get_context_fn = graph.function("get_context");
-    let get_context = graph.call_site(&get_context_fn);
-    let into_future_fn = graph.function("into_future");
-    let into_future = graph.call_site(&into_future_fn);
-    let _f_fn = graph.function("f");
-    let _f = graph.call_site(&_f_fn);
-    assert!(input.output().flows_to_data(&target.input()));
+#[test]
+#[ignore = "We no longer remove the state machine. I preserve this test case
+    if we want to do that removal in the future."]
+fn remove_poll_match() {
+    inline_test! {
+        #[paralegal_flow::marker(noinline)]
+        async fn f() -> usize {
+            0
+        }
 
-    assert!(poll.output().is_terminal());
-    assert!(new_unchecked.output().is_terminal());
-    assert!(get_context.output().is_terminal());
-    assert!(into_future.output().is_terminal());
-});
+        #[paralegal_flow::marker(noinline)]
+        fn some_input() -> usize {
+            0
+        }
 
-define_test!(no_overtaint_over_poll
-    skip
-    "Field level precision across function calls is broken.
-    See https://github.com/willcrichton/flowistry/issues/94."
-    : graph -> {
-    let input_fn = graph.function("some_input");
-    let input = graph.call_site(&input_fn);
-    let another_input_fn = graph.function("another_input");
-    let another_input = graph.call_site(&another_input_fn);
+        #[paralegal_flow::marker(target)]
+        fn target(i: usize) {}
 
-    let target_fn = graph.function("target");
-    let target = graph.call_site(&target_fn);
-    let another_target_fn = graph.function("another_target");
-    let another_target = graph.call_site(&another_target_fn);
+        async fn main() {
+            let p = some_input();
+            let x = f().await;
+            let y = target(p);
+            ()
+        }
+    }
+    .check_ctrl(|graph| {
+        let input_fn = graph.function("some_input");
+        let input = graph.call_site(&input_fn);
+        let target_fn = graph.function("target");
+        let target = graph.call_site(&target_fn);
+        let poll_fn = graph.function("poll");
+        let poll = graph.call_site(&poll_fn);
+        let new_unchecked_fn = graph.function("new_unchecked");
+        let new_unchecked = graph.call_site(&new_unchecked_fn);
+        let get_context_fn = graph.function("get_context");
+        let get_context = graph.call_site(&get_context_fn);
+        let into_future_fn = graph.function("into_future");
+        let into_future = graph.call_site(&into_future_fn);
+        let _f_fn = graph.function("f");
+        let _f = graph.call_site(&_f_fn);
+        assert!(input.output().flows_to_data(&target.input()));
 
-    assert!(input.output().flows_to_data(&target.input()));
-    assert!(another_input.output().flows_to_data(&another_target.input()));
-    assert!(!dbg!(input.output()).flows_to_data(&dbg!(another_target.input())));
-    assert!(!another_input.output().flows_to_data(&target.input()));
-});
+        assert!(poll.output().is_terminal());
+        assert!(new_unchecked.output().is_terminal());
+        assert!(get_context.output().is_terminal());
+        assert!(into_future.output().is_terminal());
+    });
+}
+
+#[test]
+#[ignore = "Field level precision across function calls is broken.
+    See https://github.com/willcrichton/flowistry/issues/94."]
+fn no_overtaint_over_poll() {
+    inline_test! {
+        #[paralegal_flow::marker(noinline)]
+        async fn f() -> usize {
+            0
+        }
+
+        #[paralegal_flow::marker(noinline)]
+        fn some_input() -> usize {
+            0
+        }
+
+        #[paralegal_flow::marker(noinline)]
+        fn another_input() -> usize {
+            9
+        }
+
+        #[paralegal_flow::marker(target)]
+        fn target(i: usize) {}
+
+        #[paralegal_flow::marker(target)]
+        fn another_target(i: usize) {}
+
+        async fn id_fun<T>(t: T) -> T {
+            let _ = f();
+            t
+        }
+
+        async fn main() {
+            let p = some_input();
+            let q = another_input();
+            let t = id_fun((p, q)).await;
+            target(t.0);
+            another_target(t.1);
+        }
+    }
+    .check_ctrl(|graph| {
+        let input_fn = graph.function("some_input");
+        let input = graph.call_site(&input_fn);
+        let another_input_fn = graph.function("another_input");
+        let another_input = graph.call_site(&another_input_fn);
+
+        let target_fn = graph.function("target");
+        let target = graph.call_site(&target_fn);
+        let another_target_fn = graph.function("another_target");
+        let another_target = graph.call_site(&another_target_fn);
+
+        assert!(input.output().flows_to_data(&target.input()));
+        assert!(
+            another_input
+                .output()
+                .flows_to_data(&another_target.input())
+        );
+        assert!(!dbg!(input.output()).flows_to_data(&dbg!(another_target.input())));
+        assert!(!another_input.output().flows_to_data(&target.input()));
+    });
+}
 
 define_test!(return_from_async: graph -> {
     let input_fn = graph.function("some_input");

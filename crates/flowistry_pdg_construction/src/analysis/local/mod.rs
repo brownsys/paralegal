@@ -368,10 +368,6 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
         let ty = func.ty(&self.mono_body, self.tcx());
         utils::type_as_fn(self.tcx(), ty)
     }
-
-    fn fmt_fn(&self, def_id: DefId) -> String {
-        self.tcx().def_path_str(def_id)
-    }
 }
 
 impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
@@ -450,8 +446,8 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
             }
         };
         trace!(
-            "Resolved call to function: {} with generic args {generic_args:?}",
-            self.fmt_fn(called_def_id)
+            "Resolved call to function: {}",
+            tcx.def_path_str_with_args(called_def_id, generic_args)
         );
 
         // Monomorphize the called function with the known generic_args.
@@ -524,8 +520,8 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
         let resolved_def_id = resolved_fn.def_id();
         if called_def_id != resolved_def_id {
             trace!(
-                called = self.fmt_fn(called_def_id),
-                resolved = self.fmt_fn(resolved_def_id),
+                called = tcx.def_path_str(called_def_id),
+                resolved = tcx.def_path_str(resolved_def_id),
                 "  monomorphized"
             );
         }
