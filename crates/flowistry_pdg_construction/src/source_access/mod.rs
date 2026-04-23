@@ -1,6 +1,8 @@
 use std::{
     cell::RefCell,
-    path::PathBuf,
+    fs::File,
+    io::BufWriter,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -18,7 +20,11 @@ use rustc_hir::{
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
     hir::nested_filter::OnlyBodies,
-    mir::{Body, ClearCrossCrate, StatementKind},
+    mir::{
+        coverage::{BlockMarkerId, CoverageKind},
+        pretty::MirWriter,
+        Body, ClearCrossCrate, Statement, StatementKind,
+    },
     ty::TyCtxt,
     util::Providers,
 };
@@ -40,6 +46,55 @@ pub struct CachedBody<'tcx> {
     input_facts: FlowistryFacts,
 }
 
+const REPLACEMENT_STATEMENT: StatementKind<'static> =
+    StatementKind::Coverage(CoverageKind::BlockMarker {
+        id: BlockMarkerId::MAX,
+    });
+
+fn for_each_reachable_statement<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: LocalDefId,
+    mut f: impl FnMut(&mut Statement<'tcx>),
+) {
+    for id in tcx.nested_bodies_within(def_id).iter().chain([def_id]) {
+        let (mir, promoted) = tcx.mir_promoted(id);
+        let mut slf_guard = mir.risky_hack_borrow_mut();
+        let mut promoted_guard = promoted.risky_hack_borrow_mut();
+        let target_bodies = std::iter::once(&mut *slf_guard).chain(promoted_guard.iter_mut());
+        target_bodies
+            .flat_map(|b| b.basic_blocks_mut().iter_mut())
+            .flat_map(|bb| bb.statements.iter_mut())
+            .for_each(&mut f);
+    }
+}
+
+fn with_incompatible_instructions_removed<'tcx, R>(
+    tcx: TyCtxt<'tcx>,
+    def_id: LocalDefId,
+    f: impl FnOnce() -> R,
+) -> R {
+    let mut original_statements = vec![];
+    for_each_reachable_statement(tcx, def_id, |stmt| {
+        let tcx_scoped_replacement_statement =
+            unsafe { std::mem::transmute::<_, StatementKind<'tcx>>(REPLACEMENT_STATEMENT) };
+        let kind = &mut stmt.kind;
+        assert_ne!(kind, &tcx_scoped_replacement_statement);
+        if matches!(kind, StatementKind::BackwardIncompatibleDropHint { .. }) {
+            original_statements.push(std::mem::replace(kind, tcx_scoped_replacement_statement));
+        }
+    });
+    let res = f();
+    original_statements.reverse();
+    for_each_reachable_statement(tcx, def_id, |stmt| {
+        let kind = &mut stmt.kind;
+        if kind == &unsafe { std::mem::transmute::<_, StatementKind<'tcx>>(REPLACEMENT_STATEMENT) }
+        {
+            *kind = original_statements.pop().unwrap();
+        }
+    });
+    res
+}
+
 fn get_bodies_associated_with<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: LocalDefId,
@@ -49,6 +104,7 @@ fn get_bodies_associated_with<'tcx>(
         root_id = tcx.parent(root_id.into()).expect_local();
     }
     let (mir, _) = tcx.mir_promoted(root_id);
+
     if mir.borrow().should_skip() {
         tracing::debug!(
             "Skipping body for {} (custom mir)",
@@ -56,12 +112,43 @@ fn get_bodies_associated_with<'tcx>(
         );
         return None;
     }
-    tracing::trace!("Checking body {}", tcx.def_path_str(def_id));
-    let mut bodies = rustc_borrowck::consumers::get_bodies_with_borrowck_facts(
-        tcx,
-        root_id,
-        ConsumerOptions::PoloniusInputFacts,
-    );
+    // let target_name =
+    //     "<unix::linux_like::linux_l4re_shared::__c_anonymous_ifr_ifru as core::fmt::Debug>::fmt";
+    // let actual_name = tcx.def_path_str(def_id);
+    // if target_name == actual_name {
+    //     let writer = MirWriter::new(tcx);
+    //     let path = "offending-function.mir";
+    //     let f = File::create(path).unwrap();
+    //     tracing::info!(
+    //         "Dumping {} to {}",
+    //         actual_name,
+    //         Path::new(path).canonicalize().unwrap().display()
+    //     );
+    //     let mut w = BufWriter::new(f);
+    //     writer.write_mir_fn(&mir.borrow(), &mut w).unwrap();
+    // }
+    //tracing::debug!("Checking body `{}`", tcx.def_path_str(def_id));
+    // HACK: We remove all BackwardIncompatibleDropHint instructions, because
+    // they trigger an ICE when computing the borrowcheck instruction
+    let mut bodies = with_incompatible_instructions_removed(tcx, def_id, || {
+        rustc_borrowck::consumers::get_bodies_with_borrowck_facts(
+            tcx,
+            root_id,
+            ConsumerOptions::PoloniusInputFacts,
+        )
+    });
+    // MORE HACKS: we also clean the hacky instructions from our output to make sure they don't cause issues.
+    for stmt in bodies
+        .values_mut()
+        .flat_map(|b| b.body.basic_blocks_mut().iter_mut())
+        .flat_map(|bb| bb.statements.iter_mut())
+    {
+        let kind = &mut stmt.kind;
+        if kind == &unsafe { std::mem::transmute::<_, StatementKind<'tcx>>(REPLACEMENT_STATEMENT) }
+        {
+            *kind = StatementKind::Nop;
+        }
+    }
     let slf = CachedBody::from_body(bodies.remove(&def_id).unwrap_or_else(|| {
         panic!(
             "Retrieving body of {} via borrowchecking {} failed",
@@ -69,6 +156,7 @@ fn get_bodies_associated_with<'tcx>(
             tcx.def_path_str(root_id)
         )
     }));
+
     Some((
         slf,
         bodies

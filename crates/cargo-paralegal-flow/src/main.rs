@@ -67,6 +67,7 @@ fn main() -> anyhow::Result<()> {
     cmd.args(["check", "--message-format=json"]) // or "build"
         .arg("--target-dir")
         .arg(metadata.target_directory.join("paralegal"))
+        .args(args.cargo_args.iter())
         .stdout(Stdio::piped())
         .env("RUSTC_WRAPPER", rustc_wrapper_bin)
         .env(PARALEGAL_ARGS, serde_json::to_string(&args)?)

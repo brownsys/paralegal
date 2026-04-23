@@ -17,6 +17,7 @@ extern crate rustc_errors;
 extern crate rustc_hir;
 extern crate rustc_index;
 extern crate rustc_interface;
+extern crate rustc_lint_defs;
 extern crate rustc_macros;
 extern crate rustc_middle;
 extern crate rustc_mir_dataflow;
@@ -32,9 +33,9 @@ use flowistry_pdg_construction::source_access::{
 };
 use paralegal_spdg::{AnalyzerStats, FLOW_GRAPH_EXT, ProgramDescription, STAT_FILE_EXT};
 
-use paralegal_rustc_utils::cache::Cache;
-use rustc_borrowck::consumers::BodyWithBorrowckFacts;
+use rustc_interface::Config;
 use rustc_middle::ty::TyCtxt;
+use rustc_session::config::Polonius;
 use rustc_span::ErrorGuaranteed;
 use tracing::{debug, error, info};
 
@@ -191,10 +192,6 @@ impl DumpOnlyCallbacks {
 
 const INTERMEDIATE_STAT_EXT: &str = "stats.json";
 
-thread_local! {
-    static BODY_CACHE: Cache<rustc_hir::def_id::LocalDefId, BodyWithBorrowckFacts<'static>> = Cache::default();
-}
-
 fn dump_mir_and_update_stats(tcx: TyCtxt, timer: &mut DumpStats) {
     let (tycheck_time, dump_time) = dump_mir_and_borrowck_facts(tcx);
     let dump_marker_start = Instant::now();
@@ -203,9 +200,21 @@ fn dump_mir_and_update_stats(tcx: TyCtxt, timer: &mut DumpStats) {
     timer.tycheck_time = tycheck_time;
 }
 
+fn configure(config: &mut Config) {
+    config.override_queries = Some(|_, providers| providers.queries.mir_borrowck = mir_borrowck);
+    assert_eq!(config.opts.unstable_opts.threads, 1);
+    config.opts.unstable_opts.polonius = Polonius::Next;
+    // We don't care about emitting any lints. Users can get those when they
+    // compile normally.  This could be added back if needed, but on toolchain
+    // 2026-04-20 we need to at least disable `tail_expr_drop_order` or we get
+    // issues with borrowcheck fact generation.
+    config.opts.lint_cap = Some(rustc_lint_defs::Allow);
+    // TODO add crate attr and cfg paralegal
+}
+
 impl rustc_driver::Callbacks for DumpOnlyCallbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
-        config.override_queries = Some(|_, providers| providers.queries.mir_borrowck = mir_borrowck)
+        configure(config)
     }
 
     fn after_expansion(
@@ -237,7 +246,7 @@ impl FinalizingCallbacks for DumpOnlyCallbacks {
 
 impl rustc_driver::Callbacks for Callbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
-        config.override_queries = Some(|_, providers| providers.queries.mir_borrowck = mir_borrowck)
+        configure(config)
     }
 
     fn after_expansion<'tcx>(
@@ -399,6 +408,7 @@ impl CrateInfo {
 
 /// Also adds and additional features required by the Paralegal build config
 fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>) -> CrateInfo {
+    // TODO do this configuration in `config`
     let crate_name = compiler_args
         .iter()
         .enumerate()
