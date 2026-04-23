@@ -1,4 +1,4 @@
-use crate::{utils::TyExt, Either};
+use crate::{Either, utils::TyExt};
 
 use paralegal_spdg::Identifier;
 use rustc_data_structures::fx::FxHashSet;

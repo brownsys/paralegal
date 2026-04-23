@@ -581,11 +581,7 @@ fn control_flow_overtaint() {
     InlineTestBuilder::new(stringify!(
         #[paralegal_flow::marker(is_check, return)]
         async fn perform_check(data: usize) -> Result<(), ()> {
-            if data != 0 {
-                Ok(())
-            } else {
-                Err(())
-            }
+            if data != 0 { Ok(()) } else { Err(()) }
         }
 
         #[paralegal_flow::marker(is_sensitive1, return)]

@@ -61,23 +61,18 @@ fn get_bodies_associated_with<'tcx>(
         root_id,
         ConsumerOptions::PoloniusInputFacts,
     );
-    let slf = CachedBody::from_body(
-        bodies
-            .remove(&def_id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "Retrieving body of {} via borrowchecking {} failed",
-                    tcx.def_path_str(def_id),
-                    tcx.def_path_str(root_id)
-                )
-            })
-            .into(),
-    );
+    let slf = CachedBody::from_body(bodies.remove(&def_id).unwrap_or_else(|| {
+        panic!(
+            "Retrieving body of {} via borrowchecking {} failed",
+            tcx.def_path_str(def_id),
+            tcx.def_path_str(root_id)
+        )
+    }));
     Some((
         slf,
         bodies
             .drain()
-            .map(|(id, b)| (id, CachedBody::from_body(b.into())))
+            .map(|(id, b)| (id, CachedBody::from_body(b)))
             .collect(),
     ))
 }

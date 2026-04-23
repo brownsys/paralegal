@@ -2,7 +2,6 @@
 
 use std::{hash::Hash, time::Instant};
 
-use log::{debug, info};
 use paralegal_rustc_utils::{mir::place::UNKNOWN_REGION, PlaceExt};
 use rustc_data_structures::{
     fx::{FxHashMap as HashMap, FxHashSet as HashSet},
@@ -77,7 +76,7 @@ impl<'tcx> Aliases<'tcx> {
         def_id: DefId,
         input: impl FlowistryInput<'tcx, 'a>,
     ) -> LoanMap<'tcx> {
-        let start = Instant::now();
+        let _start = Instant::now();
         let body = input.body();
         let static_region = RegionVid::from_usize(0);
 
@@ -297,7 +296,7 @@ impl<'tcx> Aliases<'tcx> {
         }
 
         // place = after[*ptr]
-        let Some((ptr, after)) = place.refs_in_projection(&self.body, self.tcx).last() else {
+        let Some((ptr, after)) = place.refs_in_projection(self.body, self.tcx).last() else {
             // This is a direct place
             aliases.insert(place);
             return aliases;

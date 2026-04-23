@@ -114,15 +114,13 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// For async handling. If this id corresponds to an async closure we try to
     /// resolve its parent item which the markers would actually be placed on.
     fn defid_rewrite(&self, def_id: DefId) -> DefId {
-        if self.tcx().is_coroutine(def_id) {
-            if let Some(parent) = self.tcx().opt_parent(def_id) {
-                if matches!(self.tcx().def_kind(parent), DefKind::AssocFn | DefKind::Fn)
-                    && self.tcx().asyncness(parent).is_async()
-                {
-                    return parent;
-                }
-            };
-        }
+        if self.tcx().is_coroutine(def_id)
+            && let Some(parent) = self.tcx().opt_parent(def_id)
+            && matches!(self.tcx().def_kind(parent), DefKind::AssocFn | DefKind::Fn)
+            && self.tcx().asyncness(parent).is_async()
+        {
+            return parent;
+        };
         def_id
     }
 

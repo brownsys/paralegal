@@ -3,7 +3,7 @@ use std::path::Path;
 
 use cargo_paralegal_flow::{ClapArgs, EXEC_HASH_ARG, PARALEGAL_ARGS};
 use paralegal_spdg::utils::setup_logging;
-use rustc_session::{config::ErrorOutputType, EarlyDiagCtxt};
+use rustc_session::{EarlyDiagCtxt, config::ErrorOutputType};
 use tracing::debug;
 
 extern crate rustc_driver;

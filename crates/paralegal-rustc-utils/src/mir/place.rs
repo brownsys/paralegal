@@ -289,7 +289,7 @@ impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
                 }
                 ProjectionElem::Downcast(sym, _) => {
                     let variant = sym.map(|s| s.to_string()).unwrap_or_else(|| "??".into());
-                    (ElemPosition::Suffix, format!("@{variant}",).into())
+                    (ElemPosition::Suffix, format!("@{variant}").into())
                 }
 
                 ProjectionElem::Index(_) => (ElemPosition::Suffix, "[_]".into()),
@@ -447,7 +447,7 @@ impl<'tcx, Dispatcher: RegionVisitorDispatcher<'tcx>> TypeVisitor<TyCtxt<'tcx>>
 {
     fn visit_ty(&mut self, ty: Ty<'tcx>) {
         let tcx = self.tcx;
-        if self.ty_stack.iter().any(|visited_ty| ty == *visited_ty) {
+        if self.ty_stack.contains(&ty) {
             return;
         }
 
@@ -548,7 +548,7 @@ impl<'tcx, Dispatcher: RegionVisitorDispatcher<'tcx>> TypeVisitor<TyCtxt<'tcx>>
             _ if ty.is_primitive_ty() => {}
 
             _ => warn!("unimplemented {ty:?} ({:?})", ty.kind()),
-        };
+        }
 
         // let inherent_impls = tcx.inherent_impls(self.def_id);
         // let traits = tcx.infer_ctxt().enter(|infcx| {

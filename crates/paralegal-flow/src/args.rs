@@ -15,8 +15,8 @@
 
 use anyhow::Error;
 use clap::ValueEnum;
-use rustc_data_structures::fx::FxHashSet;
 use rustc_data_structures::fx::FxHashMap;
+use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Symbol;
@@ -78,7 +78,9 @@ impl TryFrom<ClapArgs> for Args {
             build_config: _,
         } = value;
         if relaxed {
-            eprintln!("The `--relaxed` flag is deprecated. This is now the default behavior and therefore the flag is ignored.");
+            eprintln!(
+                "The `--relaxed` flag is deprecated. This is now the default behavior and therefore the flag is ignored."
+            );
         }
         let mut dump: DumpArgs = dump.into();
         if let Some(from_env) = env_var_expect_unicode("PARALEGAL_DUMP")? {

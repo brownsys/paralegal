@@ -91,7 +91,7 @@ impl<'tcx> VarDetector<'tcx> {
 }
 
 impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for VarDetector<'tcx> {
-    fn visit_region(&mut self, r: Region<'tcx>) -> () {
+    fn visit_region(&mut self, r: Region<'tcx>) {
         if let RegionKind::ReVar(v) = *r.0 {
             self.detected.push(v);
         }
@@ -327,7 +327,7 @@ pub fn ty_resolve<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
 pub fn manufacture_substs_for<'tcx>(
     tcx: TyCtxt<'tcx>,
     function: DefId,
-) -> Result<GenericArgsRef<'_>, ErrorGuaranteed> {
+) -> Result<GenericArgsRef<'tcx>, ErrorGuaranteed> {
     use rustc_middle::ty::{
         ExistentialPredicate, ExistentialProjection, ExistentialTraitRef, GenericParamDefKind,
         ParamTy, TraitPredicate,
@@ -367,7 +367,7 @@ pub fn manufacture_substs_for<'tcx>(
 
         let param_as_ty = ParamTy::for_def(param);
         let constraints = predicates.predicates.iter().filter_map(|clause| {
-            let clause = tcx.normalize_erasing_regions(tenv, clause.clone());
+            let clause = tcx.normalize_erasing_regions(tenv, *clause);
             let pred = if let Some(trait_ref) = clause.as_trait_clause() {
                 if trait_ref.polarity() != PredicatePolarity::Positive {
                     return None;

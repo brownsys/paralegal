@@ -17,9 +17,9 @@
 //! we are not investing in it.
 use std::fs::File;
 use std::io::{self, Read};
+use std::num::NonZeroU64;
 use std::path::Path;
 use std::sync::Arc;
-use std::{num::NonZeroU64, path::PathBuf};
 
 use rustc_ast::AttrId;
 use rustc_const_eval::interpret::AllocId;
@@ -32,8 +32,8 @@ use rustc_serialize::{
     Decodable, Decoder, Encodable, Encoder,
 };
 use rustc_span::{
-    BlobDecoder, BytePos, ByteSymbol, ExpnId, FileName, RealFileName, SourceFile, Span, SpanData,
-    SpanDecoder, SpanEncoder, Symbol, SyntaxContext, DUMMY_SP,
+    BlobDecoder, BytePos, ByteSymbol, ExpnId, FileName, SourceFile, Span, SpanData, SpanDecoder,
+    SpanEncoder, Symbol, SyntaxContext, DUMMY_SP,
 };
 
 macro_rules! encoder_methods {

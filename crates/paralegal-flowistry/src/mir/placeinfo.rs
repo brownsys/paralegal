@@ -1,10 +1,10 @@
 //! Utilities for analyzing places: children, aliases, etc.
 
-use std::{ops::ControlFlow, rc::Rc};
+use std::ops::ControlFlow;
 
 use paralegal_rustc_utils::{
     cache::{Cache, CopyCache},
-    mir::{location_or_arg::LocationOrArg, place::UNKNOWN_REGION},
+    mir::place::UNKNOWN_REGION,
     BodyExt, MutabilityExt, PlaceExt,
 };
 use rustc_hir::def_id::DefId;
@@ -134,8 +134,7 @@ impl<'tcx> PlaceInfo<'tcx> {
                 .into_iter()
                 .chain([place])
                 .filter(|place| {
-                    if let Some((place, _)) = place.refs_in_projection(&self.body, self.tcx).last()
-                    {
+                    if let Some((place, _)) = place.refs_in_projection(self.body, self.tcx).last() {
                         let ty = place.ty(self.body.local_decls(), self.tcx).ty;
                         if ty.is_box() || ty.is_raw_ptr() {
                             return true;
@@ -203,7 +202,7 @@ impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for LoanCollector<'_, 'tcx> {
             _ => unreachable!("{region:?}"),
         };
         if let Some(loans) = self.aliases.loans.get(&region) {
-            let under_immut_ref = self.stack.iter().any(|m| *m == Mutability::Not);
+            let under_immut_ref = self.stack.contains(&Mutability::Not);
             self.loans
                 .extend(loans.iter().filter_map(|(place, mutability)| {
                     let loan_mutability = if under_immut_ref {

@@ -111,12 +111,12 @@ where
         key: &In,
         compute: impl FnOnce(In) -> Option<Out>,
     ) -> Retrieval<&'a Out> {
-        if !self.0.borrow().contains_key(&key) {
+        if !self.0.borrow().contains_key(key) {
             self.0.borrow_mut().insert(key.clone(), None);
             if let Some(out) = compute(key.clone()) {
                 self.0.borrow_mut().insert(key.clone(), Some(Box::pin(out)));
             } else {
-                self.0.borrow_mut().remove(&key);
+                self.0.borrow_mut().remove(key);
             }
         }
 
@@ -125,7 +125,7 @@ where
 
     fn retrieve_no_compute<'a>(&'a self, key: &In) -> Retrieval<&'a Out> {
         let cache = self.0.borrow();
-        match cache.get(&key) {
+        match cache.get(key) {
             None => Retrieval::Uncomputable,
             Some(None) => Retrieval::Recursive,
             Some(Some(entry)) => Retrieval::Success(
@@ -143,7 +143,7 @@ where
         fail_on_overwrite: bool,
         compute: impl FnOnce(In) -> Option<(Out, Vec<(In, Out)>)>,
     ) -> Retrieval<&'a Out> {
-        if !self.0.borrow().contains_key(&key) {
+        if !self.0.borrow().contains_key(key) {
             self.0.borrow_mut().insert(key.clone(), None);
             if let Some((slf, others)) = compute(key.clone()) {
                 let mut b = self.0.borrow_mut();
@@ -154,12 +154,12 @@ where
                         if fail_on_overwrite {
                             panic!("Cache entry overwritten")
                         } else {
-                            tracing::error!("Cache entry overwritten")
+                            tracing::error!("Cache entry overwritten");
                         }
                     }
                 }
             } else {
-                self.0.borrow_mut().remove(&key);
+                self.0.borrow_mut().remove(key);
             }
         }
         self.retrieve_no_compute(key)
@@ -170,7 +170,7 @@ where
     }
     /// Safety: Invalidates all references
     pub(crate) unsafe fn clear(&self) {
-        self.0.borrow_mut().clear()
+        self.0.borrow_mut().clear();
     }
 
     pub fn get_if_present<'a>(&'a self, key: &In) -> Option<&'a Out> {

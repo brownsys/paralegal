@@ -27,8 +27,8 @@ pub fn arg_mut_ptrs<'tcx>(
         .flat_map(|(i, place)| {
             place
                 .interior_pointers(tcx, body, def_id)
-                .into_iter()
-                .flat_map(|(_, places)| {
+                .into_values()
+                .flat_map(|places| {
                     places
                         .into_iter()
                         .filter_map(|(place, mutability)| match mutability {

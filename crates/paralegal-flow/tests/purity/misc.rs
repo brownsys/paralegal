@@ -58,10 +58,11 @@ fn tcp_flow_check(ctrl: CtrlRef<'_>) {
     let auto_markers = AutoMarkers::default();
     let defined = dbg!(ctrl.markers());
     let auto = auto_markers.all();
-    let contained = dbg!(auto
-        .iter()
-        .filter(|m| defined.contains(m))
-        .collect::<Vec<_>>());
+    let contained = dbg!(
+        auto.iter()
+            .filter(|m| defined.contains(m))
+            .collect::<Vec<_>>()
+    );
     assert!(!contained.is_empty());
 
     let source1 = ctrl.marked("source");

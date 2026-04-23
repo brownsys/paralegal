@@ -10,7 +10,7 @@ use rustc_middle::{mir, ty};
 use either::Either;
 use tracing::trace;
 
-use crate::{ann::db::AutoMarkers, MarkerCtx};
+use crate::{MarkerCtx, ann::db::AutoMarkers};
 
 const ALLOWED_INTRINSICS: &[&str] = &[
     // Prefetching.
@@ -199,8 +199,7 @@ pub fn analyze_statement<'tcx>(
             analyzer.visit_statement(statement, location);
             trace!(
                 "Checking statement {:?}, found {:?}",
-                statement.kind,
-                analyzer.found_markers
+                statement.kind, analyzer.found_markers
             );
         }
         Either::Right(terminator) => {
@@ -282,7 +281,7 @@ fn contains_mut_ref<'tcx>(ty: ty::Ty<'tcx>, tcx: ty::TyCtxt<'tcx>) -> bool {
                 trace!("Found mut ref in {t:?}");
                 self.has_mut_ref = true;
             }
-            let _ = t.super_visit_with(self);
+            t.super_visit_with(self);
         }
     }
 

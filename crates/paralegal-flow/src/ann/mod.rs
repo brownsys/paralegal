@@ -288,10 +288,19 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
 }
 
 impl DumpingVisitor<'_> {
-    fn match_get_ref<'a>(&self, a: &'a Attribute, path: &[rustc_span::Symbol]) -> Option<&'a rustc_hir::AttrArgs> {
+    fn match_get_ref<'a>(
+        &self,
+        a: &'a Attribute,
+        path: &[rustc_span::Symbol],
+    ) -> Option<&'a rustc_hir::AttrArgs> {
         match a {
             Attribute::Unparsed(normal)
-                if normal.path.segments.iter().copied().eq(path.iter().copied()) =>
+                if normal
+                    .path
+                    .segments
+                    .iter()
+                    .copied()
+                    .eq(path.iter().copied()) =>
             {
                 Some(&normal.args)
             }

@@ -224,14 +224,10 @@ impl<'a, 'tcx> PlaceTranslator<'a, 'tcx> {
                         // function and its call don't match fully. (We are
                         // calling a closure that takes it's `self` by reference
                         // with a `self` by value.)
-                        if let Some(fst) = child.projection.first() {
+                        {
+                            let fst = child.projection.first()?;
                             // If there is a first place it must be a deref
                             assert_eq!(fst, &PlaceElem::Deref);
-                        } else {
-                            // We cannot remap the raw first place as it is a
-                            // reference that does not exist in the caller (as
-                            // the caller passes `self` by value.)
-                            return None;
                         }
                         // We skip the first projection element (a deref) to
                         // account for the difference in signature

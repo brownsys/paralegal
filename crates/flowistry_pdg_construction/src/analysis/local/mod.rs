@@ -19,10 +19,7 @@ use rustc_middle::{
         Operand, Place, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind,
         RETURN_PLACE,
     },
-    ty::{
-        AdtKind, EarlyBinder, GenericArgKind, GenericArgsRef, Instance, Ty, TyCtxt, TyKind,
-        TypingEnv,
-    },
+    ty::{AdtKind, EarlyBinder, GenericArgsRef, Instance, Ty, TyCtxt, TyKind, TypingEnv},
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 use rustc_span::{DesugaringKind, Span, Spanned};
@@ -741,7 +738,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
     }
 
     pub(crate) fn construct_partial(&'a self) -> PartialGraph<'tcx, K> {
-        let mut analysis = self.iterate_to_fixpoint(self.tcx(), &self.mono_body, None);
+        let analysis = self.iterate_to_fixpoint(self.tcx(), &self.mono_body, None);
 
         let mut final_state = PartialGraph::new(
             self.generic_args(),

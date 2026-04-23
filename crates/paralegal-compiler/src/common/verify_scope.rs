@@ -85,8 +85,8 @@ pub fn verify_var_not_in_scope(var: &Variable, env: &Environment) {
             break;
         }
     }
-    if context.is_some() {
-        let context_str: &str = context.unwrap().typ.into();
+    if let Some(ctx) = context {
+        let context_str: &str = ctx.typ.into();
         panic!(
             "Duplicate introduction of variable {}; previously introduced {}.\n",
             var, context_str

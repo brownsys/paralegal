@@ -10,10 +10,10 @@ use rustc_errors::FatalError;
 use rustc_middle::ty::TyCtxt;
 
 use crate::{
+    Callbacks, EXTRA_RUSTC_ARGS, HashSet,
     ann::{db::AutoMarkers, dump_markers},
     desc::{Identifier, ProgramDescription},
     utils::Print,
-    Callbacks, HashSet, EXTRA_RUSTC_ARGS,
 };
 use std::{
     fmt::{Debug, Formatter},
@@ -26,10 +26,10 @@ use std::{
 use std::{process::Command, sync::atomic::Ordering};
 
 use paralegal_spdg::{
-    traverse::{generic_flows_to, generic_influencers, EdgeSelection},
-    utils::{display_list, write_sep},
     DefInfo, DisplayPath, EdgeInfo, Endpoint, FileSystemStorable, InstructionInfo, InstructionKind,
-    Node, NodeInfo, NodeKind, ParalegalArtifact, TypeId, SPDG,
+    Node, NodeInfo, NodeKind, ParalegalArtifact, SPDG, TypeId,
+    traverse::{EdgeSelection, generic_flows_to, generic_influencers},
+    utils::{display_list, write_sep},
 };
 
 use flowistry_pdg::{CallString, Constant};
@@ -102,12 +102,14 @@ where
     S: AsRef<std::ffi::OsStr>,
 {
     let dir = dir.as_ref();
-    assert!(Command::new("cargo")
-        .arg("clean")
-        .current_dir(dir)
-        .status()
-        .unwrap()
-        .success());
+    assert!(
+        Command::new("cargo")
+            .arg("clean")
+            .current_dir(dir)
+            .status()
+            .unwrap()
+            .success()
+    );
     paralegal_flow_command(dir)
         .args(extra)
         .status()

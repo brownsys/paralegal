@@ -26,8 +26,8 @@ use nom_supreme::{
 use paralegal_spdg::Identifier;
 
 use rustc_ast::{
-    self as ast, ExprKind,
-    token::{self, Delimiter, Lit, LitKind, Token, TokenKind},
+    ExprKind,
+    token::{Delimiter, Lit, LitKind, Token, TokenKind},
     tokenstream,
 };
 use rustc_hir as hir;
@@ -113,7 +113,7 @@ type Integer = u32;
 /// Parse any one token, returning the token.
 ///
 /// This is the basic primitive that all other parsers are built from.
-fn one(mut tree: I) -> R<&TokenTree> {
+fn one(mut tree: I<'_>) -> R<'_, &TokenTree> {
     match tree.next() {
         None => Result::Err(nom::Err::Error(ErrorTree::from_error_kind(
             tree,
@@ -166,7 +166,7 @@ impl std::error::Error for StructuralError {}
 /// The difference between this and [`one`] is that this function expects the
 /// token to be a [`TokenTree::Token`] and does not permit
 /// [`TokenTree::Delimited`] subtrees.
-pub fn one_token(i: I) -> R<&Token> {
+pub fn one_token(i: I<'_>) -> R<'_, &Token> {
     nom::combinator::map_res(one, |t| match t {
         TokenTree::Token(t, _) => Ok(t),
         TokenTree::Delimited(_, _, delim, _) => Err(StructuralError {
@@ -353,8 +353,8 @@ pub fn assert_token<'a>(k: TokenKind) -> impl Parser<I<'a>, (), ErrorTree<I<'a>>
                 s,
                 ErrorKind::Fail,
                 WrongTokenKindErr {
-                    expected: k.clone(),
-                    found: t.kind.clone(),
+                    expected: k,
+                    found: t.kind,
                 },
             )))
         }
