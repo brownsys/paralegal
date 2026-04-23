@@ -20,6 +20,7 @@ use rustc_middle::{
     hir::nested_filter::OnlyBodies,
     mir::{Body, ClearCrossCrate, StatementKind},
     ty::TyCtxt,
+    util::Providers,
 };
 
 use paralegal_rustc_utils::cache::Cache;
@@ -44,18 +45,18 @@ fn get_bodies_associated_with<'tcx>(
     def_id: LocalDefId,
 ) -> Option<(CachedBody<'tcx>, Vec<(LocalDefId, CachedBody<'tcx>)>)> {
     let mut root_id = def_id;
-    // while let Some(p) = tcx.opt_parent(root_id.into()) {
-    //     if !tcx.def_kind(p).is_fn_like() || !p.is_local() {
-    //         break;
-    //     }
-    //     root_id = p.expect_local();
-    // }
     while tcx.is_closure_like(root_id.into()) {
         root_id = tcx.parent(root_id.into()).expect_local();
     }
-    if tcx.mir_promoted(root_id).0.is_stolen() {
+    let (mir, _) = tcx.mir_promoted(root_id);
+    if mir.borrow().should_skip() {
+        tracing::debug!(
+            "Skipping body for {} (custom mir)",
+            tcx.def_path_str(def_id)
+        );
         return None;
     }
+    tracing::trace!("Checking body {}", tcx.def_path_str(def_id));
     let mut bodies = rustc_borrowck::consumers::get_bodies_with_borrowck_facts(
         tcx,
         root_id,
@@ -96,6 +97,41 @@ impl<'tcx> CachedBody<'tcx> {
             },
         }
     }
+
+    pub fn get_local(def_id: LocalDefId, tcx: TyCtxt<'tcx>) -> Option<&'tcx Self> {
+        LOCAL_CACHE.with(move |cache| {
+            let body = cache
+                .try_retrieve_many(&def_id.local_def_index, true, move |_| {
+                    let (res, others) = unsafe {
+                        std::mem::transmute::<
+                            (CachedBody<'tcx>, Vec<(LocalDefId, CachedBody<'tcx>)>),
+                            (CachedBody<'static>, Vec<(LocalDefId, CachedBody<'static>)>),
+                        >(get_bodies_associated_with(tcx, def_id)?)
+                    };
+                    Some((
+                        res,
+                        others
+                            .into_iter()
+                            .map(move |(id, b)| (id.local_def_index, b))
+                            .collect(),
+                    ))
+                })
+                .as_success();
+
+            unsafe { std::mem::transmute::<Option<&_>, _>(body) }
+        })
+    }
+}
+
+pub fn mir_borrowck<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: LocalDefId,
+) -> rustc_middle::queries::mir_borrowck::ProvidedValue<'tcx> {
+    CachedBody::get_local(def_id, tcx);
+    let mut providers = Providers::default();
+    rustc_borrowck::provide(&mut providers.queries);
+    let original_mir_borrowck = providers.queries.mir_borrowck;
+    original_mir_borrowck(tcx, def_id)
 }
 
 impl<'tcx> FlowistryInput<'tcx, 'tcx> for &'tcx CachedBody<'tcx> {
@@ -117,6 +153,9 @@ pub struct FlowistryFacts {
 
 pub type LocationIndex = <RustcFacts as FactTypes>::Point;
 
+thread_local! {
+    static LOCAL_CACHE: Cache<DefIndex, CachedBody<'static>> = Cache::default();
+}
 type BodyMap<'tcx> = FxHashMap<DefIndex, CachedBody<'tcx>>;
 
 /// Allows loading bodies from previosly written artifacts.
@@ -126,7 +165,6 @@ type BodyMap<'tcx> = FxHashMap<DefIndex, CachedBody<'tcx>>;
 pub struct BodyCache<'tcx> {
     tcx: TyCtxt<'tcx>,
     cache: Cache<CrateNum, BodyMap<'tcx>>,
-    local_cache: Cache<DefIndex, CachedBody<'tcx>>,
     timer: RefCell<Duration>,
     std_crates: Vec<CrateNum>,
 }
@@ -146,7 +184,6 @@ impl<'tcx> BodyCache<'tcx> {
         Self {
             tcx,
             cache: Default::default(),
-            local_cache: Default::default(),
             timer: RefCell::new(Duration::ZERO),
             std_crates: std_crates(tcx).collect(),
         }
@@ -168,20 +205,7 @@ impl<'tcx> BodyCache<'tcx> {
     /// Serve the body from the cache or read it from the disk.
     pub fn try_get(&self, key: DefId) -> Option<&'tcx CachedBody<'tcx>> {
         let body = if let Some(local) = key.as_local() {
-            self.local_cache
-                .try_retrieve_many(&local.local_def_index, true, |_| {
-                    let start = Instant::now();
-                    let (res, others) = get_bodies_associated_with(self.tcx, local)?;
-                    *self.timer.borrow_mut() += start.elapsed();
-                    Some((
-                        res,
-                        others
-                            .into_iter()
-                            .map(|(id, b)| (id.local_def_index, b))
-                            .collect(),
-                    ))
-                })
-                .as_success()?
+            CachedBody::get_local(local, self.tcx)?
         } else if self.std_crates.contains(&key.krate) || self.tcx.is_foreign_item(key) {
             return None;
         } else {
@@ -279,22 +303,13 @@ pub fn dump_mir_and_borrowck_facts(tcx: TyCtxt<'_>) -> (Duration, Duration) {
     tcx.hir_visit_all_item_likes_in_crate(&mut vis);
 
     let tc_start = Instant::now();
-    let mut targets = vis.targets.into_iter().collect::<FxHashSet<LocalDefId>>();
+    let targets = vis.targets.into_iter().collect::<FxHashSet<LocalDefId>>();
 
-    let mut bodies: BodyMap = Default::default();
+    let bodies: FxHashMap<DefIndex, &CachedBody> = targets
+        .into_iter()
+        .map(|t| (t.local_def_index, CachedBody::get_local(t, tcx).unwrap()))
+        .collect();
 
-    while let Some(id) = targets.iter().next().copied() {
-        targets.remove(&id);
-        let Some((slf, others)) = get_bodies_associated_with(tcx, id) else {
-            tracing::error!("Body for {id:?} was stolen");
-            continue;
-        };
-        bodies.insert(id.local_def_index, slf);
-        bodies.extend(others.into_iter().map(|(id, b)| {
-            targets.remove(&id);
-            (id.local_def_index, b)
-        }))
-    }
     let tc_time = tc_start.elapsed();
     let dump_time = Instant::now();
     let path = intermediate_out_dir(tcx, INTERMEDIATE_ARTIFACT_EXT);

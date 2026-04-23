@@ -28,7 +28,7 @@ extern crate rustc_target;
 extern crate rustc_type_ir;
 
 use flowistry_pdg_construction::source_access::{
-    dump_mir_and_borrowck_facts, intermediate_out_dir,
+    dump_mir_and_borrowck_facts, intermediate_out_dir, mir_borrowck,
 };
 use paralegal_spdg::{AnalyzerStats, FLOW_GRAPH_EXT, ProgramDescription, STAT_FILE_EXT};
 
@@ -205,7 +205,7 @@ fn dump_mir_and_update_stats(tcx: TyCtxt, timer: &mut DumpStats) {
 
 impl rustc_driver::Callbacks for DumpOnlyCallbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
-        let _ = config;
+        config.override_queries = Some(|_, providers| providers.queries.mir_borrowck = mir_borrowck)
     }
 
     fn after_expansion(
@@ -237,7 +237,7 @@ impl FinalizingCallbacks for DumpOnlyCallbacks {
 
 impl rustc_driver::Callbacks for Callbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
-        let _ = config;
+        config.override_queries = Some(|_, providers| providers.queries.mir_borrowck = mir_borrowck)
     }
 
     fn after_expansion<'tcx>(

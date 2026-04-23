@@ -60,14 +60,6 @@ impl VersionArgs {
 }
 
 const REAL_LONG_VERSION: &str = env!("RUSTC_LONG_VERSION");
-const LONG_VERSION: &str = "rustc 1.84.1 (e71f9a9a9 2025-01-27)
-binary: rustc
-commit-hash: e71f9a9a98b0faf423844bf0ba7438f29dc27d58
-commit-date: 2025-01-27
-host: no-host-defined
-release: 1.84.1
-LLVM version: 19.1.5
-";
 
 const HOST: &str = env!("HOST");
 
@@ -81,11 +73,13 @@ fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().collect::<Vec<_>>();
     let version_args = VersionArgs::parse_args(args.iter());
     let long_version = if use_real_version {
-        REAL_LONG_VERSION
+        REAL_LONG_VERSION.to_string()
     } else {
-        LONG_VERSION
+        // We lie about being a nightly compiler, since build scripts often
+        // enable weird features and are much less stable for nightly compilers.
+        REAL_LONG_VERSION.replace("-nightly", "")
     };
-    let unescaped = unescape_version(long_version);
+    let unescaped = unescape_version(&long_version);
     if version_args.version {
         if version_args.verbose {
             print!("{}", unescaped.replace("no-host-defined", HOST));

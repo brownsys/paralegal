@@ -4,8 +4,9 @@ use paralegal_flow::test_utils::*;
 const TEST_CRATE_NAME: &str = "tests/purity/test-crate-raw-ptr";
 const EXTRA_ARGS: &[&str] = &[
     "--side-effect-markers",
-    // "--external-annotations",
-    // "../stdlib-markers.toml",
+    "--",
+    "-j1", // "--external-annotations",
+           // "../stdlib-markers.toml",
 ];
 
 lazy_static! {

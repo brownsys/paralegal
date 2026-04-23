@@ -193,6 +193,9 @@ where
         config.file_loader = Some(Box::new(StringLoader(
             self.input.take().expect("cannot take input twice"),
         )) as Box<_>)
+        // Note that we are not installing override queries here, which means we
+        // cannot retrieve `const` bodies. if this becomes necessary, we can
+        // move the override queries out.
     }
 }
 
