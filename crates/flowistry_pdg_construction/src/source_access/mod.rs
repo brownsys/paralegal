@@ -14,6 +14,7 @@ use polonius_engine::FactTypes;
 use rustc_borrowck::consumers::{BodyWithBorrowckFacts, ConsumerOptions, RustcFacts};
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::{
+    def::DefKind,
     def_id::{CrateNum, DefId, DefIndex, LocalDefId, LOCAL_CRATE},
     intravisit::{self},
 };
@@ -99,9 +100,10 @@ fn get_bodies_associated_with<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: LocalDefId,
 ) -> Option<(CachedBody<'tcx>, Vec<(LocalDefId, CachedBody<'tcx>)>)> {
-    let mut root_id = def_id;
-    while tcx.is_closure_like(root_id.into()) {
-        root_id = tcx.parent(root_id.into()).expect_local();
+    tracing::debug!(target = tcx.def_path_str(def_id), def_kind = ?tcx.def_kind(def_id), "Checking body");
+    let root_id = tcx.typeck_root_def_id_local(def_id);
+    if def_id != root_id {
+        tracing::debug!(target = tcx.def_path_str(root_id), def_kind = ?tcx.def_kind(root_id), "Dispatching to root body");
     }
     let (mir, _) = tcx.mir_promoted(root_id);
 
@@ -127,7 +129,6 @@ fn get_bodies_associated_with<'tcx>(
     //     let mut w = BufWriter::new(f);
     //     writer.write_mir_fn(&mir.borrow(), &mut w).unwrap();
     // }
-    //tracing::debug!("Checking body `{}`", tcx.def_path_str(def_id));
     // HACK: We remove all BackwardIncompatibleDropHint instructions, because
     // they trigger an ICE when computing the borrowcheck instruction
     let mut bodies = with_incompatible_instructions_removed(tcx, def_id, || {
