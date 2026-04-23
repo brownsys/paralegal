@@ -98,27 +98,27 @@ impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for VarDetector<'tcx> {
     }
 }
 
-struct VarEraser<'tcx> {
-    tcx: TyCtxt<'tcx>,
-}
-
-impl<'tcx> TypeFolder<TyCtxt<'tcx>> for VarEraser<'tcx> {
-    fn cx(&self) -> TyCtxt<'tcx> {
-        self.tcx
-    }
-
-    fn fold_region(&mut self, mut r: Region<'tcx>) -> Region<'tcx> {
-        if r.is_var() {
-            r = Region::new_from_kind(self.tcx, RegionKind::ReErased)
-        }
-        r
-    }
-}
-
 pub fn erase_regions<'tcx, T>(tcx: TyCtxt<'tcx>, t: T) -> T
 where
     T: TypeFoldable<TyCtxt<'tcx>> + std::fmt::Debug,
 {
+    struct VarEraser<'tcx> {
+        tcx: TyCtxt<'tcx>,
+    }
+
+    impl<'tcx> TypeFolder<TyCtxt<'tcx>> for VarEraser<'tcx> {
+        fn cx(&self) -> TyCtxt<'tcx> {
+            self.tcx
+        }
+
+        fn fold_region(&mut self, mut r: Region<'tcx>) -> Region<'tcx> {
+            if r.is_var() {
+                r = Region::new_from_kind(self.tcx, RegionKind::ReErased)
+            }
+            r
+        }
+    }
+
     let mut eraser = VarEraser { tcx };
     t.fold_with(&mut eraser)
 }
