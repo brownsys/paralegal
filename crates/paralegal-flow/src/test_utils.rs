@@ -15,6 +15,7 @@ use crate::{
     desc::{Identifier, ProgramDescription},
     utils::Print,
 };
+use std::{fmt::Display, sync::atomic::Ordering};
 use std::{
     fmt::{Debug, Formatter},
     sync::Once,
@@ -23,7 +24,6 @@ use std::{
     hash::{Hash, Hasher},
     sync::atomic::AtomicU32,
 };
-use std::{process::Command, sync::atomic::Ordering};
 
 use paralegal_spdg::{
     DefInfo, DisplayPath, EdgeInfo, Endpoint, FileSystemStorable, InstructionInfo, InstructionKind,
@@ -32,7 +32,7 @@ use paralegal_spdg::{
     utils::{display_list, write_sep},
 };
 
-use flowistry_pdg::{CallString, Constant};
+use flowistry_pdg::{CallString, Constant, GlobalLocation};
 use itertools::Itertools;
 use petgraph::visit::{Control, Data, DfsEvent, EdgeRef, FilterEdge, GraphBase, IntoEdges};
 use petgraph::visit::{IntoNeighbors, IntoNodeReferences};
@@ -417,6 +417,29 @@ impl<'g> HasGraph<'g> for &'g PreFrg {
 }
 
 impl PreFrg {
+    pub fn display_location(&self, loc: GlobalLocation) -> impl Display + '_ {
+        struct DisplayGlobalLoc<'a> {
+            loc: GlobalLocation,
+            gr: &'a ProgramDescription,
+        }
+
+        impl Display for DisplayGlobalLoc<'_> {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(
+                    f,
+                    "{} in {}",
+                    self.gr.instruction_info[&self.loc].description,
+                    DisplayPath::from(&self.gr.def_info[&self.loc.function].path)
+                )
+            }
+        }
+
+        DisplayGlobalLoc {
+            gr: &self.desc,
+            loc,
+        }
+    }
+
     pub fn from_file_at(dir: &str) -> Self {
         use_rustc(|| {
             let path = Path::new(dir).join(paralegal_non_rustc_utils::ARTIFACT_NAME);
@@ -496,7 +519,7 @@ impl<'g> HasGraph<'g> for &CtrlRef<'g> {
 }
 
 impl<'g> CtrlRef<'g> {
-    pub fn return_value(&self) -> NodeRefs {
+    pub fn return_value(&self) -> NodeRefs<'_> {
         // TODO only include mutable formal parameters?
         let nodes = self.ctrl.return_.to_vec();
         NodeRefs { nodes, graph: self }
@@ -580,7 +603,7 @@ impl<'g> CtrlRef<'g> {
             .map_or(&[], |t| t.0.as_ref())
     }
 
-    pub fn nodes_for_type(&self, typ: TypeId) -> NodeRefs {
+    pub fn nodes_for_type(&self, typ: TypeId) -> NodeRefs<'_> {
         NodeRefs {
             graph: self,
             nodes: self
@@ -618,18 +641,43 @@ impl<'g> CtrlRef<'g> {
 
     pub fn assert_purity(&self, pure: bool) {
         let auto_markers = AutoMarkers::default();
-        let defined = self.markers();
         let auto = auto_markers.all();
-        let contained = auto
-            .iter()
-            .filter(|m| defined.contains(m))
-            .collect::<Vec<_>>();
-        assert!(
-            !pure ^ contained.is_empty(),
-            "Expected {}side effects, found {:?}",
-            if pure { "no " } else { "" },
-            contained
-        );
+        let auto_set = auto.iter().copied().collect::<HashSet<_>>();
+
+        if pure {
+            let mut found_instance = false;
+            for (n, ms) in self.ctrl.markers.iter() {
+                let found = ms
+                    .iter()
+                    .copied()
+                    .filter(|m| auto_set.contains(m))
+                    .collect::<Box<[_]>>();
+                if !found.is_empty() {
+                    found_instance = true;
+                    let info = self.ctrl.node_info(*n);
+                    println!(
+                        "Found side effects {} for node {}",
+                        display_list(found.iter()),
+                        info
+                    );
+                    for at in info.at.iter() {
+                        println!("  Reached from {}", self.graph.display_location(at));
+                    }
+                }
+            }
+            assert!(!found_instance);
+        } else {
+            let defined = self.markers();
+            let contained = auto
+                .iter()
+                .filter(|m| defined.contains(m))
+                .collect::<Vec<_>>();
+            assert!(
+                !contained.is_empty(),
+                "Expected side effects but found none. Found the following markers: {}",
+                display_list(defined.iter())
+            );
+        }
     }
 
     pub fn side_effect_nodes(&'g self) -> impl Iterator<Item = NodeRef<'g>> {

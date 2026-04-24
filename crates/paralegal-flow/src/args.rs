@@ -260,10 +260,8 @@ fn config_hash_for_file(path: Option<impl AsRef<Path>>, state: &mut impl Hasher)
     path.as_ref()
         .map(|path| {
             let path = path.as_ref();
-            Ok::<_, std::io::Error>((path, path.metadata()?.modified()?))
+            (path, path.metadata().unwrap().modified().unwrap())
         })
-        .transpose()
-        .unwrap()
         .hash(state);
 }
 
