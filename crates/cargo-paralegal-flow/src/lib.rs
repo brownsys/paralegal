@@ -53,20 +53,6 @@ pub struct ClapArgs {
 }
 
 impl ClapArgs {
-    pub fn hash_config(&self, hasher: &mut impl Hasher) {
-        if self.attach_to_debugger.is_some() {
-            // If we run the debugger try to make the hash fail so we actually run.
-            std::time::Instant::now().hash(hasher);
-        }
-        // TODO Add other relevant arguments
-        let build_config = self.get_build_config();
-        config_hash_for_file(build_config, hasher);
-        self.relaxed.hash(hasher);
-        self.target.hash(hasher);
-        self.result_path.hash(hasher);
-        config_hash_for_file(self.marker_control.external_annotations().as_ref(), hasher);
-    }
-
     pub fn get_build_config(&self) -> Option<&Path> {
         const DEFAULT_BUILD_CONFIG_PATH: &str = "Paralegal.toml";
         self.build_config.as_deref().or_else(|| {
@@ -74,17 +60,6 @@ impl ClapArgs {
             path.exists().then_some(path)
         })
     }
-}
-
-fn config_hash_for_file(path: Option<impl AsRef<Path>>, state: &mut impl Hasher) {
-    path.as_ref()
-        .map(|path| {
-            let path = path.as_ref();
-            Ok::<_, std::io::Error>((path, path.metadata()?.modified()?))
-        })
-        .transpose()
-        .unwrap()
-        .hash(state);
 }
 
 #[derive(serde::Serialize, serde::Deserialize, clap::ValueEnum, Clone, Copy)]

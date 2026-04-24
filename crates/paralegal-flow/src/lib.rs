@@ -43,6 +43,7 @@ pub use std::collections::{HashMap, HashSet};
 use std::{
     fmt::Display,
     fs::File,
+    hash::Hash,
     io::BufWriter,
     path::PathBuf,
     time::{Duration, Instant},
@@ -211,6 +212,8 @@ fn configure(config: &mut Config, args: Option<&'static Args>) {
     config.opts.lint_cap = Some(rustc_lint_defs::Allow);
     // TODO add crate attr and cfg paralegal
     config.track_state = Some(Box::new(move |_, hasher| {
+        let slf = std::env::current_exe().unwrap();
+        slf.hash(hasher);
         if let Some(args) = args {
             args.hash_config(hasher);
         }
