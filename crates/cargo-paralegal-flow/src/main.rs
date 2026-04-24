@@ -1,5 +1,6 @@
 #![feature(exit_status_error)]
 use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hasher};
 use std::process::{Command, Stdio};
 
 use anyhow::Context;
@@ -8,7 +9,7 @@ use cargo_metadata::{CompilerMessage, Message};
 use clap::Parser;
 use tracing::{debug, error, trace};
 
-use cargo_paralegal_flow::{ClapArgs, PARALEGAL_ARGS};
+use cargo_paralegal_flow::{config_hash_for_file, ClapArgs, EXEC_HASH_ARG, PARALEGAL_ARGS};
 use paralegal_non_rustc_utils::{
     setup_logging, FileSystemStorable, ParalegalArtifact, ARTIFACT_NAME, FLOW_GRAPH_EXT,
 };
@@ -46,6 +47,18 @@ fn main() -> anyhow::Result<()> {
 
     args.anactrl.include_std |= args.marker_control.mark_side_effects();
 
+    let mut hasher = DefaultHasher::new();
+    args.hash_config(&mut hasher);
+    config_hash_for_file(std::env::current_exe().ok(), &mut hasher);
+    config_hash_for_file(Some(&rustc_wrapper_bin), &mut hasher);
+
+    let exec_hash = hasher.finish();
+
+    let mut rustflags = get_rustflags()?;
+
+    rustflags.push(EXEC_HASH_ARG.into());
+    rustflags.push(format!("{exec_hash:1x}"));
+
     let metadata = cargo_metadata::MetadataCommand::new()
         // At the moment this is fine, because we only use this for info about
         // workspace members and the target directory
@@ -60,7 +73,8 @@ fn main() -> anyhow::Result<()> {
         .args(args.cargo_args.iter())
         .stdout(Stdio::piped())
         .env("RUSTC_WRAPPER", rustc_wrapper_bin)
-        .env(PARALEGAL_ARGS, serde_json::to_string(&args)?);
+        .env(PARALEGAL_ARGS, serde_json::to_string(&args)?)
+        .env(CARGO_ENCODED_RUSTFLAGS, rustflags.join("\x1f"));
 
     // HACK: if running on the rustc codebase, this env var needs to exist
     // for the code to compile

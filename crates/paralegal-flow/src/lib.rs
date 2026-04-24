@@ -35,7 +35,7 @@ use flowistry_pdg_construction::source_access::{
 use paralegal_spdg::{AnalyzerStats, FLOW_GRAPH_EXT, ProgramDescription, STAT_FILE_EXT};
 
 use rustc_interface::Config;
-use rustc_middle::{ich::StableHashingContext, ty::TyCtxt};
+use rustc_middle::ty::TyCtxt;
 use rustc_span::ErrorGuaranteed;
 use tracing::{debug, error, info};
 
@@ -43,7 +43,6 @@ pub use std::collections::{HashMap, HashSet};
 use std::{
     fmt::Display,
     fs::File,
-    hash::Hash,
     io::BufWriter,
     path::PathBuf,
     time::{Duration, Instant},
@@ -201,7 +200,7 @@ fn dump_mir_and_update_stats(tcx: TyCtxt, timer: &mut DumpStats) {
     timer.tycheck_time = tycheck_time;
 }
 
-fn configure(config: &mut Config, args: Option<&'static Args>) {
+fn configure(config: &mut Config) {
     config.override_queries = Some(|_, providers| providers.queries.mir_borrowck = mir_borrowck);
     assert_eq!(config.opts.unstable_opts.threads, 1);
     //config.opts.unstable_opts.polonius = Polonius::Next;
@@ -211,18 +210,11 @@ fn configure(config: &mut Config, args: Option<&'static Args>) {
     // issues with borrowcheck fact generation.
     config.opts.lint_cap = Some(rustc_lint_defs::Allow);
     // TODO add crate attr and cfg paralegal
-    config.track_state = Some(Box::new(move |_, hasher| {
-        let slf = std::env::current_exe().unwrap();
-        slf.hash(hasher);
-        if let Some(args) = args {
-            args.hash_config(hasher);
-        }
-    }))
 }
 
 impl rustc_driver::Callbacks for DumpOnlyCallbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
-        configure(config, None)
+        configure(config)
     }
 
     fn after_expansion(
@@ -254,7 +246,7 @@ impl FinalizingCallbacks for DumpOnlyCallbacks {
 
 impl rustc_driver::Callbacks for Callbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
-        configure(config, Some(self.opts))
+        configure(config)
     }
 
     fn after_expansion<'tcx>(
