@@ -22,9 +22,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use rustc_ast::AttrId;
-use rustc_const_eval::interpret::AllocId;
-use rustc_data_structures::fx::FxHashMap;
+use rustc_const_eval::interpret::{AllocId, ConstAllocation, GlobalAlloc};
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{CrateNum, DefId, DefIndex};
+use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::ty::codec::{TyDecoder, TyEncoder};
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_serialize::{
@@ -51,6 +52,7 @@ pub struct ParalegalEncoder<'tcx> {
     type_shorthands: FxHashMap<ty::Ty<'tcx>, usize>,
     predicate_shorthands: FxHashMap<ty::PredicateKind<'tcx>, usize>,
     filepath_shorthands: FxHashMap<FileName, usize>,
+    allocations: FxHashSet<AllocId>,
 }
 
 impl<'tcx> ParalegalEncoder<'tcx> {
@@ -62,6 +64,7 @@ impl<'tcx> ParalegalEncoder<'tcx> {
             type_shorthands: Default::default(),
             predicate_shorthands: Default::default(),
             filepath_shorthands: Default::default(),
+            allocations: Default::default(),
         }
     }
 
@@ -103,6 +106,12 @@ impl Encoder for ParalegalEncoder<'_> {
     }
 }
 
+#[derive(TyEncodable, TyDecodable)]
+enum EncodedAlloc<'tcx> {
+    Ref(u64),
+    Inline(u64, GlobalAlloc<'tcx>),
+}
+
 impl<'tcx> TyEncoder<'tcx> for ParalegalEncoder<'tcx> {
     const CLEAR_CROSS_CRATE: bool = CLEAR_CROSS_CRATE;
 
@@ -119,7 +128,12 @@ impl<'tcx> TyEncoder<'tcx> for ParalegalEncoder<'tcx> {
     }
 
     fn encode_alloc_id(&mut self, alloc_id: &AllocId) {
-        u64::from(alloc_id.0).encode(self)
+        let to_encode = if self.allocations.contains(alloc_id) {
+            EncodedAlloc::Ref(alloc_id.0.into())
+        } else {
+            EncodedAlloc::Inline(alloc_id.0.into(), self.tcx.global_alloc(*alloc_id))
+        };
+        to_encode.encode(self)
     }
 }
 
@@ -129,6 +143,7 @@ pub struct ParalegalDecoder<'tcx, 'a> {
     mem_decoder: MemDecoder<'a>,
     shorthand_map: FxHashMap<usize, Ty<'tcx>>,
     file_shorthands: FxHashMap<usize, Option<Arc<SourceFile>>>,
+    allocations: FxHashMap<u64, AllocId>,
 }
 
 impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
@@ -139,6 +154,7 @@ impl<'tcx, 'a> ParalegalDecoder<'tcx, 'a> {
             mem_decoder: MemDecoder::new(buf, 0).unwrap(),
             shorthand_map: Default::default(),
             file_shorthands: Default::default(),
+            allocations: Default::default(),
         }
     }
 }
@@ -175,7 +191,24 @@ impl<'tcx> TyDecoder<'tcx> for ParalegalDecoder<'tcx, '_> {
     }
 
     fn decode_alloc_id(&mut self) -> AllocId {
-        AllocId(NonZeroU64::new(u64::decode(self)).unwrap())
+        match EncodedAlloc::decode(self) {
+            EncodedAlloc::Inline(raw_id, alloc) => {
+                let id = match alloc {
+                    GlobalAlloc::Memory(mm) => self.tcx.reserve_and_set_memory_alloc(mm),
+                    GlobalAlloc::Function { instance } => {
+                        self.tcx.reserve_and_set_fn_alloc(instance, 0)
+                    }
+                    GlobalAlloc::Static(def_id) => self.tcx.reserve_and_set_static_alloc(def_id),
+                    GlobalAlloc::TypeId { ty } => self.tcx.reserve_and_set_type_id_alloc(ty),
+                    GlobalAlloc::VTable(ty, dyn_t) => self.tcx.reserve_and_set_type_id_alloc(ty),
+                };
+
+                self.allocations.insert(raw_id, id);
+
+                id
+            }
+            EncodedAlloc::Ref(raw_id) => self.allocations[&raw_id],
+        }
     }
 
     fn with_position<F, R>(&mut self, pos: usize, f: F) -> R

@@ -25,6 +25,7 @@ extern crate rustc_parse;
 extern crate rustc_serialize;
 extern crate rustc_session;
 extern crate rustc_span;
+extern crate rustc_stable_hash;
 extern crate rustc_target;
 extern crate rustc_type_ir;
 
@@ -34,8 +35,7 @@ use flowistry_pdg_construction::source_access::{
 use paralegal_spdg::{AnalyzerStats, FLOW_GRAPH_EXT, ProgramDescription, STAT_FILE_EXT};
 
 use rustc_interface::Config;
-use rustc_middle::ty::TyCtxt;
-use rustc_session::config::Polonius;
+use rustc_middle::{ich::StableHashingContext, ty::TyCtxt};
 use rustc_span::ErrorGuaranteed;
 use tracing::{debug, error, info};
 
@@ -200,21 +200,26 @@ fn dump_mir_and_update_stats(tcx: TyCtxt, timer: &mut DumpStats) {
     timer.tycheck_time = tycheck_time;
 }
 
-fn configure(config: &mut Config) {
+fn configure(config: &mut Config, args: Option<&'static Args>) {
     config.override_queries = Some(|_, providers| providers.queries.mir_borrowck = mir_borrowck);
     assert_eq!(config.opts.unstable_opts.threads, 1);
-    config.opts.unstable_opts.polonius = Polonius::Next;
+    //config.opts.unstable_opts.polonius = Polonius::Next;
     // We don't care about emitting any lints. Users can get those when they
     // compile normally.  This could be added back if needed, but on toolchain
     // 2026-04-20 we need to at least disable `tail_expr_drop_order` or we get
     // issues with borrowcheck fact generation.
     config.opts.lint_cap = Some(rustc_lint_defs::Allow);
     // TODO add crate attr and cfg paralegal
+    config.track_state = Some(Box::new(move |_, hasher| {
+        if let Some(args) = args {
+            args.hash_config(hasher);
+        }
+    }))
 }
 
 impl rustc_driver::Callbacks for DumpOnlyCallbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
-        configure(config)
+        configure(config, None)
     }
 
     fn after_expansion(
@@ -246,7 +251,7 @@ impl FinalizingCallbacks for DumpOnlyCallbacks {
 
 impl rustc_driver::Callbacks for Callbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
-        configure(config)
+        configure(config, Some(self.opts))
     }
 
     fn after_expansion<'tcx>(

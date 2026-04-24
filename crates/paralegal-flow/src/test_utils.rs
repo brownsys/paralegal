@@ -102,14 +102,14 @@ where
     S: AsRef<std::ffi::OsStr>,
 {
     let dir = dir.as_ref();
-    assert!(
-        Command::new("cargo")
-            .arg("clean")
-            .current_dir(dir)
-            .status()
-            .unwrap()
-            .success()
-    );
+    // assert!(
+    //     Command::new("cargo")
+    //         .arg("clean")
+    //         .current_dir(dir)
+    //         .status()
+    //         .unwrap()
+    //         .success()
+    // );
     paralegal_flow_command(dir)
         .args(extra)
         .status()

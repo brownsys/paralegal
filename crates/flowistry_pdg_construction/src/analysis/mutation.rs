@@ -4,12 +4,13 @@ use either::Either;
 use flowistry_pdg::rustc_portable::Place;
 use itertools::Itertools;
 use rustc_abi::FieldIdx;
+use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{self, visit::Visitor, *},
     ty::{self, AdtKind, CoroutineArgsExt, TyKind},
 };
 use rustc_span::Spanned;
-use tracing::trace;
+use tracing::{debug, trace};
 
 use paralegal_rustc_utils::{AdtDefExt, OperandExt, PlaceExt};
 
@@ -358,6 +359,7 @@ where
             self.place_info.body,
             self.ty_env,
             self.strict,
+            self.place_info.def_id,
         );
         collector.visit_rvalue(rvalue, location);
         let inputs = collector
@@ -438,6 +440,7 @@ struct PlaceAndConstCollector<'tcx, 'a> {
     body: &'a mir::Body<'tcx>,
     ty_env: ty::TypingEnv<'tcx>,
     strict: bool,
+    def_id: DefId,
 }
 
 impl<'tcx, 'a> PlaceAndConstCollector<'tcx, 'a> {
@@ -446,13 +449,19 @@ impl<'tcx, 'a> PlaceAndConstCollector<'tcx, 'a> {
         body: &'a mir::Body<'tcx>,
         ty_env: ty::TypingEnv<'tcx>,
         strict: bool,
+        def_id: DefId,
     ) -> Self {
+        debug!(
+            function = tcx.def_path_str(def_id),
+            "starting place collection"
+        );
         Self {
             values: Vec::new(),
             tcx,
             body,
             ty_env,
             strict,
+            def_id,
         }
     }
 }

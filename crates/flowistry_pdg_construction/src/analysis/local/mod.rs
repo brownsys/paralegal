@@ -28,8 +28,8 @@ use crate::{
     analysis::global::Use,
     source_access::CachedBody,
     utils::{
-        self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize, ShimResult,
-        ShimType, TyAsFnResult,
+        self, erase_regions, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize,
+        ShimResult, ShimType, TyAsFnResult,
     },
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
@@ -223,7 +223,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
     }
 
     pub fn normalize_place(&self, place: &Place<'tcx>) -> Place<'tcx> {
-        //let place = erase_regions(self.tcx(), *place);
+        let place = erase_regions(self.tcx(), *place);
         // Normalize the place to remove regions and other things that are not
         // needed for the PDG.
         debug!(
@@ -235,7 +235,7 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
             .try_instantiate_and_normalize_erasing_regions(
                 self.generic_args(),
                 self.param_env,
-                EarlyBinder::bind(*place),
+                EarlyBinder::bind(place),
             )
             .unwrap_or_else(|err| {
                 panic!(

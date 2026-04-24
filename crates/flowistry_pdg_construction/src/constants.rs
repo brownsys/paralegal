@@ -7,6 +7,7 @@ use rustc_middle::{
     mir::{self, Place},
     ty::{self},
 };
+use tracing::debug;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum PlaceOrConst<'tcx> {

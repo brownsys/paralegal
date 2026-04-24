@@ -15,13 +15,18 @@
 
 use anyhow::Error;
 use clap::ValueEnum;
-use rustc_data_structures::fx::FxHashMap;
-use rustc_data_structures::fx::FxHashSet;
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
+use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
+use rustc_macros::HashStable;
+use rustc_middle::ich::StableHashingContext;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Symbol;
-use std::collections::HashMap;
+use rustc_stable_hash::ExtendedHasher;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::{OsStr, OsString};
+use std::hash::{Hash, Hasher};
+use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::OnceLock;
@@ -236,6 +241,30 @@ impl Args {
     pub fn setup_logging(&self) -> anyhow::Result<()> {
         setup_logging()
     }
+
+    pub fn hash_config(&self, hasher: &mut impl Hasher) {
+        if self.attach_to_debugger.is_some() {
+            // If we run the debugger try to make the hash fail so we actually run.
+            std::time::Instant::now().hash(hasher);
+        }
+        // TODO Add other relevant arguments
+        config_hash_for_file(self.build_config.0.as_ref(), hasher);
+        self.relaxed.hash(hasher);
+        self.target.hash(hasher);
+        self.result_path.hash(hasher);
+        config_hash_for_file(self.marker_control.external_annotations().as_ref(), hasher);
+    }
+}
+
+fn config_hash_for_file(path: Option<impl AsRef<Path>>, state: &mut impl Hasher) {
+    path.as_ref()
+        .map(|path| {
+            let path = path.as_ref();
+            Ok::<_, std::io::Error>((path, path.metadata()?.modified()?))
+        })
+        .transpose()
+        .unwrap()
+        .hash(state);
 }
 
 pub struct AnalysisCtrl {
@@ -440,12 +469,12 @@ pub enum Stub {
 pub struct BuildConfig {
     /// Dependency specific configuration
     #[serde(default)]
-    pub dep: crate::HashMap<String, DepConfig>,
+    pub dep: BTreeMap<String, DepConfig>,
     /// A select list of non-workspace crates which should be recursed into
     /// during analysis. If you want this to happen for all non-workspace crates
     /// instead specify `default-include = true`.
     #[serde(default)]
     pub include: Vec<String>,
     #[serde(default)]
-    pub stubs: HashMap<String, Stub>,
+    pub stubs: BTreeMap<String, Stub>,
 }
