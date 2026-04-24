@@ -289,7 +289,11 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                             place.local == alias.local
                         } else {
                             trace!("Checking conflict status of {place:?} and {alias:?}");
-                            utils::places_conflict(self.tcx(), &self.mono_body, *place, alias)
+                            self.memo.place_conflict_context.places_conflict(
+                                &self.mono_body,
+                                *place,
+                                alias,
+                            )
                         }
                     });
 

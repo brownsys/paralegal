@@ -25,7 +25,7 @@ use crate::{
     callback::DefaultCallback,
     constants::PlaceOrConst,
     source_access::{self, BodyCache, CachedBody},
-    utils::{manufacture_substs_for, try_resolve_function, TwoLevelCache},
+    utils::{manufacture_substs_for, try_resolve_function, PlaceConflictContext, TwoLevelCache},
     CallChangeCallback,
 };
 
@@ -84,6 +84,7 @@ pub struct MemoPdgConstructor<'tcx, K> {
     pub(crate) body_cache: Rc<source_access::BodyCache<'tcx>>,
     disable_cache: bool,
     relaxed: bool,
+    pub(crate) place_conflict_context: PlaceConflictContext<'tcx>,
 }
 
 impl<'tcx, K: Default> MemoPdgConstructor<'tcx, K> {
@@ -105,6 +106,7 @@ impl<'tcx, K: Default> MemoPdgConstructor<'tcx, K> {
             body_cache,
             disable_cache: false,
             relaxed: false,
+            place_conflict_context: PlaceConflictContext::new(tcx),
         }
     }
 }
@@ -124,6 +126,7 @@ impl<'tcx, K> MemoPdgConstructor<'tcx, K> {
             body_cache: Rc::new(BodyCache::new(tcx)),
             disable_cache: false,
             relaxed: false,
+            place_conflict_context: PlaceConflictContext::new(tcx),
         }
     }
 
