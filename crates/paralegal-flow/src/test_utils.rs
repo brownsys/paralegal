@@ -173,6 +173,7 @@ pub struct InlineTestBuilder {
     input: String,
     extra_args: Vec<String>,
     marker_file: Option<String>,
+    build_config: Option<String>,
 }
 
 #[macro_export]
@@ -200,6 +201,7 @@ impl InlineTestBuilder {
             ctrl_name: Some("crate::main".into()),
             extra_args: Default::default(),
             marker_file: None,
+            build_config: None,
         }
     }
 
@@ -229,6 +231,11 @@ impl InlineTestBuilder {
 
     pub fn with_marker_file(&mut self, marker_file: impl Into<String>) -> &mut Self {
         self.marker_file = Some(marker_file.into());
+        self
+    }
+
+    pub fn with_build_config(&mut self, config: impl Into<String>) -> &mut Self {
+        self.build_config = Some(config.into());
         self
     }
 
@@ -270,6 +277,15 @@ impl InlineTestBuilder {
             ));
             std::fs::write(&p, m).unwrap();
             args.push("--external-annotations".to_string());
+            args.push(p.to_str().unwrap().to_string());
+        }
+        if let Some(c) = &self.build_config {
+            let p = std::env::temp_dir().join(format!(
+                "paralegal-config-{}.toml",
+                FILE_INDEX.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::write(&p, c).unwrap();
+            args.push("--build-config".to_string());
             args.push(p.to_str().unwrap().to_string());
         }
         args.extend(self.extra_args.iter().cloned());
