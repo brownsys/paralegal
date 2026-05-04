@@ -5,29 +5,9 @@
 
 #![feature(rustc_private)]
 
-#[macro_use]
-extern crate lazy_static;
-
-use paralegal_flow::{define_flow_test_template, inline_test, test_utils::*};
+use paralegal_flow::{inline_test, test_utils::*};
 use paralegal_spdg::Identifier;
-
-extern crate either;
-extern crate rustc_middle;
-
-const TEST_CRATE_NAME: &str = "tests/stub-tests";
-
-lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool = run_paralegal_flow_with_flow_graph_dump_and(
-        TEST_CRATE_NAME,
-        ["--include=crate", "--no-adaptive-approximation"]
-    );
-}
-
-macro_rules! define_test {
-    ($($t:tt)*) => {
-        define_flow_test_template!(TEST_CRATE_ANALYZED, TEST_CRATE_NAME, $($t)*);
-    };
-}
+use std::sync::OnceLock;
 
 const STUBS_TOML: &str = r#"
 [stubs."std::thread::spawn"]
@@ -42,6 +22,17 @@ generic-name = "F"
 mode = "sub-closure"
 generic-name = "F"
 "#;
+
+static EXTERN_ARGS: OnceLock<Vec<String>> = OnceLock::new();
+
+fn extern_args() -> &'static Vec<String> {
+    EXTERN_ARGS.get_or_init(|| {
+        collect_extern_args(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/stub-tests/Cargo.toml"),
+        )
+    })
+}
 
 fn check_source_pass_target(graph: CtrlRef<'_>) {
     let src = graph.marked(Identifier::new_intern("source"));
@@ -85,7 +76,7 @@ fn thread_spawn() {
         }
     }
     .with_build_config(STUBS_TOML)
-    .with_extra_args(["--no-adaptive-approximation"])
+    .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
     .with_entrypoint("crate::thread_spawn")
     .check_ctrl(check_source_pass_target)
 }
@@ -105,7 +96,7 @@ fn marked_thread_spawn() {
         }
     }
     .with_build_config(STUBS_TOML)
-    .with_extra_args(["--no-adaptive-approximation"])
+    .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
     .with_entrypoint("crate::marked_thread_spawn")
     .check_ctrl(simple_source_target_flow)
 }
@@ -134,7 +125,7 @@ fn marked_blocking_like() {
         }
     }
     .with_build_config(STUBS_TOML)
-    .with_extra_args(["--no-adaptive-approximation"])
+    .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
     .with_entrypoint("crate::marked_blocking_like")
     .check_ctrl(simple_source_target_flow)
 }
@@ -163,49 +154,241 @@ fn test_blocking_like() {
         }
     }
     .with_build_config(STUBS_TOML)
-    .with_extra_args(["--no-adaptive-approximation"])
+    .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
     .with_entrypoint("crate::test_blocking_like")
     .check_ctrl(simple_source_target_flow)
 }
 
-define_test!(async_spawn: graph -> {
-    check_source_pass_target(graph);
-});
+#[test]
+fn async_spawn() {
+    inline_test! {
+        #[paralegal_flow::marker(source, return)]
+        fn source() -> usize { 0 }
 
-define_test!(marked_async_spawn: graph -> {
-    simple_source_target_flow(graph);
-});
+        #[paralegal_flow::marker(pass, arguments = [0])]
+        fn pass<T>(t: T) -> T { t }
 
-define_test!(blocking_with_marker: graph -> {
-    simple_source_target_flow(graph);
-});
+        #[paralegal_flow::marker(target, arguments = [0])]
+        fn target(i: usize) {}
 
-define_test!(block_fn: graph -> {
-    simple_source_target_flow(graph)
-});
+        async fn async_spawn() {
+            let src = source();
+            let next = tokio::spawn(async move { pass(src) }).await.unwrap();
+            target(next);
+        }
+    }
+    .with_build_config(STUBS_TOML)
+    .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
+    .with_rustc_args(extern_args())
+    .with_entrypoint("crate::async_spawn")
+    .check_ctrl(check_source_pass_target)
+}
 
-define_test!(test_blocking_with_let_bound_closure: graph -> {
-    simple_source_target_flow(graph)
-});
+#[test]
+fn marked_async_spawn() {
+    inline_test! {
+        #[paralegal_flow::marker(source, return)]
+        async fn async_source() -> usize { 0 }
 
-define_test!(block_closure: graph -> {
-    simple_source_target_flow(graph)
-});
+        #[paralegal_flow::marker(target, arguments = [0])]
+        fn target(i: usize) {}
 
-define_test!(strategic_overtaint: graph -> {
-    simple_source_target_flow(graph)
-});
+        async fn marked_async_spawn() {
+            let next = tokio::spawn(async_source()).await.unwrap();
+            target(next);
+        }
+    }
+    .with_build_config(STUBS_TOML)
+    .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
+    .with_rustc_args(extern_args())
+    .with_entrypoint("crate::marked_async_spawn")
+    .check_ctrl(simple_source_target_flow)
+}
 
-define_test!(strategic_overtaint_2: graph -> {
-    simple_source_target_flow(graph)
-});
+#[test]
+fn block_fn() {
+    inline_test! {
+        #[paralegal_flow::marker(source, return)]
+        fn source() -> usize { 0 }
 
-define_test!(no_taint_without_connection: graph -> {
-    let src = graph.marked(Identifier::new_intern("source"));
-    let target = graph.marked(Identifier::new_intern("target"));
+        #[paralegal_flow::marker(target, arguments = [0])]
+        fn target(i: usize) {}
 
-    assert!(!src.is_empty());
-    assert!(!target.is_empty());
+        fn to_block() -> Result<usize, actix_web::error::BlockingError> {
+            Ok(source())
+        }
 
-    assert!(!src.flows_to_data(&target));
-});
+        async fn block_fn() -> Result<(), actix_web::error::BlockingError> {
+            Ok(target(actix_web::web::block(to_block).await?? + 1))
+        }
+    }
+    .with_build_config(STUBS_TOML)
+    .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
+    .with_rustc_args(extern_args())
+    .with_entrypoint("crate::block_fn")
+    .check_ctrl(simple_source_target_flow)
+}
+
+#[test]
+fn block_closure() {
+    inline_test! {
+        #[paralegal_flow::marker(source, return)]
+        fn source() -> usize { 0 }
+
+        #[paralegal_flow::marker(target, arguments = [0])]
+        fn target(i: usize) {}
+
+        async fn block_closure(to_close_over: usize) -> Result<(), actix_web::error::BlockingError> {
+            Ok(target(
+                actix_web::web::block(move || Ok(source() + to_close_over)).await?? + 1,
+            ))
+        }
+    }
+    .with_build_config(STUBS_TOML)
+    .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
+    .with_rustc_args(extern_args())
+    .with_entrypoint("crate::block_closure")
+    .check_ctrl(simple_source_target_flow)
+}
+
+#[test]
+fn blocking_with_marker() {
+    inline_test! {
+        #[paralegal_flow::marker(source, return)]
+        fn second_source<T>(_: T) -> usize { 0 }
+
+        #[paralegal_flow::marker(target, arguments = [0])]
+        fn target(i: usize) {}
+
+        pub async fn blocking<F, T>(pool: &str, f: F) -> T
+        where
+            F: FnOnce(usize) -> T + 'static + Send,
+            T: 'static + Send,
+        {
+            let pool = pool.parse().unwrap();
+            actix_web::web::block(move || (f)(pool)).await.unwrap()
+        }
+
+        async fn blocking_with_marker(to_close_over: &str) {
+            target(blocking(to_close_over, second_source).await)
+        }
+    }
+    .with_build_config(STUBS_TOML)
+    .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
+    .with_rustc_args(extern_args())
+    .with_entrypoint("crate::blocking_with_marker")
+    .check_ctrl(simple_source_target_flow)
+}
+
+#[test]
+fn test_blocking_with_let_bound_closure() {
+    inline_test! {
+        #[paralegal_flow::marker(source, return)]
+        fn source() -> usize { 0 }
+
+        #[paralegal_flow::marker(target, arguments = [0])]
+        fn target(i: usize) {}
+
+        pub async fn blocking<F, T>(pool: &str, f: F) -> T
+        where
+            F: FnOnce(usize) -> T + 'static + Send,
+            T: 'static + Send,
+        {
+            let pool = pool.parse().unwrap();
+            actix_web::web::block(move || (f)(pool)).await.unwrap()
+        }
+
+        async fn test_blocking_with_let_bound_closure(to_close_over: &str) {
+            let from_scope = 10;
+            let the_closure = move |u| u + source() + from_scope;
+            target(blocking(to_close_over, the_closure).await);
+        }
+    }
+    .with_build_config(STUBS_TOML)
+    .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
+    .with_rustc_args(extern_args())
+    .with_entrypoint("crate::test_blocking_with_let_bound_closure")
+    .check_ctrl(simple_source_target_flow)
+}
+
+#[test]
+fn strategic_overtaint() {
+    inline_test! {
+        #[paralegal_flow::marker(source, return)]
+        fn source() -> usize { 0 }
+
+        #[paralegal_flow::marker(target, arguments = [0])]
+        fn target(i: usize) {}
+
+        async fn strategic_overtaint(to_close_over: usize) -> Result<(), actix_web::error::BlockingError> {
+            Ok(target(
+                actix_web::web::block(move || Ok((source(), to_close_over)))
+                    .await??
+                    .0,
+            ))
+        }
+    }
+    .with_build_config(STUBS_TOML)
+    .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
+    .with_rustc_args(extern_args())
+    .with_entrypoint("crate::strategic_overtaint")
+    .check_ctrl(simple_source_target_flow)
+}
+
+#[test]
+fn strategic_overtaint_2() {
+    inline_test! {
+        #[paralegal_flow::marker(source, return)]
+        fn source() -> usize { 0 }
+
+        #[paralegal_flow::marker(target, arguments = [0])]
+        fn target(i: usize) {}
+
+        async fn strategic_overtaint_2(to_close_over: usize) -> Result<(), actix_web::error::BlockingError> {
+            Ok(target(
+                actix_web::web::block(move || Ok((source(), to_close_over)))
+                    .await??
+                    .1,
+            ))
+        }
+    }
+    .with_build_config(STUBS_TOML)
+    .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
+    .with_rustc_args(extern_args())
+    .with_entrypoint("crate::strategic_overtaint_2")
+    .check_ctrl(simple_source_target_flow)
+}
+
+#[test]
+fn no_taint_without_connection() {
+    inline_test! {
+        #[paralegal_flow::marker(source, return)]
+        fn source() -> usize { 0 }
+
+        #[paralegal_flow::marker(target, arguments = [0])]
+        fn target(i: usize) {}
+
+        async fn no_taint_without_connection(to_close_over: usize) -> Result<(), actix_web::error::BlockingError> {
+            Ok(target(
+                actix_web::web::block(move || {
+                    let _no_use = source();
+                    Ok(to_close_over)
+                })
+                .await??,
+            ))
+        }
+    }
+    .with_build_config(STUBS_TOML)
+    .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
+    .with_rustc_args(extern_args())
+    .with_entrypoint("crate::no_taint_without_connection")
+    .check_ctrl(|graph| {
+        let src = graph.marked(Identifier::new_intern("source"));
+        let target = graph.marked(Identifier::new_intern("target"));
+
+        assert!(!src.is_empty());
+        assert!(!target.is_empty());
+
+        assert!(!src.flows_to_data(&target));
+    })
+}

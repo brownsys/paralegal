@@ -174,6 +174,7 @@ pub struct InlineTestBuilder {
     extra_args: Vec<String>,
     marker_file: Option<String>,
     build_config: Option<String>,
+    rustc_args: Vec<String>,
 }
 
 #[macro_export]
@@ -202,6 +203,7 @@ impl InlineTestBuilder {
             extra_args: Default::default(),
             marker_file: None,
             build_config: None,
+            rustc_args: Default::default(),
         }
     }
 
@@ -236,6 +238,12 @@ impl InlineTestBuilder {
 
     pub fn with_build_config(&mut self, config: impl Into<String>) -> &mut Self {
         self.build_config = Some(config.into());
+        self
+    }
+
+    pub fn with_rustc_args<S: ToString>(&mut self, args: impl IntoIterator<Item = S>) -> &mut Self {
+        self.rustc_args
+            .extend(args.into_iter().map(|s| s.to_string()));
         self
     }
 
@@ -297,6 +305,7 @@ impl InlineTestBuilder {
         paralegal_rustc_utils::test_utils::CompileBuilder::new(&self.input)
             .with_args(EXTRA_RUSTC_ARGS.iter().copied().map(ToOwned::to_owned))
             .with_args(["-Ztrack-diagnostics".to_string()])
+            .with_args(self.rustc_args.iter().cloned())
             .compile(move |result| {
                 let args: &'static _ = Box::leak(Box::new(args));
                 dump_markers(result.tcx);
@@ -1201,4 +1210,86 @@ where
         });
 
     !matches!(result, Control::Break(()))
+}
+
+/// Build a Cargo project and collect all `--extern name=path` rustc args from
+/// the resulting rlib artifacts for the manifest's direct dependencies only.
+/// Useful for inline tests that need to link against external crates.
+///
+/// Uses the same rustc that compiled this crate (via `SYSROOT_PATH`) so the
+/// rlib crate hashes are compatible with the embedded `rustc_driver`.
+pub fn collect_extern_args(manifest_path: impl AsRef<std::path::Path>) -> Vec<String> {
+    let manifest_path = manifest_path.as_ref();
+    let direct_dependencies = direct_dependency_names(manifest_path);
+    let rustc_bin = format!("{}/bin/rustc", env!("SYSROOT_PATH"));
+    let output = std::process::Command::new("cargo")
+        .env("RUSTC", &rustc_bin)
+        .args(["build", "--message-format=json", "--manifest-path"])
+        .arg(manifest_path)
+        .output()
+        .expect("cargo build failed while collecting extern args");
+
+    if !output.status.success() {
+        panic!(
+            "cargo build for extern arg collection failed with status {}",
+            output.status
+        );
+    }
+
+    let mut args = Vec::new();
+    if let Some(parent) = manifest_path.parent() {
+        let deps_dir = parent.join("target/debug/deps");
+        args.push("-L".to_string());
+        args.push(format!("dependency={}", deps_dir.display()));
+    }
+    for line in String::from_utf8(output.stdout).unwrap().lines() {
+        let Ok(msg) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if msg["reason"].as_str() != Some("compiler-artifact") {
+            continue;
+        }
+        let Some(name) = msg["target"]["name"].as_str() else {
+            continue;
+        };
+        let extern_name = name.replace('-', "_");
+        if !direct_dependencies.contains(&extern_name) {
+            continue;
+        }
+        let Some(filenames) = msg["filenames"].as_array() else {
+            continue;
+        };
+        for f in filenames {
+            let path = f.as_str().unwrap();
+            if path.ends_with(".rlib") {
+                args.push("--extern".to_string());
+                args.push(format!("{extern_name}={path}"));
+            }
+        }
+    }
+    args
+}
+
+fn direct_dependency_names(manifest_path: &std::path::Path) -> std::collections::HashSet<String> {
+    let manifest = std::fs::read_to_string(manifest_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", manifest_path.display()));
+    let value: toml::Value = toml::from_str(&manifest)
+        .unwrap_or_else(|err| panic!("failed to parse {}: {err}", manifest_path.display()));
+
+    let mut names = std::collections::HashSet::new();
+    for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        let Some(table) = value.get(section).and_then(toml::Value::as_table) else {
+            continue;
+        };
+        for (dep_name, dep_value) in table {
+            let package_name = dep_value
+                .as_table()
+                .and_then(|t| t.get("package"))
+                .and_then(toml::Value::as_str)
+                .unwrap_or(dep_name)
+                .replace('-', "_");
+            names.insert(package_name);
+        }
+    }
+    names
 }
