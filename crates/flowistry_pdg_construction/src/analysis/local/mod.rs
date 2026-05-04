@@ -232,18 +232,19 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                 .def_path_str_with_args(self.def_id, self.generic_args()),
             self.generic_args()
         );
-        self.tcx()
-            .try_instantiate_and_normalize_erasing_regions(
-                self.generic_args(),
-                self.param_env,
-                EarlyBinder::bind(place),
-            )
-            .unwrap_or_else(|err| {
-                panic!(
-                    "Failed to normalize place {place:?} in {}: {err:?}",
-                    self.tcx().def_path_str(self.def_id)
-                )
-            })
+        erase_regions(self.tcx(), place)
+        // self.tcx()
+        //     .try_instantiate_and_normalize_erasing_regions(
+        //         self.generic_args(),
+        //         self.param_env,
+        //         EarlyBinder::bind(place),
+        //     )
+        //     .unwrap_or_else(|err| {
+        //         panic!(
+        //             "Failed to normalize place {place:?} in {}: {err:?}",
+        //             self.tcx().def_path_str(self.def_id)
+        //         )
+        //     })
     }
 
     pub(crate) fn tcx(&self) -> TyCtxt<'tcx> {
