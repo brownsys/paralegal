@@ -227,8 +227,9 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
         // Normalize the place to remove regions and other things that are not
         // needed for the PDG.
         debug!(
-            "Normalizing {place:?} in {} with {:?}",
-            self.tcx().def_path_str(self.def_id),
+            "Normalizing {place:?} in {} ({:?})",
+            self.tcx()
+                .def_path_str_with_args(self.def_id, self.generic_args()),
             self.generic_args()
         );
         self.tcx()

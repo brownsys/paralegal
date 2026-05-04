@@ -9,7 +9,10 @@ use flowistry_pdg::rustc_portable::Location;
 use flowistry_pdg_construction::{
     DepEdge, DepEdgeKind, DepNode, DepNodeKind, MemoPdgConstructor, OneHopLocation, PartialGraph,
     Use, VisitDriver, Visitor, determine_async,
-    utils::{ShimResult, handle_shims, try_monomorphize, try_resolve_function, type_as_fn},
+    utils::{
+        ShimResult, handle_shims, manufacture_substs_for, try_monomorphize, try_resolve_function,
+        type_as_fn,
+    },
 };
 use paralegal_spdg::Node;
 
@@ -69,15 +72,26 @@ pub fn assemble_pdg<'tcx>(
             panic!("INVARIANT VIOLATED: body for local function {base_body_def_id:?} cannot be loaded.",)
         })
         .body();
+    let typing_env = tcx.typing_env_normalized_for_post_analysis(base_body_def_id);
+    let base_body_args = manufacture_substs_for(tcx, base_body_def_id).unwrap();
+    let base_body_instance =
+        try_resolve_function(tcx, base_body_def_id, typing_env, base_body_args).unwrap();
 
-    let async_state = determine_async(tcx, base_body_def_id, base_body);
+    let base_body = try_monomorphize(
+        base_body_instance,
+        tcx,
+        typing_env,
+        base_body.clone(),
+        tcx.def_span(base_body_def_id),
+    )
+    .unwrap();
+
+    let async_state = determine_async(tcx, base_body_def_id, &base_body);
 
     // These will refer to the function we are actually analyzing from, which may
     // be a generator if the target is async.
-    let possibly_generator_id =
-        async_state.map_or(base_body_def_id, |(generator, ..)| generator.def_id());
-    let (possible_generator_instance, k) =
-        pdg_constructor.create_root_key(possibly_generator_id.expect_local());
+    let possibly_generator = async_state.map_or(base_body_instance, |(generator, ..)| generator);
+    let (possible_generator_instance, k) = pdg_constructor.create_root_key(possibly_generator);
 
     let mut driver = VisitDriver::new(pdg_constructor, possible_generator_instance, k);
     let mut assembler = GraphAssembler::new(pctx.clone(), known_def_ids, base_body_def_id);
@@ -98,14 +112,9 @@ pub fn assemble_pdg<'tcx>(
                 driver.start(&mut assembler);
             },
         );
-        // Using create_root_key might seem weird here but it currently does what
-        // we need (resolve the instance)
-        let base_instance = pdg_constructor
-            .create_root_key(base_body_def_id.expect_local())
-            .0;
         // Because we actually started the analysis from the generator, we now
         // have to manually sync up the actual arguments to the async function.
-        assembler.fix_async_args(base_instance, loc, &mut driver);
+        assembler.fix_async_args(base_body_instance, loc, &mut driver);
     } else {
         driver.start(&mut assembler);
     }
