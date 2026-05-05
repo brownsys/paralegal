@@ -226,8 +226,7 @@ fn closure_tests() {
             l(x)
         }
 
-        fn main() {
-            let a = 10usize;
+        fn main(a: usize) {
             let lambda = |x: usize| -> usize {
                 return x * x;
             };
@@ -491,8 +490,7 @@ fn structs() {
             c: bool,
         }
 
-        fn main() {
-            let a = 5usize;
+        fn main(a: usize) {
             let mut foo = Foo {
                 a,
                 b: "hello",
