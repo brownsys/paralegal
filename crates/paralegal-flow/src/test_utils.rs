@@ -289,10 +289,19 @@ impl DependencyEnvironmentBuilder {
         }
 
         let mut args = Vec::new();
+        // Stdlib artifacts land in a different cargo profile directory than
+        // regular deps. We extract the actual deps dir from the first stdlib
+        // rlib we encounter and emit a -L dependency= for it after the loop.
+        let mut stdlib_deps_dir: Option<std::path::PathBuf> = None;
+
         if let Some(parent) = manifest_path.parent() {
             let deps_dir = parent.join("target/debug/deps");
             args.push("-L".to_string());
             args.push(format!("dependency={}", deps_dir.display()));
+        }
+        if self.include_stdlib {
+            // Required for the noprelude,nounused: extern qualifier syntax.
+            args.push("-Zunstable-options".into());
         }
         for line in String::from_utf8(output.stdout).unwrap().lines() {
             let Ok(msg) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -305,7 +314,16 @@ impl DependencyEnvironmentBuilder {
                 continue;
             };
             let extern_name = name.replace('-', "_");
-            if !direct_dependencies.contains(&extern_name) {
+            // Stdlib crates rebuilt via -Zbuild-std are not listed in any
+            // [dependencies] section. Identify them by their manifest_path being
+            // under the sysroot's lib/rustlib/src tree.
+            let sysroot_src = concat!(env!("SYSROOT_PATH"), "/lib/rustlib/src");
+            let is_stdlib_artifact = self.include_stdlib
+                && msg["manifest_path"]
+                    .as_str()
+                    .is_some_and(|p| p.starts_with(sysroot_src));
+
+            if !is_stdlib_artifact && !direct_dependencies.contains(&extern_name) {
                 continue;
             }
             let Some(filenames) = msg["filenames"].as_array() else {
@@ -313,11 +331,37 @@ impl DependencyEnvironmentBuilder {
             };
             for f in filenames {
                 let path = f.as_str().unwrap();
-                if path.ends_with(".rlib") {
+                if !path.ends_with(".rlib") && !path.ends_with(".rmeta") {
+                    continue;
+                }
+                if is_stdlib_artifact {
+                    // Capture the deps dir that cargo-paralegal-flow used for
+                    // stdlib so we can emit the correct -L flag below.
+                    if path.ends_with(".rlib") && stdlib_deps_dir.is_none() {
+                        if let Some(dir) = std::path::Path::new(path).parent() {
+                            stdlib_deps_dir = Some(dir.to_path_buf());
+                        }
+                    }
+                    // Use noprelude for everything except std itself.
+                    // noprelude prevents duplicate-prelude conflicts; for std
+                    // we omit it so that its prelude (Ok, Vec, …) is injected
+                    // into the inline test's root module automatically.
+                    let qualifier = if extern_name == "std" { "" } else { "noprelude,nounused:" };
+                    args.push("--extern".to_string());
+                    args.push(format!("{qualifier}{extern_name}={path}"));
+                } else {
                     args.push("--extern".to_string());
                     args.push(format!("{extern_name}={path}"));
                 }
             }
+        }
+        // Add the stdlib deps dir as a -L search path so rustc can find the
+        // transitive dependencies of the noprelude stdlib externs (e.g. core
+        // when loading std). The original -L above points at target/debug/deps
+        // which only has user-crate deps, not the freshly compiled stdlib.
+        if let Some(dir) = stdlib_deps_dir {
+            args.push("-L".to_string());
+            args.push(format!("dependency={}", dir.display()));
         }
         args
     }
@@ -367,6 +411,8 @@ path = "src/main.rs"
         } else {
             vec![]
         };
+
+        println!("Collected extern args {flags:?}");
 
         DependencyEnvironment {
             rustc_flags: flags,

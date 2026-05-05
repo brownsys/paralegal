@@ -9,6 +9,7 @@ fn stdlib_environment() -> &'static DependencyEnvironment {
         DependencyEnvironmentBuilder::new()
             .with_extra_args(["--side-effect-markers", "--include-std"])
             .with_markers(include_str!("stdlib-markers.toml"))
+            .with_manifest("tests/purity/test-crate-std/Cargo.toml")
             .with_stdlib()
             .build()
     })

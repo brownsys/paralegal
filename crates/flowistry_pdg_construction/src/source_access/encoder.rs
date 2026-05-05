@@ -33,8 +33,8 @@ use rustc_serialize::{
     Decodable, Decoder, Encodable, Encoder,
 };
 use rustc_span::{
-    BlobDecoder, BytePos, ByteSymbol, ExpnId, FileName, SourceFile, Span, SpanData, SpanDecoder,
-    SpanEncoder, Symbol, SyntaxContext, DUMMY_SP,
+    BlobDecoder, BytePos, ByteSymbol, ExpnId, FileName, RelativeBytePos, RemapPathScopeComponents,
+    SourceFile, Span, SpanData, SpanDecoder, SpanEncoder, Symbol, SyntaxContext, DUMMY_SP,
 };
 
 macro_rules! encoder_methods {
@@ -354,13 +354,28 @@ impl<'tcx> Encodable<ParalegalEncoder<'tcx>> for SpanData {
         }
         TAG_VALID_SPAN_FULL.encode(s);
         source_file.cnum.encode(s);
-        let name = source_file.name.clone();
-        s.encode_file_name(&name);
+        s.encode_file_name(&source_file.name);
+        assert!(
+            source_file.contains(self.lo),
+            "Byte position (low) {} not found in file {} (from {} to {})",
+            self.lo.0,
+            source_file.name.prefer_local_unconditionally(),
+            source_file.start_pos.0,
+            source_file.end_position().0,
+        );
+        assert!(
+            source_file.contains(self.hi),
+            "Byte position (high) {} not found in file {} (from {} to {})",
+            self.hi.0,
+            source_file.name.prefer_local_unconditionally(),
+            source_file.start_pos.0,
+            source_file.end_position().0,
+        );
 
-        let lo = self.lo - source_file.start_pos;
-        let len = self.hi - self.lo;
+        let lo = source_file.original_relative_byte_pos(self.lo);
+        let hi = source_file.original_relative_byte_pos(self.hi);
         lo.encode(s);
-        len.encode(s);
+        hi.encode(s);
     }
 }
 
@@ -381,28 +396,14 @@ impl ParalegalEncoder<'_> {
 impl ParalegalDecoder<'_, '_> {
     fn decode_file_name(&mut self, crate_num: CrateNum) -> Option<Arc<SourceFile>> {
         let tag = u8::decode(self);
-        let pos = if tag == TAG_ENCODE_REMOTE {
+        if tag == TAG_ENCODE_REMOTE {
             let index = usize::decode(self);
-            if let Some(cached) = self.file_shorthands.get(&index) {
-                return cached.clone();
-            }
-            Some(index)
+            self.file_shorthands[&index].clone()
         } else if tag == TAG_ENCODE_LOCAL {
-            None
+            self.decode_filename_local(crate_num)
         } else {
             panic!("Unexpected tag value {tag}");
-        };
-        let (index, file) = if let Some(idx) = pos {
-            (
-                idx,
-                self.with_position(idx, |slf| slf.decode_filename_local(crate_num)),
-            )
-        } else {
-            (self.position(), self.decode_filename_local(crate_num))
-        };
-
-        self.file_shorthands.insert(index, file.clone());
-        file
+        }
     }
 
     fn decode_filename_local(&mut self, crate_num: CrateNum) -> Option<Arc<SourceFile>> {
@@ -453,8 +454,8 @@ impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for SpanData {
         debug_assert_eq!(tag, TAG_VALID_SPAN_FULL);
         let crate_num = CrateNum::decode(d);
         let m_source_file = d.decode_file_name(crate_num);
-        let lo = BytePos::decode(d);
-        let len = BytePos::decode(d);
+        let lo = RelativeBytePos::decode(d);
+        let hi = RelativeBytePos::decode(d);
         let Some(source_file) = m_source_file else {
             return SpanData {
                 lo: BytePos(0),
@@ -463,11 +464,24 @@ impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for SpanData {
                 parent: None,
             };
         };
-        let hi = lo + len;
-        let lo = source_file.start_pos + lo;
-        let hi = source_file.start_pos + hi;
-        assert!(source_file.contains(lo));
-        assert!(source_file.contains(hi));
+        let hi = source_file.absolute_position(hi);
+        let lo = source_file.absolute_position(lo);
+        assert!(
+            source_file.contains(lo),
+            "Byte position (low) {} not found in file {} (from {} to {})",
+            lo.0,
+            source_file.name.prefer_local_unconditionally(),
+            source_file.start_pos.0,
+            source_file.end_position().0,
+        );
+        assert!(
+            source_file.contains(hi),
+            "Byte position (high) {} not found in file {} (from {} to {})",
+            hi.0,
+            source_file.name.prefer_local_unconditionally(),
+            source_file.start_pos.0,
+            source_file.end_position().0,
+        );
         SpanData {
             lo,
             hi,

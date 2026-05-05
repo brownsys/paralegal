@@ -37,6 +37,9 @@ fn get_rustflags() -> Result<Vec<String>, std::env::VarError> {
 }
 
 fn main() -> anyhow::Result<()> {
+    let cargo = std::path::Path::new(env!("SYSROOT_PATH"))
+        .join("bin")
+        .join("cargo");
     let mut args = std::env::args().collect::<Vec<_>>();
     setup_logging()?;
     debug!(?args, "In cargo");
@@ -61,13 +64,14 @@ fn main() -> anyhow::Result<()> {
     rustflags.push(format!("{exec_hash:1x}"));
 
     let metadata = cargo_metadata::MetadataCommand::new()
+        .cargo_path(&cargo)
         // At the moment this is fine, because we only use this for info about
         // workspace members and the target directory
         .no_deps()
         .other_options(["--offline".into()])
         .exec()?;
 
-    let mut cmd = Command::new("cargo");
+    let mut cmd = Command::new(&cargo);
     cmd.args(["check", "--message-format=json"]) // or "build"
         .arg("--target-dir")
         .arg(metadata.target_directory.join("paralegal"))
