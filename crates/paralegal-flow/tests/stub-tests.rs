@@ -23,14 +23,18 @@ mode = "sub-closure"
 generic-name = "F"
 "#;
 
-static EXTERN_ARGS: OnceLock<Vec<String>> = OnceLock::new();
+/// Dependency environment configured with external crates (tokio, actix_web, etc.)
+/// This is built once and reused across all tests in this file.
+static DEPENDENCY_ENV: OnceLock<DependencyEnvironment> = OnceLock::new();
 
-fn extern_args() -> &'static Vec<String> {
-    EXTERN_ARGS.get_or_init(|| {
-        collect_extern_args(
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/stub-tests/Cargo.toml"),
-        )
+fn dependency_environment() -> &'static DependencyEnvironment {
+    DEPENDENCY_ENV.get_or_init(|| {
+        DependencyEnvironmentBuilder::new()
+            .with_manifest(
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/stub-tests/Cargo.toml"),
+            )
+            .build()
     })
 }
 
@@ -77,6 +81,7 @@ fn thread_spawn() {
     }
     .with_build_config(STUBS_TOML)
     .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
+    .with_dependency_environment(dependency_environment())
     .with_entrypoint("crate::thread_spawn")
     .check_ctrl(check_source_pass_target)
 }
@@ -97,6 +102,7 @@ fn marked_thread_spawn() {
     }
     .with_build_config(STUBS_TOML)
     .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
+    .with_dependency_environment(dependency_environment())
     .with_entrypoint("crate::marked_thread_spawn")
     .check_ctrl(simple_source_target_flow)
 }
@@ -126,6 +132,7 @@ fn marked_blocking_like() {
     }
     .with_build_config(STUBS_TOML)
     .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
+    .with_dependency_environment(dependency_environment())
     .with_entrypoint("crate::marked_blocking_like")
     .check_ctrl(simple_source_target_flow)
 }
@@ -155,6 +162,7 @@ fn test_blocking_like() {
     }
     .with_build_config(STUBS_TOML)
     .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
+    .with_dependency_environment(dependency_environment())
     .with_entrypoint("crate::test_blocking_like")
     .check_ctrl(simple_source_target_flow)
 }
@@ -179,7 +187,7 @@ fn async_spawn() {
     }
     .with_build_config(STUBS_TOML)
     .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
-    .with_rustc_args(extern_args())
+    .with_dependency_environment(dependency_environment())
     .with_entrypoint("crate::async_spawn")
     .check_ctrl(check_source_pass_target)
 }
@@ -200,7 +208,7 @@ fn marked_async_spawn() {
     }
     .with_build_config(STUBS_TOML)
     .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
-    .with_rustc_args(extern_args())
+    .with_dependency_environment(dependency_environment())
     .with_entrypoint("crate::marked_async_spawn")
     .check_ctrl(simple_source_target_flow)
 }
@@ -224,7 +232,7 @@ fn block_fn() {
     }
     .with_build_config(STUBS_TOML)
     .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
-    .with_rustc_args(extern_args())
+    .with_dependency_environment(dependency_environment())
     .with_entrypoint("crate::block_fn")
     .check_ctrl(simple_source_target_flow)
 }
@@ -246,7 +254,7 @@ fn block_closure() {
     }
     .with_build_config(STUBS_TOML)
     .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
-    .with_rustc_args(extern_args())
+    .with_dependency_environment(dependency_environment())
     .with_entrypoint("crate::block_closure")
     .check_ctrl(simple_source_target_flow)
 }
@@ -275,7 +283,7 @@ fn blocking_with_marker() {
     }
     .with_build_config(STUBS_TOML)
     .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
-    .with_rustc_args(extern_args())
+    .with_dependency_environment(dependency_environment())
     .with_entrypoint("crate::blocking_with_marker")
     .check_ctrl(simple_source_target_flow)
 }
@@ -306,7 +314,7 @@ fn test_blocking_with_let_bound_closure() {
     }
     .with_build_config(STUBS_TOML)
     .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
-    .with_rustc_args(extern_args())
+    .with_dependency_environment(dependency_environment())
     .with_entrypoint("crate::test_blocking_with_let_bound_closure")
     .check_ctrl(simple_source_target_flow)
 }
@@ -330,7 +338,7 @@ fn strategic_overtaint() {
     }
     .with_build_config(STUBS_TOML)
     .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
-    .with_rustc_args(extern_args())
+    .with_dependency_environment(dependency_environment())
     .with_entrypoint("crate::strategic_overtaint")
     .check_ctrl(simple_source_target_flow)
 }
@@ -354,7 +362,7 @@ fn strategic_overtaint_2() {
     }
     .with_build_config(STUBS_TOML)
     .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
-    .with_rustc_args(extern_args())
+    .with_dependency_environment(dependency_environment())
     .with_entrypoint("crate::strategic_overtaint_2")
     .check_ctrl(simple_source_target_flow)
 }
@@ -380,7 +388,7 @@ fn no_taint_without_connection() {
     }
     .with_build_config(STUBS_TOML)
     .with_extra_args(["--no-adaptive-approximation", "--include=crate"])
-    .with_rustc_args(extern_args())
+    .with_dependency_environment(dependency_environment())
     .with_entrypoint("crate::no_taint_without_connection")
     .check_ctrl(|graph| {
         let src = graph.marked(Identifier::new_intern("source"));

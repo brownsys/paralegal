@@ -1,6 +1,7 @@
 #![feature(exit_status_error)]
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hasher};
+use std::io::BufRead;
 use std::process::{Command, Stdio};
 
 use anyhow::Context;
@@ -104,9 +105,26 @@ fn main() -> anyhow::Result<()> {
 
     let mut targets = vec![];
 
-    for message in Message::parse_stream(reader) {
-        match message? {
-            Message::CompilerArtifact(artifact) => {
+    // Read raw lines from cargo's stdout, echo them so callers expecting
+    // `--message-format=json` can parse them, and also parse them into
+    // `cargo_metadata::Message` for internal handling.
+    let mut lines = reader.lines();
+    while let Some(line_res) = lines.next() {
+        let line = match line_res {
+            Ok(l) => l,
+            Err(e) => {
+                error!(?e, "failed to read cargo stdout line");
+                continue;
+            }
+        };
+
+        // Forward the raw JSON/text line to stdout so tools that expect the
+        // original cargo JSON stream can consume it (e.g. `collect_extern_args`).
+        println!("{}", line);
+
+        // Try to parse it as a cargo Message; if it parses, handle it.
+        match serde_json::from_str::<Message>(&line) {
+            Ok(Message::CompilerArtifact(artifact)) => {
                 let mut applicable = false;
                 if let Some(target) = &args.target {
                     if packages
@@ -146,8 +164,8 @@ fn main() -> anyhow::Result<()> {
                 }
                 debug!(?artifact, applicable, "Found artifact");
             }
-            Message::TextLine(l) => println!("{l}"),
-            Message::CompilerMessage(CompilerMessage { message, .. })
+            Ok(Message::TextLine(l)) => println!("{l}"),
+            Ok(Message::CompilerMessage(CompilerMessage { message, .. }))
                 if matches!(
                     message.level,
                     DiagnosticLevel::Error | DiagnosticLevel::Ice | DiagnosticLevel::FailureNote

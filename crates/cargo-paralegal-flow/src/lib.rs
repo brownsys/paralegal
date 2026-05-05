@@ -48,6 +48,11 @@ pub struct ClapArgs {
     /// Pass through for additional cargo arguments (like --features)
     #[clap(long)]
     pub build_config: Option<PathBuf>,
+    /// When set, forward raw cargo JSON/text lines to stdout unmodified.
+    /// This makes `cargo-paralegal-flow` act more like a drop-in replacement
+    /// for `cargo` when tools expect `--message-format=json` output.
+    #[clap(long)]
+    pub forward_json: bool,
     #[clap(last = true)]
     pub cargo_args: Vec<String>,
 }

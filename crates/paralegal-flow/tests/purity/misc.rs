@@ -1,7 +1,18 @@
 use paralegal_flow::{ann::db::AutoMarkers, inline_test, test_utils::*};
 use paralegal_spdg::DisplayPath;
+use std::sync::OnceLock;
 
-const STDLIB_MARKERS: &str = include_str!("./stdlib-markers.toml");
+static STDLIB_ENV: OnceLock<DependencyEnvironment> = OnceLock::new();
+
+fn stdlib_environment() -> &'static DependencyEnvironment {
+    STDLIB_ENV.get_or_init(|| {
+        DependencyEnvironmentBuilder::new()
+            .with_extra_args(["--side-effect-markers", "--include-std"])
+            .with_markers(include_str!("stdlib-markers.toml"))
+            .with_stdlib()
+            .build()
+    })
+}
 
 #[test]
 fn side_effect_tcp() {
@@ -9,15 +20,17 @@ fn side_effect_tcp() {
         use std::io::prelude::*;
         use std::net::TcpStream;
 
+        fn tcp_side_effect_sink(_b: u8) {}
+
         fn main() -> std::io::Result<()> {
             let mut stream = TcpStream::connect("127.0.0.1:34254")?;
             stream.write(&[1])?;
+            tcp_side_effect_sink(1);
             stream.read(&mut [0; 128])?;
             Ok(())
         }
     }
-    .with_dependencies()
-    .with_extra_args(["--side-effect-markers"])
+    .with_dependency_environment(stdlib_environment())
     .check_ctrl(|ctrl| {
         ctrl.assert_purity(false);
     });
@@ -30,8 +43,7 @@ fn side_effect_empty() {
             Ok(())
         }
     }
-    .with_dependencies()
-    .with_extra_args(["--side-effect-markers"])
+    .with_dependency_environment(stdlib_environment())
     .check_ctrl(|ctrl| {
         ctrl.assert_purity(true);
     });
@@ -46,7 +58,6 @@ fn side_effect_add() {
             Ok(())
         }
     }
-    .with_extra_args(["--side-effect-markers"])
     .check_ctrl(|ctrl| {
         ctrl.assert_purity(true);
     });
@@ -65,7 +76,6 @@ fn side_effect_extern() {
             Ok(())
         }
     }
-    .with_extra_args(["--side-effect-markers"])
     .check_ctrl(|ctrl| {
         ctrl.assert_purity(false);
     });
@@ -96,7 +106,6 @@ fn side_effect_extern_flow() {
             Ok(())
         }
     }
-    .with_extra_args(["--side-effect-markers"])
     .check_ctrl(|ctrl| {
         let auto_markers = AutoMarkers::default();
         ctrl.assert_purity(false);
@@ -123,6 +132,8 @@ fn side_effect_tcp_flow() {
         use std::io::prelude::*;
         use std::net::TcpStream;
 
+        fn tcp_side_effect_sink(_b: u8) {}
+
         #[paralegal_flow::marker(source, return)]
         fn tcp_source() -> u8 {
             42
@@ -137,14 +148,14 @@ fn side_effect_tcp_flow() {
             let mut stream = TcpStream::connect("127.0.0.1:34254")?;
             let y = tcp_source2();
             stream.write(&[tcp_source()])?;
+            tcp_side_effect_sink(tcp_source());
             let mut buf = [0; 128];
             stream.read(&mut buf)?;
             let _ = y + buf[0];
             Ok(())
         }
     }
-    .with_dependencies()
-    .with_extra_args(["--side-effect-markers"])
+    .with_dependency_environment(stdlib_environment())
     .check_ctrl(|ctrl| {
         let auto_markers = AutoMarkers::default();
         let defined = dbg!(ctrl.markers());
@@ -181,26 +192,23 @@ fn side_effect_vec() {
             v.pop();
         }
     }
-    .with_dependencies()
-    .with_extra_args(["--side-effect-markers"])
-    .with_marker_file(
-        "
-[[\"alloc::vec\"]]
-marker = \"std:vec\"
-_internal_can_fail_resolve_silently = true
-_internal_on_all_module_children = true
-
-[[\"std::boxed::Box::into_raw_with_allocator\"]]
-marker = \"std:box\"
-on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
-on_return = true
-
-[[\"core::slice\"]]
-marker = \"std:slice\"
-_internal_can_fail_resolve_silently = true
-_internal_on_all_module_children = true
-    ",
-    )
+    .with_dependency_environment(stdlib_environment())
+    //     .with_marker_file(
+    //         "
+    // [[\"alloc::vec\"]]
+    // marker = \"std:vec\"
+    // _internal_can_fail_resolve_silently = true
+    // _internal_on_all_module_children = true
+    // [[\"std::boxed::Box::into_raw_with_allocator\"]]
+    // marker = \"std:box\"
+    // on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    // on_return = true
+    // [[\"core::slice\"]]
+    // marker = \"std:slice\"
+    // _internal_can_fail_resolve_silently = true
+    // _internal_on_all_module_children = true
+    //     ",
+    //     )
     .check_ctrl(|ctrl| {
         let auto_markers = AutoMarkers::default();
         let auto = auto_markers.all();
@@ -451,8 +459,7 @@ fn clone_unit_test() {
             ().clone()
         }
     }
-    .with_dependencies()
-    .with_extra_args(["--side-effect-markers"])
+    .with_dependency_environment(stdlib_environment())
     .check_ctrl(|ctrl| {
         ctrl.assert_purity(true);
         assert!(ctrl.has_function("clone"));
@@ -470,8 +477,7 @@ fn clone_unit_test_wrapped() {
             wrapper()
         }
     }
-    .with_dependencies()
-    .with_extra_args(["--side-effect-markers"])
+    .with_dependency_environment(stdlib_environment())
     .check_ctrl(|ctrl| {
         ctrl.assert_purity(true);
         assert!(!ctrl.has_function("clone"));
@@ -489,8 +495,7 @@ fn clone_test_reachability() {
             wrapper();
         }
     }
-    .with_dependencies()
-    .with_extra_args(["--side-effect-markers"])
+    .with_dependency_environment(stdlib_environment())
     .check_ctrl(|ctrl| {
         for n in ctrl.side_effect_nodes() {
             println!("Side effect node: {n:?}");

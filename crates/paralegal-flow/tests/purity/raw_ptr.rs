@@ -1,4 +1,14 @@
-use paralegal_flow::inline_test;
+use paralegal_flow::{
+    inline_test,
+    test_utils::{DependencyEnvironment, DependencyEnvironmentBuilder},
+};
+use std::sync::OnceLock;
+
+static STDLIB_ENV: OnceLock<DependencyEnvironment> = OnceLock::new();
+
+fn stdlib_environment() -> &'static DependencyEnvironment {
+    STDLIB_ENV.get_or_init(|| DependencyEnvironmentBuilder::new().with_stdlib().build())
+}
 
 #[test]
 fn raw_mut_ptr_deref() {
@@ -15,6 +25,7 @@ fn raw_mut_ptr_deref() {
             }
         }
     }
+    .with_dependency_environment(stdlib_environment())
     .with_extra_args(["--side-effect-markers"])
     .check_ctrl(|ctrl| {
         ctrl.assert_purity(false);
@@ -36,6 +47,7 @@ fn raw_mut_ptr_mut_ref() {
             }
         }
     }
+    .with_dependency_environment(stdlib_environment())
     .with_extra_args(["--side-effect-markers"])
     .check_ctrl(|ctrl| {
         ctrl.assert_purity(false);
@@ -61,8 +73,9 @@ fn raw_mut_ptr_mut_ref_not_in_main() {
             raw_mut_ptr_mut_ref_not_in_main();
         }
     }
-    .with_entrypoint("crate::raw_mut_ptr_mut_ref_not_in_main")
+    .with_dependency_environment(stdlib_environment())
     .with_extra_args(["--side-effect-markers"])
+    .with_entrypoint("crate::raw_mut_ptr_mut_ref_not_in_main")
     .check_ctrl(|ctrl| {
         ctrl.assert_purity(false);
     });
@@ -93,6 +106,7 @@ fn raw_mut_ptr_call() {
             }
         }
     }
+    .with_dependency_environment(stdlib_environment())
     .with_extra_args(["--side-effect-markers"])
     .check_ctrl(|ctrl| {
         ctrl.assert_purity(false);
@@ -116,6 +130,7 @@ fn safe_raw_mut_ptr() {
             }
         }
     }
+    .with_dependency_environment(stdlib_environment())
     .with_extra_args(["--side-effect-markers"])
     .check_ctrl(|ctrl| {
         ctrl.assert_purity(true);
@@ -137,6 +152,7 @@ fn raw_const_ptr() {
             }
         }
     }
+    .with_dependency_environment(stdlib_environment())
     .with_extra_args(["--side-effect-markers"])
     .check_ctrl(|ctrl| {
         ctrl.assert_purity(true);

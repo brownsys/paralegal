@@ -75,6 +75,7 @@ impl TryFrom<ClapArgs> for Args {
             attach_to_debugger,
             strict,
             build_config: _,
+            forward_json: _,
         } = value;
         if relaxed {
             eprintln!(

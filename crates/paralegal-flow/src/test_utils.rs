@@ -15,7 +15,7 @@ use crate::{
     desc::{Identifier, ProgramDescription},
     utils::Print,
 };
-use std::{fmt::Display, sync::atomic::Ordering};
+use std::{fmt::Display, io::Write, sync::atomic::Ordering};
 use std::{
     fmt::{Debug, Formatter},
     sync::Once,
@@ -163,6 +163,237 @@ macro_rules! define_flow_test_template {
     };
 }
 
+/// Configures and builds a reusable dependency environment for inline tests.
+///
+/// Allows multiple tests in the same session to share compiled stdlib and other
+/// dependencies, avoiding redundant recompilation. Uses `Once` internally to
+/// ensure dependencies are compiled only once.
+///
+/// # Examples
+///
+/// Stdlib only:
+/// ```
+/// let dep_env = DependencyEnvironmentBuilder::new()
+///     .with_stdlib()
+///     .build();
+/// ```
+///
+/// With external crates from a Cargo.toml:
+/// ```
+/// let dep_env = DependencyEnvironmentBuilder::new()
+///     .with_manifest(Path::new("tests/stub-tests/Cargo.toml"))
+///     .build();
+/// ```
+pub struct DependencyEnvironmentBuilder {
+    include_stdlib: bool,
+    manifest_path: Option<std::path::PathBuf>,
+    markers: Option<String>,
+    extra_args: Vec<String>,
+}
+
+/// Holds compiled dependencies for reuse across multiple inline tests.
+///
+/// Uses `Once` to ensure one-time compilation per session. Once built,
+/// caches `--extern` flags and/or rustc flags needed to link dependencies.
+///
+/// For manifest-based environments, compiles external crates once and caches
+/// the resulting `--extern` flags.
+///
+/// For stdlib environments, this acts as an explicit marker for tests that
+/// intentionally rely on stdlib availability from the embedded rustc sysroot.
+///
+/// This environment is tied to a specific configuration of dependencies and
+/// should be created once per test file (or group of related tests) and then
+/// shared across multiple `InlineTestBuilder` instances.
+#[derive(Clone)]
+pub struct DependencyEnvironment {
+    // Lazy-initialized rustc flags (cached after first compilation)
+    rustc_flags: Vec<String>,
+    // Configuration
+    include_stdlib: bool,
+    manifest_path: Option<std::path::PathBuf>,
+    extra_args: Vec<String>,
+}
+
+impl DependencyEnvironmentBuilder {
+    /// Create a new builder with no dependencies configured.
+    pub fn new() -> Self {
+        Self {
+            include_stdlib: false,
+            manifest_path: None,
+            markers: None,
+            extra_args: vec![],
+        }
+    }
+
+    /// Include the Rust standard library (std, core, alloc).
+    ///
+    /// This allows tests to use stdlib types like `Vec`, `TcpStream`, etc.
+    pub fn with_stdlib(mut self) -> Self {
+        self.include_stdlib = true;
+        self
+    }
+
+    pub fn with_extra_args<S: ToString>(mut self, args: impl IntoIterator<Item = S>) -> Self {
+        self.extra_args
+            .extend(args.into_iter().map(|s| s.to_string()));
+        self
+    }
+
+    /// Add external crates from a Cargo.toml manifest.
+    ///
+    /// The manifest is compiled and its artifacts are linked using `--extern` flags.
+    /// This is useful for tests that need third-party crates like `tokio`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// DependencyEnvironmentBuilder::new()
+    ///     .with_manifest("tests/stub-tests/Cargo.toml")
+    ///     .build()
+    /// ```
+    pub fn with_manifest(mut self, path: impl AsRef<std::path::Path>) -> Self {
+        self.manifest_path = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    pub fn with_markers(mut self, markers: impl Into<String>) -> Self {
+        self.markers = Some(markers.into());
+        self
+    }
+
+    /// Build a Cargo project and collect all `--extern name=path` rustc args from
+    /// the resulting rlib artifacts for the manifest's direct dependencies only.
+    /// Useful for inline tests that need to link against external crates.
+    ///
+    /// Uses the same rustc that compiled this crate (via `SYSROOT_PATH`) so the
+    /// rlib crate hashes are compatible with the embedded `rustc_driver`.
+    pub fn collect_extern_args(&self, manifest_path: impl AsRef<std::path::Path>) -> Vec<String> {
+        let manifest_path = manifest_path.as_ref();
+        let direct_dependencies = direct_dependency_names(manifest_path);
+        let mut cmd =
+            paralegal_flow_command(manifest_path.canonicalize().unwrap().parent().unwrap());
+        cmd.arg("--forward-json");
+        cmd.args(&self.extra_args);
+        let output = cmd
+            .output()
+            .expect("cargo build failed while collecting extern args");
+
+        if !output.status.success() {
+            let _ = std::io::stdout().write(&output.stdout);
+            let _ = std::io::stderr().write(&output.stderr);
+            panic!(
+                "cargo build for extern arg collection failed with status {}",
+                output.status
+            );
+        }
+
+        let mut args = Vec::new();
+        if let Some(parent) = manifest_path.parent() {
+            let deps_dir = parent.join("target/debug/deps");
+            args.push("-L".to_string());
+            args.push(format!("dependency={}", deps_dir.display()));
+        }
+        for line in String::from_utf8(output.stdout).unwrap().lines() {
+            let Ok(msg) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if msg["reason"].as_str() != Some("compiler-artifact") {
+                continue;
+            }
+            let Some(name) = msg["target"]["name"].as_str() else {
+                continue;
+            };
+            let extern_name = name.replace('-', "_");
+            if !direct_dependencies.contains(&extern_name) {
+                continue;
+            }
+            let Some(filenames) = msg["filenames"].as_array() else {
+                continue;
+            };
+            for f in filenames {
+                let path = f.as_str().unwrap();
+                if path.ends_with(".rlib") {
+                    args.push("--extern".to_string());
+                    args.push(format!("{extern_name}={path}"));
+                }
+            }
+        }
+        args
+    }
+
+    /// Build the dependency environment.
+    ///
+    /// This creates (or caches) compiled artifacts that will be reused
+    /// across multiple tests in the same session. Compilation happens lazily
+    /// on first use.
+    pub fn build(self) -> DependencyEnvironment {
+        let manifest_path = self.manifest_path.clone().or_else(|| {
+            self.include_stdlib.then(|| {
+                use std::fs;
+                let temp_dir = std::env::temp_dir();
+                let project_name = "paralegal-tests-stdlib-only";
+                let project_dir = temp_dir.join(project_name);
+
+                // Create project structure
+                fs::create_dir_all(project_dir.join("src")).unwrap();
+
+                // Write Cargo.toml as binary crate
+                let cargo_toml = format!(
+                    r#"[package]
+name = "{}"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "{}"
+path = "src/main.rs"
+
+[dependencies]
+"#,
+                    project_name, project_name
+                );
+                let manifest_path = project_dir.join("Cargo.toml");
+                fs::write(&manifest_path, cargo_toml).unwrap();
+
+                // Write src/main.rs (instead of src/lib.rs)
+                fs::write(project_dir.join("src/main.rs"), "fn main() {}").unwrap();
+                manifest_path
+            })
+        });
+
+        let flags = if let Some(manifest) = &manifest_path {
+            self.collect_extern_args(manifest)
+        } else {
+            vec![]
+        };
+
+        DependencyEnvironment {
+            rustc_flags: flags,
+            include_stdlib: self.include_stdlib,
+            manifest_path: manifest_path,
+            extra_args: self.extra_args,
+        }
+    }
+}
+
+impl Default for DependencyEnvironmentBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DependencyEnvironment {
+    /// Get the rustc flags (including `--extern` arguments) for this dependency environment.
+    ///
+    /// Initializes (compiles) the environment on first call; subsequent calls
+    /// return cached flags. This is suitable for passing directly to
+    /// [`InlineTestBuilder::with_rustc_args`].
+    pub fn rustc_flags(&self) -> &[String] {
+        &self.rustc_flags
+    }
+}
+
 /// Builder for running test cases against a string of source code.
 ///
 /// Start with [`InlineTestBuilder::new`], compile and run the test case with
@@ -175,7 +406,6 @@ pub struct InlineTestBuilder {
     marker_file: Option<String>,
     build_config: Option<String>,
     rustc_args: Vec<String>,
-    compile_with_deps: bool,
 }
 
 #[macro_export]
@@ -205,7 +435,6 @@ impl InlineTestBuilder {
             marker_file: None,
             build_config: None,
             rustc_args: Default::default(),
-            compile_with_deps: false,
         }
     }
 
@@ -249,10 +478,44 @@ impl InlineTestBuilder {
         self
     }
 
-    /// Enable compilation with standard library dependencies (std, core, alloc).
-    /// This is required for tests that use stdlib types like Vec, TcpStream, etc.
+    /// Use a pre-built dependency environment for this test.
+    ///
+    /// This allows multiple tests to share compiled dependencies, avoiding
+    /// redundant recompilation. The environment provides rustc flags (like `--extern`)
+    /// that are applied automatically to the compilation.
+    ///
+    /// When the environment includes external crates (from a Cargo.toml manifest),
+    /// direct rustc compilation is used. When it only includes stdlib, Cargo-based
+    /// compilation is used to ensure proper linking.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let env = DependencyEnvironmentBuilder::new()
+    ///     .with_manifest("tests/stub-tests/Cargo.toml")
+    ///     .build();
+    ///
+    /// inline_test! { /* code */ }
+    ///     .with_dependency_environment(&env)
+    ///     .check_ctrl(|ctrl| { /* ... */ });
+    /// ```
+    pub fn with_dependency_environment(&mut self, env: &DependencyEnvironment) -> &mut Self {
+        // Add the environment's rustc flags
+        let flags = env.rustc_flags();
+        if !flags.is_empty() {
+            self.rustc_args.extend(flags.iter().cloned());
+        }
+        self.extra_args.extend(env.extra_args.iter().cloned());
+
+        self
+    }
+
+    /// Legacy compatibility shim.
+    ///
+    /// Inline tests now always use the embedded rustc path. Standard library
+    /// availability is controlled by rustc's sysroot, so this no longer toggles
+    /// a Cargo-based test compile mode.
     pub fn with_dependencies(&mut self) -> &mut Self {
-        self.compile_with_deps = true;
         self
     }
 
@@ -275,10 +538,6 @@ impl InlineTestBuilder {
         &self,
         f: impl for<'tcx> FnOnce(TyCtxt<'tcx>, PreFrg) + Send,
     ) -> Result<(), FatalError> {
-        if self.compile_with_deps {
-            return self.run_with_cargo_and_tcx(f);
-        }
-
         use clap::Parser;
 
         #[derive(clap::Parser)]
@@ -329,103 +588,6 @@ impl InlineTestBuilder {
                 let graph = PreFrg::from_description(pdg);
                 f(tcx, graph)
             })
-    }
-
-    fn run_with_cargo_and_tcx(
-        &self,
-        f: impl for<'tcx> FnOnce(TyCtxt<'tcx>, PreFrg) + Send,
-    ) -> Result<(), FatalError> {
-        use std::fs;
-        use std::sync::atomic::{AtomicU64, Ordering as AOrdering};
-
-        // Use atomic counter for unique naming (prevents collisions even in parallel)
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-        // Create a temp directory for the Cargo project
-        let temp_dir = std::env::temp_dir();
-        let counter = COUNTER.fetch_add(1, AOrdering::SeqCst);
-        let project_name = format!("inline_test_deps_{counter:x}");
-        let project_dir = temp_dir.join(&project_name);
-
-        // Clean up if it exists
-        if project_dir.exists() {
-            fs::remove_dir_all(&project_dir).ok();
-        }
-
-        // Create project structure
-        fs::create_dir_all(&project_dir).unwrap();
-        fs::create_dir_all(project_dir.join("src")).unwrap();
-
-        // Write Cargo.toml as binary crate
-        let cargo_toml = format!(
-            r#"[package]
-name = "{}"
-version = "0.1.0"
-edition = "2021"
-
-[[bin]]
-name = "{}"
-path = "src/main.rs"
-
-[dependencies]
-"#,
-            project_name, project_name
-        );
-        fs::write(project_dir.join("Cargo.toml"), cargo_toml).unwrap();
-
-        // Write src/main.rs (instead of src/lib.rs)
-        fs::write(project_dir.join("src/main.rs"), &self.input).unwrap();
-
-        // Clean the target directory to avoid stale incremental compilation artifacts
-        let _ = std::process::Command::new("cargo")
-            .arg("clean")
-            .current_dir(&project_dir)
-            .output();
-
-        // Run paralegal-flow on the project
-        // Build extra args (--dump is added by run_paralegal_flow_with_flow_graph_dump_and)
-        let mut flow_args = Vec::new();
-        if let Some(e) = &self.ctrl_name {
-            flow_args.push("--analyze".to_string());
-            flow_args.push(e.clone());
-        }
-        if let Some(m) = &self.marker_file {
-            let p = std::env::temp_dir().join(format!(
-                "markers-{}.toml",
-                FILE_INDEX.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::write(&p, m).unwrap();
-            flow_args.push("--external-annotations".to_string());
-            flow_args.push(p.to_str().unwrap().to_string());
-        }
-        if let Some(c) = &self.build_config {
-            let p = std::env::temp_dir().join(format!(
-                "paralegal-config-{}.toml",
-                FILE_INDEX.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::write(&p, c).unwrap();
-            flow_args.push("--build-config".to_string());
-            flow_args.push(p.to_str().unwrap().to_string());
-        }
-        flow_args.extend(self.extra_args.iter().cloned());
-
-        // Run paralegal-flow command (--dump is added automatically)
-        if !run_paralegal_flow_with_flow_graph_dump_and(&project_dir, flow_args) {
-            return Err(rustc_errors::FatalError);
-        }
-
-        // Load the result
-        use_rustc(|| {
-            let project_dir_str = project_dir.to_str().unwrap();
-            let graph = PreFrg::from_file_at(project_dir_str);
-            // Extract TyCtxt from the current compilation context
-            // For now, we'll use a dummy tcx
-            paralegal_rustc_utils::test_utils::CompileBuilder::new("fn dummy() {}")
-                .compile(move |result| f(result.tcx, graph))
-                .ok();
-        });
-
-        Ok(())
     }
 }
 
@@ -1320,64 +1482,6 @@ where
         });
 
     !matches!(result, Control::Break(()))
-}
-
-/// Build a Cargo project and collect all `--extern name=path` rustc args from
-/// the resulting rlib artifacts for the manifest's direct dependencies only.
-/// Useful for inline tests that need to link against external crates.
-///
-/// Uses the same rustc that compiled this crate (via `SYSROOT_PATH`) so the
-/// rlib crate hashes are compatible with the embedded `rustc_driver`.
-pub fn collect_extern_args(manifest_path: impl AsRef<std::path::Path>) -> Vec<String> {
-    let manifest_path = manifest_path.as_ref();
-    let direct_dependencies = direct_dependency_names(manifest_path);
-    let rustc_bin = format!("{}/bin/rustc", env!("SYSROOT_PATH"));
-    let output = std::process::Command::new("cargo")
-        .env("RUSTC", &rustc_bin)
-        .args(["build", "--message-format=json", "--manifest-path"])
-        .arg(manifest_path)
-        .output()
-        .expect("cargo build failed while collecting extern args");
-
-    if !output.status.success() {
-        panic!(
-            "cargo build for extern arg collection failed with status {}",
-            output.status
-        );
-    }
-
-    let mut args = Vec::new();
-    if let Some(parent) = manifest_path.parent() {
-        let deps_dir = parent.join("target/debug/deps");
-        args.push("-L".to_string());
-        args.push(format!("dependency={}", deps_dir.display()));
-    }
-    for line in String::from_utf8(output.stdout).unwrap().lines() {
-        let Ok(msg) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        if msg["reason"].as_str() != Some("compiler-artifact") {
-            continue;
-        }
-        let Some(name) = msg["target"]["name"].as_str() else {
-            continue;
-        };
-        let extern_name = name.replace('-', "_");
-        if !direct_dependencies.contains(&extern_name) {
-            continue;
-        }
-        let Some(filenames) = msg["filenames"].as_array() else {
-            continue;
-        };
-        for f in filenames {
-            let path = f.as_str().unwrap();
-            if path.ends_with(".rlib") {
-                args.push("--extern".to_string());
-                args.push(format!("{extern_name}={path}"));
-            }
-        }
-    }
-    args
 }
 
 fn direct_dependency_names(manifest_path: &std::path::Path) -> std::collections::HashSet<String> {
