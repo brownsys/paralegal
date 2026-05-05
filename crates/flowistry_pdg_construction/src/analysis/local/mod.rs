@@ -28,7 +28,7 @@ use crate::{
     analysis::global::Use,
     source_access::CachedBody,
     utils::{
-        self, erase_regions, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize,
+        self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize,
         ShimResult, ShimType, TyAsFnResult,
     },
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
@@ -223,28 +223,35 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
     }
 
     pub fn normalize_place(&self, place: &Place<'tcx>) -> Place<'tcx> {
-        let place = erase_regions(self.tcx(), *place);
-        // Normalize the place to remove regions and other things that are not
-        // needed for the PDG.
+        use rustc_middle::ty::TypeVisitableExt;
+        let tcx = self.tcx();
         debug!(
             "Normalizing {place:?} in {} ({:?})",
-            self.tcx()
-                .def_path_str_with_args(self.def_id, self.generic_args()),
+            tcx.def_path_str_with_args(self.def_id, self.generic_args()),
             self.generic_args()
         );
-        erase_regions(self.tcx(), place)
-        // self.tcx()
-        //     .try_instantiate_and_normalize_erasing_regions(
-        //         self.generic_args(),
-        //         self.param_env,
-        //         EarlyBinder::bind(place),
-        //     )
-        //     .unwrap_or_else(|err| {
-        //         panic!(
-        //             "Failed to normalize place {place:?} in {}: {err:?}",
-        //             self.tcx().def_path_str(self.def_id)
-        //         )
-        //     })
+        // Erase all free regions first (ReEarlyParam from nested coroutines,
+        // etc.) so that only TypeParams remain as contributors to has_param().
+        // Place types can embed region params from other functions' contexts
+        // when handle_special_rvalues builds Field projections from the generic
+        // body's local declarations; those foreign region params must not be
+        // passed to try_instantiate_and_normalize_erasing_regions, which would
+        // panic when it finds a region param index with no matching region arg.
+        let place = tcx.erase_and_anonymize_regions(*place);
+        if !place.has_param() {
+            return place;
+        }
+        tcx.try_instantiate_and_normalize_erasing_regions(
+                self.generic_args(),
+                self.param_env,
+                EarlyBinder::bind(place),
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to normalize place {place:?} in {}: {err:?}",
+                    tcx.def_path_str(self.def_id)
+                )
+            })
     }
 
     pub(crate) fn tcx(&self) -> TyCtxt<'tcx> {
