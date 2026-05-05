@@ -1448,7 +1448,7 @@ impl<'tcx> PlaceConflictContext<'tcx> {
     ///
     /// Basically rustc is sloppy when it comes to boxes. It is perfectly permissible to have the following assignments:
     ///
-    /// ```
+    /// ```ignore
     /// fn Box::new<T>(_1: T) {
     ///   ...
     ///   _5 = ShallowInitBox(move _4, std::sys::pal::unix::sync::mutex::Mutex);
