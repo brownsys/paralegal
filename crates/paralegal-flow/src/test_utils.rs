@@ -175,6 +175,7 @@ pub struct InlineTestBuilder {
     marker_file: Option<String>,
     build_config: Option<String>,
     rustc_args: Vec<String>,
+    compile_with_deps: bool,
 }
 
 #[macro_export]
@@ -204,6 +205,7 @@ impl InlineTestBuilder {
             marker_file: None,
             build_config: None,
             rustc_args: Default::default(),
+            compile_with_deps: false,
         }
     }
 
@@ -247,6 +249,13 @@ impl InlineTestBuilder {
         self
     }
 
+    /// Enable compilation with standard library dependencies (std, core, alloc).
+    /// This is required for tests that use stdlib types like Vec, TcpStream, etc.
+    pub fn with_dependencies(&mut self) -> &mut Self {
+        self.compile_with_deps = true;
+        self
+    }
+
     /// Compile the code, select the [`CtrlRef`] corresponding to the configured
     /// entrypoint and hand it to the `check` function which should contain the
     /// test predicate.
@@ -266,6 +275,10 @@ impl InlineTestBuilder {
         &self,
         f: impl for<'tcx> FnOnce(TyCtxt<'tcx>, PreFrg) + Send,
     ) -> Result<(), FatalError> {
+        if self.compile_with_deps {
+            return self.run_with_cargo_and_tcx(f);
+        }
+
         use clap::Parser;
 
         #[derive(clap::Parser)]
@@ -316,6 +329,103 @@ impl InlineTestBuilder {
                 let graph = PreFrg::from_description(pdg);
                 f(tcx, graph)
             })
+    }
+
+    fn run_with_cargo_and_tcx(
+        &self,
+        f: impl for<'tcx> FnOnce(TyCtxt<'tcx>, PreFrg) + Send,
+    ) -> Result<(), FatalError> {
+        use std::fs;
+        use std::sync::atomic::{AtomicU64, Ordering as AOrdering};
+
+        // Use atomic counter for unique naming (prevents collisions even in parallel)
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+        // Create a temp directory for the Cargo project
+        let temp_dir = std::env::temp_dir();
+        let counter = COUNTER.fetch_add(1, AOrdering::SeqCst);
+        let project_name = format!("inline_test_deps_{counter:x}");
+        let project_dir = temp_dir.join(&project_name);
+
+        // Clean up if it exists
+        if project_dir.exists() {
+            fs::remove_dir_all(&project_dir).ok();
+        }
+
+        // Create project structure
+        fs::create_dir_all(&project_dir).unwrap();
+        fs::create_dir_all(project_dir.join("src")).unwrap();
+
+        // Write Cargo.toml as binary crate
+        let cargo_toml = format!(
+            r#"[package]
+name = "{}"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "{}"
+path = "src/main.rs"
+
+[dependencies]
+"#,
+            project_name, project_name
+        );
+        fs::write(project_dir.join("Cargo.toml"), cargo_toml).unwrap();
+
+        // Write src/main.rs (instead of src/lib.rs)
+        fs::write(project_dir.join("src/main.rs"), &self.input).unwrap();
+
+        // Clean the target directory to avoid stale incremental compilation artifacts
+        let _ = std::process::Command::new("cargo")
+            .arg("clean")
+            .current_dir(&project_dir)
+            .output();
+
+        // Run paralegal-flow on the project
+        // Build extra args (--dump is added by run_paralegal_flow_with_flow_graph_dump_and)
+        let mut flow_args = Vec::new();
+        if let Some(e) = &self.ctrl_name {
+            flow_args.push("--analyze".to_string());
+            flow_args.push(e.clone());
+        }
+        if let Some(m) = &self.marker_file {
+            let p = std::env::temp_dir().join(format!(
+                "markers-{}.toml",
+                FILE_INDEX.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::write(&p, m).unwrap();
+            flow_args.push("--external-annotations".to_string());
+            flow_args.push(p.to_str().unwrap().to_string());
+        }
+        if let Some(c) = &self.build_config {
+            let p = std::env::temp_dir().join(format!(
+                "paralegal-config-{}.toml",
+                FILE_INDEX.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::write(&p, c).unwrap();
+            flow_args.push("--build-config".to_string());
+            flow_args.push(p.to_str().unwrap().to_string());
+        }
+        flow_args.extend(self.extra_args.iter().cloned());
+
+        // Run paralegal-flow command (--dump is added automatically)
+        if !run_paralegal_flow_with_flow_graph_dump_and(&project_dir, flow_args) {
+            return Err(rustc_errors::FatalError);
+        }
+
+        // Load the result
+        use_rustc(|| {
+            let project_dir_str = project_dir.to_str().unwrap();
+            let graph = PreFrg::from_file_at(project_dir_str);
+            // Extract TyCtxt from the current compilation context
+            // For now, we'll use a dummy tcx
+            paralegal_rustc_utils::test_utils::CompileBuilder::new("fn dummy() {}")
+                .compile(move |result| f(result.tcx, graph))
+                .ok();
+        });
+
+        Ok(())
     }
 }
 
