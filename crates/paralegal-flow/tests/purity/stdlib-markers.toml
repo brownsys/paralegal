@@ -5,11 +5,6 @@ marker = "std:vec"
 _internal_can_fail_resolve_silently = true
 _internal_on_all_module_children = true
 
-[["alloc::vec"]]
-marker = "std:slice"
-_internal_can_fail_resolve_silently = true
-_internal_on_all_module_children = true
-
 [["core::slice"]]
 marker = "std:slice"
 _internal_can_fail_resolve_silently = true

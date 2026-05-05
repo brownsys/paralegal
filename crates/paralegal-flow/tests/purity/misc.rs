@@ -183,6 +183,24 @@ fn side_effect_vec() {
     }
     .with_dependencies()
     .with_extra_args(["--side-effect-markers"])
+    .with_marker_file(
+        "
+[[\"alloc::vec\"]]
+marker = \"std:vec\"
+_internal_can_fail_resolve_silently = true
+_internal_on_all_module_children = true
+
+[[\"std::boxed::Box::into_raw_with_allocator\"]]
+marker = \"std:box\"
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+on_return = true
+
+[[\"core::slice\"]]
+marker = \"std:slice\"
+_internal_can_fail_resolve_silently = true
+_internal_on_all_module_children = true
+    ",
+    )
     .check_ctrl(|ctrl| {
         let auto_markers = AutoMarkers::default();
         let auto = auto_markers.all();

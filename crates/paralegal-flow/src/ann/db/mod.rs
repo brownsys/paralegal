@@ -105,7 +105,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         }
         self.db().side_effect_heuristics_results.get(&def_id, |_| {
             let body = self.db().body_cache.get(def_id).body();
-            side_effect_detection::analyze_body(body, &self.db().auto_markers, self.tcx())
+            side_effect_detection::analyze_body(body, &self.db().auto_markers, self.tcx(), def_id)
                 .into_iter()
                 .collect()
         })
