@@ -16,7 +16,7 @@ use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_borrowck::consumers::{get_bodies_with_borrowck_facts, BodyWithBorrowckFacts};
 use rustc_data_structures::fx::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rustc_errors::FatalError;
-use rustc_hir::{def_id::LocalDefId, BodyId, ItemKind};
+use rustc_hir::{self as hir, def_id::LocalDefId, BodyId, ItemKind};
 use rustc_interface::interface;
 use rustc_middle::{
     mir::{Body, HasLocalDecls, Local, Place, PlaceTy},
@@ -144,8 +144,11 @@ impl<'tcx> CompileResult<'tcx> {
         let body_id = tcx
             .hir_crate_items(())
             .definitions()
-            .filter_map(|id| match tcx.hir_expect_item(id).kind {
-                ItemKind::Fn { body, .. } => Some(body),
+            .filter_map(|id| match tcx.hir_node_by_def_id(id) {
+                hir::Node::Item(hir::Item {
+                    kind: ItemKind::Fn { body, .. },
+                    ..
+                }) => Some(*body),
                 _ => None,
             })
             .next()
