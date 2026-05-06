@@ -180,7 +180,7 @@ fn main() -> anyhow::Result<()> {
             }
             // Non-JSON lines (e.g. build script stdout) that fail to parse
             // should be forwarded so callers don't silently lose output.
-            Err(_) => println!("{line}"),
+            Err(_) if !args.forward_json => println!("{line}"),
             _ => (),
         }
     }
