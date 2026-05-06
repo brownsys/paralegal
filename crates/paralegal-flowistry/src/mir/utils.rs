@@ -65,6 +65,8 @@ pub struct AsyncHack<'a, 'tcx> {
 }
 
 impl<'a, 'tcx> AsyncHack<'a, 'tcx> {
+    /// Detects the `&mut std::task::Context` argument, if present, so the hack
+    /// can later filter out the spurious region constraints it introduces.
     pub fn new(tcx: TyCtxt<'tcx>, body: &'a Body<'tcx>, def_id: DefId) -> Self {
         let context_ty = body.async_context(tcx, def_id);
         AsyncHack {
@@ -74,6 +76,8 @@ impl<'a, 'tcx> AsyncHack<'a, 'tcx> {
         }
     }
 
+    /// Returns the set of region variables that appear in the `Context` type
+    /// and should be excluded from the subset relation.
     pub fn ignore_regions(&self) -> HashSet<RegionVid> {
         match self.context_ty {
             Some(context_ty) => context_ty
@@ -90,6 +94,8 @@ impl<'a, 'tcx> AsyncHack<'a, 'tcx> {
         }
     }
 
+    /// Returns `true` if `place` has the `Context` type and should be ignored
+    /// in function-call argument processing.
     pub fn ignore_place(&self, place: Place<'tcx>) -> bool {
         match self.context_ty {
             Some(context_ty) => {

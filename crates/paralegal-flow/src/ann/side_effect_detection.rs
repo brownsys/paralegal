@@ -178,10 +178,9 @@ pub fn analyze_body<'tcx>(
     body: &mir::Body<'tcx>,
     auto_markers: &AutoMarkers,
     tcx: ty::TyCtxt<'tcx>,
-    def_id: DefId,
 ) -> FxHashSet<Identifier> {
     use mir::visit::Visitor;
-    let mut analyzer = BodyAnalyzer::new(body, auto_markers, tcx, def_id);
+    let mut analyzer = BodyAnalyzer::new(body, auto_markers, tcx);
     analyzer.visit_body(body);
     analyzer.found_markers
 }
@@ -191,11 +190,10 @@ pub fn analyze_statement<'tcx>(
     location: mir::Location, // we take location here so we can guarantee that the statement is within the body
     auto_markers: &AutoMarkers,
     tcx: ty::TyCtxt<'tcx>,
-    def_id: DefId,
 ) -> FxHashSet<Identifier> {
     use mir::visit::Visitor;
 
-    let mut analyzer = BodyAnalyzer::new(body, auto_markers, tcx, def_id);
+    let mut analyzer = BodyAnalyzer::new(body, auto_markers, tcx);
     match body.stmt_at(location) {
         Either::Left(statement) => {
             analyzer.visit_statement(statement, location);
@@ -216,7 +214,6 @@ struct BodyAnalyzer<'tcx, 'b> {
     found_markers: FxHashSet<Identifier>,
     auto_markers: &'b AutoMarkers,
     tcx: ty::TyCtxt<'tcx>,
-    def_id: DefId,
 }
 
 impl<'tcx, 'b> BodyAnalyzer<'tcx, 'b> {
@@ -224,14 +221,12 @@ impl<'tcx, 'b> BodyAnalyzer<'tcx, 'b> {
         body: &'b mir::Body<'tcx>,
         auto_markers: &'b AutoMarkers,
         tcx: ty::TyCtxt<'tcx>,
-        def_id: DefId,
     ) -> Self {
         Self {
             body,
             found_markers: HashSet::default(),
             auto_markers,
             tcx,
-            def_id,
         }
     }
 }

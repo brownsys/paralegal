@@ -20,9 +20,7 @@ use rustc_middle::{
     },
 };
 use rustc_span::{ErrorGuaranteed, Span, Spanned, Symbol};
-use rustc_type_ir::{
-    AliasTyKind, PredicatePolarity, RegionKind, RegionVid, TypeFoldable, TypeFolder,
-};
+use rustc_type_ir::{AliasTyKind, PredicatePolarity, RegionKind, TypeFoldable, TypeFolder};
 
 mod two_level_cache;
 pub use two_level_cache::TwoLevelCache;
@@ -74,28 +72,6 @@ pub fn is_virtual(tcx: TyCtxt, function: DefId) -> bool {
                 Defaultness::Default { has_value: true })
         )
     })
-}
-
-struct VarDetector<'tcx> {
-    detected: Vec<RegionVid>,
-    cx: TyCtxt<'tcx>,
-}
-
-impl<'tcx> VarDetector<'tcx> {
-    fn new(tcx: TyCtxt<'tcx>) -> Self {
-        Self {
-            detected: vec![],
-            cx: tcx,
-        }
-    }
-}
-
-impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for VarDetector<'tcx> {
-    fn visit_region(&mut self, r: Region<'tcx>) {
-        if let RegionKind::ReVar(v) = *r.0 {
-            self.detected.push(v);
-        }
-    }
 }
 
 pub fn erase_regions<'tcx, T>(tcx: TyCtxt<'tcx>, t: T) -> T
@@ -1026,7 +1002,7 @@ impl<'tcx> PlaceConflictContext<'tcx> {
                 .iter()
                 .find(|m| m.ident.name == sym)
                 .and_then(|m| m.res.opt_def_id())
-                .expect(&format!("Could not find module {n}"))
+                .unwrap_or_else(|| panic!("Could not find module {n}"))
         };
         let ptr_mod = find_child(core.as_def_id(), "ptr");
         let unique_ptr_def_id = find_child(ptr_mod, "Unique");

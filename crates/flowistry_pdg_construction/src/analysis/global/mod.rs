@@ -7,11 +7,11 @@ use flowistry_pdg::{Constant, GlobalLocation};
 
 use df::ResultsVisitor;
 use rustc_errors::DiagMessage;
-use rustc_hir::def_id::{DefId, LocalDefId};
+use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{visit::Visitor, AggregateKind, Location, Place, Rvalue, Terminator, TerminatorKind},
-    ty::{Instance, TyCtxt, TypingEnv},
+    ty::{Instance, TyCtxt},
 };
 use rustc_mir_dataflow as df;
 
@@ -25,7 +25,7 @@ use crate::{
     callback::DefaultCallback,
     constants::PlaceOrConst,
     source_access::{self, BodyCache, CachedBody},
-    utils::{manufacture_substs_for, try_resolve_function, PlaceConflictContext, TwoLevelCache},
+    utils::{PlaceConflictContext, TwoLevelCache},
     CallChangeCallback,
 };
 

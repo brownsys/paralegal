@@ -1,8 +1,6 @@
 use std::{
     cell::RefCell,
-    fs::File,
-    io::BufWriter,
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::{Duration, Instant},
 };
 
@@ -14,7 +12,6 @@ use polonius_engine::FactTypes;
 use rustc_borrowck::consumers::{BodyWithBorrowckFacts, ConsumerOptions, RustcFacts};
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::{
-    def::DefKind,
     def_id::{CrateNum, DefId, DefIndex, LocalDefId, LOCAL_CRATE},
     intravisit::{self},
 };
@@ -23,7 +20,6 @@ use rustc_middle::{
     hir::nested_filter::OnlyBodies,
     mir::{
         coverage::{BlockMarkerId, CoverageKind},
-        pretty::MirWriter,
         Body, ClearCrossCrate, Statement, StatementKind,
     },
     ty::TyCtxt,
@@ -47,10 +43,13 @@ pub struct CachedBody<'tcx> {
     input_facts: FlowistryFacts,
 }
 
-const REPLACEMENT_STATEMENT: StatementKind<'static> =
-    StatementKind::Coverage(CoverageKind::BlockMarker {
-        id: BlockMarkerId::MAX,
-    });
+macro_rules! replacement_statement {
+    () => {
+        StatementKind::Coverage(CoverageKind::BlockMarker {
+            id: BlockMarkerId::MAX,
+        })
+    };
+}
 
 fn for_each_reachable_statement<'tcx>(
     tcx: TyCtxt<'tcx>,
@@ -76,20 +75,17 @@ fn with_incompatible_instructions_removed<'tcx, R>(
 ) -> R {
     let mut original_statements = vec![];
     for_each_reachable_statement(tcx, def_id, |stmt| {
-        let tcx_scoped_replacement_statement =
-            unsafe { std::mem::transmute::<_, StatementKind<'tcx>>(REPLACEMENT_STATEMENT) };
         let kind = &mut stmt.kind;
-        assert_ne!(kind, &tcx_scoped_replacement_statement);
+        assert_ne!(kind, &replacement_statement!());
         if matches!(kind, StatementKind::BackwardIncompatibleDropHint { .. }) {
-            original_statements.push(std::mem::replace(kind, tcx_scoped_replacement_statement));
+            original_statements.push(std::mem::replace(kind, replacement_statement!()));
         }
     });
     let res = f();
     original_statements.reverse();
     for_each_reachable_statement(tcx, def_id, |stmt| {
         let kind = &mut stmt.kind;
-        if kind == &unsafe { std::mem::transmute::<_, StatementKind<'tcx>>(REPLACEMENT_STATEMENT) }
-        {
+        if kind == &replacement_statement!() {
             *kind = original_statements.pop().unwrap();
         }
     });
@@ -114,21 +110,6 @@ fn get_bodies_associated_with<'tcx>(
         );
         return None;
     }
-    // let target_name =
-    //     "<unix::linux_like::linux_l4re_shared::__c_anonymous_ifr_ifru as core::fmt::Debug>::fmt";
-    // let actual_name = tcx.def_path_str(def_id);
-    // if target_name == actual_name {
-    //     let writer = MirWriter::new(tcx);
-    //     let path = "offending-function.mir";
-    //     let f = File::create(path).unwrap();
-    //     tracing::info!(
-    //         "Dumping {} to {}",
-    //         actual_name,
-    //         Path::new(path).canonicalize().unwrap().display()
-    //     );
-    //     let mut w = BufWriter::new(f);
-    //     writer.write_mir_fn(&mir.borrow(), &mut w).unwrap();
-    // }
     // HACK: We remove all BackwardIncompatibleDropHint instructions, because
     // they trigger an ICE when computing the borrowcheck instruction
     let mut bodies = with_incompatible_instructions_removed(tcx, def_id, || {
@@ -145,8 +126,7 @@ fn get_bodies_associated_with<'tcx>(
         .flat_map(|bb| bb.statements.iter_mut())
     {
         let kind = &mut stmt.kind;
-        if kind == &unsafe { std::mem::transmute::<_, StatementKind<'tcx>>(REPLACEMENT_STATEMENT) }
-        {
+        if kind == &replacement_statement!() {
             *kind = StatementKind::Nop;
         }
     }

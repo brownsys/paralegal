@@ -440,7 +440,6 @@ struct PlaceAndConstCollector<'tcx, 'a> {
     body: &'a mir::Body<'tcx>,
     ty_env: ty::TypingEnv<'tcx>,
     strict: bool,
-    def_id: DefId,
 }
 
 impl<'tcx, 'a> PlaceAndConstCollector<'tcx, 'a> {
@@ -461,7 +460,6 @@ impl<'tcx, 'a> PlaceAndConstCollector<'tcx, 'a> {
             body,
             ty_env,
             strict,
-            def_id,
         }
     }
 }

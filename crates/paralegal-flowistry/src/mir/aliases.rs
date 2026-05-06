@@ -1,6 +1,6 @@
 //! Alias analysis to determine the points-to set of a reference.
 
-use std::{hash::Hash, time::Instant};
+use std::time::Instant;
 
 use paralegal_rustc_utils::{mir::place::UNKNOWN_REGION, PlaceExt};
 use rustc_data_structures::{

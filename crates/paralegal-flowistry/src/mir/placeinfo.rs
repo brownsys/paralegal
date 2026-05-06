@@ -5,7 +5,7 @@ use std::ops::ControlFlow;
 use paralegal_rustc_utils::{
     cache::{Cache, CopyCache},
     mir::place::UNKNOWN_REGION,
-    BodyExt, MutabilityExt, PlaceExt,
+    MutabilityExt, PlaceExt,
 };
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
@@ -17,8 +17,11 @@ use super::{aliases::Aliases, utils::PlaceSet, FlowistryInput};
 
 /// Utilities for analyzing places: children, aliases, etc.
 pub struct PlaceInfo<'tcx> {
+    /// Type context
     pub tcx: TyCtxt<'tcx>,
+    /// The body this info refers to
     pub body: &'tcx Body<'tcx>,
+    /// Id of the function this info refers to
     pub def_id: DefId,
 
     // Core computed data structure
@@ -61,6 +64,7 @@ impl<'tcx> PlaceInfo<'tcx> {
         }
     }
 
+    /// Returns the MIR body this `PlaceInfo` was built from.
     pub fn body(&self) -> &'tcx Body<'tcx> {
         self.body
     }
@@ -154,7 +158,7 @@ impl<'tcx> PlaceInfo<'tcx> {
             stack: vec![],
             loans: PlaceSet::default(),
         };
-        collector.visit_ty(ty);
+        let _ = collector.visit_ty(ty);
         collector.loans
     }
 }
@@ -176,17 +180,17 @@ impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for LoanCollector<'_, 'tcx> {
         match ty.kind() {
             TyKind::Ref(_, _, mutability) => {
                 self.stack.push(*mutability);
-                ty.super_visit_with(self);
+                ty.super_visit_with(self)?;
                 self.stack.pop();
                 return ControlFlow::Break(());
             }
             _ if ty.is_box() || ty.is_raw_ptr() => {
-                self.visit_region(self.unknown_region);
+                self.visit_region(self.unknown_region)?;
             }
             _ => {}
         };
 
-        ty.super_visit_with(self);
+        ty.super_visit_with(self)?;
         ControlFlow::Continue(())
     }
 

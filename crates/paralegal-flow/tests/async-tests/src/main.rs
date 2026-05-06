@@ -118,7 +118,11 @@ async fn async_return_from_async() -> usize {
 
 #[paralegal::marker(is_check, return)]
 async fn perform_check(data: usize) -> Result<(), ()> {
-    if data != 0 { Ok(()) } else { Err(()) }
+    if data != 0 {
+        Ok(())
+    } else {
+        Err(())
+    }
 }
 
 #[paralegal::marker(is_sensitive1, return)]
@@ -142,7 +146,11 @@ async fn control_flow_overtaint_tracing(condition: bool, data: usize) -> Result<
 
 #[paralegal::marker(is_check, return)]
 fn perform_check_unasync(data: usize) -> Result<(), ()> {
-    if data != 0 { Ok(()) } else { Err(()) }
+    if data != 0 {
+        Ok(())
+    } else {
+        Err(())
+    }
 }
 
 #[paralegal::marker(is_sensitive1, return)]

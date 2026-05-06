@@ -169,6 +169,7 @@ where
         self.0.borrow().contains_key(key)
     }
     /// Safety: Invalidates all references
+    #[allow(unused)]
     pub(crate) unsafe fn clear(&self) {
         self.0.borrow_mut().clear();
     }

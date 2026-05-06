@@ -17,15 +17,14 @@
 //! we are not investing in it.
 use std::fs::File;
 use std::io::{self, Read};
-use std::num::NonZeroU64;
 use std::path::Path;
 use std::sync::Arc;
 
 use rustc_ast::AttrId;
-use rustc_const_eval::interpret::{AllocId, ConstAllocation, GlobalAlloc};
+use rustc_const_eval::interpret::{AllocId, GlobalAlloc};
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{CrateNum, DefId, DefIndex};
-use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
+use rustc_macros::{TyDecodable, TyEncodable};
 use rustc_middle::ty::codec::{TyDecoder, TyEncoder};
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_serialize::{
@@ -33,8 +32,8 @@ use rustc_serialize::{
     Decodable, Decoder, Encodable, Encoder,
 };
 use rustc_span::{
-    BlobDecoder, BytePos, ByteSymbol, ExpnId, FileName, RelativeBytePos, RemapPathScopeComponents,
-    SourceFile, Span, SpanData, SpanDecoder, SpanEncoder, Symbol, SyntaxContext, DUMMY_SP,
+    BlobDecoder, BytePos, ByteSymbol, ExpnId, FileName, RelativeBytePos, SourceFile, Span,
+    SpanData, SpanDecoder, SpanEncoder, Symbol, SyntaxContext, DUMMY_SP,
 };
 
 macro_rules! encoder_methods {
@@ -200,7 +199,7 @@ impl<'tcx> TyDecoder<'tcx> for ParalegalDecoder<'tcx, '_> {
                     }
                     GlobalAlloc::Static(def_id) => self.tcx.reserve_and_set_static_alloc(def_id),
                     GlobalAlloc::TypeId { ty } => self.tcx.reserve_and_set_type_id_alloc(ty),
-                    GlobalAlloc::VTable(ty, dyn_t) => self.tcx.reserve_and_set_type_id_alloc(ty),
+                    GlobalAlloc::VTable(ty, _dyn_t) => self.tcx.reserve_and_set_type_id_alloc(ty),
                 };
 
                 self.allocations.insert(raw_id, id);

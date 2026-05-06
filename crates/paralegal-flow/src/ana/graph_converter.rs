@@ -398,13 +398,8 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     ) {
         let function = vis.current_function();
         let function_id = function.def_id();
-        let side_effects = side_effect_detection::analyze_statement(
-            body,
-            loc,
-            self.auto_markers(),
-            self.tcx(),
-            function_id,
-        );
+        let side_effects =
+            side_effect_detection::analyze_statement(body, loc, self.auto_markers(), self.tcx());
         if !side_effects.is_empty() {
             self.register_markers(node, side_effects);
         }
