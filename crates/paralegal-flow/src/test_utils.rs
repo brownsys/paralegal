@@ -172,14 +172,17 @@ macro_rules! define_flow_test_template {
 /// # Examples
 ///
 /// Stdlib only:
-/// ```
+/// ```no_run
+/// # use paralegal_flow::test_utils::DependencyEnvironmentBuilder;
 /// let dep_env = DependencyEnvironmentBuilder::new()
 ///     .with_stdlib()
 ///     .build();
 /// ```
 ///
 /// With external crates from a Cargo.toml:
-/// ```
+/// ```no_run
+/// # use paralegal_flow::test_utils::DependencyEnvironmentBuilder;
+/// # use std::path::Path;
 /// let dep_env = DependencyEnvironmentBuilder::new()
 ///     .with_manifest(Path::new("tests/stub-tests/Cargo.toml"))
 ///     .build();
@@ -248,10 +251,11 @@ impl DependencyEnvironmentBuilder {
     ///
     /// # Example
     ///
-    /// ```
-    /// DependencyEnvironmentBuilder::new()
+    /// ```no_run
+    /// # use paralegal_flow::test_utils::DependencyEnvironmentBuilder;
+    /// let _env = DependencyEnvironmentBuilder::new()
     ///     .with_manifest("tests/stub-tests/Cargo.toml")
-    ///     .build()
+    ///     .build();
     /// ```
     pub fn with_manifest(mut self, path: impl AsRef<std::path::Path>) -> Self {
         self.manifest_path = Some(path.as_ref().to_path_buf());
@@ -518,7 +522,9 @@ impl InlineTestBuilder {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```no_run
+    /// # use paralegal_flow::test_utils::DependencyEnvironmentBuilder;
+    /// # use paralegal_flow::inline_test;
     /// let env = DependencyEnvironmentBuilder::new()
     ///     .with_manifest("tests/stub-tests/Cargo.toml")
     ///     .build();
