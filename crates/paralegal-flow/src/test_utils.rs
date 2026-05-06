@@ -8,6 +8,7 @@ use hir::def_id::DefId;
 use paralegal_non_rustc_utils::prepare_analyzer_command;
 use rustc_errors::FatalError;
 use rustc_middle::ty::TyCtxt;
+use tracing::debug;
 
 use crate::{
     Callbacks, EXTRA_RUSTC_ARGS, HashSet,
@@ -397,7 +398,7 @@ path = "src/main.rs"
             vec![]
         };
 
-        println!("Collected extern args {flags:?}");
+        debug!("Collected extern args {flags:?}");
 
         DependencyEnvironment {
             rustc_flags: flags,
