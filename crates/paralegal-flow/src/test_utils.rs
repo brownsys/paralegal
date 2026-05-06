@@ -290,13 +290,9 @@ impl DependencyEnvironmentBuilder {
         }
 
         let mut args = Vec::new();
-        // Stdlib artifacts land in a different cargo profile directory than
-        // regular deps. We extract the actual deps dir from the first stdlib
-        // rlib we encounter and emit a -L dependency= for it after the loop.
-        let mut stdlib_deps_dir: Option<std::path::PathBuf> = None;
 
         if let Some(parent) = manifest_path.parent() {
-            let deps_dir = parent.join("target/debug/deps");
+            let deps_dir = parent.join("target/paralegal/debug/deps");
             args.push("-L".to_string());
             args.push(format!("dependency={}", deps_dir.display()));
         }
@@ -335,38 +331,18 @@ impl DependencyEnvironmentBuilder {
                 if !path.ends_with(".rlib") && !path.ends_with(".rmeta") {
                     continue;
                 }
-                if is_stdlib_artifact {
-                    // Capture the deps dir that cargo-paralegal-flow used for
-                    // stdlib so we can emit the correct -L flag below.
-                    if path.ends_with(".rlib") && stdlib_deps_dir.is_none() {
-                        if let Some(dir) = std::path::Path::new(path).parent() {
-                            stdlib_deps_dir = Some(dir.to_path_buf());
-                        }
-                    }
-                    // Use noprelude for everything except std itself.
-                    // noprelude prevents duplicate-prelude conflicts; for std
-                    // we omit it so that its prelude (Ok, Vec, …) is injected
-                    // into the inline test's root module automatically.
-                    let qualifier = if extern_name == "std" {
-                        ""
-                    } else {
-                        "noprelude,nounused:"
-                    };
-                    args.push("--extern".to_string());
-                    args.push(format!("{qualifier}{extern_name}={path}"));
+                // Use noprelude for everything except std itself.
+                // noprelude prevents duplicate-prelude conflicts; for std
+                // we omit it so that its prelude (Ok, Vec, …) is injected
+                // into the inline test's root module automatically.
+                let qualifier = if is_stdlib_artifact && extern_name != "std" {
+                    "noprelude,nounused:"
                 } else {
-                    args.push("--extern".to_string());
-                    args.push(format!("{extern_name}={path}"));
-                }
+                    ""
+                };
+                args.push("--extern".to_string());
+                args.push(format!("{qualifier}{extern_name}={path}"));
             }
-        }
-        // Add the stdlib deps dir as a -L search path so rustc can find the
-        // transitive dependencies of the noprelude stdlib externs (e.g. core
-        // when loading std). The original -L above points at target/debug/deps
-        // which only has user-crate deps, not the freshly compiled stdlib.
-        if let Some(dir) = stdlib_deps_dir {
-            args.push("-L".to_string());
-            args.push(format!("dependency={}", dir.display()));
         }
         args
     }
