@@ -232,9 +232,11 @@ _internal_can_fail_resolve_silently = true
 marker = "ignore"
 on_return = true
 _internal_on_all_module_children = true
+_internal_can_fail_resolve_silently = true
 
 
 [["crate::my_mod"]]
 marker = "ignore"
 on_return = true
 _internal_on_all_module_children = true
+_internal_can_fail_resolve_silently = true

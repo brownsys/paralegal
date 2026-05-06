@@ -15,7 +15,7 @@ use crate::{
     desc::{Identifier, ProgramDescription},
     utils::Print,
 };
-use std::{fmt::Display, io::Write, sync::atomic::Ordering};
+use std::{ffi::OsString, fmt::Display, io::Write, path::PathBuf, sync::atomic::Ordering};
 use std::{
     fmt::{Debug, Formatter},
     sync::Once,
@@ -187,7 +187,7 @@ macro_rules! define_flow_test_template {
 pub struct DependencyEnvironmentBuilder {
     include_stdlib: bool,
     manifest_path: Option<std::path::PathBuf>,
-    markers: Option<String>,
+    markers: Option<PathBuf>,
     extra_args: Vec<String>,
 }
 
@@ -213,6 +213,7 @@ pub struct DependencyEnvironment {
     include_stdlib: bool,
     manifest_path: Option<std::path::PathBuf>,
     extra_args: Vec<String>,
+    marker_file: Option<PathBuf>,
 }
 
 impl DependencyEnvironmentBuilder {
@@ -257,8 +258,8 @@ impl DependencyEnvironmentBuilder {
         self
     }
 
-    pub fn with_markers(mut self, markers: impl Into<String>) -> Self {
-        self.markers = Some(markers.into());
+    pub fn with_markers(mut self, markers: impl AsRef<Path>) -> Self {
+        self.markers = Some(markers.as_ref().to_path_buf());
         self
     }
 
@@ -346,7 +347,11 @@ impl DependencyEnvironmentBuilder {
                     // noprelude prevents duplicate-prelude conflicts; for std
                     // we omit it so that its prelude (Ok, Vec, …) is injected
                     // into the inline test's root module automatically.
-                    let qualifier = if extern_name == "std" { "" } else { "noprelude,nounused:" };
+                    let qualifier = if extern_name == "std" {
+                        ""
+                    } else {
+                        "noprelude,nounused:"
+                    };
                     args.push("--extern".to_string());
                     args.push(format!("{qualifier}{extern_name}={path}"));
                 } else {
@@ -419,6 +424,7 @@ path = "src/main.rs"
             include_stdlib: self.include_stdlib,
             manifest_path: manifest_path,
             extra_args: self.extra_args,
+            marker_file: self.markers,
         }
     }
 }
@@ -449,8 +455,8 @@ pub struct InlineTestBuilder {
     ctrl_name: Option<String>,
     input: String,
     extra_args: Vec<String>,
-    marker_file: Option<String>,
-    build_config: Option<String>,
+    marker_file: Option<PathBuf>,
+    build_config: Option<PathBuf>,
     rustc_args: Vec<String>,
 }
 
@@ -508,13 +514,13 @@ impl InlineTestBuilder {
         self
     }
 
-    pub fn with_marker_file(&mut self, marker_file: impl Into<String>) -> &mut Self {
-        self.marker_file = Some(marker_file.into());
+    pub fn with_marker_file(&mut self, marker_file: &Path) -> &mut Self {
+        self.marker_file = Some(marker_file.to_path_buf());
         self
     }
 
-    pub fn with_build_config(&mut self, config: impl Into<String>) -> &mut Self {
-        self.build_config = Some(config.into());
+    pub fn with_build_config(&mut self, config: &Path) -> &mut Self {
+        self.build_config = Some(config.to_path_buf());
         self
     }
 
@@ -552,6 +558,7 @@ impl InlineTestBuilder {
             self.rustc_args.extend(flags.iter().cloned());
         }
         self.extra_args.extend(env.extra_args.iter().cloned());
+        self.marker_file = env.marker_file.clone();
 
         self
     }
@@ -592,29 +599,19 @@ impl InlineTestBuilder {
             args: crate::ClapArgs,
         }
 
-        let mut args = vec!["".to_string()];
+        let mut args: Vec<OsString> = vec!["".into()];
         if let Some(e) = &self.ctrl_name {
-            args.extend(["--analyze".to_string(), e.clone()])
+            args.extend(["--analyze".into(), e.into()])
         }
         if let Some(m) = &self.marker_file {
-            let p = std::env::temp_dir().join(format!(
-                "markers-{}.toml",
-                FILE_INDEX.fetch_add(1, Ordering::Relaxed)
-            ));
-            std::fs::write(&p, m).unwrap();
-            args.push("--external-annotations".to_string());
-            args.push(p.to_str().unwrap().to_string());
+            args.push("--external-annotations".into());
+            args.push(m.into());
         }
         if let Some(c) = &self.build_config {
-            let p = std::env::temp_dir().join(format!(
-                "paralegal-config-{}.toml",
-                FILE_INDEX.fetch_add(1, Ordering::Relaxed)
-            ));
-            std::fs::write(&p, c).unwrap();
-            args.push("--build-config".to_string());
-            args.push(p.to_str().unwrap().to_string());
+            args.push("--build-config".into());
+            args.push(c.into());
         }
-        args.extend(self.extra_args.iter().cloned());
+        args.extend(self.extra_args.iter().map(|s| s.into()));
 
         let args = crate::Args::try_from(TopLevelArgs::parse_from(args).args).unwrap();
 

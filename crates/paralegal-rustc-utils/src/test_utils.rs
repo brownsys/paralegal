@@ -26,14 +26,21 @@ use rustc_span::source_map::FileLoader;
 
 use crate::{cache::Cache, BodyExt, PlaceExt};
 
-pub struct StringLoader(pub String);
+pub struct StringLoader {
+    pub input_file: String,
+    pub source: String,
+}
 impl FileLoader for StringLoader {
-    fn file_exists(&self, _: &Path) -> bool {
-        true
+    fn file_exists(&self, path: &Path) -> bool {
+        path.to_str() == Some(self.input_file.as_str()) || path.is_file()
     }
 
-    fn read_file(&self, _: &Path) -> io::Result<String> {
-        Ok(self.0.clone())
+    fn read_file(&self, path: &Path) -> io::Result<String> {
+        if path.to_str() == Some(self.input_file.as_str()) {
+            Ok(self.source.clone())
+        } else {
+            fs::read_to_string(path)
+        }
     }
 
     fn read_binary_file(&self, path: &Path) -> io::Result<Arc<[u8]>> {
@@ -107,9 +114,11 @@ impl CompileBuilder {
         .chain(self.arguments.iter().cloned())
         .collect::<Box<_>>();
 
+        let input_file = crate_name.clone();
         let mut callbacks = TestCallbacks {
             callback: Some(move |tcx: TyCtxt<'_>| f(CompileResult { crate_name, tcx })),
             input: Some(self.input.clone()),
+            input_file,
         };
 
         rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut callbacks))
@@ -176,6 +185,7 @@ impl<'tcx> CompileResult<'tcx> {
 struct TestCallbacks<Cb> {
     callback: Option<Cb>,
     input: Option<String>,
+    input_file: String,
 }
 
 impl<Cb> rustc_driver::Callbacks for TestCallbacks<Cb>
@@ -193,9 +203,10 @@ where
     }
 
     fn config(&mut self, config: &mut interface::Config) {
-        config.file_loader = Some(Box::new(StringLoader(
-            self.input.take().expect("cannot take input twice"),
-        )) as Box<_>)
+        config.file_loader = Some(Box::new(StringLoader {
+            input_file: self.input_file.clone(),
+            source: self.input.take().expect("cannot take input twice"),
+        }) as Box<_>)
         // Note that we are not installing override queries here, which means we
         // cannot retrieve `const` bodies. if this becomes necessary, we can
         // move the override queries out.

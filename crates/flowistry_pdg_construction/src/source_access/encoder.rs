@@ -400,7 +400,10 @@ impl ParalegalDecoder<'_, '_> {
             let index = usize::decode(self);
             self.file_shorthands[&index].clone()
         } else if tag == TAG_ENCODE_LOCAL {
-            self.decode_filename_local(crate_num)
+            let position = self.position();
+            let file = self.decode_filename_local(crate_num);
+            self.file_shorthands.insert(position, file.clone());
+            file
         } else {
             panic!("Unexpected tag value {tag}");
         }

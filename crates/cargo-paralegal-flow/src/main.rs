@@ -112,8 +112,7 @@ fn main() -> anyhow::Result<()> {
     // Read raw lines from cargo's stdout, echo them so callers expecting
     // `--message-format=json` can parse them, and also parse them into
     // `cargo_metadata::Message` for internal handling.
-    let mut lines = reader.lines();
-    while let Some(line_res) = lines.next() {
+    for line_res in reader.lines() {
         let line = match line_res {
             Ok(l) => l,
             Err(e) => {
@@ -124,7 +123,9 @@ fn main() -> anyhow::Result<()> {
 
         // Forward the raw JSON/text line to stdout so tools that expect the
         // original cargo JSON stream can consume it (e.g. `collect_extern_args`).
-        println!("{}", line);
+        if args.forward_json {
+            println!("{}", line);
+        }
 
         // Try to parse it as a cargo Message; if it parses, handle it.
         match serde_json::from_str::<Message>(&line) {
