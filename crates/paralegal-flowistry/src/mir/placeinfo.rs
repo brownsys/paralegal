@@ -325,4 +325,321 @@ fn main() {
             )
         });
     }
+
+    /// children of a scalar (leaf) place is just that place itself — no subfields.
+    #[test]
+    fn test_children_scalar() {
+        let input = r#"
+fn main() {
+  let x: i32 = 42;
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let x = p.local("x");
+            compare_sets(
+                hashset! { x.mk() },
+                place_info.children(x.mk()),
+            );
+        });
+    }
+
+    /// children of a reference is just the reference itself — we do not cross
+    /// the reference boundary.
+    #[test]
+    fn test_children_reference_is_leaf() {
+        let input = r#"
+fn main() {
+  let a: i32 = 1;
+  let r = &a;
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let r = p.local("r");
+            // r is &i32; children stops at the reference — no deref.
+            compare_sets(
+                hashset! { r.mk() },
+                place_info.children(r.mk()),
+            );
+        });
+    }
+
+    /// children of a flat tuple enumerates all immediate fields.
+    #[test]
+    fn test_children_flat_tuple() {
+        let input = r#"
+fn main() {
+  let t = (1_i32, 2_i32, 3_i32);
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let t = p.local("t");
+            compare_sets(
+                hashset! {
+                    t.mk(),
+                    t.field(0).mk(),
+                    t.field(1).mk(),
+                    t.field(2).mk(),
+                },
+                place_info.children(t.mk()),
+            );
+        });
+    }
+
+    /// conflicts of a scalar place is just that place — no parent, no children.
+    #[test]
+    fn test_conflicts_scalar() {
+        let input = r#"
+fn main() {
+  let x: i32 = 0;
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let x = p.local("x");
+            compare_sets(
+                &hashset! { x.mk() },
+                place_info.conflicts(x.mk()),
+            );
+        });
+    }
+
+    /// conflicts of the root of a nested struct includes all descendants.
+    #[test]
+    fn test_conflicts_root_includes_all_children() {
+        let input = r#"
+fn main() {
+  let t = ((1_i32, 2_i32), 3_i32);
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let t = p.local("t");
+            // conflicts(t) = children(t) (no ancestors since t is the root)
+            compare_sets(
+                &hashset! {
+                    t.mk(),
+                    t.field(0).mk(),
+                    t.field(0).field(0).mk(),
+                    t.field(0).field(1).mk(),
+                    t.field(1).mk(),
+                },
+                place_info.conflicts(t.mk()),
+            );
+        });
+    }
+
+    /// conflicts of a deeply nested leaf includes all ancestors up to the root
+    /// but not the siblings along the path.
+    #[test]
+    fn test_conflicts_deep_leaf_no_siblings() {
+        let input = r#"
+fn main() {
+  let t = ((1_i32, 2_i32), 3_i32);
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let t = p.local("t");
+            // conflicts(t.0.0) = {t, t.0, t.0.0}  — NOT t.0.1 or t.1
+            compare_sets(
+                &hashset! {
+                    t.mk(),
+                    t.field(0).mk(),
+                    t.field(0).field(0).mk(),
+                },
+                place_info.conflicts(t.field(0).field(0).mk()),
+            );
+        });
+    }
+
+    /// conflicts stops at a shared-reference boundary: ancestors through a `&`
+    /// are NOT included, but the deref itself and its children are.
+    #[test]
+    fn test_conflicts_stops_at_ref_boundary() {
+        let input = r#"
+fn main() {
+  let inner = (1_i32, 2_i32);
+  let r = &inner;
+  let outer = (r, 3_i32);
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            // outer: (&(i32, i32), i32)
+            // outer.0 is &(i32, i32); *outer.0 should NOT appear in conflicts of outer.0
+            // because outer.0 is a reference — the deref is on the other side of a ref boundary.
+            let outer = p.local("outer");
+            // conflicts(outer.0) = {outer, outer.0}  — stops at the ref, does not go into *outer.0
+            compare_sets(
+                &hashset! {
+                    outer.mk(),
+                    outer.field(0).mk(),
+                },
+                place_info.conflicts(outer.field(0).mk()),
+            );
+        });
+    }
+
+    /// aliases: for a simple `x = &y`, `*x` should alias `y`.
+    #[test]
+    fn test_aliases_simple_borrow() {
+        let input = r#"
+fn main() {
+  let y: i32 = 0;
+  let x = &y;
+  let _ = *x;
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let x = p.local("x");
+            let y = p.local("y");
+            // *x should alias y
+            let aliases = place_info.aliases(x.deref().mk());
+            compare_sets(
+                &hashset! { y.mk() },
+                aliases,
+            );
+        });
+    }
+
+    /// aliases: a mutable borrow `x = &mut y` means `*x` aliases `y`.
+    #[test]
+    fn test_aliases_mut_borrow() {
+        let input = r#"
+fn main() {
+  let mut y: i32 = 0;
+  let x = &mut y;
+  *x = 1;
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let x = p.local("x");
+            let y = p.local("y");
+            let aliases = place_info.aliases(x.deref().mk());
+            compare_sets(
+                &hashset! { y.mk() },
+                aliases,
+            );
+        });
+    }
+
+    /// reachable_values of a scalar place is just that place itself.
+    #[test]
+    fn test_reachable_values_scalar() {
+        let input = r#"
+fn main() {
+  let x: i32 = 5;
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let x = p.local("x");
+            compare_sets(
+                &hashset! { x.mk() },
+                place_info.reachable_values(x.mk(), Mutability::Not),
+            );
+            compare_sets(
+                &hashset! { x.mk() },
+                place_info.reachable_values(x.mk(), Mutability::Mut),
+            );
+        });
+    }
+
+    /// reachable_values with Mutability::Mut on a place that only holds an
+    /// immutable reference returns just the place itself (the referent is excluded).
+    #[test]
+    fn test_reachable_values_immut_ref_excluded_from_mut() {
+        let input = r#"
+fn main() {
+  let a: i32 = 1;
+  let r = &a;
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let r = p.local("r");
+            // Mutability::Not includes a
+            compare_sets(
+                &hashset! { r.mk(), p.local("a").mk() },
+                place_info.reachable_values(r.mk(), Mutability::Not),
+            );
+            // Mutability::Mut excludes a (behind immutable &)
+            compare_sets(
+                &hashset! { r.mk() },
+                place_info.reachable_values(r.mk(), Mutability::Mut),
+            );
+        });
+    }
+
+    /// reachable_values follows a chain of mutable references transitively.
+    #[test]
+    fn test_reachable_values_transitive_mut_refs() {
+        let input = r#"
+fn main() {
+  let mut a: i32 = 0;
+  let mut b = &mut a;
+  let c = &mut b;
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let c = p.local("c");
+            // c: &mut &mut i32 → through mutable chain we reach b then a
+            compare_sets(
+                &hashset! {
+                    c.mk(),
+                    p.local("b").mk(),
+                    p.local("a").mk(),
+                },
+                place_info.reachable_values(c.mk(), Mutability::Mut),
+            );
+        });
+    }
+
+    /// reachable_values: a mixed chain where an immutable ref sits in the middle
+    /// means Mut stops before crossing the immutable boundary, but Not goes all the way.
+    ///
+    /// The chain is: c (&mut bc) -> bc (&i32 copy of b's borrow of a) -> a.
+    /// Because `bc = b` is a Copy assignment (both are &i32), the loan graph
+    /// records that bc's region points directly to `a`, not to `b`. So `b`
+    /// does not appear in the reachable set — only `bc` and `a` do (plus `c`
+    /// itself).
+    #[test]
+    fn test_reachable_values_mixed_mut_immut_chain() {
+        let input = r#"
+fn main() {
+  let a: i32 = 1;
+  let b = &a;      // b: &i32  (immutable)
+  let mut bc = b;  // bc: &i32, copy of b — same loan region points to a
+  let c = &mut bc; // c: &mut &i32
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let c = p.local("c");
+            // c: &mut &i32
+            // Not: c, bc, a (bc's region loans a directly; b is not in the chain)
+            compare_sets(
+                &hashset! {
+                    c.mk(),
+                    p.local("bc").mk(),
+                    p.local("a").mk(),
+                },
+                place_info.reachable_values(c.mk(), Mutability::Not),
+            );
+            // Mut: c, bc (bc is directly reachable via &mut), but a is behind &i32
+            compare_sets(
+                &hashset! {
+                    c.mk(),
+                    p.local("bc").mk(),
+                },
+                place_info.reachable_values(c.mk(), Mutability::Mut),
+            );
+        });
+    }
 }
