@@ -17,8 +17,11 @@ use super::{aliases::Aliases, utils::PlaceSet, FlowistryInput};
 
 /// Utilities for analyzing places: children, aliases, etc.
 pub struct PlaceInfo<'tcx> {
+    /// Type context
     pub tcx: TyCtxt<'tcx>,
+    /// The body this info refers to
     pub body: &'tcx Body<'tcx>,
+    /// Id of the function this info refers to
     pub def_id: DefId,
 
     // Core computed data structure
@@ -61,6 +64,7 @@ impl<'tcx> PlaceInfo<'tcx> {
         }
     }
 
+    /// Returns the MIR body this `PlaceInfo` was built from.
     pub fn body(&self) -> &'tcx Body<'tcx> {
         self.body
     }
@@ -128,21 +132,28 @@ impl<'tcx> PlaceInfo<'tcx> {
     /// is `{y, x}`. With `Mutability::Mut`, then the output is `{y}` (no `x`).
     pub fn reachable_values(&self, place: Place<'tcx>, mutability: Mutability) -> &PlaceSet<'tcx> {
         self.reachable_cache.get(&(place, mutability), |_| {
-            let ty = place.ty(self.body.local_decls(), self.tcx).ty;
-            let loans = self.collect_loans(ty, mutability);
-            loans
-                .into_iter()
-                .chain([place])
-                .filter(|place| {
-                    if let Some((place, _)) = place.refs_in_projection(self.body, self.tcx).last() {
-                        let ty = place.ty(self.body.local_decls(), self.tcx).ty;
-                        if ty.is_box() || ty.is_unsafe_ptr() {
-                            return true;
-                        }
+            let passes_filter = |p: Place<'tcx>| {
+                if let Some((pref, _)) = p.refs_in_projection(self.body, self.tcx).last() {
+                    let ty = pref.ty(self.body.local_decls(), self.tcx).ty;
+                    if ty.is_box() || ty.is_raw_ptr() {
+                        return true;
                     }
-                    place.is_direct(self.body, self.tcx)
-                })
-                .collect()
+                }
+                p.is_direct(self.body, self.tcx)
+            };
+
+            let mut result = PlaceSet::default();
+            let mut worklist = vec![place];
+
+            while let Some(p) = worklist.pop() {
+                if !passes_filter(p) || !result.insert(p) {
+                    continue;
+                }
+                let ty = p.ty(self.body.local_decls(), self.tcx).ty;
+                worklist.extend(self.collect_loans(ty, mutability));
+            }
+
+            result
         })
     }
 
@@ -154,7 +165,7 @@ impl<'tcx> PlaceInfo<'tcx> {
             stack: vec![],
             loans: PlaceSet::default(),
         };
-        collector.visit_ty(ty);
+        let _ = collector.visit_ty(ty);
         collector.loans
     }
 }
@@ -174,19 +185,24 @@ impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for LoanCollector<'_, 'tcx> {
 
     fn visit_ty(&mut self, ty: Ty<'tcx>) -> Self::Result {
         match ty.kind() {
-            TyKind::Ref(_, _, mutability) => {
+            // For reference types: only visit the region to collect loans, then
+            // return Continue so sibling references in the same compound type are
+            // also visited. The inner type is intentionally skipped here; the
+            // worklist in reachable_values handles transitive traversal by
+            // following each loan's own type.
+            TyKind::Ref(region, _, mutability) => {
                 self.stack.push(*mutability);
-                ty.super_visit_with(self);
+                self.visit_region(*region)?;
                 self.stack.pop();
-                return ControlFlow::Break(());
+                return ControlFlow::Continue(());
             }
-            _ if ty.is_box() || ty.is_unsafe_ptr() => {
-                self.visit_region(self.unknown_region);
+            _ if ty.is_box() || ty.is_raw_ptr() => {
+                self.visit_region(self.unknown_region)?;
             }
             _ => {}
         };
 
-        ty.super_visit_with(self);
+        ty.super_visit_with(self)?;
         ControlFlow::Continue(())
     }
 
@@ -202,7 +218,7 @@ impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for LoanCollector<'_, 'tcx> {
             _ => unreachable!("{region:?}"),
         };
         if let Some(loans) = self.aliases.loans.get(&region) {
-            let under_immut_ref = self.stack.iter().any(|m| *m == Mutability::Not);
+            let under_immut_ref = self.stack.contains(&Mutability::Not);
             self.loans
                 .extend(loans.iter().filter_map(|(place, mutability)| {
                     let loan_mutability = if under_immut_ref {
@@ -235,7 +251,7 @@ mod test {
     ) {
         test_utils::compile_body(input, |tcx, body_id, body_with_facts| {
             let body = &body_with_facts.body;
-            let def_id = tcx.hir().body_owner_def_id(body_id);
+            let def_id = tcx.hir_body_owner_def_id(body_id);
             let place_info = PlaceInfo::build(tcx, def_id.to_def_id(), body_with_facts);
 
             f(tcx, body, place_info)
@@ -258,7 +274,6 @@ fn main() {
             let p = Placer::new(tcx, body);
             let c = p.local("c");
             compare_sets(
-                place_info.children(c.mk()),
                 hashset! {
                   c.mk(),
                   c.field(0).mk(),
@@ -266,10 +281,10 @@ fn main() {
                   c.field(0).field(1).mk(),
                   c.field(1).mk(),
                 },
+                place_info.children(c.mk()),
             );
 
             compare_sets(
-                place_info.conflicts(c.field(0).mk()),
                 &hashset! {
                   c.mk(),
                   c.field(0).mk(),
@@ -277,36 +292,339 @@ fn main() {
                   c.field(0).field(1).mk(),
                   // c.field(1) not part of the set
                 },
+                place_info.conflicts(c.field(0).mk()),
             );
 
             // a and b are reachable at immut-level
             compare_sets(
-                place_info.reachable_values(c.mk(), Mutability::Not),
                 &hashset! {
                   c.mk(),
                   p.local("a").mk(),
                   p.local("b").mk()
                 },
+                place_info.reachable_values(c.mk(), Mutability::Not),
             );
 
             // only b is reachable at mut-level
             compare_sets(
-                place_info.reachable_values(c.mk(), Mutability::Mut),
                 &hashset! {
                   c.mk(),
                   p.local("b").mk()
                 },
+                place_info.reachable_values(c.mk(), Mutability::Mut),
             );
 
             // handles transitive references
             compare_sets(
-                place_info.reachable_values(p.local("f").mk(), Mutability::Not),
                 &hashset! {
                   p.local("f").mk(),
                   p.local("e").mk(),
                   p.local("d").mk()
                 },
+                place_info.reachable_values(p.local("f").mk(), Mutability::Not),
             )
+        });
+    }
+
+    /// children of a scalar (leaf) place is just that place itself — no subfields.
+    #[test]
+    fn test_children_scalar() {
+        let input = r#"
+fn main() {
+  let x: i32 = 42;
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let x = p.local("x");
+            compare_sets(hashset! { x.mk() }, place_info.children(x.mk()));
+        });
+    }
+
+    /// children of a reference is just the reference itself — we do not cross
+    /// the reference boundary.
+    #[test]
+    fn test_children_reference_is_leaf() {
+        let input = r#"
+fn main() {
+  let a: i32 = 1;
+  let r = &a;
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let r = p.local("r");
+            // r is &i32; children stops at the reference — no deref.
+            compare_sets(hashset! { r.mk() }, place_info.children(r.mk()));
+        });
+    }
+
+    /// children of a flat tuple enumerates all immediate fields.
+    #[test]
+    fn test_children_flat_tuple() {
+        let input = r#"
+fn main() {
+  let t = (1_i32, 2_i32, 3_i32);
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let t = p.local("t");
+            compare_sets(
+                hashset! {
+                    t.mk(),
+                    t.field(0).mk(),
+                    t.field(1).mk(),
+                    t.field(2).mk(),
+                },
+                place_info.children(t.mk()),
+            );
+        });
+    }
+
+    /// conflicts of a scalar place is just that place — no parent, no children.
+    #[test]
+    fn test_conflicts_scalar() {
+        let input = r#"
+fn main() {
+  let x: i32 = 0;
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let x = p.local("x");
+            compare_sets(&hashset! { x.mk() }, place_info.conflicts(x.mk()));
+        });
+    }
+
+    /// conflicts of the root of a nested struct includes all descendants.
+    #[test]
+    fn test_conflicts_root_includes_all_children() {
+        let input = r#"
+fn main() {
+  let t = ((1_i32, 2_i32), 3_i32);
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let t = p.local("t");
+            // conflicts(t) = children(t) (no ancestors since t is the root)
+            compare_sets(
+                &hashset! {
+                    t.mk(),
+                    t.field(0).mk(),
+                    t.field(0).field(0).mk(),
+                    t.field(0).field(1).mk(),
+                    t.field(1).mk(),
+                },
+                place_info.conflicts(t.mk()),
+            );
+        });
+    }
+
+    /// conflicts of a deeply nested leaf includes all ancestors up to the root
+    /// but not the siblings along the path.
+    #[test]
+    fn test_conflicts_deep_leaf_no_siblings() {
+        let input = r#"
+fn main() {
+  let t = ((1_i32, 2_i32), 3_i32);
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let t = p.local("t");
+            // conflicts(t.0.0) = {t, t.0, t.0.0}  — NOT t.0.1 or t.1
+            compare_sets(
+                &hashset! {
+                    t.mk(),
+                    t.field(0).mk(),
+                    t.field(0).field(0).mk(),
+                },
+                place_info.conflicts(t.field(0).field(0).mk()),
+            );
+        });
+    }
+
+    /// conflicts stops at a shared-reference boundary: ancestors through a `&`
+    /// are NOT included, but the deref itself and its children are.
+    #[test]
+    fn test_conflicts_stops_at_ref_boundary() {
+        let input = r#"
+fn main() {
+  let inner = (1_i32, 2_i32);
+  let r = &inner;
+  let outer = (r, 3_i32);
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            // outer: (&(i32, i32), i32)
+            // outer.0 is &(i32, i32); *outer.0 should NOT appear in conflicts of outer.0
+            // because outer.0 is a reference — the deref is on the other side of a ref boundary.
+            let outer = p.local("outer");
+            // conflicts(outer.0) = {outer, outer.0}  — stops at the ref, does not go into *outer.0
+            compare_sets(
+                &hashset! {
+                    outer.mk(),
+                    outer.field(0).mk(),
+                },
+                place_info.conflicts(outer.field(0).mk()),
+            );
+        });
+    }
+
+    /// aliases: for a simple `x = &y`, `*x` should alias `y`.
+    #[test]
+    fn test_aliases_simple_borrow() {
+        let input = r#"
+fn main() {
+  let y: i32 = 0;
+  let x = &y;
+  let _ = *x;
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let x = p.local("x");
+            let y = p.local("y");
+            // *x should alias y
+            let aliases = place_info.aliases(x.deref().mk());
+            compare_sets(&hashset! { y.mk() }, aliases);
+        });
+    }
+
+    /// aliases: a mutable borrow `x = &mut y` means `*x` aliases `y`.
+    #[test]
+    fn test_aliases_mut_borrow() {
+        let input = r#"
+fn main() {
+  let mut y: i32 = 0;
+  let x = &mut y;
+  *x = 1;
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let x = p.local("x");
+            let y = p.local("y");
+            let aliases = place_info.aliases(x.deref().mk());
+            compare_sets(&hashset! { y.mk() }, aliases);
+        });
+    }
+
+    /// reachable_values of a scalar place is just that place itself.
+    #[test]
+    fn test_reachable_values_scalar() {
+        let input = r#"
+fn main() {
+  let x: i32 = 5;
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let x = p.local("x");
+            compare_sets(
+                &hashset! { x.mk() },
+                place_info.reachable_values(x.mk(), Mutability::Not),
+            );
+            compare_sets(
+                &hashset! { x.mk() },
+                place_info.reachable_values(x.mk(), Mutability::Mut),
+            );
+        });
+    }
+
+    /// reachable_values with Mutability::Mut on a place that only holds an
+    /// immutable reference returns just the place itself (the referent is excluded).
+    #[test]
+    fn test_reachable_values_immut_ref_excluded_from_mut() {
+        let input = r#"
+fn main() {
+  let a: i32 = 1;
+  let r = &a;
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let r = p.local("r");
+            // Mutability::Not includes a
+            compare_sets(
+                &hashset! { r.mk(), p.local("a").mk() },
+                place_info.reachable_values(r.mk(), Mutability::Not),
+            );
+            // Mutability::Mut excludes a (behind immutable &)
+            compare_sets(
+                &hashset! { r.mk() },
+                place_info.reachable_values(r.mk(), Mutability::Mut),
+            );
+        });
+    }
+
+    /// reachable_values follows a chain of mutable references transitively.
+    #[test]
+    fn test_reachable_values_transitive_mut_refs() {
+        let input = r#"
+fn main() {
+  let mut a: i32 = 0;
+  let mut b = &mut a;
+  let c = &mut b;
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let c = p.local("c");
+            // c: &mut &mut i32 → through mutable chain we reach b then a
+            compare_sets(
+                &hashset! {
+                    c.mk(),
+                    p.local("b").mk(),
+                    p.local("a").mk(),
+                },
+                place_info.reachable_values(c.mk(), Mutability::Mut),
+            );
+        });
+    }
+
+    /// reachable_values: a mixed chain where an immutable ref sits in the middle
+    /// means Mut stops before crossing the immutable boundary, but Not goes all the way.
+    ///
+    /// The chain is: c (&mut bc) -> bc (&i32 copy of b's borrow of a) -> a.
+    /// Because `bc = b` is a Copy assignment (both are &i32), the loan graph
+    /// records that bc's region points directly to `a`, not to `b`. So `b`
+    /// does not appear in the reachable set — only `bc` and `a` do (plus `c`
+    /// itself).
+    #[test]
+    fn test_reachable_values_mixed_mut_immut_chain() {
+        let input = r#"
+fn main() {
+  let a: i32 = 1;
+  let b = &a;      // b: &i32  (immutable)
+  let mut bc = b;  // bc: &i32, copy of b — same loan region points to a
+  let c = &mut bc; // c: &mut &i32
+}
+        "#;
+        placeinfo_harness(input, |tcx, body, place_info| {
+            let p = Placer::new(tcx, body);
+            let c = p.local("c");
+            // c: &mut &i32
+            // Not: c, bc, a (bc's region loans a directly; b is not in the chain)
+            compare_sets(
+                &hashset! {
+                    c.mk(),
+                    p.local("bc").mk(),
+                    p.local("a").mk(),
+                },
+                place_info.reachable_values(c.mk(), Mutability::Not),
+            );
+            // Mut: c, bc (bc is directly reachable via &mut), but a is behind &i32
+            compare_sets(
+                &hashset! {
+                    c.mk(),
+                    p.local("bc").mk(),
+                },
+                place_info.reachable_values(c.mk(), Mutability::Mut),
+            );
         });
     }
 }

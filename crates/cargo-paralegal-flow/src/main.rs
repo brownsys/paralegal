@@ -1,6 +1,7 @@
 #![feature(exit_status_error)]
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hasher};
+use std::io::BufRead;
 use std::process::{Command, Stdio};
 
 use anyhow::Context;
@@ -9,7 +10,7 @@ use cargo_metadata::{CompilerMessage, Message};
 use clap::Parser;
 use tracing::{debug, error, trace};
 
-use cargo_paralegal_flow::{ClapArgs, EXEC_HASH_ARG, PARALEGAL_ARGS};
+use cargo_paralegal_flow::{config_hash_for_file, ClapArgs, EXEC_HASH_ARG, PARALEGAL_ARGS};
 use paralegal_non_rustc_utils::{
     setup_logging, FileSystemStorable, ParalegalArtifact, ARTIFACT_NAME, FLOW_GRAPH_EXT,
 };
@@ -36,6 +37,9 @@ fn get_rustflags() -> Result<Vec<String>, std::env::VarError> {
 }
 
 fn main() -> anyhow::Result<()> {
+    let cargo = std::path::Path::new(env!("SYSROOT_PATH"))
+        .join("bin")
+        .join("cargo");
     let mut args = std::env::args().collect::<Vec<_>>();
     setup_logging()?;
     debug!(?args, "In cargo");
@@ -49,6 +53,9 @@ fn main() -> anyhow::Result<()> {
 
     let mut hasher = DefaultHasher::new();
     args.hash_config(&mut hasher);
+    config_hash_for_file(std::env::current_exe().ok(), &mut hasher);
+    config_hash_for_file(Some(&rustc_wrapper_bin), &mut hasher);
+
     let exec_hash = hasher.finish();
 
     let mut rustflags = get_rustflags()?;
@@ -57,16 +64,18 @@ fn main() -> anyhow::Result<()> {
     rustflags.push(format!("{exec_hash:1x}"));
 
     let metadata = cargo_metadata::MetadataCommand::new()
+        .cargo_path(&cargo)
         // At the moment this is fine, because we only use this for info about
         // workspace members and the target directory
         .no_deps()
         .other_options(["--offline".into()])
         .exec()?;
 
-    let mut cmd = Command::new("cargo");
+    let mut cmd = Command::new(&cargo);
     cmd.args(["check", "--message-format=json"]) // or "build"
         .arg("--target-dir")
         .arg(metadata.target_directory.join("paralegal"))
+        .args(args.cargo_args.iter())
         .stdout(Stdio::piped())
         .env("RUSTC_WRAPPER", rustc_wrapper_bin)
         .env(PARALEGAL_ARGS, serde_json::to_string(&args)?)
@@ -100,9 +109,27 @@ fn main() -> anyhow::Result<()> {
 
     let mut targets = vec![];
 
-    for message in Message::parse_stream(reader) {
-        match message? {
-            Message::CompilerArtifact(artifact) => {
+    // Read raw lines from cargo's stdout, echo them so callers expecting
+    // `--message-format=json` can parse them, and also parse them into
+    // `cargo_metadata::Message` for internal handling.
+    for line_res in reader.lines() {
+        let line = match line_res {
+            Ok(l) => l,
+            Err(e) => {
+                error!(?e, "failed to read cargo stdout line");
+                continue;
+            }
+        };
+
+        // Forward the raw JSON/text line to stdout so tools that expect the
+        // original cargo JSON stream can consume it (e.g. `collect_extern_args`).
+        if args.forward_json {
+            println!("{}", line);
+        }
+
+        // Try to parse it as a cargo Message; if it parses, handle it.
+        match serde_json::from_str::<Message>(&line) {
+            Ok(Message::CompilerArtifact(artifact)) => {
                 let mut applicable = false;
                 if let Some(target) = &args.target {
                     if packages
@@ -142,8 +169,8 @@ fn main() -> anyhow::Result<()> {
                 }
                 debug!(?artifact, applicable, "Found artifact");
             }
-            Message::TextLine(l) => println!("{l}"),
-            Message::CompilerMessage(CompilerMessage { message, .. })
+            Ok(Message::TextLine(l)) => println!("{l}"),
+            Ok(Message::CompilerMessage(CompilerMessage { message, .. }))
                 if matches!(
                     message.level,
                     DiagnosticLevel::Error | DiagnosticLevel::Ice | DiagnosticLevel::FailureNote
@@ -151,6 +178,9 @@ fn main() -> anyhow::Result<()> {
             {
                 println!("{}", message)
             }
+            // Non-JSON lines (e.g. build script stdout) that fail to parse
+            // should be forwarded so callers don't silently lose output.
+            Err(_) if !args.forward_json => println!("{line}"),
             _ => (),
         }
     }

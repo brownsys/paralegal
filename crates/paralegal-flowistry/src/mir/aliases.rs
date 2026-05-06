@@ -1,8 +1,7 @@
 //! Alias analysis to determine the points-to set of a reference.
 
-use std::hash::Hash;
+use std::time::Instant;
 
-use log::{debug, info};
 use paralegal_rustc_utils::{mir::place::UNKNOWN_REGION, PlaceExt};
 use rustc_data_structures::{
     fx::{FxHashMap as HashMap, FxHashSet as HashSet},
@@ -77,6 +76,7 @@ impl<'tcx> Aliases<'tcx> {
         def_id: DefId,
         input: impl FlowistryInput<'tcx, 'a>,
     ) -> LoanMap<'tcx> {
+        let _start = Instant::now();
         let body = input.body();
         let static_region = RegionVid::from_usize(0);
 
@@ -174,16 +174,6 @@ impl<'tcx> Aliases<'tcx> {
             }
         }
 
-        info!(
-            "Initial places in loan set: {}, total regions {}, definite regions: {}",
-            contains.values().map(|set| set.len()).sum::<usize>(),
-            contains.len(),
-            definite.len()
-        );
-
-        debug!("Initial contains: {contains:#?}");
-        debug!("Definite: {definite:#?}");
-
         // Compute a topological sort of the subset relation.
         let edge_pairs = subset
             .rows()
@@ -277,13 +267,6 @@ impl<'tcx> Aliases<'tcx> {
             }
         }
 
-        info!(
-            "Final places in loan set: {}",
-            contains.values().map(|set| set.len()).sum::<usize>()
-        );
-
-        log::trace!("contains: {contains:#?}");
-
         contains
     }
 
@@ -373,7 +356,7 @@ mod test {
     ) {
         test_utils::compile_body(input, |tcx, body_id, body_with_facts| {
             let body = &body_with_facts.body;
-            let def_id = tcx.hir().body_owner_def_id(body_id);
+            let def_id = tcx.hir_body_owner_def_id(body_id);
             let aliases = Aliases::build(tcx, def_id.to_def_id(), body_with_facts);
 
             f(tcx, body, aliases)

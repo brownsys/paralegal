@@ -1,20 +1,22 @@
 use super::{path_for_item, src_loc_for_span};
 use crate::{
+    HashMap, HashSet, MarkerCtx, Pctx,
     ann::{db::AutoMarkers, side_effect_detection},
     desc::*,
     utils::*,
-    HashMap, HashSet, MarkerCtx, Pctx,
 };
 use flowistry_pdg::rustc_portable::Location;
 use flowistry_pdg_construction::{
-    determine_async,
-    utils::{handle_shims, try_monomorphize, try_resolve_function, type_as_fn, ShimResult},
     DepEdge, DepEdgeKind, DepNode, DepNodeKind, MemoPdgConstructor, OneHopLocation, PartialGraph,
-    Use, VisitDriver, Visitor,
+    Use, VisitDriver, Visitor, determine_async,
+    utils::{
+        ShimResult, handle_shims, manufacture_substs_for, try_monomorphize, try_resolve_function,
+        type_as_fn,
+    },
 };
 use paralegal_spdg::Node;
 
-use rustc_hash::FxHashSet;
+use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir,
@@ -70,15 +72,26 @@ pub fn assemble_pdg<'tcx>(
             panic!("INVARIANT VIOLATED: body for local function {base_body_def_id:?} cannot be loaded.",)
         })
         .body();
+    let typing_env = tcx.typing_env_normalized_for_post_analysis(base_body_def_id);
+    let base_body_args = manufacture_substs_for(tcx, base_body_def_id).unwrap();
+    let base_body_instance =
+        try_resolve_function(tcx, base_body_def_id, typing_env, base_body_args).unwrap();
 
-    let async_state = determine_async(tcx, base_body_def_id, base_body);
+    let base_body = try_monomorphize(
+        base_body_instance,
+        tcx,
+        typing_env,
+        base_body.clone(),
+        tcx.def_span(base_body_def_id),
+    )
+    .unwrap();
+
+    let async_state = determine_async(tcx, base_body_def_id, &base_body);
 
     // These will refer to the function we are actually analyzing from, which may
     // be a generator if the target is async.
-    let possibly_generator_id =
-        async_state.map_or(base_body_def_id, |(generator, ..)| generator.def_id());
-    let (possible_generator_instance, k) =
-        pdg_constructor.create_root_key(possibly_generator_id.expect_local());
+    let possibly_generator = async_state.map_or(base_body_instance, |(generator, ..)| generator);
+    let (possible_generator_instance, k) = pdg_constructor.create_root_key(possibly_generator);
 
     let mut driver = VisitDriver::new(pdg_constructor, possible_generator_instance, k);
     let mut assembler = GraphAssembler::new(pctx.clone(), known_def_ids, base_body_def_id);
@@ -99,14 +112,9 @@ pub fn assemble_pdg<'tcx>(
                 driver.start(&mut assembler);
             },
         );
-        // Using create_root_key might seem weird here but it currently does what
-        // we need (resolve the instance)
-        let base_instance = pdg_constructor
-            .create_root_key(base_body_def_id.expect_local())
-            .0;
         // Because we actually started the analysis from the generator, we now
         // have to manually sync up the actual arguments to the async function.
-        assembler.fix_async_args(base_instance, loc, &mut driver);
+        assembler.fix_async_args(base_body_instance, loc, &mut driver);
     } else {
         driver.start(&mut assembler);
     }
@@ -288,7 +296,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             resolution,
             tcx,
             TypingEnv::fully_monomorphized(),
-            &raw_ty,
+            raw_ty,
             span,
         )
         .unwrap();
@@ -302,7 +310,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     fn handle_node_types_helper(
         &mut self,
         node: GNode,
-        mut base_ty: mir::tcx::PlaceTy<'tcx>,
+        mut base_ty: mir::PlaceTy<'tcx>,
         projections: &[mir::PlaceElem<'tcx>],
     ) {
         trace!("Has place type {base_ty:?}");
@@ -318,7 +326,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             self.types.entry(node).or_default().extend(
                 node_types
                     .iter()
-                    .filter(|t| !tcx.is_coroutine(**t) && !tcx.def_kind(*t).is_fn_like()),
+                    .filter(|t| !tcx.is_coroutine(**t) && !tcx.def_kind(**t).is_fn_like()),
             )
         }
         trace!("Found marked node types {node_types:?}",);
@@ -327,7 +335,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     /// Return the (sub)types of this type that are marked.
     fn type_is_marked(
         &'a self,
-        typ: mir::tcx::PlaceTy<'tcx>,
+        typ: mir::PlaceTy<'tcx>,
         deep: bool,
     ) -> impl Iterator<Item = TypeId> + use<'a, 'tcx> {
         if deep {
@@ -410,8 +418,14 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             term.kind
         );
         let param_env = TypingEnv::post_analysis(self.tcx(), function.def_id());
-        let func =
-            try_monomorphize(function, self.tcx(), param_env, func, term.source_info.span).unwrap();
+        let func = try_monomorphize(
+            function,
+            self.tcx(),
+            param_env,
+            func.clone(),
+            term.source_info.span,
+        )
+        .unwrap();
         let Some(funcc) = func.constant() else {
             self.pctx.maybe_span_err(
                 weight.span,
@@ -566,14 +580,14 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             None,
         );
 
-        let mono_ty = |local| {
-            let decl = &base_body.local_decls[local];
-            mir::tcx::PlaceTy::from_ty(
+        let mono_ty = |local: mir::Local| {
+            let decl: &mir::LocalDecl<'tcx> = &base_body.local_decls[local];
+            mir::PlaceTy::from_ty(
                 try_monomorphize(
                     instance,
                     tcx,
                     TypingEnv::fully_monomorphized(),
-                    &decl.ty,
+                    decl.ty,
                     decl.source_info.span,
                 )
                 .unwrap(),

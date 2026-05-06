@@ -1,20 +1,19 @@
 use std::fmt::{Display, Write};
 
 use either::Either;
-use flowistry_pdg_construction::source_access::{intermediate_out_dir, ParalegalEncoder};
-use rustc_ast::Attribute;
-
+use flowistry_pdg_construction::source_access::{ParalegalEncoder, intermediate_out_dir};
 use rustc_hir::{
+    Attribute,
     def_id::DefIndex,
     intravisit::{self, nested_filter::NestedFilter},
 };
 use rustc_macros::{Decodable, Encodable};
-use rustc_middle::{hir::map::Map, ty::TyCtxt};
+use rustc_middle::ty::TyCtxt;
 use rustc_serialize::Encodable;
 use serde::{Deserialize, Serialize};
 
 use paralegal_spdg::{
-    rustc_proxies, tiny_bitset_pretty, utils::write_sep, Identifier, TinyBitSet, TypeId,
+    Identifier, TinyBitSet, TypeId, rustc_proxies, tiny_bitset_pretty, utils::write_sep,
 };
 
 pub mod db;
@@ -24,7 +23,7 @@ pub mod side_effect_detection;
 use parse::*;
 use tracing::{debug, warn};
 
-use crate::{discover::AttrMatchT, sym_vec, utils::MetaItemMatch};
+use crate::{discover::AttrMatchT, sym_vec};
 
 /// Types of annotations we support.
 ///
@@ -243,7 +242,7 @@ struct DumpingVisitor<'tcx> {
 }
 
 impl<'hir> NestedFilter<'hir> for VisitFilter {
-    type Map = Map<'hir>;
+    type MaybeTyCtxt = TyCtxt<'hir>;
 
     const INTER: bool = true;
     const INTRA: bool = true;
@@ -254,8 +253,8 @@ struct VisitFilter;
 impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
     type NestedFilter = VisitFilter;
 
-    fn nested_visit_map(&mut self) -> Self::Map {
-        self.tcx.hir()
+    fn maybe_tcx(&mut self) -> Self::MaybeTyCtxt {
+        self.tcx
     }
 
     fn visit_id(&mut self, hir_id: rustc_hir::HirId) {
@@ -264,8 +263,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
         };
         let v: Vec<_> = self
             .tcx
-            .hir()
-            .attrs(hir_id)
+            .hir_attrs(hir_id)
             .iter()
             .filter_map(|ann| match self.try_parse_annotation(hir_id, ann) {
                 Ok(ann) => Some(ann),
@@ -273,7 +271,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
                     self.tcx
                         .dcx()
                         .struct_span_err(
-                            ann.span,
+                            ann.span(),
                             format!("Failed to parse annotation because of {e}"),
                         )
                         .with_span_note(self.tcx.def_span(owner.def_id), "annotated function")
@@ -290,6 +288,26 @@ impl<'tcx> intravisit::Visitor<'tcx> for DumpingVisitor<'tcx> {
 }
 
 impl DumpingVisitor<'_> {
+    fn match_get_ref<'a>(
+        &self,
+        a: &'a Attribute,
+        path: &[rustc_span::Symbol],
+    ) -> Option<&'a rustc_hir::AttrArgs> {
+        match a {
+            Attribute::Unparsed(normal)
+                if normal
+                    .path
+                    .segments
+                    .iter()
+                    .copied()
+                    .eq(path.iter().copied()) =>
+            {
+                Some(&normal.args)
+            }
+            _ => None,
+        }
+    }
+
     fn try_parse_annotation(
         &self,
         hir_id: rustc_hir::HirId,
@@ -298,26 +316,28 @@ impl DumpingVisitor<'_> {
         let consts = &self.markers;
         let tcx = self.tcx;
         let one = |a| Either::Left(Some(a));
-        let ann = if let Some(i) = a.match_get_ref(&consts.marker_marker) {
+        let ann = if let Some(i) = self.match_get_ref(a, &consts.marker_marker) {
             one(Annotation::Marker(ann_match_fn(
                 self.tcx,
                 &self.symbols,
                 hir_id,
                 i,
-                a.span,
+                a.span(),
             )?))
-        } else if let Some(i) = a.match_get_ref(&consts.label_marker) {
-            warn!("The `paralegal_flow::label` annotation is deprecated, use `paralegal_flow::marker` instead");
+        } else if let Some(i) = self.match_get_ref(a, &consts.label_marker) {
+            warn!(
+                "The `paralegal_flow::label` annotation is deprecated, use `paralegal_flow::marker` instead"
+            );
             one(Annotation::Marker(ann_match_fn(
                 self.tcx,
                 &self.symbols,
                 hir_id,
                 i,
-                a.span,
+                a.span(),
             )?))
-        } else if let Some(i) = a.match_get_ref(&consts.otype_marker) {
+        } else if let Some(i) = self.match_get_ref(a, &consts.otype_marker) {
             Either::Right(otype_ann_match(i, tcx)?.into_iter().map(Annotation::OType))
-        } else if let Some(i) = a.match_get_ref(&consts.exception_marker) {
+        } else if let Some(i) = self.match_get_ref(a, &consts.exception_marker) {
             one(Annotation::Exception(match_exception(&self.symbols, i)?))
         } else {
             Either::Left(None)
@@ -337,7 +357,7 @@ pub fn dump_markers(tcx: TyCtxt) {
         markers: Markers::default(),
         symbols: Default::default(),
     };
-    tcx.hir().visit_all_item_likes_in_crate(&mut vis);
+    tcx.hir_visit_all_item_likes_in_crate(&mut vis);
     let path = intermediate_out_dir(tcx, MARKER_META_EXT);
     let mut encoder = ParalegalEncoder::new(&path, tcx);
     vis.annotations.encode(&mut encoder);

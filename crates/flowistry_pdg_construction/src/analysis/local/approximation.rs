@@ -1,4 +1,4 @@
-use log::trace;
+use tracing::trace;
 
 use rustc_abi::VariantIdx;
 

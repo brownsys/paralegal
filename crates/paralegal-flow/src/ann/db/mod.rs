@@ -11,19 +11,18 @@
 //! All interactions happen through the central database object: [`MarkerCtx`].
 
 use crate::{
-    ann::{side_effect_detection, Annotation, ExceptionAnnotation, MarkerAnnotation},
+    Either, HashMap,
+    ann::{Annotation, ExceptionAnnotation, MarkerAnnotation, side_effect_detection},
     args::{Args, Stub},
     utils::{
-        self, is_function_like,
+        self, IntoDefId, is_function_like,
         resolve::{
             expect_resolve_string_to_def_id, report_resolution_err, resolve_string_to_def_id,
         },
-        IntoDefId,
     },
-    Either, HashMap,
 };
 use flowistry_pdg_construction::source_access::{
-    local_or_remote_paths, BodyCache, ParalegalDecoder,
+    BodyCache, ParalegalDecoder, local_or_remote_paths,
 };
 use itertools::Itertools;
 use paralegal_flowistry::mir::FlowistryInput;
@@ -54,7 +53,7 @@ use std::{
     rc::Rc,
 };
 
-use super::{MarkerMeta, MarkerRefinement, MARKER_META_EXT};
+use super::{MARKER_META_EXT, MarkerMeta, MarkerRefinement};
 
 mod reachable;
 mod type_markers;
@@ -115,15 +114,13 @@ impl<'tcx> MarkerCtx<'tcx> {
     /// For async handling. If this id corresponds to an async closure we try to
     /// resolve its parent item which the markers would actually be placed on.
     fn defid_rewrite(&self, def_id: DefId) -> DefId {
-        if self.tcx().is_coroutine(def_id) {
-            if let Some(parent) = self.tcx().opt_parent(def_id) {
-                if matches!(self.tcx().def_kind(parent), DefKind::AssocFn | DefKind::Fn)
-                    && self.tcx().asyncness(parent).is_async()
-                {
-                    return parent;
-                }
-            };
-        }
+        if self.tcx().is_coroutine(def_id)
+            && let Some(parent) = self.tcx().opt_parent(def_id)
+            && matches!(self.tcx().def_kind(parent), DefKind::AssocFn | DefKind::Fn)
+            && self.tcx().asyncness(parent).is_async()
+        {
+            return parent;
+        };
         def_id
     }
 
@@ -162,7 +159,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         let start = self.defid_rewrite(start);
         let tcx = self.tcx();
         let parent_maybe = matches!(tcx.def_kind(start), DefKind::AssocFn | DefKind::AssocTy)
-            .then(|| tcx.associated_item(start).trait_item_def_id)
+            .then(|| tcx.associated_item(start).trait_item_def_id())
             .flatten();
         [start].into_iter().chain(parent_maybe)
     }
@@ -317,7 +314,7 @@ impl<'tcx> MarkerCtx<'tcx> {
             .into_iter()
             .chain(
                 matches!(self.tcx().def_kind(def_id), DefKind::AssocFn)
-                    .then(|| self.tcx().associated_item(def_id).trait_item_def_id)
+                    .then(|| self.tcx().associated_item(def_id).trait_item_def_id())
                     .flatten(),
             )
             .find_map(|def_id| self.0.stubs.get(&def_id))
@@ -406,7 +403,7 @@ pub struct MarkerDatabase<'tcx> {
     config: &'static Args,
     type_markers: Cache<ty::Ty<'tcx>, Box<TypeMarkers>>,
     body_cache: Rc<BodyCache<'tcx>>,
-    included_crates: Rc<dyn Fn(CrateNum) -> bool>,
+    included_crates: Rc<dyn Fn(CrateNum) -> bool + 'tcx>,
     stubs: FxHashMap<DefId, &'static Stub>,
     marker_statistics: RefCell<HashMap<MaybeMonomorphized<'tcx>, FunctionMarkerStat<'tcx>>>,
     auto_markers: AutoMarkers,
@@ -670,7 +667,7 @@ fn load_annotations(
     tcx: TyCtxt,
     included_crates: impl IntoIterator<Item = CrateNum>,
 ) -> FxHashMap<DefId, Vec<Annotation>> {
-    let sysroot = &tcx.sess.sysroot;
+    let sysroot = tcx.sess.opts.sysroot.path();
     included_crates
         .into_iter()
         .flat_map(|krate| {
@@ -764,7 +761,9 @@ fn check_format(from_toml: &toml::Value) -> anyhow::Result<()> {
                     && k != "_internal_on_all_module_children"
                     && k != "_internal_can_fail_resolve_silently"
                 {
-                    bail!("External annotation entry for `{key}.[{i}]` may only have `marker`, `markers`, `on_argument`, `on_return` or `refinements` fields");
+                    bail!(
+                        "External annotation entry for `{key}.[{i}]` may only have `marker`, `markers`, `on_argument`, `on_return` or `refinements` fields"
+                    );
                 }
             }
         }

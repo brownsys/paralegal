@@ -11,7 +11,7 @@ use rustc_middle::{
     },
     ty::{GenericArgsRef, Instance, TyCtxt},
 };
-use rustc_span::{source_map::Spanned, Span};
+use rustc_span::{Span, Spanned};
 
 use crate::utils::{is_async, ArgSlice, TyAsFnResult};
 
@@ -113,8 +113,8 @@ pub fn is_async_trait_fn(tcx: TyCtxt, def_id: DefId, body: &Body<'_>) -> bool {
 fn has_async_trait_signature(tcx: TyCtxt, def_id: DefId) -> bool {
     if let Some(assoc_item) = tcx.opt_associated_item(def_id) {
         let sig = tcx.fn_sig(def_id).skip_binder();
-        assoc_item.container == ty::AssocItemContainer::Impl
-            && assoc_item.trait_item_def_id.is_some()
+        matches!(assoc_item.container, ty::AssocContainer::TraitImpl(_))
+            && assoc_item.trait_item_def_id().is_some()
             && match_pin_box_dyn_ty(tcx.lang_items(), sig.output().skip_binder())
     } else {
         false
@@ -136,7 +136,7 @@ fn match_pin_box_dyn_ty(lang_items: &rustc_hir::LanguageItems, t: ty::Ty) -> boo
     let Some(box_t) = t_a.boxed_ty() else {
         return false;
     };
-    let ty::TyKind::Dynamic(pred, _, ty::DynKind::Dyn) = box_t.kind() else {
+    let ty::TyKind::Dynamic(pred, _) = box_t.kind() else {
         return false;
     };
     pred.iter().any(|p| {

@@ -12,7 +12,10 @@ pub mod utils;
 /// going to be
 /// [BodyWithBorrowckFacts]
 pub trait FlowistryInput<'tcx, 'a>: Copy {
+    /// Returns the MIR body for the function being analyzed.
     fn body(self) -> &'tcx Body<'tcx>;
+    /// Returns an iterator over the base subset relation from borrowck facts,
+    /// as `(sub-region, super-region)` pairs.
     fn input_facts_subset_base(self) -> Box<dyn Iterator<Item = (RegionVid, RegionVid)> + 'a>;
 }
 

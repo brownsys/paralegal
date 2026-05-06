@@ -619,12 +619,12 @@ dependencies = [
  "fluid-let",
  "internment",
  "itertools 0.13.0",
- "log",
  "paralegal-flowistry",
  "paralegal-rustc-utils",
  "petgraph",
  "serde",
  "strum 0.25.0",
+ "tracing",
 ]
 
 [[package]]
@@ -1234,6 +1234,7 @@ dependencies = [
  "serde",
  "test-log",
  "textwrap",
+ "tracing",
  "ts-rs",
 ]
 

@@ -290,6 +290,54 @@ fn no_overtaint_from_sibling_markers() {
     });
 }
 
+/// `get_parent` is supposed to return the trait method DefId when given an impl
+/// method DefId. This directly tests the function: given an impl method, it
+/// must return `Some(trait_method_defid)` — not `None` (the stub value).
+#[test]
+fn get_parent_returns_trait_method_for_impl_method() {
+    extern crate rustc_middle;
+
+    InlineTestBuilder::new(stringify!(
+        trait MyTrait {
+            fn get_parent_test_method(self) -> u32;
+        }
+
+        impl MyTrait for u32 {
+            fn get_parent_test_method(self) -> u32 {
+                self + 1
+            }
+        }
+
+        #[paralegal_flow::analyze]
+        fn main() {
+            let x: u32 = 5;
+            let _ = x.get_parent_test_method();
+        }
+    ))
+    .run_with_tcx(|tcx, graph| {
+        let name = Identifier::new_intern("get_parent_test_method");
+        let methods = graph
+            .name_map
+            .get(&name)
+            .expect("no function named get_parent_test_method in def_info");
+
+        // Identify the impl method: its associated_item has a trait_item_def_id (the
+        // trait method it overrides), while the trait method itself returns None there.
+        let impl_method = methods
+            .iter()
+            .find(|&&did| tcx.associated_item(did).trait_item_def_id().is_some())
+            .copied()
+            .expect("could not find an impl method for get_parent_test_method");
+
+        let parent = paralegal_flow::utils::get_parent(tcx, impl_method);
+        assert!(
+            parent.is_some(),
+            "get_parent({impl_method:?}) returned None; the function appears to be stubbed"
+        );
+    })
+    .unwrap();
+}
+
 #[test]
 fn async_fn_marker() {
     inline_test! {

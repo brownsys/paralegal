@@ -1,14 +1,4 @@
-#![feature(
-    rustc_private,
-    negative_impls,
-    min_specialization,
-    type_alias_impl_trait,
-    box_patterns,
-    let_chains,
-    exact_size_is_empty,
-    impl_trait_in_assoc_type,
-    doc_auto_cfg
-)]
+#![feature(rustc_private, min_specialization)]
 #![warn(clippy::pedantic)]
 #![allow(
     clippy::len_zero,
@@ -20,7 +10,7 @@
     clippy::doc_markdown,
     clippy::single_match_else,
     clippy::if_not_else,
-    clippy::match_on_vec_items,
+    clippy::indexing_slicing,
     clippy::map_unwrap_or,
     clippy::match_wildcard_for_single_variants,
     clippy::items_after_statements,
@@ -29,6 +19,7 @@
 )]
 
 extern crate either;
+extern crate rustc_abi;
 extern crate rustc_borrowck;
 extern crate rustc_data_structures;
 extern crate rustc_driver;

@@ -3,21 +3,17 @@
 use std::{borrow::Cow, collections::VecDeque};
 
 use log::{trace, warn};
+use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_data_structures::fx::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rustc_hir::def_id::DefId;
-use rustc_infer::infer::TyCtxtInferExt;
 use rustc_middle::{
     mir::{
         visit::{PlaceContext, Visitor},
         Body, HasLocalDecls, Local, Location, Mutability, Place, PlaceElem, PlaceRef,
         ProjectionElem, VarDebugInfo, VarDebugInfoContents, RETURN_PLACE,
     },
-    traits::ObligationCause,
     ty::{self, AdtKind, Region, RegionKind, RegionVid, Ty, TyCtxt, TyKind, TypeVisitor},
 };
-use rustc_target::abi::{FieldIdx, VariantIdx};
-use rustc_trait_selection::traits::NormalizeExt;
-use rustc_type_ir::TypingMode;
 
 use crate::AdtDefExt;
 
@@ -293,7 +289,7 @@ impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
                 }
                 ProjectionElem::Downcast(sym, _) => {
                     let variant = sym.map(|s| s.to_string()).unwrap_or_else(|| "??".into());
-                    (ElemPosition::Suffix, format!("@{variant}",).into())
+                    (ElemPosition::Suffix, format!("@{variant}").into())
                 }
 
                 ProjectionElem::Index(_) => (ElemPosition::Suffix, "[_]".into()),
@@ -331,15 +327,8 @@ impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
     }
 
     fn normalize(&self, tcx: TyCtxt<'tcx>, def_id: DefId) -> Place<'tcx> {
-        let param_env = tcx.param_env(def_id);
-        let place = tcx.erase_regions(*self);
-        //let typing_mode = TypingMode::post_borrowck_analysis(tcx, def_id.expect_local());
-        let typing_mode = TypingMode::PostAnalysis;
-        let infcx = tcx.infer_ctxt().build(typing_mode);
-        let place = infcx
-            .at(&ObligationCause::dummy(), param_env)
-            .normalize(place)
-            .value;
+        let typing_env = ty::TypingEnv::post_analysis(tcx, def_id);
+        let place = tcx.normalize_erasing_regions(typing_env, ty::Unnormalized::new_wip(*self));
 
         let projection = place
             .projection
@@ -458,7 +447,7 @@ impl<'tcx, Dispatcher: RegionVisitorDispatcher<'tcx>> TypeVisitor<TyCtxt<'tcx>>
 {
     fn visit_ty(&mut self, ty: Ty<'tcx>) {
         let tcx = self.tcx;
-        if self.ty_stack.iter().any(|visited_ty| ty == *visited_ty) {
+        if self.ty_stack.contains(&ty) {
             return;
         }
 
@@ -559,7 +548,7 @@ impl<'tcx, Dispatcher: RegionVisitorDispatcher<'tcx>> TypeVisitor<TyCtxt<'tcx>>
             _ if ty.is_primitive_ty() => {}
 
             _ => warn!("unimplemented {ty:?} ({:?})", ty.kind()),
-        };
+        }
 
         // let inherent_impls = tcx.inherent_impls(self.def_id);
         // let traits = tcx.infer_ctxt().enter(|infcx| {
@@ -688,7 +677,6 @@ fn foobar(x: &i32) {
             let ref_k = Place::from_local(name_map["ref_k"], tcx);
             assert!(!ref_k.is_arg(body));
             assert!(k.is_direct(body, tcx));
-            // Not sure why these would have ever worked.
             let deref_ref_k = Place::make(ref_k.local, &[PlaceElem::Deref, PlaceElem::Deref], tcx);
             //assert!(deref_ref_k.is_direct(body, tcx));
             assert_eq!(deref_ref_k.refs_in_projection(body, tcx).count(), 1);
@@ -765,7 +753,7 @@ fn main() {
             body_with_facts: &BodyWithBorrowckFacts<'tcx>,
         ) {
             let body = &body_with_facts.body;
-            let def_id = tcx.hir().body_owner_def_id(body_id).to_def_id();
+            let def_id = tcx.hir_body_owner_def_id(body_id).to_def_id();
             let p = Placer::new(tcx, body);
 
             let y = p.local("y").mk();

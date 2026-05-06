@@ -15,12 +15,11 @@
 
 use anyhow::Error;
 use clap::ValueEnum;
-use rustc_data_structures::fx::FxHashSet;
-use rustc_hash::FxHashMap;
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Symbol;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -76,9 +75,12 @@ impl TryFrom<ClapArgs> for Args {
             attach_to_debugger,
             strict,
             build_config: _,
+            forward_json: _,
         } = value;
         if relaxed {
-            eprintln!("The `--relaxed` flag is deprecated. This is now the default behavior and therefore the flag is ignored.");
+            eprintln!(
+                "The `--relaxed` flag is deprecated. This is now the default behavior and therefore the flag is ignored."
+            );
         }
         let mut dump: DumpArgs = dump.into();
         if let Some(from_env) = env_var_expect_unicode("PARALEGAL_DUMP")? {
@@ -438,12 +440,12 @@ pub enum Stub {
 pub struct BuildConfig {
     /// Dependency specific configuration
     #[serde(default)]
-    pub dep: crate::HashMap<String, DepConfig>,
+    pub dep: BTreeMap<String, DepConfig>,
     /// A select list of non-workspace crates which should be recursed into
     /// during analysis. If you want this to happen for all non-workspace crates
     /// instead specify `default-include = true`.
     #[serde(default)]
     pub include: Vec<String>,
     #[serde(default)]
-    pub stubs: HashMap<String, Stub>,
+    pub stubs: BTreeMap<String, Stub>,
 }

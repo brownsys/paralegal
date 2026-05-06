@@ -3,7 +3,7 @@
 //! While this is technically a "library", it only is so for the purposes of
 //! being able to reference the same code in the two executables `paralegal_flow` and
 //! `cargo-paralegal-flow` (a structure suggested by [rustc_plugin]).
-#![feature(rustc_private, min_specialization, let_chains)]
+#![feature(rustc_private, min_specialization)]
 
 extern crate rustc_abi;
 extern crate rustc_arena;
@@ -11,31 +11,31 @@ extern crate rustc_ast;
 extern crate rustc_borrowck;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
+extern crate rustc_driver_impl;
 extern crate rustc_error_messages;
 extern crate rustc_errors;
-extern crate rustc_hash;
 extern crate rustc_hir;
 extern crate rustc_index;
 extern crate rustc_interface;
+extern crate rustc_lint_defs;
 extern crate rustc_macros;
 extern crate rustc_middle;
 extern crate rustc_mir_dataflow;
 extern crate rustc_parse;
-extern crate rustc_query_system;
 extern crate rustc_serialize;
 extern crate rustc_session;
 extern crate rustc_span;
+extern crate rustc_stable_hash;
 extern crate rustc_target;
 extern crate rustc_type_ir;
 
 use flowistry_pdg_construction::source_access::{
-    dump_mir_and_borrowck_facts_with_cache, intermediate_out_dir,
+    dump_mir_and_borrowck_facts, intermediate_out_dir, mir_borrowck,
 };
-use paralegal_spdg::{AnalyzerStats, ProgramDescription, FLOW_GRAPH_EXT, STAT_FILE_EXT};
+use paralegal_spdg::{AnalyzerStats, FLOW_GRAPH_EXT, ProgramDescription, STAT_FILE_EXT};
 
-use paralegal_rustc_utils::cache::Cache;
-use rustc_borrowck::consumers::BodyWithBorrowckFacts;
-use rustc_middle::{mir::BorrowCheckResult, ty::TyCtxt};
+use rustc_interface::Config;
+use rustc_middle::ty::TyCtxt;
 use rustc_span::ErrorGuaranteed;
 use tracing::{debug, error, info};
 
@@ -192,44 +192,29 @@ impl DumpOnlyCallbacks {
 
 const INTERMEDIATE_STAT_EXT: &str = "stats.json";
 
-thread_local! {
-    static BODY_CACHE: Cache<rustc_hir::def_id::LocalDefId, BodyWithBorrowckFacts<'static>> = Cache::default();
-}
-
-fn mir_borrowck(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::LocalDefId) -> &BorrowCheckResult<'_> {
-    use rustc_borrowck::consumers::{get_body_with_borrowck_facts, ConsumerOptions};
-    let body_with_facts =
-        get_body_with_borrowck_facts(tcx, def_id, ConsumerOptions::PoloniusInputFacts);
-
-    // SAFETY: The reader casts the 'static lifetime to 'tcx before using it.
-    let body_with_facts: BodyWithBorrowckFacts<'static> =
-        unsafe { std::mem::transmute(body_with_facts) };
-    BODY_CACHE.with(|cache| {
-        cache.get(&def_id, |_| body_with_facts);
-    });
-
-    let mut providers = rustc_middle::util::Providers::default();
-    rustc_borrowck::provide(&mut providers);
-    let original_mir_borrowck = providers.mir_borrowck;
-    original_mir_borrowck(tcx, def_id)
-}
-
 fn dump_mir_and_update_stats(tcx: TyCtxt, timer: &mut DumpStats) {
-    let (tycheck_time, dump_time) = dump_mir_and_borrowck_facts_with_cache(tcx, |i| {
-        BODY_CACHE.with(|cache| unsafe {
-            // SAFETY: The cache is guaranteed to outlive the returned reference.
-            std::mem::transmute::<Option<&'static _>, Option<&'_ _>>(cache.get_if_present(&i))
-        })
-    });
+    let (tycheck_time, dump_time) = dump_mir_and_borrowck_facts(tcx);
     let dump_marker_start = Instant::now();
     dump_markers(tcx);
     timer.dump_time = dump_marker_start.elapsed() + dump_time;
     timer.tycheck_time = tycheck_time;
 }
 
+fn configure(config: &mut Config) {
+    config.override_queries = Some(|_, providers| providers.queries.mir_borrowck = mir_borrowck);
+    assert_eq!(config.opts.unstable_opts.threads, 1);
+    //config.opts.unstable_opts.polonius = Polonius::Next;
+    // We don't care about emitting any lints. Users can get those when they
+    // compile normally.  This could be added back if needed, but on toolchain
+    // 2026-04-20 we need to at least disable `tail_expr_drop_order` or we get
+    // issues with borrowcheck fact generation.
+    config.opts.lint_cap = Some(rustc_lint_defs::Allow);
+    // TODO add crate attr and cfg paralegal
+}
+
 impl rustc_driver::Callbacks for DumpOnlyCallbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
-        config.override_queries = Some(|_session, local| local.mir_borrowck = mir_borrowck);
+        configure(config)
     }
 
     fn after_expansion(
@@ -261,7 +246,7 @@ impl FinalizingCallbacks for DumpOnlyCallbacks {
 
 impl rustc_driver::Callbacks for Callbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
-        config.override_queries = Some(|_session, local| local.mir_borrowck = mir_borrowck);
+        configure(config)
     }
 
     fn after_expansion<'tcx>(
@@ -365,10 +350,11 @@ impl Callbacks {
 
     fn run_the_analyzer(&mut self, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
         let abort = (|| {
-            assert!(self
-                .output_location
-                .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
-                .is_none());
+            assert!(
+                self.output_location
+                    .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
+                    .is_none()
+            );
             let (desc, mut stats) = self.run_in_context_without_writing_stats(tcx)?;
             self.stats.measure(TimedStat::Serialization, || {
                 desc.canonical_write(self.opts.result_path()).unwrap()
@@ -422,6 +408,7 @@ impl CrateInfo {
 
 /// Also adds and additional features required by the Paralegal build config
 fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>) -> CrateInfo {
+    // TODO do this configuration in `config`
     let crate_name = compiler_args
         .iter()
         .enumerate()
@@ -509,14 +496,14 @@ pub fn run(mut compiler_args: Vec<String>, plugin_args: Args) -> Result<(), Erro
 
     let upcasted_callback = callbacks.upcast_mut();
 
-    rustc_driver::RunCompiler::new(&compiler_args, upcasted_callback).run();
+    rustc_driver_impl::run_compiler(&compiler_args, upcasted_callback);
 
     callbacks.finalize();
     Ok(())
 }
 
 fn attach_debugger(debugger: Debugger) {
-    use std::process::{id, Command};
+    use std::process::{Command, id};
     use std::thread::sleep;
 
     match debugger {

@@ -3,14 +3,14 @@ use std::{borrow::Cow, collections::HashSet, fmt::Display, hash::Hash, iter};
 use either::Either;
 use flowistry_pdg::RichLocation;
 use itertools::Itertools;
-use log::{debug, log_enabled, trace, Level};
 use paralegal_flowistry::mir::{placeinfo::PlaceInfo, FlowistryInput};
+use tracing::{debug, trace};
 
 use paralegal_rustc_utils::{
     mir::control_dependencies::ControlDependencies, AdtDefExt, BodyExt, PlaceExt,
 };
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_errors::DiagCtxtHandle;
-use rustc_hash::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
 use rustc_middle::{
@@ -19,13 +19,10 @@ use rustc_middle::{
         Operand, Place, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind,
         RETURN_PLACE,
     },
-    ty::{
-        AdtKind, EarlyBinder, GenericArgKind, GenericArgsRef, Instance, Ty, TyCtxt, TyKind,
-        TypingEnv,
-    },
+    ty::{AdtKind, EarlyBinder, GenericArgsRef, Instance, Ty, TyCtxt, TyKind, TypingEnv},
 };
 use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
-use rustc_span::{source_map::Spanned, DesugaringKind, Span};
+use rustc_span::{DesugaringKind, Span, Spanned};
 
 use crate::{
     analysis::global::Use,
@@ -226,21 +223,35 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
     }
 
     pub fn normalize_place(&self, place: &Place<'tcx>) -> Place<'tcx> {
-        let place = self.tcx().erase_regions(*place);
-        // Normalize the place to remove regions and other things that are not
-        // needed for the PDG.
-        self.tcx()
-            .try_instantiate_and_normalize_erasing_regions(
-                self.generic_args(),
-                self.param_env,
-                EarlyBinder::bind(place),
+        use rustc_middle::ty::TypeVisitableExt;
+        let tcx = self.tcx();
+        debug!(
+            "Normalizing {place:?} in {} ({:?})",
+            tcx.def_path_str_with_args(self.def_id, self.generic_args()),
+            self.generic_args()
+        );
+        // Erase all free regions first (ReEarlyParam from nested coroutines,
+        // etc.) so that only TypeParams remain as contributors to has_param().
+        // Place types can embed region params from other functions' contexts
+        // when handle_special_rvalues builds Field projections from the generic
+        // body's local declarations; those foreign region params must not be
+        // passed to try_instantiate_and_normalize_erasing_regions, which would
+        // panic when it finds a region param index with no matching region arg.
+        let place = tcx.erase_and_anonymize_regions(*place);
+        if !place.has_param() {
+            return place;
+        }
+        tcx.try_instantiate_and_normalize_erasing_regions(
+            self.generic_args(),
+            self.param_env,
+            EarlyBinder::bind(place),
+        )
+        .unwrap_or_else(|err| {
+            panic!(
+                "Failed to normalize place {place:?} in {}: {err:?}",
+                tcx.def_path_str(self.def_id)
             )
-            .unwrap_or_else(|err| {
-                panic!(
-                    "Failed to normalize place {place:?} in {}: {err:?}",
-                    self.tcx().def_path_str(self.def_id)
-                )
-            })
+        })
     }
 
     pub(crate) fn tcx(&self) -> TyCtxt<'tcx> {
@@ -287,7 +298,11 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
                             place.local == alias.local
                         } else {
                             trace!("Checking conflict status of {place:?} and {alias:?}");
-                            utils::places_conflict(self.tcx(), &self.mono_body, *place, alias)
+                            self.memo.place_conflict_context.places_conflict(
+                                &self.mono_body,
+                                *place,
+                                alias,
+                            )
                         }
                     });
 
@@ -366,10 +381,6 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
         let ty = func.ty(&self.mono_body, self.tcx());
         utils::type_as_fn(self.tcx(), ty)
     }
-
-    fn fmt_fn(&self, def_id: DefId) -> String {
-        self.tcx().def_path_str(def_id)
-    }
 }
 
 impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
@@ -390,7 +401,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
             root,
             tcx,
             param_env,
-            body_with_facts.body(),
+            body_with_facts.body().clone(),
             tcx.def_span(def_id),
         )
         .unwrap();
@@ -448,8 +459,8 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
             }
         };
         trace!(
-            "Resolved call to function: {} with generic args {generic_args:?}",
-            self.fmt_fn(called_def_id)
+            "Resolved call to function: {}",
+            tcx.def_path_str_with_args(called_def_id, generic_args)
         );
 
         // Monomorphize the called function with the known generic_args.
@@ -460,9 +471,13 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
         let Some(mut resolved_fn) =
             utils::try_resolve_function(self.tcx(), called_def_id, typing_env, generic_args)
         else {
-            let dynamics = generic_args.iter()
+            let dynamics = generic_args
+                .iter()
                 .flat_map(|g| g.walk())
-                .filter(|arg| matches!(arg.unpack(), GenericArgKind::Type(t) if matches!(t.kind(), TyKind::Dynamic(..))))
+                .filter(|arg| {
+                    arg.as_type()
+                        .is_some_and(|t| matches!(t.kind(), TyKind::Dynamic(..)))
+                })
                 .collect::<Box<[_]>>();
             let mut msg = format!(
                 "instance resolution for call to function {} failed.",
@@ -516,9 +531,12 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
             }
         };
         let resolved_def_id = resolved_fn.def_id();
-        if log_enabled!(Level::Trace) && called_def_id != resolved_def_id {
-            let (called, resolved) = (self.fmt_fn(called_def_id), self.fmt_fn(resolved_def_id));
-            trace!("  `{called}` monomorphized to `{resolved}`",);
+        if called_def_id != resolved_def_id {
+            trace!(
+                called = tcx.def_path_str(called_def_id),
+                resolved = tcx.def_path_str(resolved_def_id),
+                "  monomorphized"
+            );
         }
 
         if let Some(handler) = self.can_approximate_async_functions(resolved_def_id, span) {
@@ -729,7 +747,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
     }
 
     pub(crate) fn construct_partial(&'a self) -> PartialGraph<'tcx, K> {
-        let mut analysis = self.iterate_to_fixpoint(self.tcx(), &self.mono_body, None);
+        let analysis = self.iterate_to_fixpoint(self.tcx(), &self.mono_body, None);
 
         let mut final_state = PartialGraph::new(
             self.generic_args(),
@@ -739,7 +757,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
             self.k.clone(),
         );
 
-        analysis.visit_reachable_with(&self.mono_body, &mut final_state);
+        df::visit_reachable_results(&self.mono_body, &analysis, &mut final_state);
 
         let all_returns = self
             .mono_body
@@ -876,7 +894,7 @@ impl<'a, 'tcx, K: Hash + Eq + Clone> df::Analysis<'tcx> for &'a LocalAnalysis<'t
 
     fn initialize_start_block(&self, _body: &Body<'tcx>, _state: &mut Self::Domain) {}
     fn apply_primary_statement_effect(
-        &mut self,
+        &self,
         state: &mut Self::Domain,
         statement: &Statement<'tcx>,
         location: Location,
@@ -886,7 +904,7 @@ impl<'a, 'tcx, K: Hash + Eq + Clone> df::Analysis<'tcx> for &'a LocalAnalysis<'t
     }
 
     fn apply_primary_terminator_effect<'mir>(
-        &mut self,
+        &self,
         state: &mut Self::Domain,
         terminator: &'mir Terminator<'tcx>,
         location: Location,
@@ -896,7 +914,7 @@ impl<'a, 'tcx, K: Hash + Eq + Clone> df::Analysis<'tcx> for &'a LocalAnalysis<'t
     }
 
     fn apply_call_return_effect(
-        &mut self,
+        &self,
         _state: &mut Self::Domain,
         _block: BasicBlock,
         _return_places: rustc_middle::mir::CallReturnPlaces<'_, 'tcx>,
@@ -965,9 +983,11 @@ fn is_split<'tcx>(ty: Ty<'tcx>, context: DefId, tcx: TyCtxt<'tcx>) -> bool {
         | TyKind::Param(..)
         | TyKind::Never => false,
 
+        TyKind::Pat(inner, _) => is_split(*inner, context, tcx),
+
         _ if ty.is_primitive_ty() => false,
         _ => {
-            log::warn!("unimplemented {ty:?} ({:?})", ty.kind());
+            tracing::warn!("unimplemented {ty:?} ({:?})", ty.kind());
             false
         }
     }

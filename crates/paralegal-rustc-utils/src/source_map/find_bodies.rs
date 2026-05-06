@@ -9,28 +9,27 @@ struct BodyFinder<'tcx> {
 
 impl<'tcx> Visitor<'tcx> for BodyFinder<'tcx> {
     type NestedFilter = OnlyBodies;
+    type MaybeTyCtxt = TyCtxt<'tcx>;
 
-    fn nested_visit_map(&mut self) -> Self::Map {
-        self.tcx.hir()
+    fn maybe_tcx(&mut self) -> Self::MaybeTyCtxt {
+        self.tcx
     }
 
     fn visit_nested_body(&mut self, id: BodyId) {
-        let hir = self.nested_visit_map();
-
         // const/static items are considered to have bodies, so we want to exclude
         // them from our search for functions
-        if !hir
-            .body_owner_kind(hir.body_owner_def_id(id))
+        if !self
+            .tcx
+            .hir_body_owner_kind(self.tcx.hir_body_owner_def_id(id))
             .is_fn_or_closure()
         {
             return;
         }
 
-        let body = hir.body(id);
+        let body = self.tcx.hir_body(id);
         self.visit_body(body);
 
-        let hir = self.tcx.hir();
-        let span = hir.span_with_body(hir.body_owner(id));
+        let span = self.tcx.hir_span_with_body(self.tcx.hir_body_owner(id));
         if !span.from_expansion() {
             self.bodies.push((span, id));
         }
@@ -43,7 +42,7 @@ pub fn find_bodies(tcx: TyCtxt) -> Vec<(Span, BodyId)> {
         tcx,
         bodies: Vec::new(),
     };
-    tcx.hir().visit_all_item_likes_in_crate(&mut finder);
+    tcx.hir_visit_all_item_likes_in_crate(&mut finder);
     finder.bodies
 }
 

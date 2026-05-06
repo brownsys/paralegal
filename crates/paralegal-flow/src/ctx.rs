@@ -5,7 +5,7 @@ use rustc_errors::DiagMessage;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
 
-use crate::{ann::db::MarkerDatabase, MarkerCtx};
+use crate::{MarkerCtx, ann::db::MarkerDatabase};
 
 #[derive(Clone)]
 pub struct Pctx<'tcx>(Rc<PctxPayload<'tcx>>);

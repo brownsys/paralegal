@@ -1,19 +1,19 @@
-use std::{fmt::Display, rc::Rc};
+use std::{fmt::Display, sync::Arc};
 
 use flowistry_pdg_construction::CallInfo;
-use paralegal_spdg::{utils::write_sep, Identifier};
+use paralegal_spdg::{Identifier, utils::write_sep};
 use rustc_hir::def_id::{CrateNum, DefId};
 use rustc_middle::ty::{
-    AssocKind, BoundVariableKind, Clause, ClauseKind, Instance, ProjectionPredicate,
+    self, AssocKind, BoundVariableKind, Clause, ClauseKind, Instance, ProjectionPredicate,
     TraitPredicate, TypingEnv,
 };
 use rustc_span::Span;
 use rustc_type_ir::{PredicatePolarity, TyKind};
 
 use crate::{
+    MarkerCtx, Pctx,
     ana::Print,
     args::{InliningDepth, Stub},
-    MarkerCtx, Pctx,
 };
 
 pub type K = u32;
@@ -26,7 +26,7 @@ pub type K = u32;
 /// options have been set.
 pub struct InlineJudge<'tcx> {
     ctx: Pctx<'tcx>,
-    included_crates: Rc<dyn Fn(CrateNum) -> bool>,
+    included_crates: Arc<dyn Fn(CrateNum) -> bool + 'tcx>,
 }
 
 /// Describes the type of inlining to perform
@@ -52,7 +52,7 @@ impl Display for InlineJudgement {
 
 impl<'tcx> InlineJudge<'tcx> {
     pub fn new(ctx: Pctx<'tcx>) -> Self {
-        let included_crates = Rc::new(ctx.opts().anactrl().inclusion_predicate(ctx.tcx()));
+        let included_crates = Arc::new(ctx.opts().anactrl().inclusion_predicate(ctx.tcx()));
         Self {
             included_crates,
             ctx,
@@ -226,7 +226,10 @@ impl<'tcx> SafetyChecker<'tcx> {
 
     fn check_projection_predicate(&self, predicate: &ProjectionPredicate<'tcx>, span: Span) {
         if let Some(t) = predicate.term.as_type() {
-            let t = self.ctx.tcx().normalize_erasing_regions(self.typing_env, t);
+            let t = self
+                .ctx
+                .tcx()
+                .normalize_erasing_regions(self.typing_env, ty::Unnormalized::new(t));
             let markers = self.ctx.marker_ctx().deep_type_markers(t);
             if !markers.is_empty() {
                 let markers = markers.iter().map(|t| t.1).collect::<Box<_>>();
@@ -303,14 +306,14 @@ impl<'tcx> SafetyChecker<'tcx> {
             // will be checked if there is a method that produces (or consumes)
             // this type.
             match item.kind {
-                AssocKind::Fn => {
+                AssocKind::Fn { .. } => {
                     let method = item.def_id;
                     let markers = self.ctx.marker_ctx().get_reachable_markers(method);
                     if !markers.is_empty() {
                         self.err_markers(&self.ctx.tcx().def_path_str(method), markers, span)
                     }
                 }
-                AssocKind::Const | AssocKind::Type => (),
+                AssocKind::Const { .. } | AssocKind::Type { .. } => (),
             }
         }
     }
@@ -335,6 +338,7 @@ impl<'tcx> SafetyChecker<'tcx> {
             }
             ClauseKind::Projection(predicate) => self.check_projection_predicate(predicate, span),
             ClauseKind::Trait(predicate) => self.check_trait_predicate(predicate, span),
+            ClauseKind::UnstableFeature(_) => {}
         }
     }
 
@@ -344,6 +348,6 @@ impl<'tcx> SafetyChecker<'tcx> {
         tcx.predicates_of(self.resolved.def_id())
             .instantiate(tcx, self.resolved.args)
             .into_iter()
-            .for_each(|(clause, span)| self.check_predicate(clause, span));
+            .for_each(|(clause, span)| self.check_predicate(clause.skip_normalization(), span));
     }
 }

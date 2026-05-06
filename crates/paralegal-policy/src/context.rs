@@ -500,13 +500,13 @@ impl RootContext {
     }
 
     /// Returns a DisplayDef for the given def_id
-    pub fn describe_def(&self, def_id: DefId) -> DisplayDef {
+    pub fn describe_def(&self, def_id: DefId) -> DisplayDef<'_> {
         DisplayDef { ctx: self, def_id }
     }
 
     #[deprecated = "Use NodeExt::describe instead"]
     /// Returns a DisplayNode for the given Node
-    pub fn describe_node(&self, node: GlobalNode) -> DisplayNode {
+    pub fn describe_node(&self, node: GlobalNode) -> DisplayNode<'_> {
         node.describe(self)
     }
 
@@ -1001,7 +1001,7 @@ pub trait NodeExt: private::Sealed {
     /// Get the type(s) of a Node.
     fn types(self, ctx: &RootContext) -> &[TypeId];
     /// Returns a DisplayNode for the given Node
-    fn describe(self, ctx: &RootContext) -> DisplayNode;
+    fn describe(self, ctx: &RootContext) -> DisplayNode<'_>;
     /// Retrieve metadata about a node.
     fn info(self, ctx: &RootContext) -> &NodeInfo;
     /// Retrieve metadata about the instruction executed by a specific node.
@@ -1044,7 +1044,7 @@ impl NodeExt for GlobalNode {
             .map_or(&[], |v| v.0.as_ref())
     }
 
-    fn describe(self, ctx: &RootContext) -> DisplayNode {
+    fn describe(self, ctx: &RootContext) -> DisplayNode<'_> {
         DisplayNode::pretty(
             self.local_node(),
             &ctx.desc.controllers[&self.controller_id()],
@@ -1144,7 +1144,7 @@ impl<T: NodeExt + Copy> NodeExt for &'_ T {
         (*self).types(ctx)
     }
 
-    fn describe(self, ctx: &RootContext) -> DisplayNode {
+    fn describe(self, ctx: &RootContext) -> DisplayNode<'_> {
         (*self).describe(ctx)
     }
 

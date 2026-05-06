@@ -8,13 +8,15 @@ use hir::def_id::DefId;
 use paralegal_non_rustc_utils::prepare_analyzer_command;
 use rustc_errors::FatalError;
 use rustc_middle::ty::TyCtxt;
+use tracing::debug;
 
 use crate::{
+    Callbacks, EXTRA_RUSTC_ARGS, HashSet,
     ann::{db::AutoMarkers, dump_markers},
     desc::{Identifier, ProgramDescription},
     utils::Print,
-    Callbacks, HashSet, EXTRA_RUSTC_ARGS,
 };
+use std::{ffi::OsString, fmt::Display, io::Write, path::PathBuf, sync::atomic::Ordering};
 use std::{
     fmt::{Debug, Formatter},
     sync::Once,
@@ -23,16 +25,15 @@ use std::{
     hash::{Hash, Hasher},
     sync::atomic::AtomicU32,
 };
-use std::{process::Command, sync::atomic::Ordering};
 
 use paralegal_spdg::{
-    traverse::{generic_flows_to, generic_influencers, EdgeSelection},
-    utils::{display_list, write_sep},
     DefInfo, DisplayPath, EdgeInfo, Endpoint, FileSystemStorable, InstructionInfo, InstructionKind,
-    Node, NodeInfo, NodeKind, ParalegalArtifact, TypeId, SPDG,
+    Node, NodeInfo, NodeKind, ParalegalArtifact, SPDG, TypeId,
+    traverse::{EdgeSelection, generic_flows_to, generic_influencers},
+    utils::{display_list, write_sep},
 };
 
-use flowistry_pdg::{CallString, Constant};
+use flowistry_pdg::{CallString, Constant, GlobalLocation};
 use itertools::Itertools;
 use petgraph::visit::{Control, Data, DfsEvent, EdgeRef, FilterEdge, GraphBase, IntoEdges};
 use petgraph::visit::{IntoNeighbors, IntoNodeReferences};
@@ -102,12 +103,14 @@ where
     S: AsRef<std::ffi::OsStr>,
 {
     let dir = dir.as_ref();
-    assert!(Command::new("cargo")
-        .arg("clean")
-        .current_dir(dir)
-        .status()
-        .unwrap()
-        .success());
+    // assert!(
+    //     Command::new("cargo")
+    //         .arg("clean")
+    //         .current_dir(dir)
+    //         .status()
+    //         .unwrap()
+    //         .success()
+    // );
     paralegal_flow_command(dir)
         .args(extra)
         .status()
@@ -161,6 +164,269 @@ macro_rules! define_flow_test_template {
     };
 }
 
+/// Configures and builds a reusable dependency environment for inline tests.
+///
+/// Allows multiple tests in the same session to share compiled stdlib and other
+/// dependencies, avoiding redundant recompilation. Uses `Once` internally to
+/// ensure dependencies are compiled only once.
+///
+/// # Examples
+///
+/// Stdlib only:
+/// ```no_run
+/// # use paralegal_flow::test_utils::DependencyEnvironmentBuilder;
+/// let dep_env = DependencyEnvironmentBuilder::new()
+///     .with_stdlib()
+///     .build();
+/// ```
+///
+/// With external crates from a Cargo.toml:
+/// ```no_run
+/// # use paralegal_flow::test_utils::DependencyEnvironmentBuilder;
+/// # use std::path::Path;
+/// let dep_env = DependencyEnvironmentBuilder::new()
+///     .with_manifest(Path::new("tests/stub-tests/Cargo.toml"))
+///     .build();
+/// ```
+pub struct DependencyEnvironmentBuilder {
+    include_stdlib: bool,
+    manifest_path: Option<std::path::PathBuf>,
+    markers: Option<PathBuf>,
+    extra_args: Vec<String>,
+}
+
+/// Holds compiled dependencies for reuse across multiple inline tests.
+///
+/// Uses `Once` to ensure one-time compilation per session. Once built,
+/// caches `--extern` flags and/or rustc flags needed to link dependencies.
+///
+/// For manifest-based environments, compiles external crates once and caches
+/// the resulting `--extern` flags.
+///
+/// For stdlib environments, this acts as an explicit marker for tests that
+/// intentionally rely on stdlib availability from the embedded rustc sysroot.
+///
+/// This environment is tied to a specific configuration of dependencies and
+/// should be created once per test file (or group of related tests) and then
+/// shared across multiple `InlineTestBuilder` instances.
+#[derive(Clone)]
+pub struct DependencyEnvironment {
+    // Lazy-initialized rustc flags (cached after first compilation)
+    rustc_flags: Vec<String>,
+    // Configuration
+    include_stdlib: bool,
+    manifest_path: Option<std::path::PathBuf>,
+    extra_args: Vec<String>,
+    marker_file: Option<PathBuf>,
+}
+
+impl DependencyEnvironmentBuilder {
+    /// Create a new builder with no dependencies configured.
+    pub fn new() -> Self {
+        Self {
+            include_stdlib: false,
+            manifest_path: None,
+            markers: None,
+            extra_args: vec![],
+        }
+    }
+
+    /// Include the Rust standard library (std, core, alloc).
+    ///
+    /// This allows tests to use stdlib types like `Vec`, `TcpStream`, etc.
+    pub fn with_stdlib(mut self) -> Self {
+        self.include_stdlib = true;
+        self
+    }
+
+    pub fn with_extra_args<S: ToString>(mut self, args: impl IntoIterator<Item = S>) -> Self {
+        self.extra_args
+            .extend(args.into_iter().map(|s| s.to_string()));
+        self
+    }
+
+    /// Add external crates from a Cargo.toml manifest.
+    ///
+    /// The manifest is compiled and its artifacts are linked using `--extern` flags.
+    /// This is useful for tests that need third-party crates like `tokio`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use paralegal_flow::test_utils::DependencyEnvironmentBuilder;
+    /// let _env = DependencyEnvironmentBuilder::new()
+    ///     .with_manifest("tests/stub-tests/Cargo.toml")
+    ///     .build();
+    /// ```
+    pub fn with_manifest(mut self, path: impl AsRef<std::path::Path>) -> Self {
+        self.manifest_path = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    pub fn with_markers(mut self, markers: impl AsRef<Path>) -> Self {
+        self.markers = Some(markers.as_ref().to_path_buf());
+        self
+    }
+
+    /// Build a Cargo project and collect all `--extern name=path` rustc args from
+    /// the resulting rlib artifacts for the manifest's direct dependencies only.
+    /// Useful for inline tests that need to link against external crates.
+    ///
+    /// Uses the same rustc that compiled this crate (via `SYSROOT_PATH`) so the
+    /// rlib crate hashes are compatible with the embedded `rustc_driver`.
+    pub fn collect_extern_args(&self, manifest_path: impl AsRef<std::path::Path>) -> Vec<String> {
+        let manifest_path = manifest_path.as_ref();
+        let direct_dependencies = direct_dependency_names(manifest_path);
+        let mut cmd =
+            paralegal_flow_command(manifest_path.canonicalize().unwrap().parent().unwrap());
+        cmd.arg("--forward-json");
+        cmd.args(&self.extra_args);
+        let output = cmd
+            .output()
+            .expect("cargo build failed while collecting extern args");
+
+        if !output.status.success() {
+            let _ = std::io::stdout().write(&output.stdout);
+            let _ = std::io::stderr().write(&output.stderr);
+            panic!(
+                "cargo build for extern arg collection failed with status {}",
+                output.status
+            );
+        }
+
+        let mut args = Vec::new();
+
+        if let Some(parent) = manifest_path.parent() {
+            let deps_dir = parent.join("target/paralegal/debug/deps");
+            args.push("-L".to_string());
+            args.push(format!("dependency={}", deps_dir.display()));
+        }
+        if self.include_stdlib {
+            // Required for the noprelude,nounused: extern qualifier syntax.
+            args.push("-Zunstable-options".into());
+        }
+        for line in String::from_utf8(output.stdout).unwrap().lines() {
+            let Ok(msg) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if msg["reason"].as_str() != Some("compiler-artifact") {
+                continue;
+            }
+            let Some(name) = msg["target"]["name"].as_str() else {
+                continue;
+            };
+            let extern_name = name.replace('-', "_");
+            // Stdlib crates rebuilt via -Zbuild-std are not listed in any
+            // [dependencies] section. Identify them by their manifest_path being
+            // under the sysroot's lib/rustlib/src tree.
+            let sysroot_src = concat!(env!("SYSROOT_PATH"), "/lib/rustlib/src");
+            let is_stdlib_artifact = self.include_stdlib
+                && msg["manifest_path"]
+                    .as_str()
+                    .is_some_and(|p| p.starts_with(sysroot_src));
+
+            if !is_stdlib_artifact && !direct_dependencies.contains(&extern_name) {
+                continue;
+            }
+            let Some(filenames) = msg["filenames"].as_array() else {
+                continue;
+            };
+            for f in filenames {
+                let path = f.as_str().unwrap();
+                if !path.ends_with(".rlib") && !path.ends_with(".rmeta") {
+                    continue;
+                }
+                // Use noprelude for everything except std itself.
+                // noprelude prevents duplicate-prelude conflicts; for std
+                // we omit it so that its prelude (Ok, Vec, …) is injected
+                // into the inline test's root module automatically.
+                let qualifier = if is_stdlib_artifact && extern_name != "std" {
+                    "noprelude,nounused:"
+                } else {
+                    ""
+                };
+                args.push("--extern".to_string());
+                args.push(format!("{qualifier}{extern_name}={path}"));
+            }
+        }
+        args
+    }
+
+    /// Build the dependency environment.
+    ///
+    /// This creates (or caches) compiled artifacts that will be reused
+    /// across multiple tests in the same session. Compilation happens lazily
+    /// on first use.
+    pub fn build(self) -> DependencyEnvironment {
+        let manifest_path = self.manifest_path.clone().or_else(|| {
+            self.include_stdlib.then(|| {
+                use std::fs;
+                let temp_dir = std::env::temp_dir();
+                let project_name = "paralegal-tests-stdlib-only";
+                let project_dir = temp_dir.join(project_name);
+
+                // Create project structure
+                fs::create_dir_all(project_dir.join("src")).unwrap();
+
+                // Write Cargo.toml as binary crate
+                let cargo_toml = format!(
+                    r#"[package]
+name = "{}"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "{}"
+path = "src/main.rs"
+
+[dependencies]
+"#,
+                    project_name, project_name
+                );
+                let manifest_path = project_dir.join("Cargo.toml");
+                fs::write(&manifest_path, cargo_toml).unwrap();
+
+                // Write src/main.rs (instead of src/lib.rs)
+                fs::write(project_dir.join("src/main.rs"), "fn main() {}").unwrap();
+                manifest_path
+            })
+        });
+
+        let flags = if let Some(manifest) = &manifest_path {
+            self.collect_extern_args(manifest)
+        } else {
+            vec![]
+        };
+
+        debug!("Collected extern args {flags:?}");
+
+        DependencyEnvironment {
+            rustc_flags: flags,
+            include_stdlib: self.include_stdlib,
+            manifest_path: manifest_path,
+            extra_args: self.extra_args,
+            marker_file: self.markers,
+        }
+    }
+}
+
+impl Default for DependencyEnvironmentBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DependencyEnvironment {
+    /// Get the rustc flags (including `--extern` arguments) for this dependency environment.
+    ///
+    /// Initializes (compiles) the environment on first call; subsequent calls
+    /// return cached flags. This is suitable for passing directly to
+    /// [`InlineTestBuilder::with_rustc_args`].
+    pub fn rustc_flags(&self) -> &[String] {
+        &self.rustc_flags
+    }
+}
+
 /// Builder for running test cases against a string of source code.
 ///
 /// Start with [`InlineTestBuilder::new`], compile and run the test case with
@@ -170,7 +436,9 @@ pub struct InlineTestBuilder {
     ctrl_name: Option<String>,
     input: String,
     extra_args: Vec<String>,
-    marker_file: Option<String>,
+    marker_file: Option<PathBuf>,
+    build_config: Option<PathBuf>,
+    rustc_args: Vec<String>,
 }
 
 #[macro_export]
@@ -198,6 +466,8 @@ impl InlineTestBuilder {
             ctrl_name: Some("crate::main".into()),
             extra_args: Default::default(),
             marker_file: None,
+            build_config: None,
+            rustc_args: Default::default(),
         }
     }
 
@@ -225,8 +495,63 @@ impl InlineTestBuilder {
         self
     }
 
-    pub fn with_marker_file(&mut self, marker_file: impl Into<String>) -> &mut Self {
-        self.marker_file = Some(marker_file.into());
+    pub fn with_marker_file(&mut self, marker_file: &Path) -> &mut Self {
+        self.marker_file = Some(marker_file.to_path_buf());
+        self
+    }
+
+    pub fn with_build_config(&mut self, config: &Path) -> &mut Self {
+        self.build_config = Some(config.to_path_buf());
+        self
+    }
+
+    pub fn with_rustc_args<S: ToString>(&mut self, args: impl IntoIterator<Item = S>) -> &mut Self {
+        self.rustc_args
+            .extend(args.into_iter().map(|s| s.to_string()));
+        self
+    }
+
+    /// Use a pre-built dependency environment for this test.
+    ///
+    /// This allows multiple tests to share compiled dependencies, avoiding
+    /// redundant recompilation. The environment provides rustc flags (like `--extern`)
+    /// that are applied automatically to the compilation.
+    ///
+    /// When the environment includes external crates (from a Cargo.toml manifest),
+    /// direct rustc compilation is used. When it only includes stdlib, Cargo-based
+    /// compilation is used to ensure proper linking.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use paralegal_flow::test_utils::DependencyEnvironmentBuilder;
+    /// # use paralegal_flow::inline_test;
+    /// let env = DependencyEnvironmentBuilder::new()
+    ///     .with_manifest("tests/stub-tests/Cargo.toml")
+    ///     .build();
+    ///
+    /// inline_test! { /* code */ }
+    ///     .with_dependency_environment(&env)
+    ///     .check_ctrl(|ctrl| { /* ... */ });
+    /// ```
+    pub fn with_dependency_environment(&mut self, env: &DependencyEnvironment) -> &mut Self {
+        // Add the environment's rustc flags
+        let flags = env.rustc_flags();
+        if !flags.is_empty() {
+            self.rustc_args.extend(flags.iter().cloned());
+        }
+        self.extra_args.extend(env.extra_args.iter().cloned());
+        self.marker_file = env.marker_file.clone();
+
+        self
+    }
+
+    /// Legacy compatibility shim.
+    ///
+    /// Inline tests now always use the embedded rustc path. Standard library
+    /// availability is controlled by rustc's sysroot, so this no longer toggles
+    /// a Cargo-based test compile mode.
+    pub fn with_dependencies(&mut self) -> &mut Self {
         self
     }
 
@@ -257,20 +582,19 @@ impl InlineTestBuilder {
             args: crate::ClapArgs,
         }
 
-        let mut args = vec!["".to_string()];
+        let mut args: Vec<OsString> = vec!["".into()];
         if let Some(e) = &self.ctrl_name {
-            args.extend(["--analyze".to_string(), e.clone()])
+            args.extend(["--analyze".into(), e.into()])
         }
         if let Some(m) = &self.marker_file {
-            let p = std::env::temp_dir().join(format!(
-                "markers-{}.toml",
-                FILE_INDEX.fetch_add(1, Ordering::Relaxed)
-            ));
-            std::fs::write(&p, m).unwrap();
-            args.push("--external-annotations".to_string());
-            args.push(p.to_str().unwrap().to_string());
+            args.push("--external-annotations".into());
+            args.push(m.into());
         }
-        args.extend(self.extra_args.iter().cloned());
+        if let Some(c) = &self.build_config {
+            args.push("--build-config".into());
+            args.push(c.into());
+        }
+        args.extend(self.extra_args.iter().map(|s| s.into()));
 
         let args = crate::Args::try_from(TopLevelArgs::parse_from(args).args).unwrap();
 
@@ -279,6 +603,7 @@ impl InlineTestBuilder {
         paralegal_rustc_utils::test_utils::CompileBuilder::new(&self.input)
             .with_args(EXTRA_RUSTC_ARGS.iter().copied().map(ToOwned::to_owned))
             .with_args(["-Ztrack-diagnostics".to_string()])
+            .with_args(self.rustc_args.iter().cloned())
             .compile(move |result| {
                 let args: &'static _ = Box::leak(Box::new(args));
                 dump_markers(result.tcx);
@@ -415,6 +740,29 @@ impl<'g> HasGraph<'g> for &'g PreFrg {
 }
 
 impl PreFrg {
+    pub fn display_location(&self, loc: GlobalLocation) -> impl Display + '_ {
+        struct DisplayGlobalLoc<'a> {
+            loc: GlobalLocation,
+            gr: &'a ProgramDescription,
+        }
+
+        impl Display for DisplayGlobalLoc<'_> {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(
+                    f,
+                    "{} in {}",
+                    self.gr.instruction_info[&self.loc].description,
+                    DisplayPath::from(&self.gr.def_info[&self.loc.function].path)
+                )
+            }
+        }
+
+        DisplayGlobalLoc {
+            gr: &self.desc,
+            loc,
+        }
+    }
+
     pub fn from_file_at(dir: &str) -> Self {
         use_rustc(|| {
             let path = Path::new(dir).join(paralegal_non_rustc_utils::ARTIFACT_NAME);
@@ -494,7 +842,7 @@ impl<'g> HasGraph<'g> for &CtrlRef<'g> {
 }
 
 impl<'g> CtrlRef<'g> {
-    pub fn return_value(&self) -> NodeRefs {
+    pub fn return_value(&self) -> NodeRefs<'_> {
         // TODO only include mutable formal parameters?
         let nodes = self.ctrl.return_.to_vec();
         NodeRefs { nodes, graph: self }
@@ -578,7 +926,7 @@ impl<'g> CtrlRef<'g> {
             .map_or(&[], |t| t.0.as_ref())
     }
 
-    pub fn nodes_for_type(&self, typ: TypeId) -> NodeRefs {
+    pub fn nodes_for_type(&self, typ: TypeId) -> NodeRefs<'_> {
         NodeRefs {
             graph: self,
             nodes: self
@@ -616,18 +964,43 @@ impl<'g> CtrlRef<'g> {
 
     pub fn assert_purity(&self, pure: bool) {
         let auto_markers = AutoMarkers::default();
-        let defined = self.markers();
         let auto = auto_markers.all();
-        let contained = auto
-            .iter()
-            .filter(|m| defined.contains(m))
-            .collect::<Vec<_>>();
-        assert!(
-            !pure ^ contained.is_empty(),
-            "Expected {}side effects, found {:?}",
-            if pure { "no " } else { "" },
-            contained
-        );
+        let auto_set = auto.iter().copied().collect::<HashSet<_>>();
+
+        if pure {
+            let mut found_instance = false;
+            for (n, ms) in self.ctrl.markers.iter() {
+                let found = ms
+                    .iter()
+                    .copied()
+                    .filter(|m| auto_set.contains(m))
+                    .collect::<Box<[_]>>();
+                if !found.is_empty() {
+                    found_instance = true;
+                    let info = self.ctrl.node_info(*n);
+                    println!(
+                        "Found side effects {} for node {}",
+                        display_list(found.iter()),
+                        info
+                    );
+                    for at in info.at.iter() {
+                        println!("  Reached from {}", self.graph.display_location(at));
+                    }
+                }
+            }
+            assert!(!found_instance);
+        } else {
+            let defined = self.markers();
+            let contained = auto
+                .iter()
+                .filter(|m| defined.contains(m))
+                .collect::<Vec<_>>();
+            assert!(
+                !contained.is_empty(),
+                "Expected side effects but found none. Found the following markers: {}",
+                display_list(defined.iter())
+            );
+        }
     }
 
     pub fn side_effect_nodes(&'g self) -> impl Iterator<Item = NodeRef<'g>> {
@@ -1135,4 +1508,28 @@ where
         });
 
     !matches!(result, Control::Break(()))
+}
+
+fn direct_dependency_names(manifest_path: &std::path::Path) -> std::collections::HashSet<String> {
+    let manifest = std::fs::read_to_string(manifest_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", manifest_path.display()));
+    let value: toml::Value = toml::from_str(&manifest)
+        .unwrap_or_else(|err| panic!("failed to parse {}: {err}", manifest_path.display()));
+
+    let mut names = std::collections::HashSet::new();
+    for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        let Some(table) = value.get(section).and_then(toml::Value::as_table) else {
+            continue;
+        };
+        for (dep_name, dep_value) in table {
+            let package_name = dep_value
+                .as_table()
+                .and_then(|t| t.get("package"))
+                .and_then(toml::Value::as_str)
+                .unwrap_or(dep_name)
+                .replace('-', "_");
+            names.insert(package_name);
+        }
+    }
+    names
 }

@@ -1124,7 +1124,7 @@ impl SPDG {
 
     /// Gather all [`Node`]s that are mentioned in this controller including data and control flow.
     pub fn all_sources(&self) -> impl Iterator<Item = Node> + '_ {
-        self.graph.node_identifiers().map(Into::into)
+        self.graph.node_identifiers()
     }
 
     /// Dump this graph in dot format.

@@ -4,20 +4,20 @@
 //! Essentially this discovers all local `paralegal_flow::*` annotations.
 
 use crate::{
+    Pctx,
     ana::{InlineJudge, SPDGGenerator},
     stats::Stats,
     sym_vec,
     utils::*,
-    Pctx,
 };
 
 use rustc_hir::{
+    BodyId,
     def_id::LocalDefId,
     intravisit::{self, FnKind},
-    BodyId,
 };
 use rustc_middle::{hir::nested_filter::OnlyBodies, ty::TyCtxt};
-use rustc_span::{symbol::Ident, Span, Symbol};
+use rustc_span::{Span, Symbol, symbol::Ident};
 use tracing::trace;
 
 use self::resolve::expect_resolve_string_to_def_id;
@@ -100,14 +100,14 @@ impl<'tcx> CollectingVisitor<'tcx> {
     /// endpoints.
     pub fn run(mut self) -> SPDGGenerator<'tcx> {
         let tcx = self.tcx;
-        tcx.hir().visit_all_item_likes_in_crate(&mut self);
+        tcx.hir_visit_all_item_likes_in_crate(&mut self);
         self.into_generator()
     }
 
     /// Does the function named by this id have the `paralegal_flow::analyze` annotation
     fn should_analyze_function(&self, ident: LocalDefId) -> bool {
-        let attrs = self.tcx.hir().attrs(self.tcx.local_def_id_to_hir_id(ident));
-        let should_analyze = attrs.iter().any(|a| a.matches_path(&self.analyze_marker));
+        let attrs = self.tcx.hir_attrs(self.tcx.local_def_id_to_hir_id(ident));
+        let should_analyze = attrs.iter().any(|a| a.path_matches(&self.analyze_marker));
         trace!(
             name = self.tcx.def_path_str(ident),
             should_analyze,
@@ -121,8 +121,8 @@ impl<'tcx> CollectingVisitor<'tcx> {
 impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
     type NestedFilter = OnlyBodies;
 
-    fn nested_visit_map(&mut self) -> Self::Map {
-        self.tcx.hir()
+    fn maybe_tcx(&mut self) -> Self::MaybeTyCtxt {
+        self.tcx
     }
 
     /// Finds the functions that have been marked as targets.

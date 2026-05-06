@@ -25,6 +25,7 @@ textwrap = { version = "0.16", optional = true }
 regex = { version = "1", optional = true }
 ts-rs = { version = "7", optional = true }
 rand = "0.8"
+tracing.workspace = true
 
 [dev-dependencies]
 test-log = "0.2"

@@ -7,7 +7,7 @@ use rustc_middle::{
     mir::*,
     ty::{GenericArgKind, RegionKind, RegionVid, Ty, TyCtxt},
 };
-use rustc_span::source_map::Spanned;
+use rustc_span::Spanned;
 
 /// An unordered collections of MIR [`Place`]s.
 ///
@@ -27,8 +27,8 @@ pub fn arg_mut_ptrs<'tcx>(
         .flat_map(|(i, place)| {
             place
                 .interior_pointers(tcx, body, def_id)
-                .into_iter()
-                .flat_map(|(_, places)| {
+                .into_values()
+                .flat_map(|places| {
                     places
                         .into_iter()
                         .filter_map(|(place, mutability)| match mutability {
@@ -65,6 +65,8 @@ pub struct AsyncHack<'a, 'tcx> {
 }
 
 impl<'a, 'tcx> AsyncHack<'a, 'tcx> {
+    /// Detects the `&mut std::task::Context` argument, if present, so the hack
+    /// can later filter out the spurious region constraints it introduces.
     pub fn new(tcx: TyCtxt<'tcx>, body: &'a Body<'tcx>, def_id: DefId) -> Self {
         let context_ty = body.async_context(tcx, def_id);
         AsyncHack {
@@ -74,11 +76,13 @@ impl<'a, 'tcx> AsyncHack<'a, 'tcx> {
         }
     }
 
+    /// Returns the set of region variables that appear in the `Context` type
+    /// and should be excluded from the subset relation.
     pub fn ignore_regions(&self) -> HashSet<RegionVid> {
         match self.context_ty {
             Some(context_ty) => context_ty
                 .walk()
-                .filter_map(|part| match part.unpack() {
+                .filter_map(|part| match part.kind() {
                     GenericArgKind::Lifetime(r) => match r.kind() {
                         RegionKind::ReVar(rv) => Some(rv),
                         _ => None,
@@ -90,12 +94,14 @@ impl<'a, 'tcx> AsyncHack<'a, 'tcx> {
         }
     }
 
+    /// Returns `true` if `place` has the `Context` type and should be ignored
+    /// in function-call argument processing.
     pub fn ignore_place(&self, place: Place<'tcx>) -> bool {
         match self.context_ty {
             Some(context_ty) => {
                 self.tcx
-                    .erase_regions(place.ty(&self.body.local_decls, self.tcx).ty)
-                    == self.tcx.erase_regions(context_ty)
+                    .erase_and_anonymize_regions(place.ty(&self.body.local_decls, self.tcx).ty)
+                    == self.tcx.erase_and_anonymize_regions(context_ty)
             }
             None => false,
         }

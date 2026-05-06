@@ -5,29 +5,29 @@
 //! [`analyze`](SPDGGenerator::analyze).
 
 use crate::{
+    DumpStats, HashMap, HashSet, INTERMEDIATE_STAT_EXT, MarkerCtx, Pctx,
     ann::{Annotation, MarkerAnnotation},
     args::Stub,
     desc::*,
     discover::FnToAnalyze,
     stats::{Stats, TimedStat},
     utils::*,
-    DumpStats, HashMap, HashSet, MarkerCtx, Pctx, INTERMEDIATE_STAT_EXT,
 };
 
 use std::{fs::File, io::BufReader, rc::Rc, time::Instant};
 
 use anyhow::Result;
 use flowistry_pdg_construction::{
-    source_access::local_or_remote_paths,
-    utils::{is_async, type_as_fn, ArgSlice},
     CallChangeCallback, CallChanges, CallInfo, CallingConvention, InlineMissReason,
     MemoPdgConstructor, SkipCall,
+    source_access::local_or_remote_paths,
+    utils::{ArgSlice, is_async, type_as_fn},
 };
 use inline_judge::{InlineJudgement, K};
 use itertools::Itertools;
 use paralegal_flowistry::mir::FlowistryInput;
 
-use rustc_hash::FxHashSet;
+use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::{
     self as hir, def,
     def_id::{DefId, LOCAL_CRATE},
@@ -36,7 +36,7 @@ use rustc_middle::{
     mir::{self, Location},
     ty::{Instance, TyCtxt, TypingEnv},
 };
-use rustc_span::{ErrorGuaranteed, FileNameDisplayPreference, Span as RustSpan, Symbol};
+use rustc_span::{ErrorGuaranteed, Span as RustSpan, Symbol};
 use tracing::{debug, info};
 
 mod graph_converter;
@@ -418,7 +418,7 @@ fn src_loc_for_span(span: RustSpan, tcx: TyCtxt) -> Span {
         tcx.sess.source_map().span_to_location_info(span);
     let file_path = source_file.map_or_else(
         || "<unknown>".to_string(),
-        |f| f.name.display(FileNameDisplayPreference::Local).to_string(),
+        |f| f.name.prefer_local_unconditionally().to_string(),
     );
     let abs_file_path = if !file_path.starts_with('/') {
         std::env::current_dir()
@@ -469,7 +469,7 @@ fn def_kind_for_item(id: DefId, tcx: TyCtxt) -> DefKind {
         def::DefKind::Struct
         | def::DefKind::AssocTy
         | def::DefKind::OpaqueTy
-        | def::DefKind::TyAlias { .. }
+        | def::DefKind::TyAlias
         | def::DefKind::Enum => DefKind::Type,
         def::DefKind::Ctor { .. } => DefKind::Ctor,
         kind => unreachable!("{} ({:?})", tcx.def_path_debug_str(id), kind),
@@ -571,7 +571,7 @@ impl Stub {
                         return Err(tcx.dcx().span_err(
                             at,
                             format!("Expected `fn` or `closure` def kind, got {kind:?}"),
-                        ))
+                        ));
                     }
                 }
             }
@@ -605,11 +605,11 @@ impl Stub {
         let calling_convention = if expect_indirect {
             let clj = match arguments {
                 [clj] => clj,
-                [gen, _]
+                [r#gen, _]
                     if tcx.def_kind(function.def_id()) == hir::def::DefKind::AssocFn
-                        && tcx.associated_item(function.def_id()).trait_item_def_id == poll =>
+                        && tcx.associated_item(function.def_id()).trait_item_def_id() == poll =>
                 {
-                    gen
+                    r#gen
                 }
                 _ => {
                     return Err(tcx.dcx().span_err(
@@ -619,7 +619,7 @@ impl Stub {
                             function.def_id(),
                             arguments.len()
                         ),
-                    ))
+                    ));
                 }
             };
             CallingConvention::Indirect {

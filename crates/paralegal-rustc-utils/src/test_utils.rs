@@ -1,38 +1,54 @@
 //! Running rustc and Flowistry in tests.
 
-use std::{fmt::Debug, fs, hash::Hash, io, panic, path::Path, process::Command, sync::LazyLock};
+use std::{
+    fmt::Debug,
+    fs,
+    hash::Hash,
+    io, panic,
+    path::Path,
+    process::Command,
+    sync::{Arc, LazyLock},
+};
 
 use anyhow::Result;
 use log::debug;
-use rustc_borrowck::consumers::{get_body_with_borrowck_facts, BodyWithBorrowckFacts};
-use rustc_data_structures::{
-    fx::{FxHashMap as HashMap, FxHashSet as HashSet},
-    sync::Lrc,
-};
+use rustc_abi::{FieldIdx, VariantIdx};
+use rustc_borrowck::consumers::{get_bodies_with_borrowck_facts, BodyWithBorrowckFacts};
+use rustc_data_structures::fx::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rustc_errors::FatalError;
-use rustc_hir::{def_id::LocalDefId, BodyId, ItemKind};
+use rustc_hir::{self as hir, def_id::LocalDefId, BodyId, ItemKind};
 use rustc_interface::interface;
 use rustc_middle::{
-    mir::{Body, HasLocalDecls, Local, Place},
+    mir::{Body, HasLocalDecls, Local, Place, PlaceTy},
     ty::TyCtxt,
 };
 use rustc_span::source_map::FileLoader;
-use rustc_target::abi::{FieldIdx, VariantIdx};
 
 use crate::{cache::Cache, BodyExt, PlaceExt};
 
-pub struct StringLoader(pub String);
+pub struct StringLoader {
+    pub input_file: String,
+    pub source: String,
+}
 impl FileLoader for StringLoader {
-    fn file_exists(&self, _: &Path) -> bool {
-        true
+    fn file_exists(&self, path: &Path) -> bool {
+        path.to_str() == Some(self.input_file.as_str()) || path.is_file()
     }
 
-    fn read_file(&self, _: &Path) -> io::Result<String> {
-        Ok(self.0.clone())
+    fn read_file(&self, path: &Path) -> io::Result<String> {
+        if path.to_str() == Some(self.input_file.as_str()) {
+            Ok(self.source.clone())
+        } else {
+            fs::read_to_string(path)
+        }
     }
 
-    fn read_binary_file(&self, path: &Path) -> io::Result<Lrc<[u8]>> {
+    fn read_binary_file(&self, path: &Path) -> io::Result<Arc<[u8]>> {
         Ok(fs::read(path)?.into())
+    }
+
+    fn current_directory(&self) -> io::Result<std::path::PathBuf> {
+        std::env::current_dir()
     }
 }
 
@@ -94,19 +110,18 @@ impl CompileBuilder {
             &format!("{}", temp_dir.display()),
         ]
         .into_iter()
-        .map(std::borrow::ToOwned::to_owned)
+        .map(|s| s.to_owned())
         .chain(self.arguments.iter().cloned())
         .collect::<Box<_>>();
 
+        let input_file = crate_name.clone();
         let mut callbacks = TestCallbacks {
-            callback: Some(move |tcx: TyCtxt<'_>| f(CompileResult { tcx, crate_name })),
+            callback: Some(move |tcx: TyCtxt<'_>| f(CompileResult { crate_name, tcx })),
+            input: Some(self.input.clone()),
+            input_file,
         };
 
-        rustc_driver::catch_fatal_errors(|| {
-            let mut compiler = rustc_driver::RunCompiler::new(&args, &mut callbacks);
-            compiler.set_file_loader(Some(Box::new(StringLoader(self.input.clone()))));
-            compiler.run();
-        })
+        rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut callbacks))
     }
 
     pub fn expect_compile(&self, f: impl for<'tcx> FnOnce(CompileResult<'tcx>) + Send) {
@@ -121,7 +136,7 @@ pub fn compile_body(
     CompileBuilder::new(input).expect_compile(|res| {
         let (body_id, body_with_facts) = res.as_body();
         f(res.tcx, body_id, body_with_facts);
-    });
+    })
 }
 thread_local! {
     static BODY_CACHE: Cache<LocalDefId, BodyWithBorrowckFacts<'static>> = Cache::default();
@@ -135,24 +150,29 @@ pub struct CompileResult<'tcx> {
 impl<'tcx> CompileResult<'tcx> {
     pub fn as_body(&self) -> (BodyId, &'tcx BodyWithBorrowckFacts<'tcx>) {
         let tcx = self.tcx;
-        let hir = tcx.hir();
-        let body_id = hir
-            .items()
-            .filter_map(|id| match hir.item(id).kind {
-                ItemKind::Fn(_, _, body) => Some(body),
+        let body_id = tcx
+            .hir_crate_items(())
+            .definitions()
+            .filter_map(|id| match tcx.hir_node_by_def_id(id) {
+                hir::Node::Item(hir::Item {
+                    kind: ItemKind::Fn { body, .. },
+                    ..
+                }) => Some(*body),
                 _ => None,
             })
             .next()
             .unwrap();
 
-        let def_id = tcx.hir().body_owner_def_id(body_id);
+        let def_id = tcx.hir_body_owner_def_id(body_id);
         let body_with_facts = BODY_CACHE.with(|cache| {
             let val = cache.get(&def_id, move |_| {
-                let body = get_body_with_borrowck_facts(
+                let mut bodies = get_bodies_with_borrowck_facts(
                     tcx,
                     def_id,
                     rustc_borrowck::consumers::ConsumerOptions::PoloniusInputFacts,
                 );
+                assert_eq!(bodies.len(), 1);
+                let body = bodies.drain().next().unwrap().1;
                 unsafe { std::mem::transmute::<_, BodyWithBorrowckFacts<'static>>(body) }
             });
             unsafe { std::mem::transmute::<&_, &'tcx BodyWithBorrowckFacts<'tcx>>(val) }
@@ -164,20 +184,32 @@ impl<'tcx> CompileResult<'tcx> {
 
 struct TestCallbacks<Cb> {
     callback: Option<Cb>,
+    input: Option<String>,
+    input_file: String,
 }
 
 impl<Cb> rustc_driver::Callbacks for TestCallbacks<Cb>
 where
     Cb: FnOnce(TyCtxt<'_>),
 {
-    fn after_expansion(
+    fn after_expansion<'tcx>(
         &mut self,
         _compiler: &interface::Compiler,
-        tcx: TyCtxt<'_>,
+        tcx: TyCtxt<'tcx>,
     ) -> rustc_driver::Compilation {
         let callback = self.callback.take().unwrap();
         callback(tcx);
         rustc_driver::Compilation::Stop
+    }
+
+    fn config(&mut self, config: &mut interface::Config) {
+        config.file_loader = Some(Box::new(StringLoader {
+            input_file: self.input_file.clone(),
+            source: self.input.take().expect("cannot take input twice"),
+        }) as Box<_>)
+        // Note that we are not installing override queries here, which means we
+        // cannot retrieve `const` bodies. if this becomes necessary, we can
+        // move the override queries out.
     }
 }
 
@@ -216,10 +248,8 @@ pub struct PlaceBuilder<'a, 'tcx> {
 impl<'tcx> PlaceBuilder<'_, 'tcx> {
     pub fn field(mut self, i: usize) -> Self {
         let f = FieldIdx::from_usize(i);
-        let ty = self
-            .place
-            .ty(self.body.local_decls(), self.tcx)
-            .field_ty(self.tcx, f);
+        let ty = self.place.ty(self.body.local_decls(), self.tcx);
+        let ty = PlaceTy::field_ty(self.tcx, ty.ty, ty.variant_index, f);
         self.place = self.tcx.mk_place_field(self.place, f, ty);
         self
     }

@@ -120,6 +120,10 @@ where
             }
         }
 
+        self.retrieve_no_compute(key)
+    }
+
+    fn retrieve_no_compute<'a>(&'a self, key: &In) -> Retrieval<&'a Out> {
         let cache = self.0.borrow();
         match cache.get(key) {
             None => Retrieval::Uncomputable,
@@ -133,20 +137,45 @@ where
         }
     }
 
+    pub fn try_retrieve_many<'a>(
+        &'a self,
+        key: &In,
+        fail_on_overwrite: bool,
+        compute: impl FnOnce(In) -> Option<(Out, Vec<(In, Out)>)>,
+    ) -> Retrieval<&'a Out> {
+        if !self.0.borrow().contains_key(key) {
+            self.0.borrow_mut().insert(key.clone(), None);
+            if let Some((slf, others)) = compute(key.clone()) {
+                let mut b = self.0.borrow_mut();
+                b.insert(key.clone(), Some(Box::pin(slf)));
+                for (k, v) in others {
+                    let prior = b.insert(k, Some(Box::pin(v)));
+                    if prior.is_some() {
+                        if fail_on_overwrite {
+                            panic!("Cache entry overwritten")
+                        } else {
+                            tracing::error!("Cache entry overwritten");
+                        }
+                    }
+                }
+            } else {
+                self.0.borrow_mut().remove(key);
+            }
+        }
+        self.retrieve_no_compute(key)
+    }
+
     pub fn is_in_cache(&self, key: &In) -> bool {
         self.0.borrow().contains_key(key)
     }
-    #[allow(dead_code)]
     /// Safety: Invalidates all references
+    #[allow(unused)]
     pub(crate) unsafe fn clear(&self) {
         self.0.borrow_mut().clear();
     }
 
-    pub fn get_if_present<'a>(&self, key: &In) -> Option<&'a Out> {
-        self.0
-            .borrow()
-            .get(key)
-            .and_then(|v| Some(unsafe { std::mem::transmute::<&'_ Out, &'a Out>(v.as_ref()?) }))
+    pub fn get_if_present<'a>(&'a self, key: &In) -> Option<&'a Out> {
+        self.retrieve_no_compute(key).as_success()
     }
 }
 

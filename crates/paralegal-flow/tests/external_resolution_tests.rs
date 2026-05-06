@@ -24,11 +24,13 @@ fn trait_instance_entry_point_test() {
     ))
     .with_entrypoint("<crate::MyStruct as std::clone::Clone>::clone")
     .run(|graph| {
-        assert!(graph
-            .desc
-            .controllers
-            .values()
-            .any(|v| v.name.as_str() == "clone"))
+        assert!(
+            graph
+                .desc
+                .controllers
+                .values()
+                .any(|v| v.name.as_str() == "clone")
+        )
     })
     .unwrap()
 }
@@ -44,11 +46,13 @@ fn qualified_type_without_trait() {
     ))
     .with_entrypoint("<crate::MyStruct>::method")
     .run(|graph| {
-        assert!(graph
-            .desc
-            .controllers
-            .values()
-            .any(|v| v.name.as_str() == "method"))
+        assert!(
+            graph
+                .desc
+                .controllers
+                .values()
+                .any(|v| v.name.as_str() == "method")
+        )
     })
     .unwrap()
 }
