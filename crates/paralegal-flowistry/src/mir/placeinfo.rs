@@ -337,10 +337,7 @@ fn main() {
         placeinfo_harness(input, |tcx, body, place_info| {
             let p = Placer::new(tcx, body);
             let x = p.local("x");
-            compare_sets(
-                hashset! { x.mk() },
-                place_info.children(x.mk()),
-            );
+            compare_sets(hashset! { x.mk() }, place_info.children(x.mk()));
         });
     }
 
@@ -358,10 +355,7 @@ fn main() {
             let p = Placer::new(tcx, body);
             let r = p.local("r");
             // r is &i32; children stops at the reference — no deref.
-            compare_sets(
-                hashset! { r.mk() },
-                place_info.children(r.mk()),
-            );
+            compare_sets(hashset! { r.mk() }, place_info.children(r.mk()));
         });
     }
 
@@ -399,10 +393,7 @@ fn main() {
         placeinfo_harness(input, |tcx, body, place_info| {
             let p = Placer::new(tcx, body);
             let x = p.local("x");
-            compare_sets(
-                &hashset! { x.mk() },
-                place_info.conflicts(x.mk()),
-            );
+            compare_sets(&hashset! { x.mk() }, place_info.conflicts(x.mk()));
         });
     }
 
@@ -499,10 +490,7 @@ fn main() {
             let y = p.local("y");
             // *x should alias y
             let aliases = place_info.aliases(x.deref().mk());
-            compare_sets(
-                &hashset! { y.mk() },
-                aliases,
-            );
+            compare_sets(&hashset! { y.mk() }, aliases);
         });
     }
 
@@ -521,10 +509,7 @@ fn main() {
             let x = p.local("x");
             let y = p.local("y");
             let aliases = place_info.aliases(x.deref().mk());
-            compare_sets(
-                &hashset! { y.mk() },
-                aliases,
-            );
+            compare_sets(&hashset! { y.mk() }, aliases);
         });
     }
 

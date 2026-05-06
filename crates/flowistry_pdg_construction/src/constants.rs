@@ -103,7 +103,9 @@ impl<'tcx> PlaceOrConst<'tcx> {
 #[derive(Debug, Clone)]
 pub enum ConstConversionError<'tcx> {
     UnsupportedConstType(mir::Const<'tcx>),
-    Integer128NotSupported { signed: bool },
+    Integer128NotSupported {
+        signed: bool,
+    },
     EvalFailed(mir::Const<'tcx>),
     /// A `RuntimeChecks` operand was encountered; these are compiler-inserted
     /// runtime assertions (e.g. overflow checks) and carry no data value.
