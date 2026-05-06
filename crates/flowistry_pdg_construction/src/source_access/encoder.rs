@@ -127,10 +127,10 @@ impl<'tcx> TyEncoder<'tcx> for ParalegalEncoder<'tcx> {
     }
 
     fn encode_alloc_id(&mut self, alloc_id: &AllocId) {
-        let to_encode = if self.allocations.contains(alloc_id) {
-            EncodedAlloc::Ref(alloc_id.0.into())
-        } else {
+        let to_encode = if self.allocations.insert(*alloc_id) {
             EncodedAlloc::Inline(alloc_id.0.into(), self.tcx.global_alloc(*alloc_id))
+        } else {
+            EncodedAlloc::Ref(alloc_id.0.into())
         };
         to_encode.encode(self)
     }
