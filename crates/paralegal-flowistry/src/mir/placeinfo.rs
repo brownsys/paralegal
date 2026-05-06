@@ -132,21 +132,28 @@ impl<'tcx> PlaceInfo<'tcx> {
     /// is `{y, x}`. With `Mutability::Mut`, then the output is `{y}` (no `x`).
     pub fn reachable_values(&self, place: Place<'tcx>, mutability: Mutability) -> &PlaceSet<'tcx> {
         self.reachable_cache.get(&(place, mutability), |_| {
-            let ty = place.ty(self.body.local_decls(), self.tcx).ty;
-            let loans = self.collect_loans(ty, mutability);
-            loans
-                .into_iter()
-                .chain([place])
-                .filter(|place| {
-                    if let Some((place, _)) = place.refs_in_projection(self.body, self.tcx).last() {
-                        let ty = place.ty(self.body.local_decls(), self.tcx).ty;
-                        if ty.is_box() || ty.is_raw_ptr() {
-                            return true;
-                        }
+            let passes_filter = |p: Place<'tcx>| {
+                if let Some((pref, _)) = p.refs_in_projection(self.body, self.tcx).last() {
+                    let ty = pref.ty(self.body.local_decls(), self.tcx).ty;
+                    if ty.is_box() || ty.is_raw_ptr() {
+                        return true;
                     }
-                    place.is_direct(self.body, self.tcx)
-                })
-                .collect()
+                }
+                p.is_direct(self.body, self.tcx)
+            };
+
+            let mut result = PlaceSet::default();
+            let mut worklist = vec![place];
+
+            while let Some(p) = worklist.pop() {
+                if !passes_filter(p) || !result.insert(p) {
+                    continue;
+                }
+                let ty = p.ty(self.body.local_decls(), self.tcx).ty;
+                worklist.extend(self.collect_loans(ty, mutability));
+            }
+
+            result
         })
     }
 
@@ -178,11 +185,16 @@ impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for LoanCollector<'_, 'tcx> {
 
     fn visit_ty(&mut self, ty: Ty<'tcx>) -> Self::Result {
         match ty.kind() {
-            TyKind::Ref(_, _, mutability) => {
+            // For reference types: only visit the region to collect loans, then
+            // return Continue so sibling references in the same compound type are
+            // also visited. The inner type is intentionally skipped here; the
+            // worklist in reachable_values handles transitive traversal by
+            // following each loan's own type.
+            TyKind::Ref(region, _, mutability) => {
                 self.stack.push(*mutability);
-                ty.super_visit_with(self)?;
+                self.visit_region(*region)?;
                 self.stack.pop();
-                return ControlFlow::Break(());
+                return ControlFlow::Continue(());
             }
             _ if ty.is_box() || ty.is_raw_ptr() => {
                 self.visit_region(self.unknown_region)?;
@@ -262,7 +274,6 @@ fn main() {
             let p = Placer::new(tcx, body);
             let c = p.local("c");
             compare_sets(
-                place_info.children(c.mk()),
                 hashset! {
                   c.mk(),
                   c.field(0).mk(),
@@ -270,10 +281,10 @@ fn main() {
                   c.field(0).field(1).mk(),
                   c.field(1).mk(),
                 },
+                place_info.children(c.mk()),
             );
 
             compare_sets(
-                place_info.conflicts(c.field(0).mk()),
                 &hashset! {
                   c.mk(),
                   c.field(0).mk(),
@@ -281,35 +292,36 @@ fn main() {
                   c.field(0).field(1).mk(),
                   // c.field(1) not part of the set
                 },
+                place_info.conflicts(c.field(0).mk()),
             );
 
             // a and b are reachable at immut-level
             compare_sets(
-                place_info.reachable_values(c.mk(), Mutability::Not),
                 &hashset! {
                   c.mk(),
                   p.local("a").mk(),
                   p.local("b").mk()
                 },
+                place_info.reachable_values(c.mk(), Mutability::Not),
             );
 
             // only b is reachable at mut-level
             compare_sets(
-                place_info.reachable_values(c.mk(), Mutability::Mut),
                 &hashset! {
                   c.mk(),
                   p.local("b").mk()
                 },
+                place_info.reachable_values(c.mk(), Mutability::Mut),
             );
 
             // handles transitive references
             compare_sets(
-                place_info.reachable_values(p.local("f").mk(), Mutability::Not),
                 &hashset! {
                   p.local("f").mk(),
                   p.local("e").mk(),
                   p.local("d").mk()
                 },
+                place_info.reachable_values(p.local("f").mk(), Mutability::Not),
             )
         });
     }
