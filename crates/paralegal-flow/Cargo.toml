@@ -1,7 +1,7 @@
 [package]
 name = "paralegal-flow"
 version = "0.0.1"
-edition = "2021"
+edition = "2024"
 publish = false
 description = "Extractor for precise semantic PDGs from rust code."
 
@@ -9,33 +9,30 @@ description = "Extractor for precise semantic PDGs from rust code."
 rustc_private = true
 
 [features]
-test = ["rustc_utils/test"]
+test = ["paralegal-rustc-utils/test"]
 
 [dependencies]
 paralegal-spdg = { path = "../paralegal-spdg", features = ["rustc"] }
+cargo-paralegal-flow.path = "../cargo-paralegal-flow"
+paralegal-non-rustc-utils.path = "../paralegal-non-rustc-utils"
 
 flowistry_pdg_construction = { path = "../flowistry_pdg_construction" }
 flowistry_pdg = { path = "../flowistry_pdg" }
-flowistry = { workspace = true }
+paralegal-flowistry = { path = "../paralegal-flowistry" }
 
-rustc_utils = { workspace = true }
-rustc_plugin = { workspace = true }
-indexical = { version = "0.3.1", default-features = false, features = [
-    "rustc",
-] }
+paralegal-rustc-utils = { path = "../paralegal-rustc-utils" }
+clap.workspace = true
 
-
-clap = { version = "4.5.23", features = ["derive", "cargo", "env"] }
 serde = { workspace = true, features = ["derive"] }
 lazy_static = "1"
 ordermap = "0.5.4"
 trait_enum = "0.5"
 pretty = "0.12"
 nom = "7"
-log = { version = "0.4", features = ["serde"] }
-env_logger = "0.10"
-num-derive = "0.4"
-num-traits = "0.2"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+num-derive.workspace = true
+num-traits.workspace = true
 petgraph = { workspace = true }
 humantime = "2"
 strum = { workspace = true }
@@ -46,7 +43,7 @@ anyhow = "1.0.72"
 thiserror = "2"
 serde_bare = "0.5.0"
 toml = "0.8"
-serde_json = "1"
+serde_json.workspace = true
 nom-supreme = "0.8.0"
 
 dot = { git = "https://github.com/JustusAdam/dot-rust", rev = "ff2b42ceda98c639c8ea3cbfc56b83d6e06e8106" }
@@ -57,9 +54,3 @@ chrono = "0.4"
 [dev-dependencies]
 paralegal-flow = { path = ".", features = ["test"] }
 env_logger = "0.10"
-
-[[bin]]
-name = "cargo-paralegal-flow"
-
-[[bin]]
-name = "paralegal-flow"

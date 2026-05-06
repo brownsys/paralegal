@@ -34,7 +34,10 @@ pub mod dot;
 pub mod ser;
 mod tiny_bitset;
 pub mod traverse;
-pub mod utils;
+pub use paralegal_non_rustc_utils::{
+    self as utils, FileSystemStorable, ParalegalArtifact, ARTIFACT_NAME, FLOW_GRAPH_EXT,
+    FLOW_GRAPH_OUT_NAME, STAT_FILE_EXT,
+};
 
 use allocative::{ident_key, Allocative};
 use internment::Intern;
@@ -43,12 +46,10 @@ use rustc_portable::DefId;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use std::{fmt, hash::Hash, path::PathBuf};
-use utils::write_sep;
-
-use utils::serde_map_via_vec;
 
 pub use crate::tiny_bitset::pretty as tiny_bitset_pretty;
 pub use crate::tiny_bitset::TinyBitSet;
+use crate::utils::{serde_map_via_vec, write_sep};
 use flowistry_pdg::rustc_portable::LocalDefId;
 use petgraph::graph::{EdgeIndex, EdgeReference, NodeIndex};
 use petgraph::prelude::EdgeRef;
@@ -62,13 +63,6 @@ pub type Endpoint = DefId;
 pub type TypeId = DefId;
 /// Identifiers for functions
 pub type Function = Identifier;
-
-/// Name of the file used for emitting the serialized
-/// [`ProgramDescription`].
-pub const FLOW_GRAPH_OUT_NAME: &str = "flow-graph.o";
-
-/// Extension for output files containing statistics of the analzyer run.
-pub const STAT_FILE_EXT: &str = "stat.json";
 
 #[allow(dead_code)]
 mod ser_localdefid_map {
@@ -1163,7 +1157,7 @@ impl SPDG {
 
     /// Gather all [`Node`]s that are mentioned in this controller including data and control flow.
     pub fn all_sources(&self) -> impl Iterator<Item = Node> + '_ {
-        self.graph.node_identifiers().map(Into::into)
+        self.graph.node_identifiers()
     }
 
     /// Dump this graph in dot format.

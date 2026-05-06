@@ -3,24 +3,24 @@ use std::{collections::hash_map::Entry, fmt::Formatter, hash::Hash};
 use either::Either;
 
 use itertools::Itertools;
-use log::trace;
+use tracing::trace;
 
+use paralegal_rustc_utils::{BodyExt, PlaceExt};
 use rustc_borrowck::consumers::PlaceConflictBias;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::{self as hir, def_id::DefId, Defaultness};
 use rustc_middle::{
     mir::{
-        tcx::PlaceTy, Body, HasLocalDecls, Local, Location, Operand, Place, PlaceElem, PlaceRef,
+        Body, HasLocalDecls, Local, Location, Operand, Place, PlaceElem, PlaceRef, PlaceTy,
         ProjectionElem, Statement, StatementKind, Terminator, TerminatorKind,
     },
     ty::{
-        self, AssocItemContainer, Binder, EarlyBinder, GenericArg, GenericArgsRef, Instance,
+        self, AssocContainer, Binder, EarlyBinder, GenericArg, GenericArgsRef, Instance,
         InstanceKind, Region, Ty, TyCtxt, TyKind, TypeVisitable, TypeVisitor, TypingEnv,
     },
 };
-use rustc_span::{source_map::Spanned, ErrorGuaranteed, Span};
-use rustc_type_ir::{fold::TypeFoldable, AliasTyKind, PredicatePolarity, RegionKind};
-use rustc_utils::{BodyExt, PlaceExt};
+use rustc_span::{ErrorGuaranteed, Span, Spanned, Symbol};
+use rustc_type_ir::{AliasTyKind, PredicatePolarity, RegionKind, TypeFoldable, TypeFolder};
 
 mod two_level_cache;
 pub use two_level_cache::TwoLevelCache;
@@ -66,7 +66,7 @@ pub fn is_virtual(tcx: TyCtxt, function: DefId) -> bool {
     tcx.opt_associated_item(function).is_some_and(|assoc_item| {
         matches!(
             assoc_item.container,
-            AssocItemContainer::Trait
+            AssocContainer::Trait
             if !matches!(
                 assoc_item.defaultness(tcx),
                 Defaultness::Default { has_value: true })
@@ -74,28 +74,51 @@ pub fn is_virtual(tcx: TyCtxt, function: DefId) -> bool {
     })
 }
 
+pub fn erase_regions<'tcx, T>(tcx: TyCtxt<'tcx>, t: T) -> T
+where
+    T: TypeFoldable<TyCtxt<'tcx>> + std::fmt::Debug,
+{
+    struct VarEraser<'tcx> {
+        tcx: TyCtxt<'tcx>,
+    }
+
+    impl<'tcx> TypeFolder<TyCtxt<'tcx>> for VarEraser<'tcx> {
+        fn cx(&self) -> TyCtxt<'tcx> {
+            self.tcx
+        }
+
+        fn fold_region(&mut self, mut r: Region<'tcx>) -> Region<'tcx> {
+            if r.is_var() {
+                r = Region::new_from_kind(self.tcx, RegionKind::ReErased)
+            }
+            r
+        }
+    }
+
+    let mut eraser = VarEraser { tcx };
+    t.fold_with(&mut eraser)
+}
+
 /// The "canonical" way we monomorphize
 pub fn try_monomorphize<'tcx, 'a, T>(
     inst: Instance<'tcx>,
     tcx: TyCtxt<'tcx>,
     typing_env: TypingEnv<'tcx>,
-    t: &'a T,
+    t: T,
     span: Span,
 ) -> Result<T, ErrorGuaranteed>
 where
-    T: TypeFoldable<TyCtxt<'tcx>> + Clone + std::fmt::Debug,
+    T: TypeFoldable<TyCtxt<'tcx>> + std::fmt::Debug,
 {
-    inst.try_instantiate_mir_and_normalize_erasing_regions(
-        tcx,
-        typing_env,
-        EarlyBinder::bind(tcx.erase_regions(t.clone())),
-    )
-    .map_err(|e| {
-        tcx.dcx().span_err(
-            span,
-            format!("failed to monomorphize with instance {inst:?} due to {e:?}"),
-        )
-    })
+    let t = erase_regions(tcx, t);
+
+    inst.try_instantiate_mir_and_normalize_erasing_regions(tcx, typing_env, EarlyBinder::bind(t))
+        .map_err(|e| {
+            tcx.dcx().span_err(
+                span,
+                format!("failed to monomorphize with instance {inst:?} due to {e:?}"),
+            )
+        })
 }
 
 pub enum TyAsFnResult<'tcx> {
@@ -193,7 +216,8 @@ pub fn retype_place<'tcx>(
         ty = ty.projection_ty_core(
             tcx,
             &elem,
-            |_, field, _| match ty.ty.kind() {
+            |ty| ty,
+            |self_ty, variant_index, field, _| match self_ty.kind() {
                 TyKind::Closure(_, args) => {
                     let upvar_tys = args.as_closure().upvar_tys();
                     upvar_tys.iter().nth(field.as_usize()).unwrap()
@@ -202,9 +226,9 @@ pub fn retype_place<'tcx>(
                     let upvar_tys = args.as_coroutine().upvar_tys();
                     upvar_tys.iter().nth(field.as_usize()).unwrap()
                 }
-                _ => ty.field_ty(tcx, field),
+                _ => PlaceTy::field_ty(tcx, self_ty, variant_index, field),
             },
-            |_, ty| ty,
+            |ty| ty,
         );
         let elem = match elem {
             ProjectionElem::Field(field, _) => ProjectionElem::Field(field, ty.ty),
@@ -269,31 +293,36 @@ pub fn find_body_assignments(body: &Body<'_>) -> BodyAssignments {
 
 pub fn ty_resolve<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Ty<'tcx> {
     match ty.kind() {
-        TyKind::Alias(AliasTyKind::Opaque, alias_ty) => tcx.type_of(alias_ty.def_id).skip_binder(),
+        TyKind::Alias(alias_ty) if matches!(alias_ty.kind, AliasTyKind::Opaque { .. }) => {
+            tcx.type_of(alias_ty.kind.def_id()).skip_binder()
+        }
         _ => ty,
     }
 }
 
-pub fn manufacture_substs_for(
-    tcx: TyCtxt<'_>,
+pub fn manufacture_substs_for<'tcx>(
+    tcx: TyCtxt<'tcx>,
     function: DefId,
-) -> Result<GenericArgsRef<'_>, ErrorGuaranteed> {
+) -> Result<GenericArgsRef<'tcx>, ErrorGuaranteed> {
     use rustc_middle::ty::{
-        DynKind, ExistentialPredicate, ExistentialProjection, ExistentialTraitRef,
-        GenericParamDefKind, ParamTy, TraitPredicate,
+        ExistentialPredicate, ExistentialProjection, ExistentialTraitRef, GenericParamDefKind,
+        ParamTy, TraitPredicate,
     };
 
-    trace!("Manufacturing for {function:?}");
+    trace!(?function, "Manufacturing for");
+
+    let tenv = TypingEnv::post_analysis(tcx, function);
+    let any_sym = Symbol::intern("Any");
 
     let generics = tcx.generics_of(function);
     trace!("Found generics {generics:?}");
     let predicates = tcx.predicates_of(function).instantiate_identity(tcx);
     trace!("Found predicates {predicates:?}");
     let lang_items = tcx.lang_items();
-    let types = (0..generics.count()).map(|gidx| {
+    let types = (0..generics.count()).map(|gidx| -> Result<GenericArg<'tcx>, _> {
         let param = generics.param_at(gidx, tcx);
         if let Some(default_val) = param.default_value(tcx) {
-            return Ok(default_val.instantiate_identity());
+            return Ok(tcx.normalize_erasing_regions(tenv, default_val.instantiate_identity()));
         }
         match param.kind {
             // I'm not sure this is correct. We could probably return also "erased" or "static" here.
@@ -314,6 +343,7 @@ pub fn manufacture_substs_for(
 
         let param_as_ty = ParamTy::for_def(param);
         let constraints = predicates.predicates.iter().filter_map(|clause| {
+            let clause = tcx.normalize_erasing_regions(tenv, *clause);
             let pred = if let Some(trait_ref) = clause.as_trait_clause() {
                 if trait_ref.polarity() != PredicatePolarity::Positive {
                     return None;
@@ -363,7 +393,7 @@ pub fn manufacture_substs_for(
             0 => predicates.push(Binder::dummy(ExistentialPredicate::Trait(
                 ExistentialTraitRef::new(
                     tcx,
-                    tcx.get_diagnostic_item(rustc_span::sym::Any)
+                    tcx.get_diagnostic_item(any_sym)
                         .expect("The `Any` item is not defined."),
                     no_args,
                 ),
@@ -385,11 +415,13 @@ pub fn manufacture_substs_for(
             tcx,
             poly_predicate,
             Region::new_from_kind(tcx, RegionKind::ReErased),
-            DynKind::Dyn,
         );
         Ok(GenericArg::from(ty))
     });
-    tcx.mk_args_from_iter(types)
+    let new = tcx.mk_args_from_iter(types)?;
+    trace!(?new, "finished manufacturing");
+    assert_eq!(new.len(), generics.count());
+    Ok(new)
 }
 
 #[derive(Clone, Copy, Debug, strum::AsRefStr)]
@@ -533,7 +565,7 @@ impl<'tcx> PlaceConflictContext<'tcx> {
                 .iter()
                 .find(|m| m.ident.name == sym)
                 .and_then(|m| m.res.opt_def_id())
-                .expect(&format!("Could not find module {n}"))
+                .unwrap_or_else(|| panic!("Could not find module {n}"))
         };
         let ptr_mod = find_child(core.as_def_id(), "ptr");
         let unique_ptr_def_id = find_child(ptr_mod, "Unique");
@@ -660,7 +692,7 @@ impl<'tcx> PlaceConflictContext<'tcx> {
                     | (ProjectionElem::ConstantIndex { .. }, _)
                     | (ProjectionElem::Subslice { .. }, _)
                     | (ProjectionElem::OpaqueCast { .. }, _)
-                    | (ProjectionElem::Subtype(_), _)
+                    | (ProjectionElem::UnwrapUnsafeBinder(_), _)
                     | (ProjectionElem::Downcast { .. }, _) => {
                         // Recursive case. This can still be disjoint on a
                         // further iteration if this a shallow access and
@@ -941,7 +973,7 @@ impl<'tcx> PlaceConflictContext<'tcx> {
                 | ProjectionElem::ConstantIndex { .. }
                 | ProjectionElem::OpaqueCast { .. }
                 | ProjectionElem::Subslice { .. }
-                | ProjectionElem::Subtype(_)
+                | ProjectionElem::UnwrapUnsafeBinder(_)
                 | ProjectionElem::Downcast(..),
                 _,
             ) => panic!(
@@ -955,7 +987,7 @@ impl<'tcx> PlaceConflictContext<'tcx> {
     ///
     /// Basically rustc is sloppy when it comes to boxes. It is perfectly permissible to have the following assignments:
     ///
-    /// ```
+    /// ```ignore
     /// fn Box::new<T>(_1: T) {
     ///   ...
     ///   _5 = ShallowInitBox(move _4, std::sys::pal::unix::sync::mutex::Mutex);

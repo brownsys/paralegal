@@ -2,24 +2,19 @@ use std::{hash::Hash, panic};
 
 use ast::Mutability;
 use hir::{
+    ItemKind, Node, PrimTy,
     def::{self, DefKind},
     def_id::CrateNum,
-    def_id::LocalDefId,
     def_id::LOCAL_CRATE,
-    ImplItemRef, ItemKind, Node, PrimTy, TraitItemRef,
+    def_id::LocalDefId,
 };
-use rustc_ast::{
-    self as ast, token::TokenKind, ExprKind, GenericBound, PathSegment, QSelf, TraitObjectSyntax,
-    Ty, TyKind,
-};
+use rustc_ast::{self as ast, ExprKind, GenericBound, PathSegment, QSelf, TraitObjectSyntax, Ty, TyKind, token::TokenKind};
 use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_hir::{self as hir, def_id::DefId};
-use rustc_middle::ty::{
-    self, fast_reject::SimplifiedType, FloatTy, IntTy, List, Region, TyCtxt, UintTy,
-};
-use rustc_parse::new_parser_from_source_str;
+use rustc_middle::ty::{self, FloatTy, IntTy, TyCtxt, UintTy, fast_reject::SimplifiedType};
+use rustc_parse::{lexer::StripTokens, new_parser_from_source_str};
 use rustc_span::Symbol;
-use rustc_type_ir::DynKind;
+use tracing::{trace, warn};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Res {
@@ -82,9 +77,9 @@ fn prim_ty_to_simp_ty(pt: PrimTy) -> SimplifiedType {
         PrimTy::Bool => SimplifiedType::Bool,
         PrimTy::Char => SimplifiedType::Char,
         PrimTy::Str => SimplifiedType::Str,
-        PrimTy::Int(i) => SimplifiedType::Int(ty::int_ty(i)),
-        PrimTy::Uint(u) => SimplifiedType::Uint(ty::uint_ty(u)),
-        PrimTy::Float(f) => SimplifiedType::Float(ty::float_ty(f)),
+        PrimTy::Int(i) => SimplifiedType::Int(i.into()),
+        PrimTy::Uint(u) => SimplifiedType::Uint(u.into()),
+        PrimTy::Float(f) => SimplifiedType::Float(f.into()),
     }
 }
 
@@ -171,6 +166,7 @@ pub fn resolve_string_to_def_id(tcx: TyCtxt, path: &str) -> Result<Vec<Res>> {
         &tcx.sess.psess,
         rustc_span::FileName::Anon(hasher.finish()),
         path.to_string(),
+        StripTokens::Nothing,
     )
     .unwrap();
     let qpath = parser.parse_expr().map_err(|e| {
@@ -226,13 +222,10 @@ fn local_item_children_by_name(
     local_id: LocalDefId,
     name: Symbol,
 ) -> Option<Result<Res>> {
-    use crate::rustc_hir::intravisit::Map;
-    let hir = tcx.hir();
-
     let root_mod;
-    let item_kind = match hir.hir_node_by_def_id(local_id) {
+    let item_kind = match tcx.hir_node_by_def_id(local_id) {
         Node::Crate(r#mod) => {
-            root_mod = ItemKind::Mod(r#mod);
+            root_mod = ItemKind::Mod(rustc_span::Ident::dummy(), r#mod);
             &root_mod
         }
         Node::Item(item) => &item.kind,
@@ -241,21 +234,23 @@ fn local_item_children_by_name(
 
     let res = |def_id: LocalDefId| Ok(Res::Def(tcx.def_kind(def_id), def_id.to_def_id()));
 
+    let item_matches_name = |did| tcx.opt_item_name(did).is_some_and(|n| n == name);
+
     match item_kind {
-        ItemKind::Mod(r#mod) => r#mod
+        ItemKind::Mod(_, r#mod) => r#mod
             .item_ids
             .iter()
-            .find(|&item_id| hir.item(*item_id).ident.name == name)
+            .find(|&item_id| item_matches_name(item_id.owner_id.def_id.to_def_id()))
             .map(|&item_id| res(item_id.owner_id.def_id)),
         ItemKind::Impl(r#impl) => r#impl
             .items
             .iter()
-            .find(|item| item.ident.name == name)
-            .map(|&ImplItemRef { id, .. }| res(id.owner_id.def_id)),
+            .find(|item| item_matches_name(item.owner_id.def_id.to_def_id()))
+            .map(|item| res(item.owner_id.def_id)),
         ItemKind::Trait(.., trait_item_refs) => trait_item_refs
             .iter()
-            .find(|item| item.ident.name == name)
-            .map(|&TraitItemRef { id, .. }| res(id.owner_id.def_id)),
+            .find(|item| item_matches_name(item.owner_id.def_id.to_def_id()))
+            .map(|item| res(item.owner_id.def_id)),
         _ => None,
     }
 }
@@ -276,8 +271,8 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
                 return Err(ResolutionError::UnsupportedType(t.clone()));
             };
             Ok(match adt {
-                Res::Def(_, did) => ty::Ty::new_adt(tcx, tcx.adt_def(did), ty::List::empty()),
-                Res::PrimTy(pt) => match pt {
+                Res::Def(_, did) => ty::Ty::new_adt(tcx, tcx.adt_def(*did), ty::List::empty()),
+                Res::PrimTy(simp) => match simp {
                     SimplifiedType::Bool => tcx.types.bool,
                     SimplifiedType::Char => tcx.types.char,
                     SimplifiedType::Str => tcx.types.str_,
@@ -384,7 +379,7 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
                     )
                 }
             }
-            [base, ref path @ ..] => {
+            [base, path @ ..] => {
                 /* This is relevant for issue 2 */
                 no_generics_supported(base);
                 let base_name = base.ident.name;
@@ -512,7 +507,7 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
             .inspect(|res| {
                 trace!("  Resolved to {res:?}");
                 if let Res::Def(_, did) = res {
-                    trace!("    {} at {:?}", tcx.def_path_str(did), tcx.def_span(did));
+                    trace!("    {} at {:?}", tcx.def_path_str(*did), tcx.def_span(*did));
                 }
             })
             .collect())

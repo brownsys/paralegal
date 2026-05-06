@@ -1,7 +1,7 @@
 use flowistry_pdg::Constant;
 use petgraph::visit::IntoNodeReferences;
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
 use rustc_middle::{

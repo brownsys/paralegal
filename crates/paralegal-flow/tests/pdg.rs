@@ -8,13 +8,17 @@ extern crate rustc_span;
 use std::{collections::HashSet, rc::Rc};
 
 use either::Either;
-use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    source_access::BodyCache, CallChangeCallback, CallChangeCallbackFn, CallChanges,
-    MemoPdgConstructor, SkipCall,
+    CallChangeCallback, CallChangeCallbackFn, CallChanges, MemoPdgConstructor, SkipCall,
+    source_access::BodyCache,
 };
 use itertools::Itertools;
 use paralegal_flow::{Args, Pctx};
+use paralegal_flowistry::mir::FlowistryInput;
+use paralegal_non_rustc_utils::setup_logging;
+use paralegal_rustc_utils::{
+    PlaceExt, source_map::find_bodies::find_bodies, test_utils::CompileResult,
+};
 use paralegal_spdg::{NodeKind, SPDG};
 use rustc_hir::def_id::LocalDefId;
 use rustc_middle::{
@@ -22,12 +26,11 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 use rustc_span::Symbol;
-use rustc_utils::{source_map::find_bodies::find_bodies, test_utils::CompileResult, PlaceExt};
 
 fn get_main(tcx: TyCtxt<'_>) -> LocalDefId {
     find_bodies(tcx)
         .into_iter()
-        .map(|(_, body_id)| tcx.hir().body_owner_def_id(body_id))
+        .map(|(_, body_id)| tcx.hir_body_owner_def_id(body_id))
         .find(|def_id| match tcx.opt_item_name(def_id.to_def_id()) {
             Some(name) => name.as_str() == "main",
             None => false,
@@ -60,8 +63,8 @@ fn pdg(
     configure: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &mut MemoPdgConstructor<'tcx, u32>) + Send,
     tests: impl for<'tcx> FnOnce(TyCtxt<'tcx>, &BodyCache<'tcx>, SPDG) + Send,
 ) {
-    let _ = env_logger::try_init();
-    rustc_utils::test_utils::CompileBuilder::new(input).expect_compile(
+    let _ = setup_logging();
+    paralegal_rustc_utils::test_utils::CompileBuilder::new(input).expect_compile(
         move |CompileResult { tcx, .. }| {
             let def_id = get_main(tcx);
             let mut memo = MemoPdgConstructor::new(tcx);

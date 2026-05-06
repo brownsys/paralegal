@@ -3,21 +3,23 @@ use std::time::Instant;
 
 use super::{path_for_item, src_loc_for_span};
 use crate::{
+    HashMap, HashSet, MarkerCtx, Pctx,
     ann::{db::AutoMarkers, side_effect_detection},
     desc::*,
     utils::*,
-    HashMap, HashSet, MarkerCtx, Pctx,
 };
 use flowistry_pdg::rustc_portable::Location;
 use flowistry_pdg_construction::{
-    determine_async,
-    utils::{handle_shims, try_monomorphize, try_resolve_function, type_as_fn, ShimResult},
     DepEdge, DepEdgeKind, DepNode, DepNodeKind, MemoPdgConstructor, OneHopLocation, PartialGraph,
-    Use, VisitDriver, Visitor,
+    Use, VisitDriver, Visitor, determine_async,
+    utils::{
+        ShimResult, handle_shims, manufacture_substs_for, try_monomorphize, try_resolve_function,
+        type_as_fn,
+    },
 };
 use paralegal_spdg::Node;
 
-use rustc_hash::FxHashSet;
+use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir,
@@ -25,8 +27,9 @@ use rustc_middle::{
 };
 
 use either::Either;
-use flowistry::mir::FlowistryInput;
+use paralegal_flowistry::mir::FlowistryInput;
 use petgraph::visit::{IntoNodeReferences, NodeRef};
+use tracing::{debug, trace};
 
 fn dep_edge_kind_to_edge_kind(kind: DepEdgeKind) -> EdgeKind {
     match kind {
@@ -74,20 +77,26 @@ pub fn assemble_pdg<'tcx>(
             panic!("INVARIANT VIOLATED: body for local function {base_body_def_id:?} cannot be loaded.",)
         })
         .body();
+    let typing_env = tcx.typing_env_normalized_for_post_analysis(base_body_def_id);
+    let base_body_args = manufacture_substs_for(tcx, base_body_def_id).unwrap();
+    let base_body_instance =
+        try_resolve_function(tcx, base_body_def_id, typing_env, base_body_args).unwrap();
 
-    let async_state = determine_async(tcx, base_body_def_id, base_body);
-    debug!(
-        "async_state for {}: {}",
-        tcx.def_path_str(target),
-        async_state.map_or("not async", |(.., s)| s.describe())
-    );
+    let base_body = try_monomorphize(
+        base_body_instance,
+        tcx,
+        typing_env,
+        base_body.clone(),
+        tcx.def_span(base_body_def_id),
+    )
+    .unwrap();
+
+    let async_state = determine_async(tcx, base_body_def_id, &base_body);
 
     // These will refer to the function we are actually analyzing from, which may
     // be a generator if the target is async.
-    let possibly_generator_id =
-        async_state.map_or(base_body_def_id, |(generator, ..)| generator.def_id());
-    let (possible_generator_instance, k) =
-        pdg_constructor.create_root_key(possibly_generator_id.expect_local());
+    let possibly_generator = async_state.map_or(base_body_instance, |(generator, ..)| generator);
+    let (possible_generator_instance, k) = pdg_constructor.create_root_key(possibly_generator);
 
     let mut driver = VisitDriver::new(pdg_constructor, possible_generator_instance, k);
     let mut assembler = GraphAssembler::new(pctx.clone(), known_def_ids, base_body_def_id);
@@ -125,14 +134,9 @@ pub fn assemble_pdg<'tcx>(
                 driver.start(&mut assembler);
             },
         );
-        // Using create_root_key might seem weird here but it currently does what
-        // we need (resolve the instance)
-        let base_instance = pdg_constructor
-            .create_root_key(base_body_def_id.expect_local())
-            .0;
         // Because we actually started the analysis from the generator, we now
         // have to manually sync up the actual arguments to the async function.
-        assembler.fix_async_args(base_instance, loc, &mut driver);
+        assembler.fix_async_args(base_body_instance, loc, &mut driver);
     } else {
         print_estimated_size(&mut driver);
         driver.start(&mut assembler);
@@ -328,7 +332,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             resolution,
             tcx,
             TypingEnv::fully_monomorphized(),
-            &body.local_decls[base_place.local].ty,
+            body.local_decls[base_place.local].ty,
             span,
         )
         .unwrap();
@@ -343,7 +347,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     fn handle_node_types_helper(
         &mut self,
         node: GNode,
-        mut base_ty: mir::tcx::PlaceTy<'tcx>,
+        mut base_ty: mir::PlaceTy<'tcx>,
         projections: &[mir::PlaceElem<'tcx>],
     ) {
         trace!("Has place type {base_ty:?}");
@@ -359,7 +363,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             self.types.entry(node).or_default().extend(
                 node_types
                     .iter()
-                    .filter(|t| !tcx.is_coroutine(**t) && !tcx.def_kind(*t).is_fn_like()),
+                    .filter(|t| !tcx.is_coroutine(**t) && !tcx.def_kind(**t).is_fn_like()),
             )
         }
         trace!("Found marked node types {node_types:?}",);
@@ -368,7 +372,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     /// Return the (sub)types of this type that are marked.
     fn type_is_marked(
         &'a self,
-        typ: mir::tcx::PlaceTy<'tcx>,
+        typ: mir::PlaceTy<'tcx>,
         deep: bool,
     ) -> impl Iterator<Item = TypeId> + use<'a, 'tcx> {
         if deep {
@@ -451,8 +455,14 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             term.kind
         );
         let param_env = TypingEnv::post_analysis(self.tcx(), function.def_id());
-        let func =
-            try_monomorphize(function, self.tcx(), param_env, func, term.source_info.span).unwrap();
+        let func = try_monomorphize(
+            function,
+            self.tcx(),
+            param_env,
+            func.clone(),
+            term.source_info.span,
+        )
+        .unwrap();
         let Some(funcc) = func.constant() else {
             self.pctx.maybe_span_err(
                 weight.span,
@@ -609,14 +619,14 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             true,
         );
 
-        let mono_ty = |local| {
-            let decl = &base_body.local_decls[local];
-            mir::tcx::PlaceTy::from_ty(
+        let mono_ty = |local: mir::Local| {
+            let decl: &mir::LocalDecl<'tcx> = &base_body.local_decls[local];
+            mir::PlaceTy::from_ty(
                 try_monomorphize(
                     instance,
                     tcx,
                     TypingEnv::fully_monomorphized(),
-                    &decl.ty,
+                    decl.ty,
                     decl.source_info.span,
                 )
                 .unwrap(),
@@ -688,17 +698,8 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                             std::fs::File::create(format!("{}.mir", tcx.def_path_str(fun)))
                                 .unwrap(),
                         );
-                        use rustc_middle::mir::pretty::{write_mir_fn, PrettyPrintMirOptions};
-                        write_mir_fn(
-                            tcx,
-                            self.ctx().body_cache().get(fun).body(),
-                            &mut |_, _| Ok(()),
-                            &mut f,
-                            PrettyPrintMirOptions {
-                                include_extra_comments: false,
-                            },
-                        )
-                        .unwrap();
+                        use std::io::Write;
+                        write!(f, "{:#?}", self.ctx().body_cache().get(fun).body()).unwrap();
                     }
                     tcx.dcx().span_err(
                         *span,
@@ -760,10 +761,10 @@ fn place_ty_from_ty_and_projections<'tcx>(
     tcx: TyCtxt<'tcx>,
     ty: ty::Ty<'tcx>,
     projection: &[mir::PlaceElem<'tcx>],
-) -> mir::tcx::PlaceTy<'tcx> {
+) -> mir::PlaceTy<'tcx> {
     projection
         .iter()
-        .fold(mir::tcx::PlaceTy::from_ty(ty), |place_ty, &elem| {
+        .fold(mir::PlaceTy::from_ty(ty), |place_ty, &elem| {
             place_ty.projection_ty(tcx, elem)
         })
 }
@@ -794,7 +795,7 @@ fn place_is_idempotent_projection(place: mir::Place<'_>) -> bool {
     place.projection.iter().all(|p| {
         matches!(
             p,
-            PlaceElem::Deref | PlaceElem::Subtype(_) | PlaceElem::OpaqueCast(_)
+            PlaceElem::Deref | PlaceElem::OpaqueCast(_)
         )
     })
 }
@@ -812,7 +813,6 @@ fn is_pure_node<'tcx, K: Clone>(
     match vis.current_body().stmt_at(loc) {
         Either::Left(mir::Statement { kind, .. }) => match kind {
             Sk::FakeRead(..)
-            | Sk::Deinit(..)
             | Sk::StorageLive(..)
             | Sk::StorageDead(..)
             | Sk::Retag(..)
@@ -830,9 +830,9 @@ fn is_pure_node<'tcx, K: Clone>(
                 // on the same type and would admit more patterns.
 
                 let place = match &a.1 {
-                    Use(op) | Cast(_, op, _) | ShallowInitBox(op, _) => match op {
+                    Use(op) | Cast(_, op, _) => match op {
                         Operand::Copy(place) | Operand::Move(place) => place,
-                        Operand::Constant(_) => return true,
+                        Operand::Constant(_) | Operand::RuntimeChecks(_) => return true,
                     },
 
                     Ref(_, _, place) | RawPtr(_, place) => place,
@@ -842,8 +842,8 @@ fn is_pure_node<'tcx, K: Clone>(
                             .filter_map(|o| o.place())
                             .all(place_is_idempotent_projection)
                     }
-                    ThreadLocalRef(..) => return true,
-                    Repeat(..) | Len(..) | BinaryOp(..) | NullaryOp(..) | UnaryOp(..)
+                    ThreadLocalRef(..) | WrapUnsafeBinder(..) => return true,
+                    Repeat(..) | BinaryOp(..) | UnaryOp(..)
                     | Discriminant(..) | CopyForDeref(..) => return false,
                 };
                 place_is_idempotent_projection(*place)
@@ -999,7 +999,7 @@ impl<'tcx> Visitor<'tcx, u32> for StacktracePrinter<'tcx> {
                     "    Called from {:100} {}:{start}",
                     self.tcx.def_path_str(fun),
                     smap.span_to_filename(span)
-                        .display(rustc_span::FileNameDisplayPreference::Local),
+                        .display(rustc_span::RemapPathScopeComponents::empty()),
                 )
             }
             println!();

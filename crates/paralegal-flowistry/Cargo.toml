@@ -1,0 +1,28 @@
+[package]
+name = "paralegal-flowistry"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[package.metadata.rust-analyzer]
+rustc_private = true
+
+[features]
+test = ["paralegal-rustc-utils/test"]
+default = []
+
+[dependencies]
+fluid-let = "1.0"
+serde = { version = "1", features = ["derive"] }
+log = "0.4"
+polonius-engine = "0.13.0"
+paralegal-rustc-utils = { path = "../paralegal-rustc-utils" }
+
+[dev-dependencies]
+paralegal-rustc-utils = { path = "../paralegal-rustc-utils", features = [
+    "test",
+] }
+
+[build-dependencies]
+paralegal-non-rustc-utils = { path = "../paralegal-non-rustc-utils" }

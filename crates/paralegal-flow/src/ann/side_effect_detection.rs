@@ -8,8 +8,9 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::{mir, ty};
 
 use either::Either;
+use tracing::trace;
 
-use crate::{ann::db::AutoMarkers, MarkerCtx};
+use crate::{MarkerCtx, ann::db::AutoMarkers};
 
 const ALLOWED_INTRINSICS: &[&str] = &[
     "three_way_compare",
@@ -200,8 +201,7 @@ pub fn analyze_statement<'tcx>(
             analyzer.visit_statement(statement, location);
             trace!(
                 "Checking statement {:?}, found {:?}",
-                statement.kind,
-                analyzer.found_markers
+                statement.kind, analyzer.found_markers
             );
         }
         Either::Right(terminator) => {
@@ -244,7 +244,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for BodyAnalyzer<'tcx, '_> {
         if matches!(projection_elem, mir::ProjectionElem::Deref) {
             let ty = place_ref.ty(self.body, self.tcx).ty;
 
-            if ty.is_mutable_ptr() && ty.is_unsafe_ptr() {
+            if ty.is_raw_ptr() && ty.is_mutable_ptr() {
                 self.found_markers
                     .insert(self.auto_markers.side_effect_raw_ptr);
             }
@@ -283,7 +283,7 @@ fn contains_mut_ref<'tcx>(ty: ty::Ty<'tcx>, tcx: ty::TyCtxt<'tcx>) -> bool {
                 trace!("Found mut ref in {t:?}");
                 self.has_mut_ref = true;
             }
-            t.super_visit_with(self)
+            t.super_visit_with(self);
         }
     }
 

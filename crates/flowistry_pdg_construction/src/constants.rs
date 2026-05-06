@@ -45,6 +45,9 @@ impl<'tcx> PlaceOrConst<'tcx> {
             mir::Operand::Constant(constant) => {
                 Self::Const(constant_from_const(tcx, &constant.const_, ty_env, span)?)
             }
+            mir::Operand::RuntimeChecks(_) => {
+                return Err(ConstConversionError::RuntimeChecksOperand);
+            }
         })
     }
 
@@ -100,13 +103,22 @@ impl<'tcx> PlaceOrConst<'tcx> {
 #[derive(Debug, Clone)]
 pub enum ConstConversionError<'tcx> {
     UnsupportedConstType(mir::Const<'tcx>),
-    Integer128NotSupported { signed: bool },
+    Integer128NotSupported {
+        signed: bool,
+    },
     EvalFailed(mir::Const<'tcx>),
     CannotParseFloat(ParseFloatError),
+    /// A `RuntimeChecks` operand was encountered; these are compiler-inserted
+    /// runtime assertions (e.g. overflow checks) and carry no data value.
+    RuntimeChecksOperand,
 }
 
 impl<'tcx> ConstConversionError<'tcx> {
     fn handle_default_policy(&self, tcx: ty::TyCtxt<'tcx>, span: rustc_span::Span, strict: bool) {
+        // Runtime check operands are compiler-inserted assertions; silently ignore them.
+        if matches!(self, ConstConversionError::RuntimeChecksOperand) {
+            return;
+        }
         let emit = |msg| {
             if strict {
                 tcx.dcx().span_err(span, msg);
@@ -144,8 +156,10 @@ impl std::fmt::Display for ConstConversionError<'_> {
             ConstConversionError::EvalFailed(c) => {
                 write!(f, "Evaluation failed for constant: {:?}", c)
             }
-            ConstConversionError::CannotParseFloat(e) => {
-                write!(f, "Cannot parse float: {}", e)
+            ConstConversionError::CannotParseFloat(e) => 
+                write!(f, "Cannot parse float: {}", e),
+            ConstConversionError::RuntimeChecksOperand => {
+                write!(f, "RuntimeChecks operand is not a data value")
             }
         }
     }
@@ -170,7 +184,7 @@ pub fn constant_from_const<'tcx>(
 fn constant_from_const_value<'tcx>(
     tcx: ty::TyCtxt<'tcx>,
     ty: ty::Ty<'tcx>,
-    ct: &mir::ConstValue<'tcx>,
+    ct: &mir::ConstValue,
 ) -> Result<Constant, ConstConversionError<'tcx>> {
     let default_err = Err(ConstConversionError::UnsupportedConstType(mir::Const::Val(
         *ct, ty,

@@ -12,7 +12,7 @@
 
 use std::{borrow::Cow, hash::Hash, rc::Rc};
 
-use flowistry::mir::FlowistryInput;
+use paralegal_flowistry::mir::FlowistryInput;
 use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
 use rustc_middle::{
     mir::{self, Location},
@@ -252,10 +252,8 @@ impl<'tcx, 'c, K: Clone + Hash + Eq> VisitDriver<'tcx, 'c, K> {
     ) {
         let swap_ctrl_input = !ctrl_inputs.is_empty();
         let old_ctrl_inputs = if swap_ctrl_input {
-            std::mem::replace(
-                &mut self.ctrl_inputs,
-                Some((self.graph_stack.len() - 1, ctrl_inputs)),
-            )
+            self.ctrl_inputs
+                .replace((self.graph_stack.len() - 1, ctrl_inputs))
         } else {
             None
         };

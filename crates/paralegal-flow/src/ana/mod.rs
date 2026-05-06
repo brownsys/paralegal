@@ -5,29 +5,29 @@
 //! [`analyze`](SPDGGenerator::analyze).
 
 use crate::{
+    DumpStats, HashMap, HashSet, INTERMEDIATE_STAT_EXT, MarkerCtx, Pctx,
     ann::{Annotation, MarkerAnnotation},
     args::Stub,
     desc::*,
     discover::FnToAnalyze,
     stats::{Stats, TimedStat},
     utils::*,
-    DumpStats, HashMap, HashSet, LogLevelConfig, MarkerCtx, Pctx, INTERMEDIATE_STAT_EXT,
 };
 
 use std::{fs::File, io::BufReader, rc::Rc, time::Instant};
 
 use anyhow::Result;
-use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
-    source_access::local_or_remote_paths,
-    utils::{is_async, type_as_fn, ArgSlice},
     CallChangeCallback, CallChanges, CallInfo, CallingConvention, InlineMissReason,
     MemoPdgConstructor, SkipCall,
+    source_access::local_or_remote_paths,
+    utils::{ArgSlice, is_async, type_as_fn},
 };
 use inline_judge::{InlineJudgement, K};
 use itertools::Itertools;
+use paralegal_flowistry::mir::FlowistryInput;
 
-use rustc_hash::FxHashSet;
+use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::{
     self as hir, def,
     def_id::{DefId, LOCAL_CRATE},
@@ -36,7 +36,8 @@ use rustc_middle::{
     mir::{self, Location},
     ty::{Instance, TyCtxt, TypingEnv},
 };
-use rustc_span::{ErrorGuaranteed, FileNameDisplayPreference, Span as RustSpan, Symbol};
+use rustc_span::{ErrorGuaranteed, Span as RustSpan, Symbol};
+use tracing::{debug, info};
 
 mod graph_converter;
 mod inline_judge;
@@ -124,31 +125,17 @@ impl<'tcx> SPDGGenerator<'tcx> {
     /// Should only be called after the visit.
     pub fn analyze(&mut self) -> Result<(ProgramDescription, AnalyzerStats)> {
         let targets = std::mem::take(&mut self.functions_to_analyze);
-        if let LogLevelConfig::Targeted(s) = self.ctx.opts().direct_debug() {
-            assert!(
-                targets.iter().any(|target| target.name().as_str() == s),
-                "Debug output option specified a specific target '{s}', but no such target was found in [{}]",
-                Print(|f: &mut std::fmt::Formatter<'_>| {
-                    write_sep(f, ", ", targets.iter(), |t, f| {
-                        f.write_str(t.name().as_str())
-                    })
-                })
-            )
-        }
 
         let mut known_def_ids = FxHashSet::default();
 
         targets
             .iter()
             .map(|desc| {
-                let target_name = desc.name();
-                with_reset_level_if_target(self.ctx.opts(), target_name, || {
-                    self.handle_target(
-                        //hash_verifications,
-                        desc,
-                        &mut known_def_ids,
-                    )
-                })
+                self.handle_target(
+                    //hash_verifications,
+                    desc,
+                    &mut known_def_ids,
+                )
             })
             .collect::<Result<HashMap<Endpoint, SPDG>>>()
             .map(|controllers| {
@@ -432,7 +419,7 @@ fn src_loc_for_span(span: RustSpan, tcx: TyCtxt) -> Span {
         tcx.sess.source_map().span_to_location_info(span);
     let file_path = source_file.map_or_else(
         || "<unknown>".to_string(),
-        |f| f.name.display(FileNameDisplayPreference::Local).to_string(),
+        |f| f.name.prefer_local_unconditionally().to_string(),
     );
     let abs_file_path = if !file_path.starts_with('/') {
         std::env::current_dir()
@@ -483,7 +470,7 @@ fn def_kind_for_item(id: DefId, tcx: TyCtxt) -> DefKind {
         def::DefKind::Struct
         | def::DefKind::AssocTy
         | def::DefKind::OpaqueTy
-        | def::DefKind::TyAlias { .. }
+        | def::DefKind::TyAlias
         | def::DefKind::Enum => DefKind::Type,
         def::DefKind::Ctor { .. } => DefKind::Ctor,
         kind => unreachable!("{} ({:?})", tcx.def_path_debug_str(id), kind),
@@ -519,17 +506,6 @@ fn def_info_for_item(id: DefId, markers: &MarkerCtx, tcx: TyCtxt) -> DefInfo {
                 on_argument: ann.refinement.on_argument(),
             })
             .collect(),
-    }
-}
-
-/// A higher order function that increases the logging level if the `target`
-/// matches the one selected with the `debug` flag on the command line (and
-/// reset it afterward).
-fn with_reset_level_if_target<R, F: FnOnce() -> R>(opts: &crate::Args, target: Symbol, f: F) -> R {
-    if matches!(opts.direct_debug(), LogLevelConfig::Targeted(s) if target.as_str() == s) {
-        with_temporary_logging_level(opts.verbosity().unwrap_or(log::LevelFilter::Info), f)
-    } else {
-        f()
     }
 }
 
@@ -596,7 +572,7 @@ impl Stub {
                         return Err(tcx.dcx().span_err(
                             at,
                             format!("Expected `fn` or `closure` def kind, got {kind:?}"),
-                        ))
+                        ));
                     }
                 }
             }
@@ -630,11 +606,11 @@ impl Stub {
         let calling_convention = if expect_indirect {
             let clj = match arguments {
                 [clj] => clj,
-                [gen, _]
+                [r#gen, _]
                     if tcx.def_kind(function.def_id()) == hir::def::DefKind::AssocFn
-                        && tcx.associated_item(function.def_id()).trait_item_def_id == poll =>
+                        && tcx.associated_item(function.def_id()).trait_item_def_id() == poll =>
                 {
-                    gen
+                    r#gen
                 }
                 _ => {
                     return Err(tcx.dcx().span_err(
@@ -644,7 +620,7 @@ impl Stub {
                             function.def_id(),
                             arguments.len()
                         ),
-                    ))
+                    ));
                 }
             };
             CallingConvention::Indirect {

@@ -76,7 +76,7 @@ mod tests {
     use rustc_abi::FieldIdx;
     use rustc_borrowck::consumers::BodyWithBorrowckFacts;
     use rustc_middle::mir::{self, ProjectionElem};
-    use rustc_utils::test_utils::CompileBuilder;
+    use paralegal_rustc_utils::test_utils::CompileBuilder;
     use std::collections::HashMap;
 
     fn clear_projection_elem<V, T>(e: ProjectionElem<V, T>) -> ProjectionElem<(), ()> {
@@ -100,7 +100,7 @@ mod tests {
                 ProjectionElem::Downcast(ty, variant_index)
             }
             ProjectionElem::OpaqueCast(..) => ProjectionElem::OpaqueCast(()),
-            ProjectionElem::Subtype(_) => ProjectionElem::Subtype(()),
+            ProjectionElem::UnwrapUnsafeBinder(_) => ProjectionElem::UnwrapUnsafeBinder(()),
         }
     }
 

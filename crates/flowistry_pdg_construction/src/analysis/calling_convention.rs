@@ -1,14 +1,14 @@
 use std::borrow::Cow;
 
 use flowistry_pdg::rustc_portable::DefId;
-use log::trace;
 use rustc_abi::FieldIdx;
+use tracing::trace;
 
 use rustc_middle::{
     mir::{Body, HasLocalDecls, Operand, Place, PlaceElem, RETURN_PLACE},
     ty::TyCtxt,
 };
-use rustc_span::source_map::Spanned;
+use rustc_span::Spanned;
 
 use super::{async_support::AsyncInfo, local::CallKind};
 use crate::utils::{self, ShimType};
@@ -169,9 +169,13 @@ impl<'a, 'tcx> PlaceTranslator<'a, 'tcx> {
                     self.tcx,
                 );
                 let field_idx = self.async_info.poll_ready_field_idx;
-                let child_inner_return_type = in_poll
-                    .ty(self.parent_body.local_decls(), self.tcx)
-                    .field_ty(self.tcx, field_idx);
+                let child_inner_return_type = in_poll.ty(self.parent_body.local_decls(), self.tcx);
+                let child_inner_return_type = rustc_middle::mir::PlaceTy::field_ty(
+                    self.tcx,
+                    child_inner_return_type.ty,
+                    child_inner_return_type.variant_index,
+                    field_idx,
+                );
                 (
                     in_poll.project_deeper(
                         &[PlaceElem::Field(field_idx, child_inner_return_type)],
@@ -220,14 +224,10 @@ impl<'a, 'tcx> PlaceTranslator<'a, 'tcx> {
                         // function and its call don't match fully. (We are
                         // calling a closure that takes it's `self` by reference
                         // with a `self` by value.)
-                        if let Some(fst) = child.projection.first() {
+                        {
+                            let fst = child.projection.first()?;
                             // If there is a first place it must be a deref
                             assert_eq!(fst, &PlaceElem::Deref);
-                        } else {
-                            // We cannot remap the raw first place as it is a
-                            // reference that does not exist in the caller (as
-                            // the caller passes `self` by value.)
-                            return None;
                         }
                         // We skip the first projection element (a deref) to
                         // account for the difference in signature
@@ -240,9 +240,13 @@ impl<'a, 'tcx> PlaceTranslator<'a, 'tcx> {
                     let tuple_arg = tupled_arguments.node.place()?;
                     let _projection = child.projection.to_vec();
                     let field = FieldIdx::from_usize(local.as_usize() - 2);
-                    let field_ty = tuple_arg
-                        .ty(self.parent_body, self.tcx)
-                        .field_ty(self.tcx, field);
+                    let tuple_arg_ty = tuple_arg.ty(self.parent_body, self.tcx);
+                    let field_ty = rustc_middle::mir::PlaceTy::field_ty(
+                        self.tcx,
+                        tuple_arg_ty.ty,
+                        tuple_arg_ty.variant_index,
+                        field,
+                    );
                     (
                         tuple_arg.project_deeper(&[PlaceElem::Field(field, field_ty)], self.tcx),
                         &child.projection[..],

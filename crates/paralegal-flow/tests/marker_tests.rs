@@ -5,6 +5,7 @@ extern crate lazy_static;
 
 use paralegal_flow::{define_flow_test_template, inline_test, test_utils::*};
 use paralegal_spdg::{Identifier, InstructionKind};
+use std::path::Path;
 
 const TEST_CRATE_NAME: &str = "tests/marker-tests";
 const EXTRA_ARGS: &[&str] = &["--no-interprocedural-analysis"];
@@ -322,6 +323,54 @@ fn no_overtaint_from_sibling_markers() {
     });
 }
 
+/// `get_parent` is supposed to return the trait method DefId when given an impl
+/// method DefId. This directly tests the function: given an impl method, it
+/// must return `Some(trait_method_defid)` — not `None` (the stub value).
+#[test]
+fn get_parent_returns_trait_method_for_impl_method() {
+    extern crate rustc_middle;
+
+    InlineTestBuilder::new(stringify!(
+        trait MyTrait {
+            fn get_parent_test_method(self) -> u32;
+        }
+
+        impl MyTrait for u32 {
+            fn get_parent_test_method(self) -> u32 {
+                self + 1
+            }
+        }
+
+        #[paralegal_flow::analyze]
+        fn main() {
+            let x: u32 = 5;
+            let _ = x.get_parent_test_method();
+        }
+    ))
+    .run_with_tcx(|tcx, graph| {
+        let name = Identifier::new_intern("get_parent_test_method");
+        let methods = graph
+            .name_map
+            .get(&name)
+            .expect("no function named get_parent_test_method in def_info");
+
+        // Identify the impl method: its associated_item has a trait_item_def_id (the
+        // trait method it overrides), while the trait method itself returns None there.
+        let impl_method = methods
+            .iter()
+            .find(|&&did| tcx.associated_item(did).trait_item_def_id().is_some())
+            .copied()
+            .expect("could not find an impl method for get_parent_test_method");
+
+        let parent = paralegal_flow::utils::get_parent(tcx, impl_method);
+        assert!(
+            parent.is_some(),
+            "get_parent({impl_method:?}) returned None; the function appears to be stubbed"
+        );
+    })
+    .unwrap();
+}
+
 #[test]
 fn async_fn_marker() {
     inline_test! {
@@ -373,13 +422,7 @@ fn lifetime_resolving() {
             Ref { _marker: PhantomData }.test_method();
         }
     }
-    .with_marker_file(
-        "
-        [[\"<crate::Ref as crate::Test>::test_method\"]]
-        marker = \"present\"
-        on_argument = [0]
-        ",
-    )
+    .with_marker_file(Path::new("tests/fixtures/lifetime-resolving-markers.toml"))
     .check_ctrl(|ctrl| assert!(dbg!(ctrl.markers()).contains(&Identifier::new_intern("present"))));
 }
 
@@ -412,17 +455,8 @@ fn dont_inline_on_std_marker() {
             intermediate1();
             intermediate2(0);
         }
-    }.with_marker_file(
-        "
-        [[\"crate::hidden1\"]]
-        marker = \"std:test\"
-        on_return = true
-
-        [[\"crate::hidden2\"]]
-        marker = \"safe-libs:test\"
-        on_argument = [0]
-        "
-    ).with_extra_args(["--elide-on-whitelist-markers"])
+    }.with_marker_file(Path::new("tests/fixtures/dont-inline-on-std-marker.toml"))
+    .with_extra_args(["--elide-on-whitelist-markers"])
     .check_ctrl(|ctrl| {
         assert!(ctrl.marked("std:test").is_empty());
         assert!(ctrl.marked("safe-libs:test").is_empty());

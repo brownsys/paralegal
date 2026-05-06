@@ -1,52 +1,59 @@
 # Trusted modules
 
+[["alloc::boxed"]]
+marker = "std:boxed"
+_internal_can_fail_resolve_silently = true
+_internal_on_all_module_children = true
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+on_return = true
+
+[["core::ptr::non_null"]]
+marker = "std:ptr"
+_internal_can_fail_resolve_silently = true
+_internal_on_all_module_children = true
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+on_return = true
+
+[["core::ptr::metadata"]]
+marker = "std:ptr"
+_internal_can_fail_resolve_silently = true
+_internal_on_all_module_children = true
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+on_return = true
+
 [["alloc::vec"]]
 marker = "std:vec"
 _internal_can_fail_resolve_silently = true
 _internal_on_all_module_children = true
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
-
-[["alloc::slice"]]
-marker = "std:slice"
-_internal_can_fail_resolve_silently = true
-_internal_on_all_module_children = true
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
-on_return = true
-
-[["slice"]]
-marker = "std:slice"
-_internal_on_all_module_children = true
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
-on_return = true
-
 
 [["core::slice"]]
 marker = "std:slice"
 _internal_can_fail_resolve_silently = true
 _internal_on_all_module_children = true
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["alloc::string"]]
 marker = "std:string"
 _internal_can_fail_resolve_silently = true
 _internal_on_all_module_children = true
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["std::collections::hash_map"]]
 marker = "std:hashmap"
 _internal_can_fail_resolve_silently = true
 _internal_on_all_module_children = true
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["std::collections::btree"]]
 marker = "std:btree"
 _internal_can_fail_resolve_silently = true
 _internal_on_all_module_children = true
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 # Impls of global allocator.
@@ -56,57 +63,63 @@ on_return = true
 marker = "std:allocation"
 _internal_can_fail_resolve_silently = true
 _internal_on_all_module_children = true
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["alloc::alloc::exchange_malloc"]]
 marker = "std:allocation"
 _internal_can_fail_resolve_silently = true
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
+
+[["std::boxed::Box::into_raw_with_allocator"]]
+marker = "std:box"
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+on_return = true
+#_internal_can_fail_resolve_silently = true
 
 # allowed functions
 
 # Panicking infrastructure.
 [["core::panicking::assert_failed"]]
 marker = "std:panic"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["core::panicking::const_panic_fmt"]]
 marker = "std:panic"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["core::panicking::panic"]]
 marker = "std:panic"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["core::panicking::panic_display"]]
 marker = "std:panic"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["core::panicking::panic_fmt"]]
 marker = "std:panic"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["core::panicking::panic_nounwind"]]
 marker = "std:panic"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["core::panicking::panic_nounwind_fmt"]]
 marker = "std:panic"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
@@ -114,32 +127,32 @@ _internal_can_fail_resolve_silently = true
 # "core::panicking::panic_str",
 [["core::panicking::unreachable_display"]]
 marker = "std:panic"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 # Alloc infrastructure.
 [["alloc::alloc::alloc"]]
 marker = "std:allocation"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["alloc::alloc::alloc_zeroed"]]
 marker = "std:allocation"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["alloc::alloc::dealloc"]]
 marker = "std:allocation"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["alloc::alloc::realloc"]]
 marker = "std:allocation"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
@@ -149,62 +162,62 @@ _internal_can_fail_resolve_silently = true
 # "alloc::alloc::\{impl#1\}",
 [["<alloc::alloc::Global as alloc::alloc::Allocator>::grow"]]
 marker = "std:allocation"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["<alloc::alloc::Global as alloc::alloc::Allocator>::deallocate"]]
 marker = "std:allocation"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["<alloc::alloc::Global as alloc::alloc::Allocator>::shrink"]]
 marker = "std:allocation"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 # Alloc error handler.
 [["alloc::alloc::__rust_alloc_error_handler"]]
 marker = "std:allocation"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["<core::ascii::Char as alloc::string::ToString>::to_string"]]
 marker = "std:convert"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["<char as alloc::string::ToString>::to_string"]]
 marker = "std:convert"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["<bool as alloc::string::ToString>::to_string"]]
 marker = "std:convert"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["<u8 as alloc::string::ToString>::to_string"]]
 marker = "std:convert"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["<i8 as alloc::string::ToString>::to_string"]]
 marker = "std:convert"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["<alloc::string::String as alloc::string::ToString>::to_string"]]
 marker = "std:convert"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
@@ -214,13 +227,13 @@ _internal_can_fail_resolve_silently = true
 # Format strings.
 [["core::fmt::Formatter::new"]]
 marker = "std:fmt"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["alloc::fmt::format"]]
 marker = "std:fmt"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
@@ -247,9 +260,35 @@ _internal_can_fail_resolve_silently = true
 # "<*mut _>::addr",
 [["core::ptr::alignment::Alignment::new_unchecked"]]
 marker = "std:allocation"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
+
+[["core::hint"]]
+marker = "std:hint"
+_internal_can_fail_resolve_silently = true
+_internal_on_all_module_children = true
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+on_return = true
+
+[["core::cmp"]]
+marker = "std:cmp"
+_internal_can_fail_resolve_silently = true
+_internal_on_all_module_children = true
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+on_return = true
+
+[["core::iter"]]
+marker = "std:iter"
+_internal_can_fail_resolve_silently = true
+_internal_on_all_module_children = true
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+on_return = true
+
+[["std::ffi::OsStr::from_encoded_bytes_unchecked"]]
+marker = "std:ffi"
+_internal_can_fail_resolve_silently = true
+on_return = true
 
 
 # markers for microtesting
@@ -270,35 +309,35 @@ _internal_can_fail_resolve_silently = true
 
 [["<std::slice::Iter as std::iter::Iterator>::fold"]]
 marker = "std:slice"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["str::as_bytes"]]
 marker = "std:string"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["<std::slice::Iter as std::iter::Iterator>::next"]]
 marker = "std:slice"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 _internal_can_fail_resolve_silently = true
 
 [["<std::sync::MutexGuard as std::ops::DerefMut>::deref_mut"]]
 marker = "side-effect:external-state"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["std::io::error"]]
 marker = "std:error"
 _internal_on_all_module_children = true
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["core::future::get_context"]]
 marker = "std:future"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 # Safe, because (safe) slice API observes lifetimes. Might have to exclude
@@ -306,70 +345,91 @@ on_return = true
 [["core::slice"]]
 marker = "std:slice"
 _internal_on_all_module_children = true
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["<std::ops::Range as std::slice::SliceIndex>::get"]]
 marker = "std:slice"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["<std::ops::Range as std::slice::SliceIndex>::get_mut"]]
 marker = "std:slice"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["<std::ops::Range as std::slice::SliceIndex>::index"]]
 marker = "std:slice"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["<std::ops::Range as std::slice::SliceIndex>::index_mut"]]
 marker = "std:slice"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["std::fs::OpenOptions::open"]]
 marker = "std:fs"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["<[_] as std::ops::Index>::index"]]
 marker = "std:slice"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+on_return = true
+
+[["std::path"]]
+marker = "std:path"
+_internal_can_fail_resolve_silently = true
+_internal_on_all_module_children = true
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["std::path::Path::new"]]
 marker = "std:fs"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["core::fmt::rt::Argument::new"]]
 marker = "std:fmt"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+_internal_can_fail_resolve_silently = true
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+on_return = true
+
+[["core::fmt::rt::Argument::new_display"]]
+marker = "std:fmt"
+_internal_can_fail_resolve_silently = true
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+on_return = true
+
+[["core::fmt::rt::Argument::new_debug"]]
+marker = "std:fmt"
+_internal_can_fail_resolve_silently = true
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["<&std::fs::File as std::io::Write>::write"]]
 marker = "side-effect:fs:write"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes"]]
 marker = "std:str:OsStrExt-OsStr"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::as_bytes"]]
 marker = "std:str:OsStrExt-OsStr"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["<std::path::Path as std::cmp::PartialEq>::eq"]]
 marker = "std:path:eq"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+_internal_can_fail_resolve_silently = true
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true
 
 [["<[_;_] as core::iter::IntoIterator>::into_iter"]]
 marker = "std:array_into_iter"
-on_argument = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 on_return = true

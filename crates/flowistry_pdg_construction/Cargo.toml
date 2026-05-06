@@ -10,23 +10,23 @@ rustc_private = true
 
 [dependencies]
 anyhow = "1"
-log = "0.4"
 fluid-let = "1.0"
 cfg-if = "1.0"
-rustc_utils = { workspace = true, features = ["indexical"] }
-indexical = { workspace = true }
+paralegal-rustc-utils = { path = "../paralegal-rustc-utils" }
 itertools = "0.13.0"
 petgraph = { version = "0.6.4" }
 internment = { workspace = true }
 flowistry_pdg = { version = "0.1.0", path = "../flowistry_pdg", features = [
     "rustc",
 ] }
-#flowistry = { path = "../../../flowistry/crates/flowistry", default-features = false }
-flowistry = { workspace = true }
+paralegal-flowistry = { path = "../paralegal-flowistry" }
 serde = { workspace = true, features = ["derive"] }
 strum = { workspace = true }
+tracing.workspace = true
 #rustc-hash = { version = "=2.1.0" }
 
 [dev-dependencies]
-rustc_utils = { workspace = true, features = ["indexical", "test"] }
+paralegal-rustc-utils = { path = "../paralegal-rustc-utils", features = [
+    "test",
+] }
 env_logger = "0.11.3"

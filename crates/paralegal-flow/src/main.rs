@@ -1,6 +1,13 @@
 #![feature(rustc_private)]
+use std::path::Path;
 
-extern crate rustc_plugin;
+use cargo_paralegal_flow::{ClapArgs, EXEC_HASH_ARG, PARALEGAL_ARGS};
+use paralegal_spdg::utils::setup_logging;
+use rustc_session::{EarlyDiagCtxt, config::ErrorOutputType};
+use tracing::debug;
+
+extern crate rustc_driver;
+extern crate rustc_session;
 
 #[derive(Default)]
 struct VersionArgs {
@@ -54,14 +61,6 @@ impl VersionArgs {
 }
 
 const REAL_LONG_VERSION: &str = env!("RUSTC_LONG_VERSION");
-const LONG_VERSION: &str = "rustc 1.84.1 (e71f9a9a9 2025-01-27)
-binary: rustc
-commit-hash: e71f9a9a98b0faf423844bf0ba7438f29dc27d58
-commit-date: 2025-01-27
-host: no-host-defined
-release: 1.84.1
-LLVM version: 19.1.5
-";
 
 const HOST: &str = env!("HOST");
 
@@ -69,16 +68,19 @@ fn unescape_version(s: &str) -> String {
     s.replace("\\n", "\n")
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
+    setup_logging()?;
     let use_real_version = matches!(std::env::var("PARALEGAL_USE_REAL_RUSTC_VERSION"), Ok(v) if v == "1" || v.eq_ignore_ascii_case("true"));
-    let args = std::env::args();
-    let version_args = VersionArgs::parse_args(args);
+    let mut args = std::env::args().collect::<Vec<_>>();
+    let version_args = VersionArgs::parse_args(args.iter());
     let long_version = if use_real_version {
-        REAL_LONG_VERSION
+        REAL_LONG_VERSION.to_string()
     } else {
-        LONG_VERSION
+        // We lie about being a nightly compiler, since build scripts often
+        // enable weird features and are much less stable for nightly compilers.
+        REAL_LONG_VERSION.replace("-nightly", "")
     };
-    let unescaped = unescape_version(long_version);
+    let unescaped = unescape_version(&long_version);
     if version_args.version {
         if version_args.verbose {
             print!("{}", unescaped.replace("no-host-defined", HOST));
@@ -91,5 +93,37 @@ fn main() {
         }
         std::process::exit(0);
     }
-    rustc_plugin::driver_main(paralegal_flow::DfppPlugin);
+
+    debug!(?args);
+
+    if let Some((hash_check_arg, _)) = args.iter().enumerate().find(|elem| elem.1 == EXEC_HASH_ARG)
+    {
+        args.remove(hash_check_arg);
+        args.remove(hash_check_arg);
+    }
+
+    // Setting RUSTC_WRAPPER causes Cargo to pass 'rustc' as the first argument.
+    // We're invoking the compiler programmatically, so we ignore this
+    let wrapper_mode =
+        args.get(1).map(Path::new).and_then(Path::file_stem) == Some("rustc".as_ref());
+
+    if wrapper_mode {
+        // we still want to be able to invoke it normally though
+        args.remove(1);
+    }
+
+    args.extend(["--sysroot".into(), env!("SYSROOT_PATH").into()]);
+
+    let parsed_plugin_args: ClapArgs = serde_json::from_str(&std::env::var(PARALEGAL_ARGS)?)?;
+    let plugin_args: paralegal_flow::Args = parsed_plugin_args.try_into()?;
+
+    let early_dcx = EarlyDiagCtxt::new(ErrorOutputType::default());
+    rustc_driver::init_rustc_env_logger(&early_dcx);
+
+    let code = rustc_driver::catch_with_exit_code(move || paralegal_flow::run(args, plugin_args));
+    std::process::exit(if code == std::process::ExitCode::SUCCESS {
+        0
+    } else {
+        1
+    })
 }

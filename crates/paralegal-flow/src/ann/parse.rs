@@ -14,21 +14,21 @@ use super::{
     ExceptionAnnotation, MarkerAnnotation, MarkerRefinement, MarkerRefinementKind, VerificationHash,
 };
 use crate::{
-    utils::{resolve::def_path_res, TinyBitSet},
     Symbol,
+    utils::{TinyBitSet, resolve::def_path_res},
 };
 use either::Either;
 use nom_supreme::{
-    error::ErrorTree,
-    final_parser::{final_parser, RecreateContext},
     ParserExt,
+    error::ErrorTree,
+    final_parser::{RecreateContext, final_parser},
 };
 use paralegal_spdg::Identifier;
 
 use rustc_ast::{
-    self as ast,
-    token::{self, Delimiter, Lit, LitKind, Token, TokenKind},
-    tokenstream, ExprKind,
+    ExprKind,
+    token::{Delimiter, Lit, LitKind, Token, TokenKind},
+    tokenstream,
 };
 use rustc_hir as hir;
 use rustc_hir::def_id::DefId;
@@ -40,8 +40,8 @@ use tokenstream::*;
 pub extern crate nom;
 
 use nom::{
-    error::{ErrorKind, FromExternalError, ParseError},
     Parser,
+    error::{ErrorKind, FromExternalError, ParseError},
 };
 
 pub struct Symbols {
@@ -71,7 +71,7 @@ impl Default for Symbols {
 ///
 /// Construct if from a [`TokenStream`] with [`Self::from_stream`].
 #[derive(Clone)]
-pub struct I<'a>(RefTokenTreeCursor<'a>);
+pub struct I<'a>(TokenStreamIter<'a>);
 type R<'a, T> = nom::IResult<I<'a>, T, ErrorTree<I<'a>>>;
 
 impl<'a> Iterator for I<'a> {
@@ -84,7 +84,7 @@ impl<'a> Iterator for I<'a> {
 impl<'a> I<'a> {
     /// Canonical constructor for [`I`]
     pub fn from_stream(s: &'a TokenStream) -> Self {
-        I(s.trees())
+        I(s.iter())
     }
 }
 
@@ -113,7 +113,7 @@ type Integer = u32;
 /// Parse any one token, returning the token.
 ///
 /// This is the basic primitive that all other parsers are built from.
-fn one(mut tree: I) -> R<&TokenTree> {
+fn one(mut tree: I<'_>) -> R<'_, &TokenTree> {
     match tree.next() {
         None => Result::Err(nom::Err::Error(ErrorTree::from_error_kind(
             tree,
@@ -166,7 +166,7 @@ impl std::error::Error for StructuralError {}
 /// The difference between this and [`one`] is that this function expects the
 /// token to be a [`TokenTree::Token`] and does not permit
 /// [`TokenTree::Delimited`] subtrees.
-pub fn one_token(i: I) -> R<&Token> {
+pub fn one_token(i: I<'_>) -> R<'_, &Token> {
     nom::combinator::map_res(one, |t| match t {
         TokenTree::Token(t, _) => Ok(t),
         TokenTree::Delimited(_, _, delim, _) => Err(StructuralError {
@@ -334,7 +334,6 @@ impl std::fmt::Display for WrongTokenKindErr {
         // There is a theoretical possibility of race conditions with the
         // pointers stored in this token variant so this prevents us from
         // trying to read that data, just in case.
-        assert!(!matches!(self.found, TokenKind::Interpolated(_)));
         write!(
             f,
             "Expected token kind {:?}, found {:?}",
@@ -354,8 +353,8 @@ pub fn assert_token<'a>(k: TokenKind) -> impl Parser<I<'a>, (), ErrorTree<I<'a>>
                 s,
                 ErrorKind::Fail,
                 WrongTokenKindErr {
-                    expected: k.clone(),
-                    found: t.kind.clone(),
+                    expected: k,
+                    found: t.kind,
                 },
             )))
         }
@@ -430,7 +429,7 @@ pub fn arguments<'a, 'b>(
             })
             .ok_or(RefinementOnNonFunctionErr)?;
         let sig_info = match body {
-            hir::TraitFn::Provided(id) => Either::Left(tcx.hir().body(id).params),
+            hir::TraitFn::Provided(id) => Either::Left(tcx.hir_body(id).params),
             hir::TraitFn::Required(idents) => Either::Right(idents),
         };
 
@@ -462,7 +461,9 @@ pub fn arguments<'a, 'b>(
                                 false
                             }
                         }),
-                        Either::Right(idents) => idents.iter().position(|ident| ident.name == s),
+                        Either::Right(idents) => idents
+                            .iter()
+                            .position(|ident| ident.is_some_and(|ident| ident.name == s)),
                     };
                     if found.is_none() {
                         tcx.dcx()
@@ -481,9 +482,9 @@ pub fn arguments<'a, 'b>(
 }
 
 /// Parser for the payload of the `#[paralegal_flow::output_type(...)]` annotation.
-pub(crate) fn otype_ann_match(ann: &ast::AttrArgs, tcx: TyCtxt) -> Result<Vec<DefId>, String> {
+pub(crate) fn otype_ann_match(ann: &hir::AttrArgs, tcx: TyCtxt) -> Result<Vec<DefId>, String> {
     match ann {
-        ast::AttrArgs::Delimited(dargs) => {
+        hir::AttrArgs::Delimited(dargs) => {
             let mut parser = rustc_parser::Parser::new(&tcx.sess.psess, dargs.tokens.clone(), None);
             std::iter::from_fn(|| {
                 if parser.token.kind == TokenKind::Eof {
@@ -496,7 +497,10 @@ pub(crate) fn otype_ann_match(ann: &ast::AttrArgs, tcx: TyCtxt) -> Result<Vec<De
                     )));
                 };
                 if parser.token.kind != TokenKind::Eof {
-                    parser.expect(&TokenKind::Comma).ok()?;
+                    if parser.token.kind != TokenKind::Comma {
+                        return Some(Err("Expected comma".to_string()));
+                    }
+                    parser.bump();
                 }
                 Some(
                     def_path_res(tcx, qself.as_deref(), &path.segments)
@@ -513,7 +517,7 @@ pub(crate) fn otype_ann_match(ann: &ast::AttrArgs, tcx: TyCtxt) -> Result<Vec<De
 /// Parser for an [`ExceptionAnnotation`]
 pub(crate) fn match_exception(
     symbols: &Symbols,
-    ann: &rustc_ast::AttrArgs,
+    ann: &hir::AttrArgs,
 ) -> Result<ExceptionAnnotation, String> {
     use rustc_ast::*;
     apply_parser_in_delimited_annotation(
@@ -591,11 +595,10 @@ impl RecreateContext<I<'_>> for DisplaySpan {
 
 fn apply_parser_in_delimited_annotation<'a, A, P: Parser<I<'a>, A, ErrorTree<I<'a>>> + 'a>(
     p: P,
-    ann: &'a rustc_ast::AttrArgs,
+    ann: &'a hir::AttrArgs,
 ) -> Result<A, String> {
-    use rustc_ast::*;
     match ann {
-        ast::AttrArgs::Delimited(dargs) => final_parser(p)(I::from_stream(&dargs.tokens))
+        hir::AttrArgs::Delimited(dargs) => final_parser(p)(I::from_stream(&dargs.tokens))
             .map_err(|err: ErrorTree<DisplaySpan>| err.to_string()),
         _ => Result::Err("Expected delimited annotation".to_owned()),
     }
@@ -619,7 +622,7 @@ pub(crate) fn ann_match_fn(
     tcx: TyCtxt<'_>,
     symbols: &Symbols,
     hir_id: hir::HirId,
-    ann: &rustc_ast::AttrArgs,
+    ann: &hir::AttrArgs,
     attr_span: Span,
 ) -> Result<MarkerAnnotation, String> {
     use rustc_ast::*;

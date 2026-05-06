@@ -27,7 +27,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "purity-tests-leaky"
+name = "purity-tests-side-effect"
 version = "0.1.0"
 dependencies = [
  "paralegal",

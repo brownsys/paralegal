@@ -1,13 +1,13 @@
 use crate::{
+    HashSet,
     ann::side_effect_detection,
     utils::{func_of_term, type_for_constructor},
-    HashSet,
 };
-use flowistry::mir::FlowistryInput;
 use flowistry_pdg_construction::{
     determine_async,
-    utils::{handle_shims, try_monomorphize, try_resolve_function, ShimResult},
+    utils::{ShimResult, handle_shims, try_monomorphize, try_resolve_function},
 };
+use paralegal_flowistry::mir::FlowistryInput;
 use paralegal_spdg::Identifier;
 
 use rustc_data_structures::fx::FxHashSet;
@@ -15,6 +15,7 @@ use rustc_middle::{
     mir,
     ty::{self, TypingEnv},
 };
+use tracing::trace;
 
 use std::borrow::Cow;
 
@@ -96,7 +97,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         let body = self.db().body_cache.get(res.def_id());
 
         if self.db().config.dbg().dump_mir() {
-            use rustc_utils::BodyExt;
+            use paralegal_rustc_utils::BodyExt;
             use std::io::Write;
             let path = self.tcx().def_path_str(res.def_id()) + ".mir";
             let mut f = std::fs::File::create(path.as_str()).unwrap();
@@ -111,7 +112,7 @@ impl<'tcx> MarkerCtx<'tcx> {
                     res,
                     self.tcx(),
                     param_env,
-                    body.body(),
+                    body.body().clone(),
                     self.tcx().def_span(res.def_id()),
                 )
                 .unwrap(),
@@ -218,11 +219,12 @@ impl<'tcx> MarkerCtx<'tcx> {
         // because we are not given the closure function, instead
         // we are provided the id of the function that creates the
         // future. As such we can't just monomorphize and traverse,
-        // we have to find the generator first.
-        if let ty::TyKind::Alias(ty::AliasTyKind::Opaque, alias) =
-            local_decls[mir::RETURN_PLACE].ty.kind()
+        // we have to find the generator firstparalegal_.
+        if let ty::TyKind::Alias(alias) = local_decls[mir::RETURN_PLACE].ty.kind()
+            && matches!(alias.kind, ty::AliasTyKind::Opaque { .. })
+            && let ty::AliasTyKind::Opaque { def_id, .. } = alias.kind
             && let ty::TyKind::Coroutine(closure_fn, substs) =
-                self.tcx().type_of(alias.def_id).skip_binder().kind()
+                self.tcx().type_of(def_id).skip_binder().kind()
         {
             trace!("    fits opaque type");
             let async_closure_fn =
