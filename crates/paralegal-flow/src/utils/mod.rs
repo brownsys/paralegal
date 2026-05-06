@@ -86,8 +86,9 @@ pub fn body_span<'tcx>(tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>) -> RustSpan {
 /// If `did` is a method of an `impl` of a trait, then return the `DefId` that
 /// refers to the method on the trait definition.
 pub fn get_parent(tcx: TyCtxt, did: DefId) -> Option<DefId> {
-    let _ = (tcx, did);
-    None
+    matches!(tcx.def_kind(did), DefKind::AssocFn | DefKind::AssocTy)
+        .then(|| tcx.associated_item(did).trait_item_def_id())
+        .flatten()
 }
 
 pub fn is_function_like(tcx: TyCtxt<'_>, did: DefId) -> bool {
