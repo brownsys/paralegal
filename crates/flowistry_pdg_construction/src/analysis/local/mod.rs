@@ -28,8 +28,8 @@ use crate::{
     analysis::global::Use,
     source_access::CachedBody,
     utils::{
-        self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize,
-        ShimResult, ShimType, TyAsFnResult,
+        self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize, ShimResult,
+        ShimType, TyAsFnResult,
     },
     CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
@@ -242,16 +242,16 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
             return place;
         }
         tcx.try_instantiate_and_normalize_erasing_regions(
-                self.generic_args(),
-                self.param_env,
-                EarlyBinder::bind(place),
+            self.generic_args(),
+            self.param_env,
+            EarlyBinder::bind(place),
+        )
+        .unwrap_or_else(|err| {
+            panic!(
+                "Failed to normalize place {place:?} in {}: {err:?}",
+                tcx.def_path_str(self.def_id)
             )
-            .unwrap_or_else(|err| {
-                panic!(
-                    "Failed to normalize place {place:?} in {}: {err:?}",
-                    tcx.def_path_str(self.def_id)
-                )
-            })
+        })
     }
 
     pub(crate) fn tcx(&self) -> TyCtxt<'tcx> {
@@ -982,6 +982,8 @@ fn is_split<'tcx>(ty: Ty<'tcx>, context: DefId, tcx: TyCtxt<'tcx>) -> bool {
         | TyKind::Dynamic(..)
         | TyKind::Param(..)
         | TyKind::Never => false,
+
+        TyKind::Pat(inner, _) => is_split(*inner, context, tcx),
 
         _ if ty.is_primitive_ty() => false,
         _ => {
