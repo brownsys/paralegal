@@ -1,3 +1,5 @@
+Don't infer beyond what the code and repo make explicit—ask when uncertain. Never modify abstractions or architecture without explicit instruction.
+
 ## Documentation policy
 
 Document **why**, not what. Comments must add information not visible locally.
