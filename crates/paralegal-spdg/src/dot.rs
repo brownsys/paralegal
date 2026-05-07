@@ -153,11 +153,7 @@ impl<'a> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDescri
                 let mut all_markers = markers.chain(type_markers).copied().peekable();
                 let write_id_and_desc = |s: &mut String| {
                     let idx = n.index();
-                    let desc = weight
-                        .kind
-                        .to_string()
-                        .replace('<', "&lt;")
-                        .replace('>', "&gt;");
+                    let desc = escape_label_str(&weight.kind.to_string());
                     write!(s, "<p{idx}> ({idx}) {desc}")
                 };
                 s.push('|');
@@ -203,6 +199,21 @@ impl<'a> dot::Labeller<'a, CallString, GlobalEdge> for DotPrintableProgramDescri
         let (_, to) = ctrl.edge_endpoints(edge.index).unwrap();
         (Some(Id::new(format!("p{}", to.index())).unwrap()), None)
     }
+}
+
+fn escape_label_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '{' => out.push_str("&#123;"),
+            '}' => out.push_str("&#125;"),
+            '&' => out.push_str("&amp;"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Dump all SPDGs in a single dot expression

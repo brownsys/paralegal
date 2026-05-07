@@ -8,7 +8,7 @@ use std::{io::Write, process::exit, sync::Arc};
 use fixedbitset::FixedBitSet;
 pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_spdg::traverse::{
-    generic_flows_to, generic_influencees, generic_influencers, EdgeSelection,
+    edge_generic_flows_to, generic_influencees, generic_influencers, EdgeSelection,
 };
 use paralegal_spdg::{
     CallString, DefKind, DisplayNode, Endpoint, FunctionHandling, GlobalNode, HashMap, HashSet,
@@ -281,7 +281,7 @@ impl RootContext {
     pub fn report_marker_if_absent(&self, marker: Marker) {
         assert_warning!(
             *self,
-            self.marker_to_ids.contains_key(&marker),
+            self.marker_is_defined(marker),
             format!("Marker {marker} is mentioned in the policy but not defined in source")
         )
     }
@@ -345,11 +345,20 @@ impl RootContext {
     ///
     /// If the controller with this id does not exist *or* the controller has
     /// fewer than `index` arguments.
-    pub fn controller_argument(&self, ctrl_id: Endpoint, index: u32) -> Option<GlobalNode> {
+    pub fn controller_argument(&self, ctrl_id: Endpoint, index: u32) -> Option<NodeCluster> {
         let ctrl = self.desc.controllers.get(&ctrl_id)?;
-        let inner = *ctrl.arguments.get(index as usize)?;
+        let inner = NodeCluster::new(
+            ctrl_id,
+            ctrl.arguments.iter().copied().filter(|n| {
+                ctrl.graph
+                    .node_weight(*n)
+                    .unwrap()
+                    .is_arg
+                    .is_some_and(|a| a == index as u16)
+            }),
+        );
 
-        Some(GlobalNode::from_local_node(ctrl_id, inner))
+        (!inner.nodes().is_empty()).then_some(inner)
     }
 
     /// Returns whether there is direct control flow influence from influencer to sink, or there is some node which is data-flow influenced by `influencer` and has direct control flow influence on `target`. Or as expressed in code:
@@ -638,12 +647,17 @@ pub trait Context {
     fn root(&self) -> &RootContext;
 
     /// Returns an iterator over all objects marked with `marker`.
-    fn marked_nodes(&self, marker: Marker) -> impl Iterator<Item = GlobalNode> + '_;
+    fn marked_nodes(&self, marker: impl Into<Marker>) -> impl Iterator<Item = GlobalNode> + '_;
 
     /// All nodes with this marker, be that via type or directly
     fn nodes_marked_any_way(&self, marker: Marker) -> impl Iterator<Item = GlobalNode> + '_;
     /// All nodes that have this marker through a type
     fn nodes_marked_via_type(&self, marker: Marker) -> impl Iterator<Item = GlobalNode> + '_;
+
+    /// Is this marker assigned to anything in the PDG?
+    fn marker_is_defined(&self, m: impl Into<Marker>) -> bool {
+        self.root().marker_to_ids.contains_key(&m.into())
+    }
 }
 
 impl Context for RootContext {
@@ -667,7 +681,8 @@ impl Context for RootContext {
         })
     }
 
-    fn marked_nodes(&self, marker: Marker) -> impl Iterator<Item = GlobalNode> + '_ {
+    fn marked_nodes(&self, marker: impl Into<Marker>) -> impl Iterator<Item = GlobalNode> + '_ {
+        let marker = marker.into();
         self.report_marker_if_absent(marker);
         self.marker_to_ids
             .get(&marker)
@@ -729,7 +744,7 @@ where
                 });
             }
         }
-        generic_flows_to(
+        edge_generic_flows_to(
             self.iter_nodes(),
             edge_type,
             &ctx.desc.controllers[&cf_id],
@@ -808,7 +823,7 @@ where
         //         });
         //     }
         // }
-        generic_flows_to(
+        edge_generic_flows_to(
             self.iter_nodes(),
             edge_type,
             &ctx.desc.controllers[&cf_id],
@@ -1270,11 +1285,11 @@ fn test_influencees() -> Result<()> {
     let sink_callsite = crate::test_utils::get_callsite_node(&ctx, ctrl_name, "sink1");
 
     let influencees_data_control = ctx
-        .influencees(dbg!(src_a), EdgeSelection::Both)
+        .influencees(dbg!(&src_a), EdgeSelection::Both)
         .unique()
         .collect::<Vec<_>>();
     let influencees_data = ctx
-        .influencees(src_a, EdgeSelection::Data)
+        .influencees(&src_a, EdgeSelection::Data)
         .unique()
         .collect::<Vec<_>>();
 
@@ -1330,11 +1345,11 @@ fn test_influencers() -> Result<()> {
         .collect::<Vec<_>>();
 
     assert!(
-        influencers_data_control.contains(&src_a),
+        influencers_data_control.contains(&src_a.try_as_single().unwrap()),
         "input argument a influences sink via data"
     );
     assert!(
-        influencers_data_control.contains(&dbg!(src_b)),
+        influencers_data_control.contains(&dbg!(src_b.try_as_single().unwrap())),
         "input argument b influences sink via control"
     );
     assert!(
@@ -1346,11 +1361,11 @@ fn test_influencers() -> Result<()> {
     );
 
     assert!(
-        !influencers_data.contains(&src_a),
+        !influencers_data.contains(&src_a.try_as_single().unwrap()),
         "input argument a doesnt influences sink via data"
     );
     assert!(
-        influencers_data.contains(&src_b),
+        influencers_data.contains(&src_b.try_as_single().unwrap()),
         "input argument b influences sink via data"
     );
     assert!(
@@ -1379,7 +1394,7 @@ fn test_has_ctrl_influence() -> Result<()> {
     let sink_cs = crate::test_utils::get_callsite_or_datasink_node(&ctx, ctrl_name, "sink1");
 
     assert!(
-        ctx.has_ctrl_influence(src_a, &sink_cs),
+        ctx.has_ctrl_influence(&src_a, &sink_cs),
         "src_a influences sink"
     );
     assert!(
@@ -1391,7 +1406,7 @@ fn test_has_ctrl_influence() -> Result<()> {
         "validate_foo influences sink"
     );
     assert!(
-        !ctx.has_ctrl_influence(src_b, &sink_cs),
+        !ctx.has_ctrl_influence(&src_b, &sink_cs),
         "src_b doesnt influence sink"
     );
     assert!(

@@ -67,19 +67,34 @@ impl EdgeSelection {
 
 /// A primitive that queries whether we can reach from one set of nodes to
 /// another
-pub fn generic_flows_to(
+pub fn edge_generic_flows_to(
     from: impl IntoIterator<Item = Node>,
     edge_selection: EdgeSelection,
     spdg: &SPDG,
     other: impl IntoIterator<Item = Node>,
 ) -> Option<(Node, Node)> {
+    let graph = edge_selection.filter_graph(&spdg.graph);
+    generic_flows_to(from, &graph, other)
+}
+
+use petgraph::visit as pgv;
+
+/// A primitive that queries whether we can reach from one set of nodes to
+/// another
+pub fn generic_flows_to<G>(
+    from: impl IntoIterator<Item = Node>,
+    graph: G,
+    other: impl IntoIterator<Item = Node>,
+) -> Option<(Node, Node)>
+where
+    G: pgv::Visitable + pgv::IntoNeighbors + pgv::GraphBase<NodeId = Node>,
+{
     let targets = other.into_iter().collect::<HashSet<_>>();
     let mut from = from.into_iter().peekable();
     if from.peek().is_none() || targets.is_empty() {
         return None;
     }
 
-    let graph = edge_selection.filter_graph(&spdg.graph);
     let mut search = petgraph::visit::Dfs::from_parts(vec![], graph.visit_map());
     for n in from {
         search.move_to(n);
@@ -90,15 +105,6 @@ pub fn generic_flows_to(
         }
     }
     None
-
-    // let result = petgraph::visit::depth_first_search(&graph, from, |event| match event {
-    //     DfsEvent::Discover(d, _) if targets.contains(&d) => Control::Break(d),
-    //     _ => Control::Continue,
-    // });
-    // match result {
-    //     Control::Break(r) => Some(r),
-    //     _ => None,
-    // }
 }
 
 /// The current policy for this iterator is that it does not return the start

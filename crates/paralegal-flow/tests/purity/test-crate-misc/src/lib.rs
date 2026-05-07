@@ -304,3 +304,8 @@ fn structs(a: usize) {
     foo.a = 30;
     foo.b = "hello2";
 }
+
+#[paralegal::analyze]
+fn array_iter_marker() {
+    [1,2,3].into_iter();
+}

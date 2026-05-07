@@ -300,6 +300,18 @@ impl Span {
     }
 }
 
+impl std::fmt::Display for Span {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}:{}:{}",
+            self.source_file.abs_file_path.display(),
+            self.start.line,
+            self.start.col,
+        )
+    }
+}
+
 /// Metadata on a function call.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq, Allocative)]
 pub struct FunctionCallInfo {
@@ -759,7 +771,7 @@ pub mod node_cluster {
     #[derive(Debug, Hash, Clone)]
     pub struct NodeCluster {
         controller_id: Endpoint,
-        nodes: Box<[Node]>,
+        nodes: Vec<Node>,
     }
 
     /// Owned iterator of a [`NodeCluster`]
@@ -851,8 +863,17 @@ pub mod node_cluster {
                 controller_id: ctrl_id,
                 nodes: std::iter::once(Some(first.local_node()))
                     .chain(it.map(|n| (n.controller_id() == ctrl_id).then_some(n.local_node())))
-                    .collect::<Option<Box<_>>>()?,
+                    .collect::<Option<_>>()?,
             })
+        }
+
+        /// Returns some if this cluster contains only one node.
+        pub fn try_as_single(&self) -> Option<GlobalNode> {
+            if let [node] = &*self.nodes {
+                Some(GlobalNode::from_local_node(self.controller_id, *node))
+            } else {
+                None
+            }
         }
     }
 }
@@ -1183,5 +1204,43 @@ impl Display for DisplayNode<'_> {
         } else {
             write!(f, "{{{}}} {}", self.node.index(), weight.kind)
         }
+    }
+}
+
+pub struct AutoMarkers {
+    pub side_effect_unknown_virtual: Identifier,
+    pub side_effect_foreign: Identifier,
+    pub side_effect_unknown_fn_ptr: Identifier,
+    pub side_effect_raw_ptr: Identifier,
+    pub side_effect_transmute: Identifier,
+    pub side_effect_unknown: Identifier,
+    pub side_effect_intrinsic: Identifier,
+}
+
+impl Default for AutoMarkers {
+    fn default() -> Self {
+        AutoMarkers {
+            side_effect_unknown_virtual: Identifier::new_intern("auto:side-effect:unknown:virtual"),
+            side_effect_foreign: Identifier::new_intern("auto:side-effect:foreign"),
+            side_effect_unknown_fn_ptr: Identifier::new_intern("auto:side-effect:unknown:fn-ptr"),
+            side_effect_raw_ptr: Identifier::new_intern("auto:side-effect:raw-ptr"),
+            side_effect_transmute: Identifier::new_intern("auto:side-effect:transmute"),
+            side_effect_unknown: Identifier::new_intern("auto:side-effect:unknown"),
+            side_effect_intrinsic: Identifier::new_intern("auto:side-effect:intrinsic"),
+        }
+    }
+}
+
+impl AutoMarkers {
+    pub fn all(&self) -> [Identifier; 7] {
+        [
+            self.side_effect_unknown_virtual,
+            self.side_effect_foreign,
+            self.side_effect_unknown_fn_ptr,
+            self.side_effect_raw_ptr,
+            self.side_effect_transmute,
+            self.side_effect_unknown,
+            self.side_effect_intrinsic,
+        ]
     }
 }

@@ -138,8 +138,8 @@ fn test_ctrl_flows_to() {
     let src_c = ctx.controller_argument(controller, 2).unwrap();
     let cs1 = crate::test_utils::get_callsite_node(&ctx, controller, "sink1");
     let cs2 = crate::test_utils::get_callsite_node(&ctx, controller, "sink2");
-    let switch_int_after_src_a = ctx.nth_successors(2, src_a);
-    let switch_int_after_src_c = ctx.nth_successors(2, src_c);
+    let switch_int_after_src_a = ctx.nth_successors(2, &src_a);
+    let switch_int_after_src_c = ctx.nth_successors(2, &src_c);
     assert!(switch_int_after_src_a.flows_to(&cs1, &ctx, EdgeSelection::Control));
     assert!(switch_int_after_src_c.flows_to(&cs2, &ctx, EdgeSelection::Control));
     assert!(switch_int_after_src_a.flows_to(&cs2, &ctx, EdgeSelection::Control));

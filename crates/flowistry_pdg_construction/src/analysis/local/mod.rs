@@ -381,6 +381,10 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
         let ty = func.ty(&self.mono_body, self.tcx());
         utils::type_as_fn(self.tcx(), ty)
     }
+
+    fn fmt_fn(&self, def_id: DefId) -> String {
+        format!("{} ({}:{})", self.tcx().def_path_str(def_id), def_id.krate.as_u32(), def_id.index.as_u32())
+    }
 }
 
 impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
@@ -777,7 +781,17 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
                     } else {
                         continue;
                     };
-                    let src = final_state.get_place_node(*place, location.into()).unwrap();
+                    let Some(src) = final_state.get_place_node(*place, location.into()) else {
+                        let span = match location {
+                            RichLocation::Location(l) => self.mono_body.source_info(*l).span,
+                            _ => self.mono_body.span,
+                        };
+                        // CORNER CUTTING: we should investigate why this happens.
+                        self.tcx()
+                            .dcx()
+                            .span_warn(span, format!("could not find reference to {place:?} here"));
+                        continue;
+                    };
                     let eloc = RichLocation::End;
                     let key = NodeKey::for_place(*place, eloc.into());
                     let prior = final_state.get_node(&key);

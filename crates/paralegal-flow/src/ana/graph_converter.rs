@@ -20,7 +20,7 @@ use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir,
-    ty::{Instance, TyCtxt, TypingEnv},
+    ty::{self, Instance, TyCtxt, TypingEnv},
 };
 
 use either::Either;
@@ -285,21 +285,23 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             } else {
                 (place.local.into(), place.projection.as_slice())
             };
-        trace!("Using base place {base_place:?} with projections {projections:?}");
+        trace!(
+            "Using base place {base_place:?} in {} with projections {projections:?}",
+            tcx.def_path_str(function.def_id())
+        );
 
         let resolution = vis.current_function();
 
-        // Thread through each caller to recover generic arguments
         let body = self.pctx.body_cache().get(function.def_id()).body();
-        let raw_ty = base_place.ty(body, tcx);
-        let base_ty = try_monomorphize(
+        let ty = try_monomorphize(
             resolution,
             tcx,
             TypingEnv::fully_monomorphized(),
-            raw_ty,
+            body.local_decls[base_place.local].ty,
             span,
         )
         .unwrap();
+        let base_ty = place_ty_from_ty_and_projections(tcx, ty, base_place.projection);
 
         self.handle_node_types_helper(node, base_ty, projections);
     }
@@ -676,6 +678,18 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         }
         result
     }
+}
+
+fn place_ty_from_ty_and_projections<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    ty: ty::Ty<'tcx>,
+    projection: &[mir::PlaceElem<'tcx>],
+) -> mir::PlaceTy<'tcx> {
+    projection
+        .iter()
+        .fold(mir::PlaceTy::from_ty(ty), |place_ty, &elem| {
+            place_ty.projection_ty(tcx, elem)
+        })
 }
 
 fn globalize_node<'tcx, K: Clone>(

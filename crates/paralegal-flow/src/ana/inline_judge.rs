@@ -5,7 +5,7 @@ use paralegal_spdg::{Identifier, utils::write_sep};
 use rustc_hir::def_id::{CrateNum, DefId};
 use rustc_middle::ty::{
     self, AssocKind, BoundVariableKind, Clause, ClauseKind, Instance, ProjectionPredicate,
-    TraitPredicate, TypingEnv,
+    TraitPredicate, TyCtxt, TypingEnv,
 };
 use rustc_span::Span;
 use rustc_type_ir::{PredicatePolarity, TyKind};
@@ -87,7 +87,7 @@ impl<'tcx> InlineJudge<'tcx> {
                 .marker_if_unloadable(marker_target_def_id)
                 .is_some() =>
             {
-                InlineJudgement::AbstractViaType("cannot unloadable item")
+                InlineJudgement::AbstractViaType("unloadable item")
             }
             _ if self.ctx.tcx().is_constructor(marker_target_def_id) => {
                 // This is an enum constructor. It would be better to handle
@@ -135,14 +135,20 @@ impl<'tcx> InlineJudge<'tcx> {
             InliningDepth::Unconstrained => InlineJudgement::Inline(false),
         };
         if let InlineJudgement::AbstractViaType(reason) = judgement {
-            let emit_err = !(is_marked || self.ctx.opts().relaxed());
-            self.ensure_is_safe_to_approximate(
-                info.param_env,
-                info.callee,
-                info.span,
-                emit_err,
-                reason,
-            )
+            if !self
+                .marker_ctx()
+                .all_markers_associated_with(marker_target_def_id)
+                .any(|m| m.as_str().starts_with("std:"))
+            {
+                let emit_err = !(is_marked || self.ctx.opts().relaxed());
+                self.ensure_is_safe_to_approximate(
+                    info.param_env,
+                    info.callee,
+                    info.span,
+                    emit_err,
+                    reason,
+                )
+            }
         }
         judgement
     }
@@ -192,13 +198,34 @@ struct SafetyChecker<'tcx> {
     reason: &'static str,
 }
 
+struct PpInst<'tcx> {
+    tcx: TyCtxt<'tcx>,
+    i: Instance<'tcx>,
+}
+
+impl std::fmt::Display for PpInst<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.tcx.def_path_str(self.i.def_id()))?;
+        if !self.i.args.is_empty() {
+            write!(f, "<")?;
+            write_sep(f, ",", self.i.args, |a, fmt| write!(fmt, "{:?}", a))?;
+            write!(f, ">")?;
+        }
+        Ok(())
+    }
+}
+
 impl<'tcx> SafetyChecker<'tcx> {
     /// Emit an error or a warning with some preformatted messaging.
     fn err(&self, s: &str, span: Span) {
         let sess = self.ctx.tcx().dcx();
         let msg = format!(
-            "the call to {:?} is not safe to abstract as demanded by '{}', because of: {s}",
-            self.resolved, self.reason
+            "the call to {} is not safe to abstract as demanded by '{}', because of: {s}",
+            PpInst {
+                i: self.resolved,
+                tcx: self.ctx.tcx()
+            },
+            self.reason
         );
         if self.emit_err {
             let mut diagnostic = sess.struct_span_err(span, msg);
@@ -213,11 +240,20 @@ impl<'tcx> SafetyChecker<'tcx> {
 
     /// Emit an error that mentions the `markers` found
     fn err_markers(&self, s: &str, markers: &[Identifier], span: Span) {
-        if !markers.is_empty() {
+        let mut markers = markers
+            .iter()
+            .filter(|m| !m.as_str().starts_with("std:"))
+            .peekable();
+        if markers.peek().is_some() {
             self.err(
                 &format!(
                     "{s}: found marker(s) {}",
-                    Print(|fmt| write_sep(fmt, ", ", markers, |elem, fmt| write!(fmt, "'{elem}'")))
+                    Print(
+                        |fmt| write_sep(fmt, ", ", markers.clone(), |elem, fmt| write!(
+                            fmt,
+                            "'{elem}'"
+                        ))
+                    )
                 ),
                 span,
             );
