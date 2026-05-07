@@ -176,17 +176,30 @@ pub fn is_allowed_as_clone_unit_instance<'tcx>(
         && matches!(generics.as_slice(), [ty] if ty.as_type().is_some_and(ty::Ty::is_unit))
 }
 
+/// Scan an entire function body for side-effect markers.
+///
+/// Detects mutable raw-pointer derefs, unsafe transmutes, and direct calls to
+/// foreign items or non-allowed intrinsics. Used by [`crate::MarkerCtx::side_effect_markers`]
+/// to decide whether a callee should be abstracted rather than inlined.
 pub fn analyze_body<'tcx>(
     body: &mir::Body<'tcx>,
     auto_markers: &AutoMarkers,
     tcx: ty::TyCtxt<'tcx>,
 ) -> FxHashSet<Identifier> {
     use mir::visit::Visitor;
-    let mut analyzer = BodyAnalyzer::new(body, auto_markers, tcx);
+    let mut analyzer = BodyAnalyzer::new_with_callees(body, auto_markers, tcx);
     analyzer.visit_body(body);
     analyzer.found_markers
 }
 
+/// Scan a single statement or terminator for side-effect markers.
+///
+/// Unlike [`analyze_body`], this does **not** flag `Call` terminators whose
+/// callee is a foreign item or intrinsic. At the PDG-node level those effects
+/// are already attributed through [`crate::MarkerCtx::for_selector`] on the
+/// callee's return/argument nodes, which also enforces the `is_marked`
+/// suppression logic. Checking callees here would double-count them and could
+/// bypass that suppression for explicitly annotated functions.
 pub fn analyze_statement<'tcx>(
     body: &mir::Body<'tcx>,
     location: mir::Location, // we take location here so we can guarantee that the statement is within the body
@@ -216,6 +229,11 @@ struct BodyAnalyzer<'tcx, 'b> {
     found_markers: FxHashSet<Identifier>,
     auto_markers: &'b AutoMarkers,
     tcx: ty::TyCtxt<'tcx>,
+    /// When true, `visit_terminator` flags direct calls to foreign items or
+    /// non-allowed intrinsics. Used by `analyze_body` to catch cases like
+    /// `ptr::copy` whose body is now an `unreachable!()` stub on recent
+    /// toolchains rather than a true `extern "rust-intrinsic"` item.
+    check_direct_callees: bool,
 }
 
 impl<'tcx, 'b> BodyAnalyzer<'tcx, 'b> {
@@ -229,6 +247,18 @@ impl<'tcx, 'b> BodyAnalyzer<'tcx, 'b> {
             found_markers: HashSet::default(),
             auto_markers,
             tcx,
+            check_direct_callees: false,
+        }
+    }
+
+    fn new_with_callees(
+        body: &'b mir::Body<'tcx>,
+        auto_markers: &'b AutoMarkers,
+        tcx: ty::TyCtxt<'tcx>,
+    ) -> Self {
+        Self {
+            check_direct_callees: true,
+            ..Self::new(body, auto_markers, tcx)
         }
     }
 }
@@ -261,6 +291,32 @@ impl<'tcx> mir::visit::Visitor<'tcx> for BodyAnalyzer<'tcx, '_> {
             }
         }
         self.super_rvalue(rvalue, location);
+    }
+
+    fn visit_terminator(&mut self, terminator: &mir::Terminator<'tcx>, location: mir::Location) {
+        if self.check_direct_callees
+            && let mir::TerminatorKind::Call { func, .. } = &terminator.kind
+        {
+            let ty = func.ty(self.body, self.tcx);
+            if let ty::TyKind::FnDef(def_id, _) = ty.kind() {
+                let def_id = *def_id;
+                if self.tcx.is_foreign_item(def_id) {
+                    trace!("Found foreign call in terminator {terminator:?}");
+                    self.found_markers
+                        .insert(self.auto_markers.side_effect_foreign);
+                } else if let Some(idef) = self.tcx.intrinsic(def_id) {
+                    let name = idef.name;
+                    if name.as_str() != "transmute"
+                        && !ALLOWED_INTRINSICS.iter().any(|&s| s == name.as_str())
+                    {
+                        trace!("Found non-allowed intrinsic {name} in terminator");
+                        self.found_markers
+                            .insert(self.auto_markers.side_effect_intrinsic);
+                    }
+                }
+            }
+        }
+        self.super_terminator(terminator, location);
     }
 }
 

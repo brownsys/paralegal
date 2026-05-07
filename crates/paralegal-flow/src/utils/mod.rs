@@ -815,6 +815,9 @@ pub fn flatten_child_items(
                 }
                 .iter()
                 .filter_map(|c| c.res.opt_def_id())
+                // Only follow items directly defined in this module, not
+                // re-exports. Re-exported items have their defining module as
+                // parent, not this one, so they should not inherit its markers.
                 .filter(|c| {
                     let parent = tcx.opt_parent(*c);
                     assert!(

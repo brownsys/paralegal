@@ -181,8 +181,11 @@ impl<'tcx> MarkerCtx<'tcx> {
         let side_effect_markers = self.side_effect_markers(def_id);
         let mut iter = self.relevant_def_ids(def_id).flat_map(get).peekable();
         let is_empty = iter.peek().is_none();
+        // If the function has any explicit marker (even on a different selector),
+        // the user has analyzed it and we should not append auto side-effect markers.
+        let include_se = is_empty && !self.is_marked(def_id);
         iter.chain(
-            is_empty
+            include_se
                 .then(|| side_effect_markers.iter().copied())
                 .into_iter()
                 .flatten(),

@@ -1,149 +1,347 @@
 #![feature(rustc_private)]
-#[macro_use]
-extern crate lazy_static;
 
-use paralegal_flow::{define_flow_test_template, test_utils::*};
+use paralegal_flow::{inline_test, test_utils::*};
 
-const CRATE_DIR: &str = "tests/new-alias-analysis-tests";
+const EXTRA_ARGS: [&str; 2] = ["--include=crate", "--no-adaptive-approximation"];
 
-lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool = run_paralegal_flow_with_flow_graph_dump_and(
-        CRATE_DIR,
-        ["--include=crate", "--no-adaptive-approximation"]
-    );
+#[test]
+fn track_mutable_modify() {
+    inline_test! {
+        struct S {
+            field: u32,
+            field2: u32,
+        }
+
+        #[paralegal_flow::marker(noinline, return)]
+        fn new_s() -> S {
+            S { field: 0, field2: 1 }
+        }
+
+        #[paralegal_flow::marker(noinline, return)]
+        fn modify_it(x: &mut u32) {}
+
+        #[paralegal_flow::marker(noinline)]
+        fn read<T>(t: &T) {}
+
+        fn main() {
+            let mut x = new_s();
+            modify_it(&mut x.field);
+            read(&x)
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let source_fn = graph.function("new_s");
+        let source = graph.call_site(&source_fn);
+        let modify_fn = graph.function("modify_it");
+        let modify = graph.call_site(&modify_fn);
+        let read_fn = graph.function("read");
+        let read = graph.call_site(&read_fn);
+
+        assert!(source.output().is_neighbor_data(&modify.input()));
+        assert!(modify.output().is_neighbor_data(&read.input()));
+        assert!(source.output().is_neighbor_data(&read.input()));
+    });
 }
 
-macro_rules! define_test {
-    ($($t:tt)*) => {
-        define_flow_test_template!(TEST_CRATE_ANALYZED, CRATE_DIR, $($t)*);
-    };
+#[test]
+#[ignore = "Returning references has undecided PDG semantics. See \
+    https://github.com/willcrichton/flowistry/issues/90"]
+fn eliminate_return_connection() {
+    inline_test! {
+        struct S {
+            field: u32,
+            field2: u32,
+        }
+
+        #[paralegal_flow::marker(noinline, return)]
+        fn new_s() -> S {
+            S { field: 0, field2: 1 }
+        }
+
+        #[paralegal_flow::marker(noinline)]
+        fn deref_t(s: &S) -> &String {
+            unimplemented!()
+        }
+
+        #[paralegal_flow::marker(noinline)]
+        fn read<T>(t: &T) {}
+
+        fn main() {
+            let s = new_s();
+            let t = deref_t(&s);
+            read(t);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let source_fn = graph.function("new_s");
+        let source = graph.call_site(&source_fn);
+        let pass_through_fn = graph.function("deref_t");
+        let pass_through = graph.call_site(&pass_through_fn);
+        let read_fn = graph.function("read");
+        let read = graph.call_site(&read_fn);
+
+        assert!(
+            dbg!(source.output())
+                .always_happens_before_data(&dbg!(pass_through.output()), &dbg!(read.input()))
+        );
+    });
 }
 
-define_test!(track_mutable_modify : graph -> {
-    let source_fn = graph.function("new_s");
-    let source = graph.call_site(&source_fn);
-    let modify_fn = graph.function("modify_it");
-    let modify = graph.call_site(&modify_fn);
-    let read_fn = graph.function("read");
-    let read = graph.call_site(&read_fn);
+#[test]
+fn eliminate_mut_input_connection() {
+    inline_test! {
+        struct S {
+            field: u32,
+            field2: u32,
+        }
 
-    assert!(source.output().is_neighbor_data(&modify.input()));
-    assert!(modify.output().is_neighbor_data(&read.input()));
-    assert!(source.output().is_neighbor_data(&read.input()));
-});
+        #[paralegal_flow::marker(noinline, return)]
+        fn new_s() -> S {
+            S { field: 0, field2: 1 }
+        }
 
-define_test!(eliminate_return_connection skip
-    "Returning references has undecided PDG semantics. See\
-    https://github.com/willcrichton/flowistry/issues/90" : graph -> {
-    let source_fn = graph.function("new_s");
-    let source = graph.call_site(&source_fn);
-    let pass_through_fn = graph.function("deref_t");
-    let pass_through = graph.call_site(&pass_through_fn);
-    let read_fn = graph.function("read");
-    let read = graph.call_site(&read_fn);
+        #[paralegal_flow::marker(noinline)]
+        fn read<T>(t: &T) {}
 
-    assert!(dbg!(source.output()).always_happens_before_data(&dbg!(pass_through.output()), &dbg!(read.input())));
-});
+        fn main() {
+            let s: S = new_s();
+            let mut v = Vec::new();
+            v.push(&s);
+            read(&v);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let source_fn = graph.function("new_s");
+        let source = graph.call_site(&source_fn);
+        let push_fn = graph.function("push");
+        let push = graph.call_site(&push_fn);
+        let read_fn = graph.function("read");
+        let read = graph.call_site(&read_fn);
 
-define_test!(eliminate_mut_input_connection: graph -> {
-    let source_fn = graph.function("new_s");
-    let source = graph.call_site(&source_fn);
-    let push_fn = graph.function("push");
-    let push = graph.call_site(&push_fn);
-    let read_fn = graph.function("read");
-    let read = graph.call_site(&read_fn);
+        assert!(source.output().is_neighbor_data(&push.input()));
+        assert!(push.output().is_neighbor_data(&read.input()));
+    });
+}
 
-    assert!(source.output().is_neighbor_data(&push.input()));
-    assert!(push.output().is_neighbor_data(&read.input()));
-});
+#[test]
+#[ignore = "Alias analysis is configured to abstract via lifetimes only at the moment. \
+    See https://github.com/willcrichton/flowistry/issues/93"]
+fn input_elimination_isnt_a_problem_empty() {
+    inline_test! {
+        struct S {
+            field: u32,
+            field2: u32,
+        }
 
-define_test!(input_elimination_isnt_a_problem_empty
-    skip
-    "Alias analysis is  configured to abstract via lifetimes
-    only at the moment. See https://github.com/willcrichton/flowistry/issues/93"
-    : graph -> {
-    let source_fn = graph.function("new_s");
-    let source = graph.call_site(&source_fn);
-    let read_fn = graph.function("read");
-    let read = graph.call_site(&read_fn);
+        #[paralegal_flow::marker(noinline, return)]
+        fn new_s() -> S {
+            S { field: 0, field2: 1 }
+        }
 
-    assert!(!source.output().flows_to_data(&read.input()));
-});
+        #[paralegal_flow::marker(noinline)]
+        fn read<T>(t: &T) {}
 
-define_test!(input_elimination_isnt_a_problem_vec_push  : graph -> {
-    // I don't remember how important it is for this test case that these test
-    // "neighbor" relations but some of the assertions here are no longer a
-    // neighbors. This is both because statements are now in the PDG and because
-    // callees now have "start" and "end" locations.
-    //
-    // Basically everything that is "flows_to_data" here used to be
-    // "is_neighbor_data".
-    let source_fn = graph.function("new_s");
-    let source = graph.call_site(&source_fn);
-    let push_fn = graph.function("push");
-    let push = graph.call_site(&push_fn);
-    let insert_fn = graph.function("insert");
-    let insert = graph.call_site(&insert_fn);
-    let read_fn = graph.function("read");
-    let read = graph.call_site(&read_fn);
+        fn insert_ref<'v, 't: 'v, T>(v: &mut Vec<&'v T>, t: &'t T) {}
 
-    assert!(source.output().is_neighbor_data(&insert.input()));
-    assert!(insert.output().flows_to_data(&push.input()));
-    assert!(push.output().flows_to_data(&read.input()));
-    assert!(source.output().flows_to_data(&push.input()));
-    // This is where the overtaint happens
-    assert!(insert.output().always_happens_before_data(&push.output(), &read.input()));
+        fn main() {
+            let x = new_s();
+            let mut v = Vec::new();
+            insert_ref(&mut v, &x);
+            read(&v);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let source_fn = graph.function("new_s");
+        let source = graph.call_site(&source_fn);
+        let read_fn = graph.function("read");
+        let read = graph.call_site(&read_fn);
 
-    // This is no longer true, because an additional direct edge is inserted
-    // because the lifetimes guarantee that the source also reaches `read`
-    // unmodified.
-    // assert!(source.output().always_happens_before_data(&push.output(), &read.input()));
-});
+        assert!(!source.output().flows_to_data(&read.input()));
+    });
+}
 
-define_test!(input_elimination_isnt_a_problem_statement : graph -> {
-    let src_1_fn = graph.function("new_s");
-    let src_1 = graph.call_site(&src_1_fn);
-    let src_2_fn = graph.function("another_s");
-    let src_2 = graph.call_site(&src_2_fn);
+#[test]
+fn input_elimination_isnt_a_problem_vec_push() {
+    inline_test! {
+        struct S {
+            field: u32,
+            field2: u32,
+        }
 
-    let assoc_fn = graph.function("assoc");
-    let assoc = graph.call_site(&assoc_fn);
+        #[paralegal_flow::marker(noinline, return)]
+        fn new_s() -> S {
+            S { field: 0, field2: 1 }
+        }
 
-    let read_fn = graph.function("read");
-    let read = graph.call_site(&read_fn);
+        #[paralegal_flow::marker(noinline)]
+        fn read<T>(t: &T) {}
 
-    assert!(src_1.output().is_neighbor_data(&assoc.input()));
-    assert!(assoc.output().is_neighbor_data(&read.input()));
-    assert!(src_2.output().is_neighbor_data(&read.input()));
+        fn insert_ref_2<'v, 't: 'v, T>(v: &mut Vec<&'v T>, t: &'t T) {
+            v.push(t)
+        }
 
-    // This is no longer true, because an additional direct edge is inserted
-    // because the lifetimes guarantee that the source also reaches `read`
-    // unmodified.
-    // assert!(!src_1.output().is_neighbor_data(&read.input()));
-});
+        fn main() {
+            let x = new_s();
+            let mut v = Vec::new();
+            v.insert(0, &x);
+            insert_ref_2(&mut v, &x);
+            read(&v);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let source_fn = graph.function("new_s");
+        let source = graph.call_site(&source_fn);
+        let push_fn = graph.function("push");
+        let push = graph.call_site(&push_fn);
+        let insert_fn = graph.function("insert");
+        let insert = graph.call_site(&insert_fn);
+        let read_fn = graph.function("read");
+        let read = graph.call_site(&read_fn);
 
-define_test!(no_inlining_overtaint : graph -> {
-    let get_fn = graph.function("get_user_data");
-    let get = graph.call_site(&get_fn);
-    let get2_fn = graph.function("get2_user_data");
-    let get2 = graph.call_site(&get2_fn);
-    let send_fn = graph.function("send_user_data");
-    let send = graph.call_site(&send_fn);
-    let send2_fn = graph.function("send2_user_data");
-    let send2 = graph.call_site(&send2_fn);
-    let dp_fn = graph.function("dp1_user_data");
-    let dp = graph.call_site(&dp_fn);
+        assert!(source.output().is_neighbor_data(&insert.input()));
+        assert!(insert.output().flows_to_data(&push.input()));
+        assert!(push.output().flows_to_data(&read.input()));
+        assert!(source.output().flows_to_data(&push.input()));
+        assert!(
+            insert
+                .output()
+                .always_happens_before_data(&push.output(), &read.input())
+        );
+    });
+}
 
-    assert!(get.output().flows_to_data(&send.input()));
-    assert!(get2.output().flows_to_data(&send2.input()));
-    assert!(get2.output().flows_to_data(&dp.input()));
-    assert!(!get.output().flows_to_data(&dp.input()));
+#[test]
+fn input_elimination_isnt_a_problem_statement() {
+    inline_test! {
+        struct S {
+            field: u32,
+            field2: u32,
+        }
 
-    assert!(!get.output().flows_to_data(&send2.input()));
-    assert!(!get2.output().flows_to_data(&send.input()));
-});
+        #[paralegal_flow::marker(noinline, return)]
+        fn new_s() -> S {
+            S { field: 0, field2: 1 }
+        }
 
-// Inspired by sled::arc::Arc::make_mut, when instantiating `T` to `Config`
+        #[paralegal_flow::marker(noinline)]
+        fn another_s() -> S {
+            unimplemented!()
+        }
+
+        #[paralegal_flow::marker(noinline)]
+        fn read<T>(t: &T) {}
+
+        struct T<'a> {
+            field: &'a S,
+        }
+
+        #[paralegal_flow::marker(noinline)]
+        fn new_t<'a>() -> T<'a> {
+            unimplemented!()
+        }
+
+        #[paralegal_flow::marker(noinline)]
+        fn assoc<'a, 'b: 'a>(x: &mut T<'a>, s: &'b S) {}
+
+        fn main() {
+            let ref r = new_s();
+            let ref r2 = another_s();
+            let mut x = new_t();
+            assoc(&mut x, r);
+            x.field = r2;
+            read(&x);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let src_1_fn = graph.function("new_s");
+        let src_1 = graph.call_site(&src_1_fn);
+        let src_2_fn = graph.function("another_s");
+        let src_2 = graph.call_site(&src_2_fn);
+        let assoc_fn = graph.function("assoc");
+        let assoc = graph.call_site(&assoc_fn);
+        let read_fn = graph.function("read");
+        let read = graph.call_site(&read_fn);
+
+        assert!(src_1.output().is_neighbor_data(&assoc.input()));
+        assert!(assoc.output().is_neighbor_data(&read.input()));
+        assert!(src_2.output().is_neighbor_data(&read.input()));
+    });
+}
+
+#[test]
+fn no_inlining_overtaint() {
+    inline_test! {
+        #[paralegal_flow::marker(sensitive)]
+        struct UserData {
+            pub data: Vec<i64>,
+        }
+
+        #[paralegal_flow::marker(source, return)]
+        fn get_user_data() -> UserData {
+            UserData { data: vec![1, 2, 3] }
+        }
+
+        #[paralegal_flow::marker(source, return)]
+        fn get2_user_data() -> UserData {
+            UserData { data: vec![1, 2, 3] }
+        }
+
+        #[paralegal_flow::marker(yey_paralegal_flow_now_needs_this_label_or_it_will_recurse_into_this_function, return)]
+        fn dp1_user_data(user_data: &mut UserData) {
+            for i in &mut user_data.data {
+                *i = 2;
+            }
+        }
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn send_user_data(user_data: &UserData) {}
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn send2_user_data(user_data: &UserData) {}
+
+        fn arity2_inlineable_async_dp_user_data(ud: &mut (&mut UserData, &mut UserData)) {
+            dp1_user_data(ud.1)
+        }
+
+        fn main() {
+            let mut ud1 = get_user_data();
+            let mut ud2 = get2_user_data();
+            arity2_inlineable_async_dp_user_data(&mut (&mut ud1, &mut ud2));
+            send_user_data(&ud1);
+            send2_user_data(&ud2);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let get_fn = graph.function("get_user_data");
+        let get = graph.call_site(&get_fn);
+        let get2_fn = graph.function("get2_user_data");
+        let get2 = graph.call_site(&get2_fn);
+        let send_fn = graph.function("send_user_data");
+        let send = graph.call_site(&send_fn);
+        let send2_fn = graph.function("send2_user_data");
+        let send2 = graph.call_site(&send2_fn);
+        let dp_fn = graph.function("dp1_user_data");
+        let dp = graph.call_site(&dp_fn);
+
+        assert!(get.output().flows_to_data(&send.input()));
+        assert!(get2.output().flows_to_data(&send2.input()));
+        assert!(get2.output().flows_to_data(&dp.input()));
+        assert!(!get.output().flows_to_data(&dp.input()));
+
+        assert!(!get.output().flows_to_data(&send2.input()));
+        assert!(!get2.output().flows_to_data(&send.input()));
+    });
+}
+
+// Now yes, this doesn't quite fit into this test suite but because the tests
+// make such large artifacts, I didn't want to create another test file.
 #[test]
 fn projections_after_deref() {
     InlineTestBuilder::new(stringify!(
@@ -240,8 +438,6 @@ fn reference_in_struct() {
     });
 }
 
-// Now yes, this doesn't quite fit into this test suite but because the tests
-// make such large artifacts, I didn't want to create another test file.
 #[test]
 fn lemmy_non_monomorphized_place_bug() {
     InlineTestBuilder::new(stringify!(
