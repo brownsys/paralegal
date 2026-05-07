@@ -1,7 +1,7 @@
 #![feature(rustc_private)]
 
 use paralegal_flow::{inline_test, test_utils::*};
-use paralegal_spdg::{Identifier, InstructionKind};
+use paralegal_spdg::Identifier;
 
 const EXTRA_ARGS: &[&str] = &["--no-interprocedural-analysis"];
 
@@ -205,15 +205,19 @@ fn trait_method_marker() {
     .with_extra_args(EXTRA_ARGS.iter().copied())
     .check_ctrl(|ctrl| {
         let marker = Identifier::new_intern("find_me");
+        let mut checked_call_site = false;
         for method in ctrl.functions("method") {
             let spdg = ctrl.spdg();
-            assert!(spdg.markers.iter().any(|(node, markers)| {
-                let weight = spdg.graph.node_weight(*node).unwrap();
-                !matches!(ctrl.graph().desc.instruction_info[&weight.at.leaf()].kind,
-                        InstructionKind::FunctionCall(fun) if fun.id == method.ident)
-                    || markers.contains(&marker)
-            }));
+            for call_site in ctrl.call_sites(&method) {
+                checked_call_site = true;
+                assert!(call_site.input().as_singles().any(|n| {
+                    spdg.markers
+                        .get(&n.node())
+                        .is_some_and(|markers| markers.contains(&marker))
+                }));
+            }
         }
+        assert!(checked_call_site, "expected at least one method call site");
     });
 }
 

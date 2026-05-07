@@ -20,7 +20,7 @@ fn network() {
         use std::net::UdpSocket;
 
         fn main(socket: &UdpSocket, buf: &[u8]) -> std::io::Result<usize> {
-            socket.send(&buf)
+            socket.send(buf)
         }
     }
     .with_dependency_environment(super::stdlib_environment())
