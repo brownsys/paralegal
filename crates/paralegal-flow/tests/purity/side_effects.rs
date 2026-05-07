@@ -1,35 +1,47 @@
-use paralegal_flow::define_flow_test_template;
-use paralegal_flow::test_utils::*;
+use paralegal_flow::{inline_test, test_utils::*};
 
-const TEST_CRATE_NAME: &str = "tests/purity/test-crate-side-effect";
-const EXTRA_ARGS: &[&str] = &[
-    "--side-effect-markers",
-    "--external-annotations",
-    "../stdlib-markers.toml",
-];
-
-lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool =
-        run_paralegal_flow_with_flow_graph_dump_and(TEST_CRATE_NAME, EXTRA_ARGS);
+fn stdlib_environment() -> &'static DependencyEnvironment {
+    super::stdlib_environment()
 }
 
-macro_rules! define_test {
-    ($($t:tt)*) => {
-        define_flow_test_template!(TEST_CRATE_ANALYZED, TEST_CRATE_NAME, $($t)*);
-    };
+#[test]
+fn fs() {
+    inline_test! {
+        fn main() {
+            std::fs::write("test", "Content").unwrap();
+        }
+    }
+    .with_dependency_environment(stdlib_environment())
+    .check_ctrl(|ctrl| {
+        ctrl.show_side_effects(true);
+        assert!(!ctrl.marked("side-effect:fs:write").is_empty());
+    });
 }
 
-define_test!(fs: ctrl -> {
-    ctrl.show_side_effects(true);
+#[test]
+fn path_eq() {
+    inline_test! {
+        fn main() {
+            let _ = std::path::Path::new("test") == std::path::Path::new("test");
+        }
+    }
+    .with_dependency_environment(stdlib_environment())
+    .check_ctrl(|ctrl| {
+        ctrl.show_side_effects(true);
+        ctrl.assert_purity(true);
+    });
+}
 
-    assert!(!ctrl.marked("side-effect:fs:write").is_empty());
-});
-
-define_test!(path_eq: ctrl -> {
-    ctrl.show_side_effects(true);
-    ctrl.assert_purity(true);
-});
-
-define_test!(os_str_from_bytes: ctrl -> {
-    ctrl.assert_purity(true);
-});
+#[test]
+fn os_str_from_bytes() {
+    inline_test! {
+        fn main() {
+            use std::os::unix::prelude::OsStrExt;
+            std::ffi::OsStr::from_bytes(b"test");
+        }
+    }
+    .with_dependency_environment(stdlib_environment())
+    .check_ctrl(|ctrl| {
+        ctrl.assert_purity(true);
+    });
+}
