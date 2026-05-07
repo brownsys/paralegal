@@ -97,6 +97,14 @@ impl<'tcx> InlineJudge<'tcx> {
                 InlineJudgement::AbstractViaType("is constructor")
             }
             _ if is_marked => InlineJudgement::AbstractViaType("marked"),
+            _ if !self
+                .ctx
+                .marker_ctx()
+                .side_effect_markers(marker_target_def_id)
+                .is_empty() =>
+            {
+                InlineJudgement::AbstractViaType("direct side effects in body")
+            }
             InliningDepth::Adaptive(k) => {
                 if self
                     .ctx

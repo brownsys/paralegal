@@ -1,106 +1,241 @@
 #![feature(rustc_private)]
-#[macro_use]
-extern crate lazy_static;
 
-use paralegal_flow::test_utils::*;
+use paralegal_flow::{inline_test, test_utils::*};
 use paralegal_spdg::Identifier;
 
-const CRATE_DIR: &str = "tests/boxes";
+const EXTRA_ARGS: [&str; 2] = ["--include=crate", "--no-adaptive-approximation"];
 
-lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool = run_paralegal_flow_with_flow_graph_dump_and(
-        CRATE_DIR,
-        ["--include=crate", "--no-adaptive-approximation"]
-    );
+#[test]
+fn simple_overtaint() {
+    inline_test! {
+        type F = usize;
+
+        #[paralegal_flow::marker(source, return)]
+        fn source() -> Box<F> { unreachable!() }
+
+        #[paralegal_flow::marker(checkpoint, return)]
+        fn checkpoint<T>(_: T) -> Box<F> { unreachable!() }
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        fn main() {
+            sink(checkpoint(source()))
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let sources = graph.marked(Identifier::new_intern("source"));
+        let mid = graph.marked(Identifier::new_intern("checkpoint"));
+        let end = graph.marked(Identifier::new_intern("sink"));
+        assert!(!sources.is_empty());
+        assert!(!mid.is_empty());
+        assert!(!end.is_empty());
+        assert!(sources.always_happens_before_data(&mid, &end));
+    });
 }
 
-macro_rules! define_test {
-    ($($t:tt)*) => {
-        paralegal_flow::define_flow_test_template!(TEST_CRATE_ANALYZED, CRATE_DIR, $($t)*);
-    };
+#[test]
+fn ref_with_checkpoint() {
+    inline_test! {
+        type F = usize;
+
+        #[paralegal_flow::marker(source, return)]
+        fn source() -> Box<F> { unreachable!() }
+
+        #[paralegal_flow::marker(checkpoint_2, return)]
+        fn checkpoint_2<T>(i: T) -> Box<T> { Box::new(i) }
+
+        #[paralegal_flow::marker(modifier, return)]
+        fn modifier() -> usize { 6 }
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        fn main() {
+            let mut inp = source();
+            let r = checkpoint_2(&mut inp);
+            ***r += modifier();
+            sink(inp);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let sources = graph.marked(Identifier::new_intern("source"));
+        let mid = graph.marked(Identifier::new_intern("checkpoint_2"));
+        let end = graph.marked(Identifier::new_intern("sink"));
+        let modifier = graph.marked(Identifier::new_intern("modifier"));
+        assert!(!sources.is_empty());
+        assert!(!mid.is_empty());
+        assert!(!end.is_empty());
+        assert!(!modifier.is_empty());
+        assert!(modifier.flows_to_data(&end));
+        assert!(sources.flows_to_data(&end));
+        assert!(!mid.always_happens_before_data(&modifier, &end));
+    });
 }
 
-define_test!(simple_overtaint: graph -> {
-    let sources = graph.marked(Identifier::new_intern("source"));
-    let mid = graph.marked(Identifier::new_intern("checkpoint"));
-    let end = graph.marked(Identifier::new_intern("sink"));
-    assert!(!sources.is_empty());
-    assert!(!mid.is_empty());
-    assert!(!end.is_empty());
-    assert!(sources.always_happens_before_data(&mid, &end));
-});
+#[test]
+fn field_ref() {
+    inline_test! {
+        #[paralegal_flow::marker(source_2, return)]
+        fn source_2() -> usize { 0 }
 
-define_test!(ref_with_checkpoint: graph -> {
-    let sources = graph.marked(Identifier::new_intern("source"));
-    let mid = graph.marked(Identifier::new_intern("checkpoint_2"));
-    let end = graph.marked(Identifier::new_intern("sink"));
-    let modifier = graph.marked(Identifier::new_intern("modifier"));
-    assert!(!sources.is_empty());
-    assert!(!mid.is_empty());
-    assert!(!end.is_empty());
-    assert!(!modifier.is_empty());
-    assert!(modifier.flows_to_data(&end));
-    assert!(sources.flows_to_data(&end));
-    assert!(!mid.always_happens_before_data(&modifier, &end));
-});
+        #[paralegal_flow::marker(modifier, return)]
+        fn modifier() -> usize { 6 }
 
-// This one is just to check that fields have the same behavior as boxes.
-define_test!(field_ref: graph -> {
-    let sources = graph.marked(Identifier::new_intern("source_2"));
-    let end = graph.marked(Identifier::new_intern("sink"));
-    let modifier = graph.marked(Identifier::new_intern("modifier"));
-    assert!(!sources.is_empty());
-    assert!(!end.is_empty());
-    assert!(!modifier.is_empty());
-    assert!(modifier.flows_to_data(&end));
-    assert!(sources.flows_to_data(&end));
-    assert!(!sources.always_happens_before_data(&modifier, &end));
-});
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
 
-define_test!(ref_mut_box: graph -> {
-    let sources = graph.marked(Identifier::new_intern("source_2"));
-    let end = graph.marked(Identifier::new_intern("sink"));
-    let modifier = graph.marked(Identifier::new_intern("modifier"));
-    assert!(!sources.is_empty());
-    assert!(!end.is_empty());
-    assert!(!modifier.is_empty());
-    assert!(modifier.flows_to_data(&end));
-    assert!(sources.flows_to_data(&end));
-    assert!(!sources.always_happens_before_data(&modifier, &end));
-});
+        fn main() {
+            let mut inp = (source_2(),);
+            let my_ref = &mut inp;
+            my_ref.0 += modifier();
+            sink(inp);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let sources = graph.marked(Identifier::new_intern("source_2"));
+        let end = graph.marked(Identifier::new_intern("sink"));
+        let modifier = graph.marked(Identifier::new_intern("modifier"));
+        assert!(!sources.is_empty());
+        assert!(!end.is_empty());
+        assert!(!modifier.is_empty());
+        assert!(modifier.flows_to_data(&end));
+        assert!(sources.flows_to_data(&end));
+        assert!(!sources.always_happens_before_data(&modifier, &end));
+    });
+}
 
-define_test!(box_ref_mut: graph -> {
-    let sources = graph.marked(Identifier::new_intern("source_2"));
-    let end = graph.marked(Identifier::new_intern("sink"));
-    let modifier = graph.marked(Identifier::new_intern("modifier"));
-    assert!(!sources.is_empty());
-    assert!(!end.is_empty());
-    assert!(!modifier.is_empty());
-    assert!(modifier.flows_to_data(&end));
-    assert!(sources.flows_to_data(&end));
-    assert!(!sources.always_happens_before_data(&modifier, &end));
-});
+#[test]
+fn ref_mut_box() {
+    inline_test! {
+        #[paralegal_flow::marker(source_2, return)]
+        fn source_2() -> usize { 0 }
 
-define_test!(strong_box_update skip "Box modification is not currently considered strong. See https://github.com/brownsys/paralegal/issues/155": graph -> {
-    let sources = graph.marked(Identifier::new_intern("source_2"));
-    let end = graph.marked(Identifier::new_intern("sink"));
-    let modifier = graph.marked(Identifier::new_intern("modifier"));
-    assert!(!sources.is_empty());
-    assert!(!end.is_empty());
-    assert!(!modifier.is_empty());
-    assert!(modifier.flows_to_data(&end));
-    assert!(!sources.flows_to_data(&end));
-    //assert!(!sources.always_happens_before_data(&modifier, &end));
-});
+        #[paralegal_flow::marker(modifier, return)]
+        fn modifier() -> usize { 6 }
 
-define_test!(strong_ref_in_box_update: graph -> {
-    let sources = graph.marked(Identifier::new_intern("source_2"));
-    let end = graph.marked(Identifier::new_intern("sink"));
-    let modifier = graph.marked(Identifier::new_intern("modifier"));
-    assert!(!sources.is_empty());
-    assert!(!end.is_empty());
-    assert!(!modifier.is_empty());
-    assert!(modifier.flows_to_data(&end));
-    assert!(!sources.flows_to_data(&end));
-    //assert!(!sources.always_happens_before_data(&modifier, &end));
-});
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        fn main() {
+            let mut inp = Box::new(source_2());
+            let my_ref = &mut inp;
+            **my_ref += modifier();
+            sink(inp);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let sources = graph.marked(Identifier::new_intern("source_2"));
+        let end = graph.marked(Identifier::new_intern("sink"));
+        let modifier = graph.marked(Identifier::new_intern("modifier"));
+        assert!(!sources.is_empty());
+        assert!(!end.is_empty());
+        assert!(!modifier.is_empty());
+        assert!(modifier.flows_to_data(&end));
+        assert!(sources.flows_to_data(&end));
+        assert!(!sources.always_happens_before_data(&modifier, &end));
+    });
+}
+
+#[test]
+fn box_ref_mut() {
+    inline_test! {
+        #[paralegal_flow::marker(source_2, return)]
+        fn source_2() -> usize { 0 }
+
+        #[paralegal_flow::marker(modifier, return)]
+        fn modifier() -> usize { 6 }
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        fn main() {
+            let mut src = source_2();
+            let mut inp = Box::new(&mut src);
+            **inp += modifier();
+            sink(src);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let sources = graph.marked(Identifier::new_intern("source_2"));
+        let end = graph.marked(Identifier::new_intern("sink"));
+        let modifier = graph.marked(Identifier::new_intern("modifier"));
+        assert!(!sources.is_empty());
+        assert!(!end.is_empty());
+        assert!(!modifier.is_empty());
+        assert!(modifier.flows_to_data(&end));
+        assert!(sources.flows_to_data(&end));
+        assert!(!sources.always_happens_before_data(&modifier, &end));
+    });
+}
+
+#[test]
+#[ignore = "Box modification is not currently considered strong. \
+    See https://github.com/brownsys/paralegal/issues/155"]
+fn strong_box_update() {
+    inline_test! {
+        #[paralegal_flow::marker(source_2, return)]
+        fn source_2() -> usize { 0 }
+
+        #[paralegal_flow::marker(modifier, return)]
+        fn modifier() -> usize { 6 }
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        fn main() {
+            let mut inp = Box::new(source_2());
+            let r = &mut inp;
+            **r = modifier();
+            sink(inp);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let sources = graph.marked(Identifier::new_intern("source_2"));
+        let end = graph.marked(Identifier::new_intern("sink"));
+        let modifier = graph.marked(Identifier::new_intern("modifier"));
+        assert!(!sources.is_empty());
+        assert!(!end.is_empty());
+        assert!(!modifier.is_empty());
+        assert!(modifier.flows_to_data(&end));
+        assert!(!sources.flows_to_data(&end));
+    });
+}
+
+#[test]
+fn strong_ref_in_box_update() {
+    inline_test! {
+        #[paralegal_flow::marker(source_2, return)]
+        fn source_2() -> usize { 0 }
+
+        #[paralegal_flow::marker(modifier, return)]
+        fn modifier() -> usize { 6 }
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        fn main() {
+            let mut src = source_2();
+            let mut inp = Box::new(&mut src);
+            **inp = modifier();
+            sink(src);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let sources = graph.marked(Identifier::new_intern("source_2"));
+        let end = graph.marked(Identifier::new_intern("sink"));
+        let modifier = graph.marked(Identifier::new_intern("modifier"));
+        assert!(!sources.is_empty());
+        assert!(!end.is_empty());
+        assert!(!modifier.is_empty());
+        assert!(modifier.flows_to_data(&end));
+        assert!(!sources.flows_to_data(&end));
+    });
+}

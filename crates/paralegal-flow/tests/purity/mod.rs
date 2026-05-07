@@ -10,3 +10,19 @@ mod misc;
 mod raw_ptr;
 mod recursive;
 mod r#static;
+
+use paralegal_flow::test_utils::{DependencyEnvironment, DependencyEnvironmentBuilder};
+use std::sync::OnceLock;
+
+static STDLIB_ENV: OnceLock<DependencyEnvironment> = OnceLock::new();
+
+pub(super) fn stdlib_environment() -> &'static DependencyEnvironment {
+    STDLIB_ENV.get_or_init(|| {
+        DependencyEnvironmentBuilder::new()
+            .with_extra_args(["--side-effect-markers", "--include-std"])
+            .with_markers("tests/purity/stdlib-markers.toml")
+            .with_manifest("tests/purity/test-crate-std/Cargo.toml")
+            .with_stdlib()
+            .build()
+    })
+}

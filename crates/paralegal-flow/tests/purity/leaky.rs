@@ -1,43 +1,107 @@
-use paralegal_flow::{define_flow_test_template, test_utils::*};
+use paralegal_flow::{inline_test, test_utils::*};
 
-const TEST_CRATE_NAME: &str = "tests/purity/test-crate-leaky";
-const EXTRA_ARGS: [&str; 1] = ["--side-effect-markers"];
-
-lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool =
-        run_paralegal_flow_with_flow_graph_dump_and(TEST_CRATE_NAME, EXTRA_ARGS);
+#[test]
+fn print() {
+    inline_test! {
+        fn main(left: usize, right: usize) -> usize {
+            println!("{} {}", left, right);
+            left + right
+        }
+    }
+    .with_dependency_environment(super::stdlib_environment())
+    .check_ctrl(|ctrl| {
+        ctrl.assert_purity(false);
+    });
 }
 
-macro_rules! define_test {
-    ($($t:tt)*) => {
-        define_flow_test_template!(TEST_CRATE_ANALYZED, TEST_CRATE_NAME, $($t)*);
-    };
+#[test]
+fn network() {
+    inline_test! {
+        use std::net::UdpSocket;
+
+        fn main(socket: &UdpSocket, buf: &[u8]) -> io::Result<usize> {
+            socket.send(&buf)
+        }
+    }
+    .with_dependency_environment(super::stdlib_environment())
+    .check_ctrl(|ctrl| {
+        ctrl.assert_purity(false);
+    });
 }
 
-define_test!(print: ctrl -> {
-    ctrl.assert_purity(false)
-});
+#[test]
+fn interior() {
+    inline_test! {
+        use std::cell::RefCell;
 
-define_test!(network: ctrl-> {
-    ctrl.assert_purity(false);
-});
+        pub fn main(refcell: &RefCell<usize>) {
+            *refcell.borrow_mut() = 10;
+        }
+    }
+    .with_dependency_environment(super::stdlib_environment())
+    .check_ctrl(|ctrl| {
+        ctrl.assert_purity(false);
+    });
+}
 
-define_test!(interior: ctrl -> {
-    ctrl.assert_purity(false);
-});
+#[test]
+#[ignore = "We don't support this yet"]
+fn implicit() {
+    inline_test! {
+        struct CustomSmartPointer {
+            data: usize,
+        }
 
-define_test!(implicit
-    skip "We don't support this yet"
-    : ctrl -> {
-    ctrl.assert_purity(false);
-});
+        impl Drop for CustomSmartPointer {
+            fn drop(&mut self) {
+                println!("Dropping CustomSmartPointer with data `{}`!", self.data);
+            }
+        }
 
-define_test!(transmute_struct: ctrl -> {
-    ctrl.assert_purity(false);
-});
-define_test!(transmute_arr: ctrl -> {
-    ctrl.assert_purity(false);
-});
-define_test!(intrinsic_leaker: ctrl -> {
-    ctrl.assert_purity(false);
-});
+        fn main() {
+            let _sp = CustomSmartPointer { data: 42 };
+        }
+    }
+    .with_dependency_environment(super::stdlib_environment())
+    .check_ctrl(|ctrl| {
+        ctrl.assert_purity(false);
+    });
+}
+
+#[test]
+fn transmute_struct() {
+    inline_test! {
+        struct StructImmut<'a> {
+            field: &'a u32,
+        }
+
+        struct StructMut<'a> {
+            field: &'a mut u32,
+        }
+
+        fn transmute_struct(value: u32, sink: StructImmut) {
+            let sink_mut: StructMut = unsafe { std::mem::transmute(sink) };
+            *sink_mut.field = value;
+        }
+
+
+    }
+    .with_dependency_environment(super::stdlib_environment())
+    .check_ctrl(|ctrl| {
+        ctrl.assert_purity(false);
+    });
+}
+
+#[test]
+fn transmute_arr() {
+    inline_test! {
+        fn transmute_arr(value: u32, sink: [&u32; 1]) {
+            let sink_mut: [&mut u32; 1] = unsafe { std::mem::transmute(sink) };
+            *sink_mut[0] = value;
+        }
+    }
+    .with_dependency_environment(super::stdlib_environment())
+    .check_ctrl(|ctrl| {
+        ctrl.assert_purity(false);
+    });
+}

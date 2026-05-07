@@ -333,7 +333,8 @@ impl DependencyEnvironmentBuilder {
             };
             for f in filenames {
                 let path = f.as_str().unwrap();
-                if !path.ends_with(".rlib") && !path.ends_with(".rmeta") {
+                let is_proc_macro_dylib = path.ends_with(".so") || path.ends_with(".dylib");
+                if !path.ends_with(".rlib") && !path.ends_with(".rmeta") && !is_proc_macro_dylib {
                     continue;
                 }
                 // Use noprelude for everything except std itself.

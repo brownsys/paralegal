@@ -1,42 +1,60 @@
 #![feature(rustc_private)]
-#[macro_use]
-extern crate lazy_static;
 
 use flowistry_pdg::CallString;
 use paralegal_flow::inline_test;
 use paralegal_flow::test_utils::*;
 use paralegal_spdg::Identifier;
+use std::sync::OnceLock;
 
-const CRATE_DIR: &str = "tests/async-tests";
+const EXTRA_ARGS: [&str; 2] = ["--include=crate", "--no-adaptive-approximation"];
 
-lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool = run_paralegal_flow_with_flow_graph_dump_and(
-        CRATE_DIR,
-        ["--include=crate", "--no-adaptive-approximation"]
-    );
+fn async_test_env() -> &'static DependencyEnvironment {
+    static ENV: OnceLock<DependencyEnvironment> = OnceLock::new();
+    ENV.get_or_init(|| {
+        DependencyEnvironmentBuilder::new()
+            .with_manifest("tests/async-tests/Cargo.toml")
+            .build()
+    })
 }
 
-macro_rules! define_test {
-    ($($t:tt)*) => {
-        paralegal_flow::define_flow_test_template!(TEST_CRATE_ANALYZED, CRATE_DIR, $($t)*);
-    };
+#[test]
+fn top_level_inlining_happens() {
+    inline_test! {
+        #[paralegal_flow::marker(sensitive)]
+        struct UserData { pub data: Vec<i64> }
+
+        #[paralegal_flow::marker(source, return)]
+        fn get_user_data() -> UserData { UserData { data: vec![1, 2, 3] } }
+
+        #[paralegal_flow::marker(noinline, return)]
+        fn dp_user_data(user_data: &mut UserData) {}
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn send_user_data(user_data: &UserData) {}
+
+        async fn main() {
+            let mut user_data = get_user_data();
+            dp_user_data(&mut user_data);
+            send_user_data(&user_data);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let get_fn = graph.function("get_user_data");
+        let get = graph.call_site(&get_fn);
+        let dp_fn = graph.function("dp_user_data");
+        let dp = graph.call_site(&dp_fn);
+        let send_fn = graph.function("send_user_data");
+        let send = graph.call_site(&send_fn);
+
+        assert!(get.output().flows_to_data(&dp.input()));
+        assert!(dp.output().flows_to_data(&send.input()));
+        assert!(get.output().flows_to_data(&send.input()));
+        // This used to check for neighbors. But now "input" is not actually nodes
+        // at the same location as the call site but one ahead, so the gap shortened.
+        assert!(!get.output().overlaps(&send.input()))
+    });
 }
-
-define_test!(top_level_inlining_happens : graph -> {
-    let get_fn = graph.function("get_user_data");
-    let get = graph.call_site(&get_fn);
-    let dp_fn = graph.function("dp_user_data");
-    let dp = graph.call_site(&dp_fn);
-    let send_fn = graph.function("send_user_data");
-    let send = graph.call_site(&send_fn);
-
-    assert!(get.output().flows_to_data(&dp.input()));
-    assert!(dp.output().flows_to_data(&send.input()));
-    assert!(get.output().flows_to_data(&send.input()));
-    // This used to check for neighbors. But now "input" is not actually nodes
-    // at the same location as the call site but one ahead, so the gap shortened.
-    assert!(!get.output().overlaps(&send.input()))
-});
 
 #[test]
 #[ignore = "Need to make instruction info more robust. Doesn't monomorphize properly"]
@@ -84,21 +102,52 @@ fn awaiting_works() {
     });
 }
 
-define_test!(two_data_over_boundary : graph -> {
-    let get_fn = graph.function("get_user_data");
-    let get = graph.call_site(&get_fn);
-    let get2_fn = graph.function("get_user_data2");
-    let get2 = graph.call_site(&get2_fn);
-    let send_fn = graph.function("send_user_data");
-    let send = graph.call_site(&send_fn);
-    let send2_fn = graph.function("send_user_data2");
-    let send2 = graph.call_site(&send2_fn);
+#[test]
+fn two_data_over_boundary() {
+    inline_test! {
+        #[paralegal_flow::marker(sensitive)]
+        struct UserData { pub data: Vec<i64> }
 
-    assert!(get.output().flows_to_data(&send.input()));
-    assert!(get2.output().flows_to_data(&send2.input()));
-    assert!(!get.output().flows_to_data(&send2.input()));
-    assert!(!get2.output().flows_to_data(&send.input()));
-});
+        #[paralegal_flow::marker(source, return)]
+        fn get_user_data() -> UserData { UserData { data: vec![1, 2, 3] } }
+
+        #[paralegal_flow::marker(source, return)]
+        fn get_user_data2() -> UserData { UserData { data: vec![4, 5, 6] } }
+
+        #[paralegal_flow::marker(source, return)]
+        async fn async_get_user_data() -> UserData { UserData { data: vec![7, 8, 9] } }
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn send_user_data(user_data: &UserData) {}
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn send_user_data2(user_data: &UserData) {}
+
+        async fn main() {
+            let user_data1 = get_user_data();
+            let user_data2 = get_user_data2();
+            let _ = async_get_user_data().await;
+            send_user_data(&user_data1);
+            send_user_data2(&user_data2);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let get_fn = graph.function("get_user_data");
+        let get = graph.call_site(&get_fn);
+        let get2_fn = graph.function("get_user_data2");
+        let get2 = graph.call_site(&get2_fn);
+        let send_fn = graph.function("send_user_data");
+        let send = graph.call_site(&send_fn);
+        let send2_fn = graph.function("send_user_data2");
+        let send2 = graph.call_site(&send2_fn);
+
+        assert!(get.output().flows_to_data(&send.input()));
+        assert!(get2.output().flows_to_data(&send2.input()));
+        assert!(!get.output().flows_to_data(&send2.input()));
+        assert!(!get2.output().flows_to_data(&send.input()));
+    });
+}
 
 #[test]
 #[ignore = "Odd aliasing behavior with async. See https://github.com/brownsys/paralegal/issues/144"]
@@ -394,21 +443,52 @@ fn no_mixed_mutability_inlining_overtaint() {
     });
 }
 
-define_test!(no_value_inlining_overtaint : graph -> {
-    let get_fn = graph.function("get_user_data");
-    let get = graph.call_site(&get_fn);
-    let get2_fn = graph.function("get_user_data2");
-    let get2 = graph.call_site(&get2_fn);
-    let send_fn = graph.function("send_user_data");
-    let send = graph.call_site(&send_fn);
-    let send2_fn = graph.function("send_user_data2");
-    let send2 = graph.call_site(&send2_fn);
+#[test]
+fn no_value_inlining_overtaint() {
+    inline_test! {
+        #[paralegal_flow::marker(sensitive)]
+        struct UserData { pub data: Vec<i64> }
 
-    assert!(get.output().flows_to_data(&send.input()));
-    assert!(get2.output().flows_to_data(&send2.input()));
-    assert!(!get.output().flows_to_data(&send2.input()));
-    assert!(!get2.output().flows_to_data(&send.input()));
-});
+        #[paralegal_flow::marker(source, return)]
+        fn get_user_data() -> UserData { UserData { data: vec![1, 2, 3] } }
+
+        #[paralegal_flow::marker(source, return)]
+        fn get_user_data2() -> UserData { UserData { data: vec![4, 5, 6] } }
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn send_user_data(user_data: &UserData) {}
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn send_user_data2(user_data: &UserData) {}
+
+        async fn move_send_both(ud1: UserData, ud2: UserData) {
+            send_user_data(&ud1);
+            send_user_data2(&ud2);
+        }
+
+        async fn main() {
+            let ud1 = get_user_data();
+            let ud2 = get_user_data2();
+            move_send_both(ud1, ud2).await;
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let get_fn = graph.function("get_user_data");
+        let get = graph.call_site(&get_fn);
+        let get2_fn = graph.function("get_user_data2");
+        let get2 = graph.call_site(&get2_fn);
+        let send_fn = graph.function("send_user_data");
+        let send = graph.call_site(&send_fn);
+        let send2_fn = graph.function("send_user_data2");
+        let send2 = graph.call_site(&send2_fn);
+
+        assert!(get.output().flows_to_data(&send.input()));
+        assert!(get2.output().flows_to_data(&send2.input()));
+        assert!(!get.output().flows_to_data(&send2.input()));
+        assert!(!get2.output().flows_to_data(&send.input()));
+    });
+}
 
 #[test]
 #[ignore = "We no longer remove the state machine. I preserve this test case
@@ -520,46 +600,93 @@ fn no_overtaint_over_poll() {
     });
 }
 
-define_test!(return_from_async: graph -> {
-    let input_fn = graph.function("some_input");
-    let instruction_info = &graph.graph().desc.instruction_info;
-    println!("Looking for function {:?}", input_fn.ident);
-    let filter = |m: CallString| {
-        instruction_info[&m.leaf()]
-            .kind
-            .as_function_call()
-            .is_some_and(|i| i.id == input_fn.ident)
-    };
-    for e in graph.spdg().graph
-            .edge_weights()
-            .filter(|e| filter(e.at)) {
-                println!("Edge {e} is at function in question");
-            }
-    for n in graph.spdg()
-            .graph.node_weights()
-            .filter(|n| filter(n.at)) {
-                println!("Node {n} is at function in question");
-            }
-    let input = graph.call_site(&input_fn);
+#[test]
+fn return_from_async() {
+    inline_test! {
+        #[paralegal_flow::marker(noinline, return)]
+        fn some_input() -> usize { 0 }
 
-    assert!(graph.returns(&input.output()))
-});
+        async fn main() -> usize {
+            some_input()
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let input_fn = graph.function("some_input");
+        let instruction_info = &graph.graph().desc.instruction_info;
+        println!("Looking for function {:?}", input_fn.ident);
+        let filter = |m: CallString| {
+            instruction_info[&m.leaf()]
+                .kind
+                .as_function_call()
+                .is_some_and(|i| i.id == input_fn.ident)
+        };
+        for e in graph.spdg().graph
+                .edge_weights()
+                .filter(|e| filter(e.at)) {
+                    println!("Edge {e} is at function in question");
+                }
+        for n in graph.spdg()
+                .graph.node_weights()
+                .filter(|n| filter(n.at)) {
+                    println!("Node {n} is at function in question");
+                }
+        let input = graph.call_site(&input_fn);
 
-define_test!(async_return_from_async: graph -> {
-    let input_fn = graph.function("some_input");
-    let input = graph.call_site(&input_fn);
-    dbg!(graph.return_value());
-    assert!(graph.returns(&dbg!(input.output())))
-});
+        assert!(graph.returns(&input.output()))
+    });
+}
 
-define_test!(markers: graph -> {
-    let input = graph.marked(Identifier::new_intern("source"));
-    let output = graph.marked(Identifier::new_intern("sink"));
+#[test]
+fn async_return_from_async() {
+    inline_test! {
+        #[paralegal_flow::marker(noinline)]
+        async fn f() -> usize { 0 }
 
-    assert!(!input.is_empty());
-    assert!(!output.is_empty());
-    assert!(input.flows_to_data(&output));
-});
+        #[paralegal_flow::marker(noinline, return)]
+        fn some_input() -> usize { 0 }
+
+        async fn id_fun<T>(t: T) -> T {
+            let _ = f();
+            t
+        }
+
+        async fn main() -> usize {
+            id_fun(some_input()).await
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let input_fn = graph.function("some_input");
+        let input = graph.call_site(&input_fn);
+        dbg!(graph.return_value());
+        assert!(graph.returns(&dbg!(input.output())))
+    });
+}
+
+#[test]
+fn markers() {
+    inline_test! {
+        #[paralegal_flow::marker(source, return)]
+        async fn src() -> usize { 0 }
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        async fn snk(snk: usize) {}
+
+        async fn main() {
+            snk(src().await).await
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let input = graph.marked(Identifier::new_intern("source"));
+        let output = graph.marked(Identifier::new_intern("sink"));
+
+        assert!(!input.is_empty());
+        assert!(!output.is_empty());
+        assert!(input.flows_to_data(&output));
+    });
+}
 
 #[test]
 fn await_on_generic() {
@@ -882,21 +1009,157 @@ fn control_flow_overtaint() {
     .check_ctrl(control_flow_overtaint_check);
 }
 
-define_test!(control_flow_overtaint_tracing: graph -> {
-    control_flow_overtaint_check(graph)
-});
+#[test]
+fn control_flow_overtaint_tracing() {
+    inline_test! {
+        use tracing;
 
-define_test!(control_flow_overtaint_tracing_unasync: graph -> {
-    control_flow_overtaint_check(graph)
-});
+        #[paralegal_flow::marker(is_check, return)]
+        async fn perform_check(data: usize) -> Result<(), ()> {
+            if data != 0 { Ok(()) } else { Err(()) }
+        }
 
-define_test!(control_flow_overtaint_async_trait: graph -> {
-    control_flow_overtaint_check(graph)
-});
+        #[paralegal_flow::marker(is_sensitive1, return)]
+        async fn sensitive_action1(data: usize) {}
 
-define_test!(control_flow_overtaint_async_trait_tracing: graph -> {
-    control_flow_overtaint_check(graph)
-});
+        #[paralegal_flow::marker(is_sensitive2, return)]
+        async fn sensitive_action2(data: usize) {}
+
+        #[tracing::instrument(skip_all)]
+        async fn main(condition: bool, data: usize) -> Result<(), ()> {
+            if condition {
+                perform_check(data).await?;
+                sensitive_action1(data).await;
+            } else {
+                sensitive_action2(data).await;
+            }
+            Ok(())
+        }
+    }
+    .with_dependency_environment(async_test_env())
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(control_flow_overtaint_check);
+}
+
+#[test]
+fn control_flow_overtaint_tracing_unasync() {
+    inline_test! {
+        use tracing;
+
+        #[paralegal_flow::marker(is_check, return)]
+        fn perform_check(data: usize) -> Result<(), ()> {
+            if data != 0 { Ok(()) } else { Err(()) }
+        }
+
+        #[paralegal_flow::marker(is_sensitive1, return)]
+        fn sensitive_action1(data: usize) {}
+
+        #[paralegal_flow::marker(is_sensitive2, return)]
+        fn sensitive_action2(data: usize) {}
+
+        #[tracing::instrument(skip_all)]
+        fn main(condition: bool, data: usize) -> Result<(), ()> {
+            if condition {
+                perform_check(data)?;
+                sensitive_action1(data);
+            } else {
+                sensitive_action2(data);
+            }
+            Ok(())
+        }
+    }
+    .with_dependency_environment(async_test_env())
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(control_flow_overtaint_check);
+}
+
+#[test]
+fn control_flow_overtaint_async_trait() {
+    inline_test! {
+        use async_trait::async_trait;
+
+        #[paralegal_flow::marker(is_check, return)]
+        async fn perform_check(data: usize) -> Result<(), ()> {
+            if data != 0 { Ok(()) } else { Err(()) }
+        }
+
+        #[paralegal_flow::marker(is_sensitive1, return)]
+        async fn sensitive_action1(data: usize) {}
+
+        #[paralegal_flow::marker(is_sensitive2, return)]
+        async fn sensitive_action2(data: usize) {}
+
+        #[async_trait]
+        trait MyAsyncTrait {
+            async fn control_flow_overtaint_async_trait(&self, condition: bool, data: usize) -> Result<(), ()>;
+        }
+
+        struct Impl;
+
+        #[async_trait]
+        impl MyAsyncTrait for Impl {
+            #[paralegal_flow::analyze]
+            async fn control_flow_overtaint_async_trait(&self, condition: bool, data: usize) -> Result<(), ()> {
+                if condition {
+                    perform_check(data).await?;
+                    sensitive_action1(data).await;
+                } else {
+                    sensitive_action2(data).await;
+                }
+                Ok(())
+            }
+        }
+    }
+    .with_dependency_environment(async_test_env())
+    .with_extra_args(EXTRA_ARGS)
+    .with_entrypoint("control_flow_overtaint_async_trait")
+    .check_ctrl(control_flow_overtaint_check);
+}
+
+#[test]
+fn control_flow_overtaint_async_trait_tracing() {
+    inline_test! {
+        use async_trait::async_trait;
+        use tracing;
+
+        #[paralegal_flow::marker(is_check, return)]
+        async fn perform_check(data: usize) -> Result<(), ()> {
+            if data != 0 { Ok(()) } else { Err(()) }
+        }
+
+        #[paralegal_flow::marker(is_sensitive1, return)]
+        async fn sensitive_action1(data: usize) {}
+
+        #[paralegal_flow::marker(is_sensitive2, return)]
+        async fn sensitive_action2(data: usize) {}
+
+        #[async_trait]
+        trait MyAsyncTrait {
+            async fn control_flow_overtaint_async_trait_tracing(&self, condition: bool, data: usize) -> Result<(), ()>;
+        }
+
+        struct Impl;
+
+        #[async_trait]
+        impl MyAsyncTrait for Impl {
+            #[paralegal_flow::analyze]
+            #[tracing::instrument(skip_all)]
+            async fn control_flow_overtaint_async_trait_tracing(&self, condition: bool, data: usize) -> Result<(), ()> {
+                if condition {
+                    perform_check(data).await?;
+                    sensitive_action1(data).await;
+                } else {
+                    sensitive_action2(data).await;
+                }
+                Ok(())
+            }
+        }
+    }
+    .with_dependency_environment(async_test_env())
+    .with_extra_args(EXTRA_ARGS)
+    .with_entrypoint("control_flow_overtaint_async_trait_tracing")
+    .check_ctrl(control_flow_overtaint_check);
+}
 
 #[test]
 fn explicit_call_to_poll() {
