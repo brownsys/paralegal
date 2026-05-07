@@ -150,6 +150,17 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
         is_arg: Use,
     ) -> DepNode<'tcx, OneHopLocation> {
         let location = location.into();
+        // A body's argument place at its Start location is the canonical
+        // boundary node for parameter `local-1` of this body. Tag it as such
+        // so consumers (notably `controller_argument`) can identify
+        // controller arguments without needing a side fallback.
+        let is_arg = if matches!(location, RichLocation::Start)
+            && self.mono_body.local_kind(place.local) == LocalKind::Arg
+        {
+            Use::Arg((place.local.as_u32() - 1) as u16)
+        } else {
+            is_arg
+        };
         debug!(
             "Creating dep node for {place:?} (base ty {:?}) in {} at {:?}",
             Place::from(place.local)

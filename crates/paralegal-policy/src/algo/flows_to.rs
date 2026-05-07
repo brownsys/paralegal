@@ -165,3 +165,24 @@ fn test_flows_to() {
     assert!(src_b.flows_to(&sink, &ctx, EdgeSelection::Both));
     assert!(src_b.flows_to(&sink, &ctx, EdgeSelection::Data));
 }
+
+// Mirror of `test_flows_to` for an `async fn` controller. Argument nodes for
+// async controllers are synthesized by `fix_async_args` rather than coming
+// from the body's own root-Start places, so this test exercises a different
+// `is_arg`-population path through `controller_argument`.
+#[test]
+fn test_async_controller_argument() {
+    use paralegal_spdg::Identifier;
+    let ctx = crate::test_utils::test_ctx();
+    let controller = ctx
+        .controller_by_name(Identifier::new_intern("controller_async"))
+        .unwrap();
+    let src_a = ctx.controller_argument(controller, 0).unwrap();
+    let src_b = ctx.controller_argument(controller, 1).unwrap();
+    let sink = crate::test_utils::get_sink_node(&ctx, controller, "sink1");
+    let cs = crate::test_utils::get_callsite_node(&ctx, controller, "sink1");
+    assert!(src_a.flows_to(&cs, &ctx, EdgeSelection::Both));
+    assert!(!src_a.flows_to(&cs, &ctx, EdgeSelection::Data));
+    assert!(src_b.flows_to(&sink, &ctx, EdgeSelection::Both));
+    assert!(src_b.flows_to(&sink, &ctx, EdgeSelection::Data));
+}

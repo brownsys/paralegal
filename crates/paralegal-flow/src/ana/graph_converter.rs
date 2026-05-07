@@ -8,7 +8,7 @@ use crate::{
 use flowistry_pdg::rustc_portable::Location;
 use flowistry_pdg_construction::{
     DepEdge, DepEdgeKind, DepNode, DepNodeKind, MemoPdgConstructor, OneHopLocation, PartialGraph,
-    Use, VisitDriver, Visitor, determine_async,
+    Use, VisitDriver, Visitor, async_support::match_coroutine_assign, determine_async,
     utils::{
         ShimResult, handle_shims, manufacture_substs_for, try_monomorphize, try_resolve_function,
         type_as_fn,
@@ -607,6 +607,46 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         let local = mir::RETURN_PLACE;
         self.handle_node_types_helper(return_node, mono_ty(local), &[]);
 
+        // The operands of the coroutine constructor in the outer body tell
+        // us, for each field of the generator's captured environment, which
+        // *outer-body local* feeds it. For a regular `async fn` each operand
+        // is the corresponding outer-fn arg, but for `Box::pin(async move
+        // {…})` the closure only captures the upvars it actually uses, so
+        // env fields don't line up 1:1 with outer args.
+        let coroutine_operands = base_body.stmt_at(loc).left().and_then(match_coroutine_assign);
+        let outer_arg_count = args_as_nodes.len() as u32;
+        let outer_args_for_capture = |field: usize| -> Vec<usize> {
+            // Map a generator-env field index to the outer-fn arg indices
+            // that flow into it.
+            let Some((_, _, operands)) = coroutine_operands else {
+                // No operand list available (shouldn't happen — `loc` came
+                // from `find_coroutine_assign`). Fall back to the legacy 1:1
+                // mapping if it's in bounds.
+                return if field < args_as_nodes.len() {
+                    vec![field]
+                } else {
+                    vec![]
+                };
+            };
+            let Some(operand) = operands.raw.get(field) else {
+                return vec![];
+            };
+            match operand.place().map(|p| p.local.as_u32()) {
+                Some(local) if local >= 1 && local <= outer_arg_count => {
+                    vec![(local - 1) as usize]
+                }
+                Some(_) => {
+                    // Captured a non-arg local in the outer body (e.g. a
+                    // destructured pattern binding). Without analyzing the
+                    // outer body's PDG we can't pinpoint which outer args
+                    // flow here, so conservatively connect every arg.
+                    (0..args_as_nodes.len()).collect()
+                }
+                // Constant operand carries no arg dependency.
+                None => vec![],
+            }
+        };
+
         // Establish connections to existing nodes
         let generator_loc = RichLocation::Location(loc);
         let transition_at = CallString::new(&[GlobalLocation {
@@ -633,15 +673,16 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     continue;
                 };
 
-                let arg = args_as_nodes[id.as_usize()];
-                self.graph.add_edge(
-                    arg.to_index(),
-                    ridx.to_index(),
-                    EdgeInfo {
-                        kind: EdgeKind::Data,
-                        at: transition_at,
-                    },
-                );
+                for arg_idx in outer_args_for_capture(id.as_usize()) {
+                    self.graph.add_edge(
+                        args_as_nodes[arg_idx].to_index(),
+                        ridx.to_index(),
+                        EdgeInfo {
+                            kind: EdgeKind::Data,
+                            at: transition_at,
+                        },
+                    );
+                }
             } else if n.place.local == mir::RETURN_PLACE {
                 let ridx = self.translate_node(nidx);
                 self.graph.add_edge(

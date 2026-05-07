@@ -1098,3 +1098,47 @@ fn pattern_arguments_poor_mans_tool_def() {
         assert!(source.flows_to_data(&target));
     });
 }
+
+// Box-pattern (poor-man's tool def) where the captured upvar is derived from
+// only one of several outer-fn args. Verifies that args not involved in the
+// capture chain do NOT flow to a sink reachable through it.
+//
+// Currently fails: when the closure captures a non-arg local,
+// `fix_async_args` conservatively wires every outer-fn arg to that env field,
+// over-tainting unrelated args. Tightening this requires tracing the capture
+// back through the outer body (e.g. via flowistry's local analysis on the
+// outer body) to identify the actual arg dependencies.
+#[test]
+#[ignore = "fix_async_args over-approximates non-arg captures in box-pattern controllers"]
+fn pattern_arguments_poor_mans_tool_def_arg_isolation() {
+    inline_test! {
+        #[paralegal_flow::marker(target, arguments = [0])]
+        fn marked(result: usize) {
+            assert_eq!(result, 42);
+        }
+
+        #[paralegal_flow::marker(source, arguments = [0])]
+        #[paralegal_flow::marker(no_source, arguments = [1])]
+        fn main(src: usize, other: usize)
+            -> std::pin::Pin<std::boxed::Box<dyn std::future::Future<Output = ()>>> {
+            // `derived` is a non-arg local, so the closure captures a non-arg
+            // upvar — the case where `outer_args_for_capture` falls back from
+            // direct-arg wiring.
+            let derived = src + 1;
+            let _ = other;
+            std::boxed::Box::pin(async move {
+                marked(derived);
+            }) as std::pin::Pin<std::boxed::Box<dyn std::future::Future<Output = ()>>>
+        }
+    }
+    .check_ctrl(|ctrl| {
+        let target = ctrl.marked(Identifier::new_intern("target"));
+        let source = ctrl.marked(Identifier::new_intern("source"));
+        let no_source = ctrl.marked(Identifier::new_intern("no_source"));
+        assert!(!target.is_empty());
+        assert!(!source.is_empty());
+        assert!(!no_source.is_empty());
+        assert!(source.flows_to_data(&target));
+        assert!(!no_source.flows_to_data(&target));
+    });
+}
