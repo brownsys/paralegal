@@ -1,3 +1,6 @@
+use std::hash::Hash;
+use std::time::Instant;
+
 use super::{path_for_item, src_loc_for_span};
 use crate::{
     HashMap, HashSet, MarkerCtx, Pctx,
@@ -20,7 +23,7 @@ use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir,
-    ty::{Instance, TyCtxt, TypingEnv},
+    ty::{self, Instance, TyCtxt, TypingEnv},
 };
 
 use either::Either;
@@ -51,6 +54,8 @@ struct GraphAssembler<'tcx, 'a> {
     /// conversion.
     types: HashMap<GNode, Vec<DefId>>,
     known_def_ids: &'a mut FxHashSet<DefId>,
+    counter: u64,
+    started: Instant,
 }
 
 /// Create a global PDG (spanning the entire call tree) starting from the given
@@ -95,6 +100,22 @@ pub fn assemble_pdg<'tcx>(
 
     let mut driver = VisitDriver::new(pdg_constructor, possible_generator_instance, k);
     let mut assembler = GraphAssembler::new(pctx.clone(), known_def_ids, base_body_def_id);
+    let print_estimated_size = |driver: &mut VisitDriver<'tcx, '_, u32>| {
+        if let Some(depth) = pctx.opts().anactrl().fail_on_deep_call_chain() {
+            let mut deepchain_printer = StacktracePrinter::new(tcx, depth);
+            driver.start(&mut deepchain_printer);
+            if deepchain_printer.locations_printed > 0 {
+                panic!("Printed a long chain");
+            }
+        }
+        let mut estimator = flowistry_pdg_construction::GraphSizeEstimator::new();
+        driver.start(&mut estimator);
+        println!(
+            "Graph for {}: {}",
+            tcx.def_path_str(target),
+            estimator.format_size()
+        );
+    };
 
     // If the top level function is async we start analysis from the generator
     // instead (because the async function itself is basically empty, it just
@@ -109,6 +130,7 @@ pub fn assemble_pdg<'tcx>(
                 location: RichLocation::Location(loc),
             },
             |driver| {
+                print_estimated_size(driver);
                 driver.start(&mut assembler);
             },
         );
@@ -116,6 +138,7 @@ pub fn assemble_pdg<'tcx>(
         // have to manually sync up the actual arguments to the async function.
         assembler.fix_async_args(base_body_instance, loc, &mut driver);
     } else {
+        print_estimated_size(&mut driver);
         driver.start(&mut assembler);
     }
     let return_ = assembler.determine_return();
@@ -153,6 +176,8 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             known_def_ids,
             types: Default::default(),
             is_async,
+            counter: 0,
+            started: Instant::now(),
         }
     }
 
@@ -176,6 +201,14 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         vis: &mut VisitDriver<'tcx, '_, K>,
         weight: &DepNode<'tcx, OneHopLocation>,
     ) -> GNode {
+        self.counter += 1;
+        if self.counter % 1_000_000 == 0 {
+            println!(
+                "[{}] Seen {} mil nodes",
+                self.started.elapsed().as_secs(),
+                self.counter / 1_000_000
+            );
+        }
         let weight = globalize_node(vis, weight, self.tcx());
         let table = self.nodes.last_mut().unwrap();
         let prior = table[node.index()];
@@ -196,6 +229,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         at: CallString,
         span: rustc_span::Span,
         is_arg: Option<u16>,
+        same: bool,
     ) -> GNode {
         GNode(self.graph.add_node(NodeInfo {
             at,
@@ -205,6 +239,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             },
             span: src_loc_for_span(span, self.tcx()),
             is_arg,
+            same,
         }))
     }
 
@@ -285,21 +320,23 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             } else {
                 (place.local.into(), place.projection.as_slice())
             };
-        trace!("Using base place {base_place:?} with projections {projections:?}");
+        trace!(
+            "Using base place {base_place:?} in {} with projections {projections:?}",
+            tcx.def_path_str(function.def_id())
+        );
 
         let resolution = vis.current_function();
 
-        // Thread through each caller to recover generic arguments
         let body = self.pctx.body_cache().get(function.def_id()).body();
-        let raw_ty = base_place.ty(body, tcx);
-        let base_ty = try_monomorphize(
+        let ty = try_monomorphize(
             resolution,
             tcx,
             TypingEnv::fully_monomorphized(),
-            raw_ty,
+            body.local_decls[base_place.local].ty,
             span,
         )
         .unwrap();
+        let base_ty = place_ty_from_ty_and_projections(tcx, ty, base_place.projection);
 
         self.handle_node_types_helper(node, base_ty, projections);
     }
@@ -570,6 +607,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     driver.globalize_location(&RichLocation::Start.into()),
                     base_body.local_decls[arg].source_info.span,
                     Some((arg.as_u32() - 1) as u16),
+                    true,
                 )
             })
             .collect::<Vec<_>>();
@@ -578,6 +616,7 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             driver.globalize_location(&RichLocation::End.into()),
             base_body.local_decls[mir::RETURN_PLACE].source_info.span,
             None,
+            true,
         );
 
         let mono_ty = |local: mir::Local| {
@@ -605,6 +644,12 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         let local = mir::RETURN_PLACE;
         self.handle_node_types_helper(return_node, mono_ty(local), &[]);
 
+        let interpreter =
+            super::simple_interpreter::SimpleInterpreter::interpret_body(tcx, base_body).unwrap();
+
+        let coroutine_fields =
+            flowistry_pdg_construction::async_support::find_coroutine_assign(base_body).3;
+
         // Establish connections to existing nodes
         let generator_loc = RichLocation::Location(loc);
         let transition_at = CallString::new(&[GlobalLocation {
@@ -621,9 +666,10 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
             else {
                 continue;
             };
+
             if n.place.local.as_u32() == 1 && at.location == RichLocation::Start {
                 let ridx = self.translate_node(nidx);
-                let Some(mir::ProjectionElem::Field(id, _)) = n.place.projection.first() else {
+                let Some(mir::ProjectionElem::Field(id, fty)) = n.place.projection.first() else {
                     tcx.dcx().span_err(
                         *span,
                         format!("Expected field projection on async generator in {def_id:?}, found {:?}", n.place),
@@ -631,7 +677,40 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
                     continue;
                 };
 
-                let arg = args_as_nodes[id.as_usize()];
+                use rustc_middle::mir::Operand;
+
+                let (Operand::Copy(op_in_parent) | Operand::Move(op_in_parent)) =
+                    coroutine_fields[*id]
+                else {
+                    tcx.dcx()
+                        .span_err(*span, format!("Expected to find operator {id:?} in parent"));
+                    continue;
+                };
+                let target_arg = interpreter.resolve(op_in_parent).unwrap();
+
+                // Subtract for 0, which is always the return value
+                let target_local = target_arg.local.as_usize() - 1;
+
+                let Some(arg) = args_as_nodes.get(target_local) else {
+                    let inst = driver.current_function();
+                    for fun in [inst.def_id(), def_id] {
+                        let mut f = std::io::BufWriter::new(
+                            std::fs::File::create(format!("{}.mir", tcx.def_path_str(fun)))
+                                .unwrap(),
+                        );
+                        use std::io::Write;
+                        write!(f, "{:#?}", self.ctx().body_cache().get(fun).body()).unwrap();
+                    }
+                    tcx.dcx().span_err(
+                        *span,
+                        format!(
+                            "Expected argument node for field {} ({fty:?}) in {}, found none",
+                            id.as_usize(),
+                            tcx.def_path_str(def_id)
+                        ),
+                    );
+                    continue;
+                };
                 self.graph.add_edge(
                     arg.to_index(),
                     ridx.to_index(),
@@ -678,6 +757,18 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
     }
 }
 
+fn place_ty_from_ty_and_projections<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    ty: ty::Ty<'tcx>,
+    projection: &[mir::PlaceElem<'tcx>],
+) -> mir::PlaceTy<'tcx> {
+    projection
+        .iter()
+        .fold(mir::PlaceTy::from_ty(ty), |place_ty, &elem| {
+            place_ty.projection_ty(tcx, elem)
+        })
+}
+
 fn globalize_node<'tcx, K: Clone>(
     vis: &mut VisitDriver<'tcx, '_, K>,
     node: &DepNode<'tcx, OneHopLocation>,
@@ -695,6 +786,70 @@ fn globalize_node<'tcx, K: Clone>(
             },
         },
         is_arg: node.use_.as_arg(),
+        same: is_pure_node(vis, node),
+    }
+}
+
+fn place_is_idempotent_projection(place: mir::Place<'_>) -> bool {
+    use mir::PlaceElem;
+    place.projection.iter().all(|p| {
+        matches!(
+            p,
+            PlaceElem::Deref | PlaceElem::OpaqueCast(_)
+        )
+    })
+}
+
+fn is_pure_node<'tcx, K: Clone>(
+    vis: &VisitDriver<'tcx, '_, K>,
+    node: &DepNode<'tcx, OneHopLocation>,
+) -> bool {
+    use mir::{Operand, Rvalue::*, StatementKind as Sk};
+    let RichLocation::Location(loc) = node.at.location else {
+        // Only argument and return nodes appear at these locations and they
+        // are never operationally changed.
+        return true;
+    };
+    match vis.current_body().stmt_at(loc) {
+        Either::Left(mir::Statement { kind, .. }) => match kind {
+            Sk::FakeRead(..)
+            | Sk::StorageLive(..)
+            | Sk::StorageDead(..)
+            | Sk::Retag(..)
+            | Sk::PlaceMention(..)
+            | Sk::AscribeUserType(..)
+            | Sk::Coverage(..)
+            | Sk::ConstEvalCounter
+            | Sk::Nop
+            | Sk::BackwardIncompatibleDropHint { .. } => true,
+            Sk::Intrinsic(..) | Sk::SetDiscriminant { .. } => false,
+            Sk::Assign(a) => {
+                // This is a conservative match. If the place is projected out
+                // at all, we say it's not the same. In theory we could, for
+                // example, check whether it gets assigned to another projection
+                // on the same type and would admit more patterns.
+
+                let place = match &a.1 {
+                    Use(op) | Cast(_, op, _) => match op {
+                        Operand::Copy(place) | Operand::Move(place) => place,
+                        Operand::Constant(_) | Operand::RuntimeChecks(_) => return true,
+                    },
+
+                    Ref(_, _, place) | RawPtr(_, place) => place,
+                    Aggregate(_, aggs) => {
+                        return aggs
+                            .iter()
+                            .filter_map(|o| o.place())
+                            .all(place_is_idempotent_projection)
+                    }
+                    ThreadLocalRef(..) | WrapUnsafeBinder(..) => return true,
+                    Repeat(..) | BinaryOp(..) | UnaryOp(..)
+                    | Discriminant(..) | CopyForDeref(..) => return false,
+                };
+                place_is_idempotent_projection(*place)
+            }
+        },
+        _ => false,
     }
 }
 
@@ -730,7 +885,14 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssembler<
         _is_at_start: bool,
     ) {
         let [parent_table, this_table] = self.nodes.last_chunk_mut().unwrap();
-        this_table[in_this.index()] = parent_table[in_caller.index()]
+        let parent_idx = parent_table[in_caller.index()];
+        this_table[in_this.index()] = parent_idx;
+
+        // We now know that this function is being inlined so we clear the
+        // purity flag in the parent which would have been set there previously
+        // as the statements were being traversed.
+        let weight = self.graph.node_weight_mut(parent_idx.0).unwrap();
+        weight.same = true
     }
 
     fn visit_node(
@@ -795,5 +957,53 @@ impl<'tcx, K: std::hash::Hash + Eq + Clone> Visitor<'tcx, K> for GraphAssembler<
                 at: edge.at,
             },
         );
+    }
+}
+
+struct StacktracePrinter<'tcx> {
+    tcx: TyCtxt<'tcx>,
+    locations_printed: u32,
+    target_depth: usize,
+}
+
+impl<'tcx> StacktracePrinter<'tcx> {
+    fn new(tcx: TyCtxt<'tcx>, target_depth: u32) -> Self {
+        Self {
+            tcx,
+            locations_printed: 0,
+            target_depth: target_depth as usize,
+        }
+    }
+}
+
+impl<'tcx> Visitor<'tcx, u32> for StacktracePrinter<'tcx> {
+    fn visit_partial_graph(
+        &mut self,
+        vis: &mut VisitDriver<'tcx, '_, u32>,
+        partial_graph: &PartialGraph<'tcx, u32>,
+    ) {
+        let call_string = vis.call_stack();
+        if self.target_depth <= call_string.len() && self.locations_printed < 5 {
+            self.locations_printed += 1;
+            println!(
+                "Found deep graph for {}",
+                self.tcx.def_path_str(partial_graph.def_id())
+            );
+            for loc in call_string.iter().rev() {
+                let fun = loc.function;
+
+                let span = self.tcx.def_span(fun);
+                let smap = &self.tcx.sess.source_map();
+                let (_, start, ..) = smap.span_to_location_info(span);
+                println!(
+                    "    Called from {:100} {}:{start}",
+                    self.tcx.def_path_str(fun),
+                    smap.span_to_filename(span)
+                        .display(rustc_span::RemapPathScopeComponents::empty()),
+                )
+            }
+            println!();
+        }
+        vis.visit_partial_graph(self, partial_graph);
     }
 }

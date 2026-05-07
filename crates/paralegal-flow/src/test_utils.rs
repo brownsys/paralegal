@@ -29,7 +29,7 @@ use std::{
 use paralegal_spdg::{
     DefInfo, DisplayPath, EdgeInfo, Endpoint, FileSystemStorable, InstructionInfo, InstructionKind,
     Node, NodeInfo, NodeKind, ParalegalArtifact, SPDG, TypeId,
-    traverse::{EdgeSelection, generic_flows_to, generic_influencers},
+    traverse::{EdgeSelection, generic_flows_to, generic_influencers, edge_generic_flows_to},
     utils::{display_list, write_sep},
 };
 
@@ -945,6 +945,22 @@ impl<'g> CtrlRef<'g> {
         }
     }
 
+    pub fn arguments_by_index(&'g self) -> Vec<NodeRefs<'g>> {
+        let mut args = vec![];
+        for n in self.ctrl.arguments.iter() {
+            let w = self.ctrl.graph.node_weight(*n).unwrap();
+            let Some(a) = w.is_arg else { continue };
+            if (a as usize) >= args.len() {
+                args.resize_with((a as usize) + 1, || NodeRefs {
+                    graph: self,
+                    nodes: vec![],
+                });
+            }
+            args[a as usize].nodes.push(*n);
+        }
+        args
+    }
+
     pub fn constants(&'g self) -> impl Iterator<Item = (NodeRef<'g>, Constant)> {
         let spdg = self.spdg();
         spdg.all_sources().filter_map(|node| {
@@ -1007,6 +1023,40 @@ impl<'g> CtrlRef<'g> {
         let auto_markers = AutoMarkers::default();
         let auto = auto_markers.all();
         auto.into_iter().flat_map(|m| self.marked(m))
+    }
+
+    pub fn show_side_effects(&self, show_trace: bool) {
+        let auto_markers = AutoMarkers::default();
+        let auto = auto_markers.all();
+        for m in auto {
+            let marked = self.marked(m);
+            if !marked.is_empty() {
+                println!("Side effect {m}");
+            }
+            for n in marked {
+                let d = DisplayPath::from(
+                    &self.graph().desc.def_info[&n.info().at.leaf().function].path,
+                );
+                println!(
+                    "{} in {} in {}",
+                    n.info().kind,
+                    n.instruction_info().description,
+                    d
+                );
+                if !show_trace {
+                    continue;
+                }
+                for loc in n.info().at.iter() {
+                    let i_info = &self.graph.desc.instruction_info[&loc];
+                    let d_info = &self.graph().desc.def_info[&loc.function];
+                    println!(
+                        "  called from {} {}",
+                        DisplayPath::from(&d_info.path),
+                        i_info.span
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -1365,6 +1415,27 @@ pub trait FlowsTo {
             .copied()
             .any(|n| self.spdg().graph.neighbors(n).next().is_some())
     }
+
+    fn flows_to_unchanged(&self, other: &impl FlowsTo) -> bool {
+        if self.spdg_ident() != other.spdg_ident() {
+            return false;
+        }
+
+        let graph = &self.spdg().graph;
+
+        let fgraph = petgraph::visit::NodeFiltered::from_fn(graph, |n| {
+            graph.node_weight(n).unwrap().same
+                || self.nodes().contains(&n)
+                || other.nodes().contains(&n)
+        });
+
+        generic_flows_to(
+            self.nodes().iter().copied(),
+            &fgraph,
+            other.nodes().iter().copied(),
+        )
+        .is_some()
+    }
 }
 
 fn influences_ctrl_impl(
@@ -1382,7 +1453,7 @@ fn influences_ctrl_impl(
         EdgeSelection::Control,
     );
 
-    generic_flows_to(
+    edge_generic_flows_to(
         slf.nodes().iter().copied(),
         edge_selection,
         slf.spdg(),
@@ -1426,7 +1497,7 @@ fn flows_to_impl(
     if slf.spdg_ident() != other.spdg_ident() {
         return false;
     }
-    generic_flows_to(
+    edge_generic_flows_to(
         slf.nodes().iter().copied(),
         edge_selection,
         slf.spdg(),

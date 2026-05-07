@@ -1,6 +1,6 @@
-use std::hash::Hash;
+use std::{hash::Hash, num::ParseFloatError};
 
-use flowistry_pdg::Constant;
+use flowistry_pdg::{Constant, FloatWrapper};
 use internment::Intern;
 
 use rustc_middle::{
@@ -107,6 +107,7 @@ pub enum ConstConversionError<'tcx> {
         signed: bool,
     },
     EvalFailed(mir::Const<'tcx>),
+    CannotParseFloat(ParseFloatError),
     /// A `RuntimeChecks` operand was encountered; these are compiler-inserted
     /// runtime assertions (e.g. overflow checks) and carry no data value.
     RuntimeChecksOperand,
@@ -155,6 +156,8 @@ impl std::fmt::Display for ConstConversionError<'_> {
             ConstConversionError::EvalFailed(c) => {
                 write!(f, "Evaluation failed for constant: {:?}", c)
             }
+            ConstConversionError::CannotParseFloat(e) => 
+                write!(f, "Cannot parse float: {}", e),
             ConstConversionError::RuntimeChecksOperand => {
                 write!(f, "RuntimeChecks operand is not a data value")
             }
@@ -183,56 +186,58 @@ fn constant_from_const_value<'tcx>(
     ty: ty::Ty<'tcx>,
     ct: &mir::ConstValue,
 ) -> Result<Constant, ConstConversionError<'tcx>> {
+    let default_err = Err(ConstConversionError::UnsupportedConstType(mir::Const::Val(
+        *ct, ty,
+    )));
     // largely from rustc_middle/mir/pretty.rs:1952-1962
     match (ct, ty.kind()) {
         (_, ty::Ref(_, inner_ty, _)) if matches!(inner_ty.kind(), ty::Str) => {
             if let Some(data) = ct.try_get_slice_bytes_for_diagnostics(tcx) {
-                return Ok(Constant::String(Intern::from_ref(
+                Ok(Constant::String(Intern::from_ref(
                     String::from_utf8_lossy(data).as_ref(),
-                )));
+                )))
+            } else {
+                default_err
             }
         }
         (mir::ConstValue::Scalar(mir::interpret::Scalar::Int(int)), tyk) => match tyk {
-            ty::Bool => return Ok(Constant::Bool(int.try_to_bool().unwrap())),
+            ty::Bool => Ok(Constant::Bool(int.try_to_bool().unwrap())),
             // Skipping floats for now.
-            // ty::Float(fty) => Self::Float(match fty {
-            //     ty::FloatTy::F16 => int.to_f16() as f64,
-            //     ty::FloatTy::F32 => int.to_f32() as f64,
-            //     ty::FloatTy::F64 => int.to_f64() as f64,
-            // }),
-            ty::Int(ity) => {
-                return Ok(Constant::Int(match ity {
-                    ty::IntTy::I8 => int.to_u8() as i64,
-                    ty::IntTy::I16 => int.to_u16() as i64,
-                    ty::IntTy::I32 => int.to_u32() as i64,
-                    ty::IntTy::I64 => int.to_u64() as i64,
-                    ty::IntTy::Isize => int.to_target_isize(tcx),
-                    ty::IntTy::I128 => {
-                        return Err(ConstConversionError::Integer128NotSupported { signed: true })
-                    }
-                }))
-            }
-            ty::Uint(uty) => {
-                return Ok(Constant::Uint(match uty {
-                    ty::UintTy::U8 => int.to_u8() as u64,
-                    ty::UintTy::U16 => int.to_u16() as u64,
-                    ty::UintTy::U32 => int.to_u32() as u64,
-                    ty::UintTy::U64 => int.to_u64(),
-                    ty::UintTy::Usize => int.to_target_usize(tcx),
-                    ty::UintTy::U128 => {
-                        return Err(ConstConversionError::Integer128NotSupported { signed: false })
-                    }
-                }))
-            }
-            ty::Char => {
-                return Ok(Constant::Char(int.to_u32() as u8 as char));
-            }
-            _ => (),
+            ty::Float(fty) => Ok(Constant::Float(
+                match fty {
+                    ty::FloatTy::F16 => int.to_f16().to_string(),
+                    ty::FloatTy::F32 => int.to_f32().to_string(),
+                    ty::FloatTy::F64 => int.to_f64().to_string(),
+                    _ => return default_err,
+                }
+                .parse()
+                .map(FloatWrapper)
+                .map_err(ConstConversionError::CannotParseFloat)?,
+            )),
+            ty::Int(ity) => Ok(Constant::Int(match ity {
+                ty::IntTy::I8 => int.to_u8() as i64,
+                ty::IntTy::I16 => int.to_u16() as i64,
+                ty::IntTy::I32 => int.to_u32() as i64,
+                ty::IntTy::I64 => int.to_u64() as i64,
+                ty::IntTy::Isize => int.to_target_isize(tcx),
+                ty::IntTy::I128 => {
+                    return Err(ConstConversionError::Integer128NotSupported { signed: true })
+                }
+            })),
+            ty::Uint(uty) => Ok(Constant::Uint(match uty {
+                ty::UintTy::U8 => int.to_u8() as u64,
+                ty::UintTy::U16 => int.to_u16() as u64,
+                ty::UintTy::U32 => int.to_u32() as u64,
+                ty::UintTy::U64 => int.to_u64(),
+                ty::UintTy::Usize => int.to_target_usize(tcx),
+                ty::UintTy::U128 => {
+                    return Err(ConstConversionError::Integer128NotSupported { signed: false })
+                }
+            })),
+            ty::Char => Ok(Constant::Char(int.to_u32() as u8 as char)),
+            _ => default_err,
         },
-        (mir::ConstValue::ZeroSized, t) => return Ok(Constant::Zst(Intern::new(format!("{t:?}")))),
-        _ => (),
+        (mir::ConstValue::ZeroSized, t) => Ok(Constant::Zst(Intern::new(format!("{t:?}")))),
+        _ => default_err,
     }
-    Err(ConstConversionError::UnsupportedConstType(mir::Const::Val(
-        *ct, ty,
-    )))
 }

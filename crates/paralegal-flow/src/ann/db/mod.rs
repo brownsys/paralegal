@@ -16,9 +16,7 @@ use crate::{
     args::{Args, Stub},
     utils::{
         self, IntoDefId, is_function_like,
-        resolve::{
-            expect_resolve_string_to_def_id, report_resolution_err, resolve_string_to_def_id,
-        },
+        resolve::{self, expect_resolve_string_to_def_id, resolve_string_to_def_id},
     },
 };
 use flowistry_pdg_construction::source_access::{
@@ -27,6 +25,8 @@ use flowistry_pdg_construction::source_access::{
 use itertools::Itertools;
 use paralegal_flowistry::mir::FlowistryInput;
 use paralegal_spdg::{Identifier, TypeId};
+
+pub use paralegal_spdg::AutoMarkers;
 
 use paralegal_rustc_utils::cache::Cache;
 use rustc_data_structures::fx::FxHashMap;
@@ -474,44 +474,6 @@ impl ItemMarkers {
     }
 }
 
-pub struct AutoMarkers {
-    pub side_effect_unknown_virtual: Identifier,
-    pub side_effect_foreign: Identifier,
-    pub side_effect_unknown_fn_ptr: Identifier,
-    pub side_effect_raw_ptr: Identifier,
-    pub side_effect_transmute: Identifier,
-    pub side_effect_unknown: Identifier,
-    pub side_effect_intrinsic: Identifier,
-}
-
-impl Default for AutoMarkers {
-    fn default() -> Self {
-        AutoMarkers {
-            side_effect_unknown_virtual: Identifier::new_intern("auto:side-effect:unknown:virtual"),
-            side_effect_foreign: Identifier::new_intern("auto:side-effect:foreign"),
-            side_effect_unknown_fn_ptr: Identifier::new_intern("auto:side-effect:unknown:fn-ptr"),
-            side_effect_raw_ptr: Identifier::new_intern("auto:side-effect:raw-ptr"),
-            side_effect_transmute: Identifier::new_intern("auto:side-effect:transmute"),
-            side_effect_unknown: Identifier::new_intern("auto:side-effect:unknown"),
-            side_effect_intrinsic: Identifier::new_intern("auto:side-effect:intrinsic"),
-        }
-    }
-}
-
-impl AutoMarkers {
-    pub fn all(&self) -> [Identifier; 7] {
-        [
-            self.side_effect_unknown_virtual,
-            self.side_effect_foreign,
-            self.side_effect_unknown_fn_ptr,
-            self.side_effect_raw_ptr,
-            self.side_effect_transmute,
-            self.side_effect_unknown,
-            self.side_effect_intrinsic,
-        ]
-    }
-}
-
 pub struct FunctionMarkerStat<'tcx> {
     pub function: MaybeMonomorphized<'tcx>,
     pub is_constructor: bool,
@@ -574,10 +536,10 @@ impl<'tcx> MarkerDatabase<'tcx> {
             .build_config()
             .stubs
             .iter()
-            .filter_map(|(k, v)| {
-                let res = expect_resolve_string_to_def_id(tcx, k, args.relaxed());
-                let res = if args.relaxed() { res? } else { res.unwrap() };
-                Some((res, v))
+            .flat_map(|(k, v)| {
+                expect_resolve_string_to_def_id(tcx, k, args.relaxed())
+                    .into_iter()
+                    .zip(std::iter::repeat(v))
             })
             .collect();
         let included_crates = Rc::new(args.anactrl().inclusion_predicate(tcx));
@@ -595,6 +557,11 @@ impl<'tcx> MarkerDatabase<'tcx> {
             for ann in anns {
                 match ann {
                     Annotation::Marker(r) => {
+                        trace!(
+                            "Assigning marker {} to {}",
+                            r.marker,
+                            tcx.def_path_str(item)
+                        );
                         for s in refinement_to_selectors(r.refinement) {
                             markers
                                 .entry(item)
@@ -783,8 +750,7 @@ fn parse_external_marker_file(s: &str) -> anyhow::Result<RawExternalMarkers> {
 /// Given the TOML of external annotations we have parsed, resolve the paths
 /// (keys of the map) to [`DefId`]s.
 fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
-    //let relaxed = opts.relaxed();
-    let relaxed = false;
+    let relaxed = opts.relaxed();
     if let Some(annotation_file) = opts.marker_control().external_annotations() {
         let data = std::fs::read_to_string(annotation_file).unwrap_or_else(|_| {
             panic!(
@@ -806,21 +772,23 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
 
         let new_map: ExternalMarkers = from_toml
             .iter()
-            .filter_map(|(path, entries)| {
+            .flat_map(|(path, entries)| {
                 let res = resolve_string_to_def_id(tcx, path);
                 let must_succeed = entries
                     .iter()
                     .any(|entry| !entry.refinement._internal_can_fail_resolve_silently);
-                let def_id = match res {
-                    Err(e) if !must_succeed => {
+                let def_ids = res.unwrap_or_else(|e| {
+                    if !must_succeed {
                         trace!("Failed to resolve path {}: {:?}", path, e);
-                        return None;
+                    } else {
+                        tcx.dcx()
+                            .err(format!("Failed to resolve path {}: {:?}", path, e));
                     }
-                    _ => report_resolution_err(tcx, path, relaxed, res)?,
-                };
-                Some((def_id, entries))
+                    vec![]
+                });
+                def_ids.into_iter().zip(std::iter::repeat(entries))
             })
-            .flat_map(|(def_id, entries)| {
+            .flat_map(|(res, entries)| {
                 let on_module_children = entries
                     .iter()
                     .fold(None, |acc, entry| {
@@ -829,7 +797,7 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
                         }) {
                             tcx.dcx().err(format!(
                                 "Conflicting use of `on_all_module_children` on {}",
-                                tcx.def_path_str(def_id)
+                                res.as_string(tcx)
                             ));
                         }
                         Some(
@@ -838,20 +806,34 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
                         )
                     })
                     .unwrap_or(false);
-                let def_kind = tcx.def_kind(def_id);
-                let only_self = [def_id];
+                let only_self = match res {
+                    resolve::Res::Def(_, id) => Box::new([id]) as Box<[_]>,
+                    _ => Box::new([]),
+                };
                 let def_ids = if on_module_children {
-                    let defs = match def_kind {
-                        DefKind::Struct | DefKind::Enum => tcx.inherent_impls(def_id),
-                        DefKind::Mod | DefKind::Impl { .. } => &only_self,
-                        _ => panic!(
-                            "Expected module-like def kind for {}, got {def_kind:?}",
-                            tcx.def_path_str(def_id)
-                        ),
+                    let defs = match res {
+                        resolve::Res::PrimTy(t) => tcx.incoherent_impls(t),
+                        resolve::Res::Def(_, id) => {
+                            let def_kind =tcx.def_kind(id);
+                            if !matches!(def_kind, DefKind::Impl {..} | DefKind::Struct | DefKind::Enum | DefKind::Mod | DefKind::Trait) {
+                                tcx.dcx().err(format!("on_all_module_children used on a non-module-like item {}, has kind {def_kind:?}", tcx.def_path_str(id)));
+                            };
+                            &only_self
+                        },
                     };
+
                     utils::flatten_child_items(tcx, defs.iter().copied())
                 } else {
-                    [def_id].into_iter().collect()
+                    match res {
+                        resolve::Res::Def(_, id) => Some(id),
+                        resolve::Res::PrimTy(t) => {
+                            tcx.dcx()
+                                .err(format!("Cannot assign markers to primitive type {t:?}"));
+                            None
+                        }
+                    }
+                    .into_iter()
+                    .collect()
                 };
                 def_ids.into_iter().flat_map(|def_id| {
                     entries.iter().map(move |entry| {
@@ -860,7 +842,22 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
                     })
                 })
             })
-            .collect();
+            .into_grouping_map()
+            .reduce(|mut one: Vec<_>, _, mut other| {
+                one.extend(other.drain(..));
+                one
+            });
+        // let mut f = std::io::BufWriter::new(
+        //     std::fs::File::create("computed-external-marker-assignments.txt").unwrap(),
+        // );
+        // use std::io::Write;
+        // for (item, markers) in new_map.iter() {
+        //     write!(f, "{:20} : ", tcx.def_path_str(item)).unwrap();
+        //     for ann in markers.iter() {
+        //         write!(f, "{}, ", ann.marker).unwrap();
+        //     }
+        //     writeln!(f).unwrap();
+        // }
         new_map
     } else {
         HashMap::new()

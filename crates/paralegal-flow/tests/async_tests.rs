@@ -1035,3 +1035,66 @@ fn async_args_and_local_variable() {
         assert!(!no_source.flows_to_any(&sinks));
     })
 }
+
+#[test]
+fn pattern_arguments() {
+    inline_test! {
+        struct Params {
+            one: usize,
+            two: usize,
+            three: usize,
+            four: usize,
+        }
+
+        #[paralegal_flow::marker(target, arguments = [0])]
+        fn marked(result: usize) {
+            assert_eq!(result, 42);
+        }
+
+        #[paralegal_flow::marker(source, arguments = [0])]
+        async fn main(Params { one, two, three, four } : Params) {
+            let result = one + three + four;
+            marked(result);
+        }
+    }
+    .check_ctrl(|ctrl| {
+        let target = ctrl.marked(Identifier::new_intern("target"));
+        let source = ctrl.marked(Identifier::new_intern("source"));
+        assert!(!target.is_empty());
+        assert!(!source.is_empty());
+        assert!(source.flows_to_data(&target));
+    });
+}
+
+#[test]
+fn pattern_arguments_poor_mans_tool_def() {
+    inline_test! {
+        struct Params {
+            one: usize,
+            two: usize,
+            three: usize,
+            four: usize,
+        }
+
+        #[paralegal_flow::marker(target, arguments = [0])]
+        fn marked(result: usize) {
+            assert_eq!(result, 42);
+        }
+
+        #[paralegal_flow::marker(source, arguments = [0])]
+        fn main(Params { one, two, three, four } : Params)
+            -> std::pin::Pin<std::boxed::Box<dyn std::future::Future<Output = ()>>> {
+            std::boxed::Box::pin(async move {
+                let result = one + three + four;
+                marked(result);
+            }) as std::pin::Pin<std::boxed::Box<dyn std::future::Future<Output = ()>>>
+        }
+    }
+    .check_ctrl(|ctrl| {
+        let target = ctrl.marked(Identifier::new_intern("target"));
+        let source = ctrl.marked(Identifier::new_intern("source"));
+        assert!(!target.is_empty());
+        assert!(!source.is_empty());
+        assert!(source.flows_to_data(&target));
+    });
+}

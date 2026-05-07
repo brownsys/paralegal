@@ -5,13 +5,20 @@ extern crate lazy_static;
 
 use paralegal_flow::{define_flow_test_template, inline_test, test_utils::*};
 use paralegal_spdg::{Identifier, InstructionKind};
+use std::path::Path;
 
 const TEST_CRATE_NAME: &str = "tests/marker-tests";
 const EXTRA_ARGS: &[&str] = &["--no-interprocedural-analysis"];
 
+const CRATE_MARKER_CRATE_PATH: &str = "tests/test-crates-for-crate-marker/consumer";
+
 lazy_static! {
     static ref TEST_CRATE_ANALYZED: bool =
         run_paralegal_flow_with_flow_graph_dump_and(TEST_CRATE_NAME, EXTRA_ARGS);
+    static ref CRATE_MARKER_CRATE_ANALYZED: bool = run_paralegal_flow_with_flow_graph_dump_and(
+        CRATE_MARKER_CRATE_PATH,
+        &["--external-annotations", "external-annotations.toml"]
+    );
 }
 
 macro_rules! define_test {
@@ -19,6 +26,32 @@ macro_rules! define_test {
         define_flow_test_template!(TEST_CRATE_ANALYZED, TEST_CRATE_NAME, $($t)*);
     };
 }
+
+macro_rules! crate_marker_test {
+    ($($t:tt)*) => {
+        define_flow_test_template!(CRATE_MARKER_CRATE_ANALYZED, CRATE_MARKER_CRATE_PATH, $($t)*);
+    };
+}
+
+crate_marker_test!(crate_marker : ctrl -> {
+    assert!(!ctrl.marked("found").is_empty());
+});
+
+crate_marker_test!(serde_json: ctrl -> {
+    assert!(!ctrl.marked("serde").is_empty());
+    ctrl.assert_purity(true);
+});
+
+crate_marker_test!(memchr: ctrl -> {
+    assert!(!ctrl.marked("memchr").is_empty());
+    ctrl.assert_purity(true);
+});
+
+crate_marker_test!(marker_overlap: ctrl -> {
+    assert!(!ctrl.marked("found").is_empty());
+    assert!(!ctrl.marked("submod-conflict").is_empty());
+    assert!(!ctrl.marked("direct-conflict").is_empty());
+});
 
 #[test]
 fn use_wrapper() {
@@ -363,5 +396,71 @@ fn async_fn_marker() {
         assert!(!source.is_empty());
         assert!(!sink.is_empty());
         assert!(source.flows_to_data(&sink));
+    });
+}
+
+#[test]
+fn lifetime_resolving() {
+    inline_test! {
+        use std::marker::PhantomData;
+
+        trait Test {
+            fn test_method(&self);
+        }
+
+        struct Ref<'a> {
+            _marker: PhantomData<&'a ()>,
+        }
+
+        impl Test for Ref<'_> {
+            fn test_method(&self) {
+                todo!()
+            }
+        }
+
+        fn main() {
+            Ref { _marker: PhantomData }.test_method();
+        }
+    }
+    .with_marker_file(Path::new("tests/fixtures/lifetime-resolving-markers.toml"))
+    .check_ctrl(|ctrl| assert!(dbg!(ctrl.markers()).contains(&Identifier::new_intern("present"))));
+}
+
+#[test]
+fn dont_inline_on_std_marker() {
+    inline_test! {
+        #[paralegal_flow::marker(target1)]
+        fn canary1 () {}
+
+        #[paralegal_flow::marker(target2)]
+        fn canary2 (arg: usize) {}
+
+        fn hidden1() {
+            canary1()
+        }
+
+        fn hidden2(arg: usize) {
+            canary2(arg)
+        }
+
+        fn intermediate1() {
+            hidden1()
+        }
+
+        fn intermediate2(arg: usize) {
+            hidden2(arg)
+        }
+
+        fn main() {
+            intermediate1();
+            intermediate2(0);
+        }
+    }.with_marker_file(Path::new("tests/fixtures/dont-inline-on-std-marker.toml"))
+    .with_extra_args(["--elide-on-whitelist-markers"])
+    .check_ctrl(|ctrl| {
+        assert!(ctrl.marked("std:test").is_empty());
+        assert!(ctrl.marked("safe-libs:test").is_empty());
+        assert!(ctrl.marked("target1").is_empty());
+        assert!(ctrl.marked("target2").is_empty());
     });
 }

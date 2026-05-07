@@ -151,6 +151,8 @@ pub struct MarkerControl {
     /// Implies `--include-std`.
     #[clap(long, env)]
     side_effect_markers: bool,
+    #[clap(long)]
+    elide_on_whitelist_markers: bool,
 }
 
 /// Arguments that control the flow analysis
@@ -187,6 +189,9 @@ pub struct ClapAnalysisCtrl {
     /// Recompile the standard library and make the code available for analysis.
     #[clap(long, env)]
     pub include_std: bool,
+    /// Emit an error if the call chain depth exceeds this value.
+    #[clap(long)]
+    pub fail_on_deep_call_chain: Option<u32>,
 }
 
 impl MarkerControl {
@@ -196,5 +201,9 @@ impl MarkerControl {
 
     pub fn mark_side_effects(&self) -> bool {
         self.side_effect_markers
+    }
+
+    pub fn elide_on_whitelist_markers(&self) -> bool {
+        self.elide_on_whitelist_markers
     }
 }

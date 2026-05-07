@@ -12,8 +12,12 @@
 
 use std::{borrow::Cow, hash::Hash, rc::Rc};
 
+use paralegal_flowistry::mir::FlowistryInput;
 use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
-use rustc_middle::{mir::Location, ty::Instance};
+use rustc_middle::{
+    mir::{self, Location},
+    ty::Instance,
+};
 
 use crate::{analysis::global::partial_graph::NodeKey, DepNodeKind, MemoPdgConstructor};
 
@@ -79,6 +83,13 @@ impl<'tcx, 'c, K: Clone> VisitDriver<'tcx, 'c, K> {
                 }
             },
         )
+    }
+
+    pub fn current_body(&self) -> &'tcx mir::Body<'tcx> {
+        self.memo
+            .body_cache()
+            .get(self.current_function().def_id())
+            .body()
     }
 }
 

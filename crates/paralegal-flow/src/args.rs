@@ -251,6 +251,27 @@ pub struct AnalysisCtrl {
     included_crate_cache: OnceLock<FxHashSet<CrateNum>>,
     no_pdg_cache: bool,
     include_std: bool,
+    fail_on_deep_call_chain: Option<u32>,
+}
+
+impl std::hash::Hash for AnalysisCtrl {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let Self {
+            analyze,
+            inlining_depth,
+            include,
+            included_crate_cache: _,
+            no_pdg_cache,
+            include_std,
+            fail_on_deep_call_chain
+        } = self;
+        analyze.hash(state);
+        inlining_depth.hash(state);
+        include.hash(state);
+        no_pdg_cache.hash(state);
+        include_std.hash(state);
+        fail_on_deep_call_chain.hash(state);
+    }
 }
 
 impl Default for AnalysisCtrl {
@@ -262,6 +283,7 @@ impl Default for AnalysisCtrl {
             no_pdg_cache: false,
             included_crate_cache: OnceLock::new(),
             include_std: false,
+            fail_on_deep_call_chain: None,
         }
     }
 }
@@ -277,6 +299,7 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             no_adaptive_approximation,
             k_depth,
             include_std,
+            fail_on_deep_call_chain
         } = value;
 
         let inlining_depth = if no_interprocedural_analysis {
@@ -294,11 +317,12 @@ impl TryFrom<ClapAnalysisCtrl> for AnalysisCtrl {
             no_pdg_cache,
             included_crate_cache: OnceLock::new(),
             include_std,
+            fail_on_deep_call_chain
         })
     }
 }
 
-#[derive(strum::EnumIs, strum::AsRefStr, Clone)]
+#[derive(strum::EnumIs, strum::AsRefStr, Clone, Hash)]
 pub enum InliningDepth {
     /// Inline to arbitrary depth
     Unconstrained,
@@ -389,6 +413,10 @@ impl AnalysisCtrl {
 
     pub fn include_std(&self) -> bool {
         self.include_std
+    }
+
+    pub fn fail_on_deep_call_chain(&self) -> Option<u32> {
+        self.fail_on_deep_call_chain
     }
 }
 

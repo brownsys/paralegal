@@ -35,10 +35,11 @@ impl VersionArgs {
         }
         let second = chars.next();
         if second == Some('-') {
-            self.handle_long_arg(&a[2..])
-        }
-        for c in second.into_iter().chain(chars) {
-            self.handle_short_arg(c);
+            self.handle_long_arg(&a[2..]);
+        } else {
+            for c in second.into_iter().chain(chars) {
+                self.handle_short_arg(c);
+            }
         }
     }
 

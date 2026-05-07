@@ -13,6 +13,7 @@ use tracing::trace;
 use crate::{MarkerCtx, ann::db::AutoMarkers};
 
 const ALLOWED_INTRINSICS: &[&str] = &[
+    "three_way_compare",
     // Prefetching.
     "prefetch_read_data",
     "prefetch_write_data",
@@ -153,6 +154,7 @@ const ALLOWED_INTRINSICS: &[&str] = &[
     // I disallow this, though I still special case it with it's own effect
     // type.
     // "transmute",
+    "ub_checks",
 ];
 
 pub(super) fn allowed_intrinsics() -> FxHashSet<rustc_span::Symbol> {
