@@ -19,7 +19,7 @@ fn network() {
     inline_test! {
         use std::net::UdpSocket;
 
-        fn main(socket: &UdpSocket, buf: &[u8]) -> io::Result<usize> {
+        fn main(socket: &UdpSocket, buf: &[u8]) -> std::io::Result<usize> {
             socket.send(&buf)
         }
     }
@@ -79,12 +79,10 @@ fn transmute_struct() {
             field: &'a mut u32,
         }
 
-        fn transmute_struct(value: u32, sink: StructImmut) {
+        fn main(value: u32, sink: StructImmut) {
             let sink_mut: StructMut = unsafe { std::mem::transmute(sink) };
             *sink_mut.field = value;
         }
-
-
     }
     .with_dependency_environment(super::stdlib_environment())
     .check_ctrl(|ctrl| {
@@ -95,7 +93,7 @@ fn transmute_struct() {
 #[test]
 fn transmute_arr() {
     inline_test! {
-        fn transmute_arr(value: u32, sink: [&u32; 1]) {
+        fn main(value: u32, sink: [&u32; 1]) {
             let sink_mut: [&mut u32; 1] = unsafe { std::mem::transmute(sink) };
             *sink_mut[0] = value;
         }

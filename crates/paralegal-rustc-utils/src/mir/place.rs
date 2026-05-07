@@ -546,9 +546,21 @@ impl<'tcx, Dispatcher: RegionVisitorDispatcher<'tcx>> TypeVisitor<TyCtxt<'tcx>>
             | TyKind::Never => {}
 
             TyKind::Pat(inner, _) => {
+                // Pattern types (e.g. *const T is !null for NonNull<T>) are
+                // runtime-erased constraints with the same representation as
+                // their inner type. Deref, Index and Field all panic in
+                // `projection_ty_core` when the current type is Pat: Deref and
+                // Index unwrap Options that return None, and Field recomputes the
+                // type from the ADT and panics for non-ADT outer types.
+                // OpaqueCast is the only projection whose handler in
+                // `projection_ty_core` is `|_, ty| ty` — it substitutes the
+                // stored type unconditionally without inspecting the outer type,
+                // so it safely "escapes" the Pat wrapper and exposes inner to
+                // subsequent handlers (e.g. RawPtr → Deref).
+                let inner = *inner;
                 self.place_stack
-                    .push(ProjectionElem::Index(Local::from_usize(0)));
-                self.visit_ty(*inner);
+                    .push(ProjectionElem::OpaqueCast(inner));
+                self.visit_ty(inner);
                 self.place_stack.pop();
             }
 

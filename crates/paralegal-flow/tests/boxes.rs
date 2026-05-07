@@ -239,3 +239,71 @@ fn strong_ref_in_box_update() {
         assert!(!sources.flows_to_data(&end));
     });
 }
+
+// The next two tests exercise alias analysis through NonNull<T>, whose inner
+// pointer field is a pattern type (`*const T is !null`) in recent toolchains.
+// RegionVisitor must traverse the Pat layer via OpaqueCast to reach the raw
+// pointer and Deref it, or it would either panic or miss the alias entirely.
+
+#[test]
+fn nonnull_read() {
+    inline_test! {
+        use std::ptr::NonNull;
+
+        #[paralegal_flow::marker(source_2, return)]
+        fn source_2() -> usize { 0 }
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        fn main() {
+            let src = source_2();
+            let nn = unsafe { NonNull::new_unchecked(&src as *const usize as *mut usize) };
+            let val = unsafe { nn.read() };
+            sink(val);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let sources = graph.marked(Identifier::new_intern("source_2"));
+        let end = graph.marked(Identifier::new_intern("sink"));
+        assert!(!sources.is_empty());
+        assert!(!end.is_empty());
+        assert!(sources.flows_to_data(&end));
+    });
+}
+
+#[test]
+fn nonnull_write() {
+    inline_test! {
+        use std::ptr::NonNull;
+
+        #[paralegal_flow::marker(source_2, return)]
+        fn source_2() -> usize { 0 }
+
+        #[paralegal_flow::marker(modifier, return)]
+        fn modifier() -> usize { 6 }
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        fn main() {
+            let mut src = source_2();
+            let nn = unsafe { NonNull::new_unchecked(&mut src as *mut usize) };
+            unsafe { *nn.as_ptr() += modifier() };
+            sink(src);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let sources = graph.marked(Identifier::new_intern("source_2"));
+        let end = graph.marked(Identifier::new_intern("sink"));
+        let modifier = graph.marked(Identifier::new_intern("modifier"));
+        assert!(!sources.is_empty());
+        assert!(!end.is_empty());
+        assert!(!modifier.is_empty());
+        // `*= ` reads the old value of src, so source_2 is always part of what flows
+        // to sink regardless of whether the write-back alias is tracked.
+        assert!(sources.flows_to_data(&end));
+    });
+}
