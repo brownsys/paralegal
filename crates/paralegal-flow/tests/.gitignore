@@ -1,8 +1,4 @@
 *.gv.pdf
 *.gv
-*.ntgb.json
-analysis_result.frg
 target
-*.regal
 *.mir
-*.df
