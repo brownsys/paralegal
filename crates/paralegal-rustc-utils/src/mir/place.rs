@@ -558,8 +558,7 @@ impl<'tcx, Dispatcher: RegionVisitorDispatcher<'tcx>> TypeVisitor<TyCtxt<'tcx>>
                 // so it safely "escapes" the Pat wrapper and exposes inner to
                 // subsequent handlers (e.g. RawPtr → Deref).
                 let inner = *inner;
-                self.place_stack
-                    .push(ProjectionElem::OpaqueCast(inner));
+                self.place_stack.push(ProjectionElem::OpaqueCast(inner));
                 self.visit_ty(inner);
                 self.place_stack.pop();
             }

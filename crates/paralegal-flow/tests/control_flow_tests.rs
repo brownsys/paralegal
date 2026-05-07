@@ -37,7 +37,10 @@ fn process_basic() {
         assert!(get.output().flows_to_data(&check.input()));
         assert!(!check.output().flows_to_data(&send.input()));
         assert!(get.output().flows_to_data(&send.input()));
-        assert!(get.output().never_happens_before_data(&check.output(), &send.input()));
+        assert!(
+            get.output()
+                .never_happens_before_data(&check.output(), &send.input())
+        );
     });
 }
 

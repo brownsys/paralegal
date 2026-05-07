@@ -207,14 +207,12 @@ fn trait_method_marker() {
         let marker = Identifier::new_intern("find_me");
         for method in ctrl.functions("method") {
             let spdg = ctrl.spdg();
-            assert!(spdg.markers
-                .iter()
-                .any(|(node, markers)| {
-                    let weight = spdg.graph.node_weight(*node).unwrap();
-                    !matches!(ctrl.graph().desc.instruction_info[&weight.at.leaf()].kind,
+            assert!(spdg.markers.iter().any(|(node, markers)| {
+                let weight = spdg.graph.node_weight(*node).unwrap();
+                !matches!(ctrl.graph().desc.instruction_info[&weight.at.leaf()].kind,
                         InstructionKind::FunctionCall(fun) if fun.id == method.ident)
                     || markers.contains(&marker)
-                }));
+            }));
         }
     });
 }
@@ -236,9 +234,9 @@ fn wrapping_typed_input() {
         let marker = Identifier::new_intern("wrapper");
         assert!(ctrl.spdg().arguments.iter().any(|node| {
             let ts = ctrl.spdg().node_types(*node);
-            dbg!(ts).iter().any(|t| {
-                ctrl.graph().desc.type_info[t].markers.contains(&marker)
-            })
+            dbg!(ts)
+                .iter()
+                .any(|t| ctrl.graph().desc.type_info[t].markers.contains(&marker))
         }))
     });
 }
@@ -265,9 +263,7 @@ fn typed_input() {
         dbg!(&ctrl.spdg().type_assigns);
         assert!(dbg!(&ctrl.spdg().arguments).iter().any(|node| {
             let ts = ctrl.spdg().node_types(*node);
-            dbg!(ts).iter().any(|t| {
-                tyinf[t].markers.contains(&marker)
-            })
+            dbg!(ts).iter().any(|t| tyinf[t].markers.contains(&marker))
         }))
     });
 }
@@ -289,9 +285,9 @@ fn typed_input_zst() {
         let marker = Identifier::new_intern("marked");
         assert!(ctrl.spdg().arguments.iter().any(|node| {
             let ts = ctrl.spdg().node_types(*node);
-            dbg!(ts).iter().any(|t| {
-                ctrl.graph().desc.type_info[t].markers.contains(&marker)
-            })
+            dbg!(ts)
+                .iter()
+                .any(|t| ctrl.graph().desc.type_info[t].markers.contains(&marker))
         }))
     });
 }

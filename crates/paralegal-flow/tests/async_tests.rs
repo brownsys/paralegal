@@ -621,16 +621,12 @@ fn return_from_async() {
                 .as_function_call()
                 .is_some_and(|i| i.id == input_fn.ident)
         };
-        for e in graph.spdg().graph
-                .edge_weights()
-                .filter(|e| filter(e.at)) {
-                    println!("Edge {e} is at function in question");
-                }
-        for n in graph.spdg()
-                .graph.node_weights()
-                .filter(|n| filter(n.at)) {
-                    println!("Node {n} is at function in question");
-                }
+        for e in graph.spdg().graph.edge_weights().filter(|e| filter(e.at)) {
+            println!("Edge {e} is at function in question");
+        }
+        for n in graph.spdg().graph.node_weights().filter(|n| filter(n.at)) {
+            println!("Node {n} is at function in question");
+        }
         let input = graph.call_site(&input_fn);
 
         assert!(graph.returns(&input.output()))

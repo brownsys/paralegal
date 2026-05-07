@@ -82,8 +82,10 @@ fn eliminate_return_connection() {
         let read_fn = graph.function("read");
         let read = graph.call_site(&read_fn);
 
-        assert!(dbg!(source.output())
-            .always_happens_before_data(&dbg!(pass_through.output()), &dbg!(read.input())));
+        assert!(
+            dbg!(source.output())
+                .always_happens_before_data(&dbg!(pass_through.output()), &dbg!(read.input()))
+        );
     });
 }
 
@@ -205,7 +207,11 @@ fn input_elimination_isnt_a_problem_vec_push() {
         assert!(insert.output().flows_to_data(&push.input()));
         assert!(push.output().flows_to_data(&read.input()));
         assert!(source.output().flows_to_data(&push.input()));
-        assert!(insert.output().always_happens_before_data(&push.output(), &read.input()));
+        assert!(
+            insert
+                .output()
+                .always_happens_before_data(&push.output(), &read.input())
+        );
     });
 }
 

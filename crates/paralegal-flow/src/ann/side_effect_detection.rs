@@ -292,30 +292,30 @@ impl<'tcx> mir::visit::Visitor<'tcx> for BodyAnalyzer<'tcx, '_> {
     }
 
     fn visit_terminator(&mut self, terminator: &mir::Terminator<'tcx>, location: mir::Location) {
-        if self.check_direct_callees {
-            if let mir::TerminatorKind::Call { func, .. } = &terminator.kind {
-                let ty = func.ty(self.body, self.tcx);
-                if let ty::TyKind::FnDef(def_id, _) = ty.kind() {
-                    let def_id = *def_id;
-                    if self.tcx.is_foreign_item(def_id) {
-                        trace!("Found foreign call in terminator {terminator:?}");
-                        self.found_markers.insert(self.auto_markers.side_effect_foreign);
-                    } else if let Some(idef) = self.tcx.intrinsic(def_id) {
-                        let name = idef.name;
-                        if name.as_str() != "transmute"
-                            && !ALLOWED_INTRINSICS.iter().any(|&s| s == name.as_str())
-                        {
-                            trace!("Found non-allowed intrinsic {name} in terminator");
-                            self.found_markers
-                                .insert(self.auto_markers.side_effect_intrinsic);
-                        }
+        if self.check_direct_callees
+            && let mir::TerminatorKind::Call { func, .. } = &terminator.kind
+        {
+            let ty = func.ty(self.body, self.tcx);
+            if let ty::TyKind::FnDef(def_id, _) = ty.kind() {
+                let def_id = *def_id;
+                if self.tcx.is_foreign_item(def_id) {
+                    trace!("Found foreign call in terminator {terminator:?}");
+                    self.found_markers
+                        .insert(self.auto_markers.side_effect_foreign);
+                } else if let Some(idef) = self.tcx.intrinsic(def_id) {
+                    let name = idef.name;
+                    if name.as_str() != "transmute"
+                        && !ALLOWED_INTRINSICS.iter().any(|&s| s == name.as_str())
+                    {
+                        trace!("Found non-allowed intrinsic {name} in terminator");
+                        self.found_markers
+                            .insert(self.auto_markers.side_effect_intrinsic);
                     }
                 }
             }
         }
         self.super_terminator(terminator, location);
     }
-
 }
 
 fn contains_mut_ref<'tcx>(ty: ty::Ty<'tcx>, tcx: ty::TyCtxt<'tcx>) -> bool {
