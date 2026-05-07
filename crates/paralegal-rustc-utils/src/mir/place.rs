@@ -545,6 +545,13 @@ impl<'tcx, Dispatcher: RegionVisitorDispatcher<'tcx>> TypeVisitor<TyCtxt<'tcx>>
             | TyKind::Param(..)
             | TyKind::Never => {}
 
+            TyKind::Pat(inner, _) => {
+                self.place_stack
+                    .push(ProjectionElem::Index(Local::from_usize(0)));
+                self.visit_ty(*inner);
+                self.place_stack.pop();
+            }
+
             _ if ty.is_primitive_ty() => {}
 
             _ => warn!("unimplemented {ty:?} ({:?})", ty.kind()),
