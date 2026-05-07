@@ -1,44 +1,92 @@
-use paralegal_flow::define_flow_test_template;
-use paralegal_flow::test_utils::*;
+use paralegal_flow::{inline_test, test_utils::*};
 
-const TEST_CRATE_NAME: &str = "tests/purity/test-crate-recursive";
-const EXTRA_ARGS: &[&str] = &[
-    "--side-effect-markers",
-    // "--external-annotations",
-    // "../stdlib-markers.toml",
-];
+#[test]
+fn pure() {
+    inline_test! {
+        fn pure_fn(a: usize) {
+            if a > 0 {
+                pure_fn(a - 1);
+            }
+        }
 
-lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool =
-        run_paralegal_flow_with_flow_graph_dump_and(TEST_CRATE_NAME, EXTRA_ARGS);
+        fn main() {
+            pure_fn(0);
+        }
+    }
+    .with_dependency_environment(super::stdlib_environment())
+    .check_ctrl(|ctrl| {
+        ctrl.assert_purity(true);
+    });
 }
 
-macro_rules! define_test {
-    ($($t:tt)*) => {
-        define_flow_test_template!(TEST_CRATE_ANALYZED, TEST_CRATE_NAME, $($t)*);
-    };
+#[test]
+fn impure() {
+    inline_test! {
+        fn impure_fn(a: usize) {
+            if a > 0 {
+                impure_fn(a - 1);
+            }
+            println!("{}", a);
+        }
+
+        fn main() {
+            impure_fn(0);
+        }
+    }
+    .with_dependency_environment(super::stdlib_environment())
+    .check_ctrl(|ctrl| {
+        ctrl.assert_purity(false);
+    });
 }
 
-define_test!(pure: ctrl -> {
-    ctrl.assert_purity(true);
-});
+#[test]
+fn mutually_recursive_pure_1() {
+    inline_test! {
+        fn rec_pure_1(a: usize) {
+            if a > 0 {
+                rec_pure_2(a - 1);
+            }
+        }
 
-define_test!(impure: ctrl -> {
-    ctrl.assert_purity(false);
-});
+        fn rec_pure_2(a: usize) {
+            if a > 0 {
+                rec_pure_1(a - 1);
+            }
+        }
 
-define_test!(mutually_recursive_pure_1: ctrl -> {
-    ctrl.assert_purity(true);
-});
+        fn main() {
+            rec_pure_1(0);
+        }
+    }
+    .with_dependency_environment(super::stdlib_environment())
+    .check_ctrl(|ctrl| {
+        ctrl.assert_purity(true);
+    });
+}
 
-define_test!(mutually_recursive_pure_2: ctrl -> {
-    ctrl.assert_purity(true);
-});
+#[test]
+fn mutually_recursive_impure_1() {
+    inline_test! {
+        fn rec_impure_1(a: usize) {
+            if a > 0 {
+                rec_impure_2(a - 1);
+            }
+            println!("{}", a);
+        }
 
-define_test!(mutually_recursive_impure_1: ctrl -> {
-    ctrl.assert_purity(false);
-});
+        fn rec_impure_2(a: usize) {
+            if a > 0 {
+                rec_impure_1(a - 1);
+            }
+            println!("{}", a);
+        }
 
-define_test!(mutually_recursive_impure_2: ctrl -> {
-    ctrl.assert_purity(false);
-});
+        fn main() {
+            rec_impure_1(0);
+        }
+    }
+    .with_dependency_environment(super::stdlib_environment())
+    .check_ctrl(|ctrl| {
+        ctrl.assert_purity(false);
+    });
+}

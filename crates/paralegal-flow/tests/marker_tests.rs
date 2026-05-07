@@ -1,24 +1,9 @@
 #![feature(rustc_private)]
 
-#[macro_use]
-extern crate lazy_static;
+use paralegal_flow::{inline_test, test_utils::*};
+use paralegal_spdg::Identifier;
 
-use paralegal_flow::{define_flow_test_template, inline_test, test_utils::*};
-use paralegal_spdg::{Identifier, InstructionKind};
-
-const TEST_CRATE_NAME: &str = "tests/marker-tests";
 const EXTRA_ARGS: &[&str] = &["--no-interprocedural-analysis"];
-
-lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool =
-        run_paralegal_flow_with_flow_graph_dump_and(TEST_CRATE_NAME, EXTRA_ARGS);
-}
-
-macro_rules! define_test {
-    ($($t:tt)*) => {
-        define_flow_test_template!(TEST_CRATE_ANALYZED, TEST_CRATE_NAME, $($t)*);
-    };
-}
 
 #[test]
 fn use_wrapper() {
@@ -201,52 +186,115 @@ fn named_refinement_on_self() {
     });
 }
 
-define_test!(trait_method_marker: ctrl -> {
-    let marker = Identifier::new_intern("find_me");
-    for method in ctrl.functions("method") {
-        let spdg = ctrl.spdg();
-        assert!(spdg.markers
-            .iter()
-            .any(|(node, markers)| {
-                let weight = spdg.graph.node_weight(*node).unwrap();
-                !matches!(ctrl.graph().desc.instruction_info[&weight.at.leaf()].kind,
-                    InstructionKind::FunctionCall(fun) if fun.id == method.ident)
-                || markers.contains(&marker)
-            }));
+#[test]
+fn trait_method_marker() {
+    inline_test! {
+        trait Test {
+            #[paralegal_flow::marker(find_me, arguments = [0])]
+            fn method(self);
+        }
+
+        impl Test for () {
+            fn method(self) {}
+        }
+
+        fn main() {
+            ().method()
+        }
     }
-});
+    .with_extra_args(EXTRA_ARGS.iter().copied())
+    .check_ctrl(|ctrl| {
+        let marker = Identifier::new_intern("find_me");
+        let mut checked_call_site = false;
+        for method in ctrl.functions("method") {
+            let spdg = ctrl.spdg();
+            for call_site in ctrl.call_sites(&method) {
+                checked_call_site = true;
+                assert!(call_site.input().as_singles().any(|n| {
+                    spdg.markers
+                        .get(&n.node())
+                        .is_some_and(|markers| markers.contains(&marker))
+                }));
+            }
+        }
+        assert!(checked_call_site, "expected at least one method call site");
+    });
+}
 
-define_test!(wrapping_typed_input: ctrl -> {
-    let marker = Identifier::new_intern("wrapper");
-    assert!(ctrl.spdg().arguments.iter().any(|node| {
-        let ts = ctrl.spdg().node_types(*node);
-        dbg!(ts).iter().any(|t| {
-            ctrl.graph().desc.type_info[t].markers.contains(&marker)
-        })
-    }))
-});
+#[test]
+fn wrapping_typed_input() {
+    inline_test! {
+        #[paralegal_flow::marker(wrapper)]
+        pub struct Wrapper<T: ?Sized>(T);
 
-define_test!(typed_input: ctrl -> {
-    let marker = Identifier::new_intern("marked");
-    let tyinf = dbg!(&ctrl.graph().desc.type_info);
-    dbg!(&ctrl.spdg().type_assigns);
-    assert!(dbg!(&ctrl.spdg().arguments).iter().any(|node| {
-        let ts = ctrl.spdg().node_types(*node);
-        dbg!(ts).iter().any(|t| {
-            tyinf[t].markers.contains(&marker)
-        })
-    }))
-});
+        fn consume_any<T>(_w: T) {}
 
-define_test!(typed_input_zst: ctrl -> {
-    let marker = Identifier::new_intern("marked");
-    assert!(ctrl.spdg().arguments.iter().any(|node| {
-        let ts = ctrl.spdg().node_types(*node);
-        dbg!(ts).iter().any(|t| {
-            ctrl.graph().desc.type_info[t].markers.contains(&marker)
-        })
-    }))
-});
+        fn main(w: Wrapper<u32>) {
+            consume_any(w)
+        }
+    }
+    .with_extra_args(EXTRA_ARGS.iter().copied())
+    .check_ctrl(|ctrl| {
+        let marker = Identifier::new_intern("wrapper");
+        assert!(ctrl.spdg().arguments.iter().any(|node| {
+            let ts = ctrl.spdg().node_types(*node);
+            dbg!(ts)
+                .iter()
+                .any(|t| ctrl.graph().desc.type_info[t].markers.contains(&marker))
+        }))
+    });
+}
+
+#[test]
+fn typed_input() {
+    inline_test! {
+        #[paralegal_flow::marker(marked)]
+        struct Marked {
+            f1: usize,
+            f2: bool,
+        }
+
+        fn consume_any<T>(_w: T) {}
+
+        fn main(w: Marked) {
+            consume_any(w)
+        }
+    }
+    .with_extra_args(EXTRA_ARGS.iter().copied())
+    .check_ctrl(|ctrl| {
+        let marker = Identifier::new_intern("marked");
+        let tyinf = dbg!(&ctrl.graph().desc.type_info);
+        dbg!(&ctrl.spdg().type_assigns);
+        assert!(dbg!(&ctrl.spdg().arguments).iter().any(|node| {
+            let ts = ctrl.spdg().node_types(*node);
+            dbg!(ts).iter().any(|t| tyinf[t].markers.contains(&marker))
+        }))
+    });
+}
+
+#[test]
+fn typed_input_zst() {
+    inline_test! {
+        #[paralegal_flow::marker(marked)]
+        struct MarkedZST;
+
+        fn consume_any<T>(_w: T) {}
+
+        fn main(w: MarkedZST) {
+            consume_any(w)
+        }
+    }
+    .with_extra_args(EXTRA_ARGS.iter().copied())
+    .check_ctrl(|ctrl| {
+        let marker = Identifier::new_intern("marked");
+        assert!(ctrl.spdg().arguments.iter().any(|node| {
+            let ts = ctrl.spdg().node_types(*node);
+            dbg!(ts)
+                .iter()
+                .any(|t| ctrl.graph().desc.type_info[t].markers.contains(&marker))
+        }))
+    });
+}
 
 #[test]
 fn no_overtaint_from_sibling_markers() {
@@ -336,6 +384,56 @@ fn get_parent_returns_trait_method_for_impl_method() {
         );
     })
     .unwrap();
+}
+
+#[test]
+fn marked_entry_point_argument() {
+    inline_test! {
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn consume(_: u32) {}
+
+        #[paralegal_flow::marker(source_arg, arguments = [0])]
+        fn main(arg: u32) {
+            consume(arg)
+        }
+    }
+    .check_ctrl(|ctrl| {
+        let marker = Identifier::new_intern("source_arg");
+        let spdg = ctrl.spdg();
+        assert!(
+            spdg.arguments.iter().any(|node| {
+                spdg.markers
+                    .get(node)
+                    .is_some_and(|markers| markers.contains(&marker))
+            }),
+            "expected argument 0 of main to be marked with `source_arg`"
+        );
+    });
+}
+
+#[test]
+fn marked_async_entry_point_argument() {
+    inline_test! {
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn consume(_: u32) {}
+
+        #[paralegal_flow::marker(source_arg, arguments = [0])]
+        async fn main(arg: u32) {
+            consume(arg)
+        }
+    }
+    .check_ctrl(|ctrl| {
+        let marker = Identifier::new_intern("source_arg");
+        let spdg = ctrl.spdg();
+        assert!(
+            spdg.arguments.iter().any(|node| {
+                spdg.markers
+                    .get(node)
+                    .is_some_and(|markers| markers.contains(&marker))
+            }),
+            "expected argument 0 of async main to be marked with `source_arg`"
+        );
+    });
 }
 
 #[test]

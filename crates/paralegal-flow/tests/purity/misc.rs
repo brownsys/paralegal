@@ -1,18 +1,8 @@
 use paralegal_flow::{ann::db::AutoMarkers, inline_test, test_utils::*};
 use paralegal_spdg::DisplayPath;
-use std::sync::OnceLock;
-
-static STDLIB_ENV: OnceLock<DependencyEnvironment> = OnceLock::new();
 
 fn stdlib_environment() -> &'static DependencyEnvironment {
-    STDLIB_ENV.get_or_init(|| {
-        DependencyEnvironmentBuilder::new()
-            .with_extra_args(["--side-effect-markers", "--include-std"])
-            .with_markers("tests/purity/stdlib-markers.toml")
-            .with_manifest("tests/purity/test-crate-std/Cargo.toml")
-            .with_stdlib()
-            .build()
-    })
+    super::stdlib_environment()
 }
 
 #[test]
@@ -488,6 +478,22 @@ fn clone_test_reachability() {
             println!("Side effect node: {n:?}");
         }
         assert!(!ctrl.has_function("clone"));
+    });
+}
+
+#[test]
+fn intrinsic_leaker() {
+    inline_test! {
+        fn main(value: &u64, sink: &u64) {
+            let sink_ptr: *mut u64 = sink as *const u64 as *mut u64;
+            unsafe {
+                std::ptr::copy(value, sink_ptr, 1);
+            }
+        }
+    }
+    .with_dependency_environment(stdlib_environment())
+    .check_ctrl(|ctrl| {
+        ctrl.assert_purity(false);
     });
 }
 

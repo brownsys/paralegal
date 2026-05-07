@@ -807,7 +807,11 @@ pub fn flatten_child_items(
                     tcx.module_children(module)
                 }
                 .iter()
-                .filter_map(|c| c.res.opt_def_id()),
+                .filter_map(|c| c.res.opt_def_id())
+                // Only follow items directly defined in this module, not
+                // re-exports. Re-exported items have their defining module as
+                // parent, not this one, so they should not inherit its markers.
+                .filter(move |did| tcx.parent(*did) == module),
             ) as Box<dyn Iterator<Item = DefId>>,
             DefKind::Impl { .. } => Box::new(
                 tcx.associated_items(module)

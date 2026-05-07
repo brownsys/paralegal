@@ -1,5 +1,4 @@
 #![allow(dead_code)]
-extern crate either;
 extern crate rustc_hir as hir;
 extern crate rustc_middle;
 extern crate rustc_span;
@@ -40,29 +39,6 @@ use petgraph::visit::{IntoNeighbors, IntoNodeReferences};
 use petgraph::visit::{NodeRef as _, Visitable};
 use std::path::Path;
 
-lazy_static::lazy_static! {
-    pub static ref CWD_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-}
-
-/// Run an action `F` in the directory `P`, ensuring that afterwards the
-/// original working directory is reestablished *and* also takes a lock so that
-/// no two parallel processes try to switch directory simultaneously.
-pub fn with_current_directory<
-    P: AsRef<std::path::Path>,
-    A,
-    F: std::panic::UnwindSafe + FnOnce() -> A,
->(
-    p: P,
-    f: F,
-) -> std::io::Result<A> {
-    let _guard = CWD_MUTEX.lock().unwrap();
-    let current = std::env::current_dir()?;
-    std::env::set_current_dir(p)?;
-    let res = f();
-    std::env::set_current_dir(current)?;
-    Ok(res)
-}
-
 /// Initialize rustc data structures (e.g. [`Symbol`] works) and run `F`
 ///
 /// Be aware that any [`Symbol`] created in `F` will **not** compare equal to
@@ -81,15 +57,6 @@ pub fn paralegal_flow_command(dir: impl AsRef<Path>) -> std::process::Command {
     cmd.current_dir(dir);
     eprintln!("Command is {cmd:?}");
     cmd
-}
-
-/// Run paralegal-flow in the current directory, passing the
-/// `--dump-serialized-flow-graph` which dumps the [`ProgramDescription`] as
-/// JSON.
-///
-/// The result is suitable for reading with [`PreFrg::from_file_at`]
-pub fn run_paralegal_flow_with_flow_graph_dump(dir: impl AsRef<Path>) -> bool {
-    run_paralegal_flow_with_flow_graph_dump_and::<_, &str>(dir, [])
 }
 
 /// Run paralegal-flow in the current directory, passing the
@@ -333,7 +300,8 @@ impl DependencyEnvironmentBuilder {
             };
             for f in filenames {
                 let path = f.as_str().unwrap();
-                if !path.ends_with(".rlib") && !path.ends_with(".rmeta") {
+                let is_proc_macro_dylib = path.ends_with(".so") || path.ends_with(".dylib");
+                if !path.ends_with(".rlib") && !path.ends_with(".rmeta") && !is_proc_macro_dylib {
                     continue;
                 }
                 // Use noprelude for everything except std itself.
@@ -543,15 +511,6 @@ impl InlineTestBuilder {
         self.extra_args.extend(env.extra_args.iter().cloned());
         self.marker_file = env.marker_file.clone();
 
-        self
-    }
-
-    /// Legacy compatibility shim.
-    ///
-    /// Inline tests now always use the embedded rustc path. Standard library
-    /// availability is controlled by rustc's sysroot, so this no longer toggles
-    /// a Cargo-based test compile mode.
-    pub fn with_dependencies(&mut self) -> &mut Self {
         self
     }
 

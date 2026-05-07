@@ -1,26 +1,65 @@
-use paralegal_flow::{define_flow_test_template, test_utils::*};
+use paralegal_flow::{inline_test, test_utils::*};
 
-const TEST_CRATE_NAME: &str = "tests/purity/test-crate-static";
-const EXTRA_ARGS: [&str; 1] = ["--side-effect-markers"];
+#[test]
+fn mutable_static() {
+    inline_test! {
+        static mut GLOBAL_VEC: Vec<u32> = vec![];
 
-lazy_static! {
-    static ref TEST_CRATE_ANALYZED: bool =
-        run_paralegal_flow_with_flow_graph_dump_and(TEST_CRATE_NAME, EXTRA_ARGS);
+        fn main(a: u32) {
+            unsafe {
+                GLOBAL_VEC.push(a);
+            }
+        }
+    }
+    .with_dependency_environment(super::stdlib_environment())
+    .check_ctrl(|ctrl| {
+        ctrl.assert_purity(false);
+    });
 }
 
-macro_rules! define_test {
-    ($($t:tt)*) => {
-        define_flow_test_template!(TEST_CRATE_ANALYZED, TEST_CRATE_NAME, $($t)*);
-    };
+#[test]
+fn pure_call_from_static() {
+    inline_test! {
+        struct PureIncrementer;
+
+        impl PureIncrementer {
+            fn inc(&self, a: usize) -> usize {
+                a + 1
+            }
+        }
+
+        static PURE_INCREMENTER: PureIncrementer = PureIncrementer {};
+
+        fn main(a: usize) {
+            PURE_INCREMENTER.inc(a);
+        }
+    }
+    .with_dependency_environment(super::stdlib_environment())
+    .check_ctrl(|ctrl| {
+        ctrl.assert_purity(true);
+    });
 }
 
-define_test!(mutable_static: ctrl -> {
-    ctrl.assert_purity(false);
-});
+#[test]
+fn impure_call_from_static() {
+    inline_test! {
+        struct ImpureIncrementer;
 
-define_test!(pure_call_from_static: ctrl -> {
-    ctrl.assert_purity(true);
-});
-define_test!(impure_call_from_static: ctrl -> {
-    ctrl.assert_purity(false);
-});
+        impl ImpureIncrementer {
+            fn inc(&self, a: usize) -> usize {
+                println!("{}", a);
+                a + 1
+            }
+        }
+
+        static IMPURE_INCREMENTER: ImpureIncrementer = ImpureIncrementer {};
+
+        fn main(a: usize) {
+            IMPURE_INCREMENTER.inc(a);
+        }
+    }
+    .with_dependency_environment(super::stdlib_environment())
+    .check_ctrl(|ctrl| {
+        ctrl.assert_purity(false);
+    });
+}
