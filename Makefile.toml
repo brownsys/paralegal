@@ -238,10 +238,59 @@ exec --fail-on-error %{COMMAND} %{COMMAND_ARGS}
 dependencies = ["get-rustc-docs"]
 script_runner = "@duckscript"
 script = '''
-source_path = concat ${RUSTUP_HOME} /toolchains/ ${RUSTUP_TOOLCHAIN} /share/doc/rust/html/rustc
+source_path = concat ${RUSTUP_HOME} /toolchains/ ${RUSTUP_TOOLCHAIN} /share/doc/rust/html/rustc-docs
 mkdir docs
-mv doc-src/index.html docs
-mv ${source_path} docs/compiler
+# Delegate to the shell `mv` instead of duckscript's, which is just
+# rename(2) and fails when ~/.rustup and the repo are on different mounts.
+exec --fail-on-error mv doc-src/index.html docs
+exec --fail-on-error mv ${source_path} docs/compiler
+'''
+
+[tasks.build-public-docs]
+description = """\
+Build cargo docs with rustdoc links to the matching rustc-docs.
+
+Locally the links resolve via `file://` to the system-installed rustc-docs, so
+you can open `target/doc/` in a browser and follow links into rustc internals.
+CI overrides `RUSTC_DOCS_URL` so the links point at the bundled compiler docs
+shipped alongside the deployed site.
+"""
+dependencies = ["get-rustc-docs"]
+script_runner = "bash"
+script = '''
+set -e
+shopt -s nullglob
+rustc_doc_dir="$(rustc --print sysroot)/share/doc/rust/html/rustc-docs"
+base_url="$RUSTC_DOCS_URL"
+if [ -z "$base_url" ]; then
+  base_url="file://$rustc_doc_dir/"
+fi
+# rustdoc appends `<crate>/<path>.html` to the URL, so it needs to be the
+# parent dir of the per-crate docs (and to end in `/`).
+# `--extern-html-root-url` is gated behind -Z unstable-options.
+flags="-Z unstable-options"
+for d in "$rustc_doc_dir"/*/; do
+  c="$(basename "$d")"
+  flags="$flags --extern-html-root-url $c=$base_url"
+done
+RUSTDOCFLAGS="$flags" cargo doc --document-private-items
+'''
+
+[tasks.assemble-deploy-docs]
+description = """\
+Build local docs with rustc-doc links and assemble `docs/` ready to deploy.
+
+Used by the docs CI job. Running locally is rarely useful; for browsing
+`target/doc/` use `build-public-docs` instead.
+"""
+# The shared `get-rustc-docs` dep runs once (cargo-make caches deps within an
+# invocation), so `populate-doc-dir`'s `mv` of the rustc-docs into
+# docs/compiler still finds them after `build-public-docs` enumerated them.
+dependencies = ["build-public-docs", "populate-doc-dir"]
+script_runner = "bash"
+script = '''
+set -e
+cp -R target/doc docs/libs
 '''
 
 [tasks.get-rustc-docs]
@@ -250,8 +299,16 @@ args = ["component", "add", "rustc-docs"]
 dependencies = ["clean-rustc-docs-location"]
 
 [tasks.clean-rustc-docs-location]
-command = "rm"
-args = [
-    "-rf",
-    "${RUSTUP_HOME}/toolchains/${RUSTUP_TOOLCHAIN}/share/doc/rust/html/rustc",
-]
+description = "Uninstall rustc-docs so a follow-up `component add` actually re-extracts."
+# rustup tracks installed components via its manifest, not filesystem state.
+# A bare `rm -rf` leaves the manifest saying "installed", so the next
+# `component add` no-ops. Two more wrinkles: if the docs dir is missing
+# (e.g. moved by an earlier `populate-doc-dir`), `component remove` errors
+# trying to delete files that aren't there; if the component was never
+# installed, `remove` errors too. Recreate an empty dir to satisfy the
+# first case, and suppress the error from the second.
+script_runner = "bash"
+script = '''
+mkdir -p "$(rustc --print sysroot)/share/doc/rust/html/rustc-docs"
+rustup component remove rustc-docs 2>/dev/null || true
+'''
