@@ -238,7 +238,7 @@ exec --fail-on-error %{COMMAND} %{COMMAND_ARGS}
 dependencies = ["get-rustc-docs"]
 script_runner = "@duckscript"
 script = '''
-source_path = concat ${RUSTUP_HOME} /toolchains/ ${RUSTUP_TOOLCHAIN} /share/doc/rust/html/rustc
+source_path = concat ${RUSTUP_HOME} /toolchains/ ${RUSTUP_TOOLCHAIN} /share/doc/rust/html/rustc-docs
 mkdir docs
 mv doc-src/index.html docs
 mv ${source_path} docs/compiler
@@ -258,14 +258,15 @@ script_runner = "bash"
 script = '''
 set -e
 shopt -s nullglob
-rustc_doc_dir="$(rustc --print sysroot)/share/doc/rust/html/rustc"
+rustc_doc_dir="$(rustc --print sysroot)/share/doc/rust/html/rustc-docs"
 base_url="$RUSTC_DOCS_URL"
 if [ -z "$base_url" ]; then
   base_url="file://$rustc_doc_dir/"
 fi
 # rustdoc appends `<crate>/<path>.html` to the URL, so it needs to be the
 # parent dir of the per-crate docs (and to end in `/`).
-flags=""
+# `--extern-html-root-url` is gated behind -Z unstable-options.
+flags="-Z unstable-options"
 for d in "$rustc_doc_dir"/*/; do
   c="$(basename "$d")"
   flags="$flags --extern-html-root-url $c=$base_url"
@@ -296,8 +297,12 @@ args = ["component", "add", "rustc-docs"]
 dependencies = ["clean-rustc-docs-location"]
 
 [tasks.clean-rustc-docs-location]
-command = "rm"
-args = [
-    "-rf",
-    "${RUSTUP_HOME}/toolchains/${RUSTUP_TOOLCHAIN}/share/doc/rust/html/rustc",
-]
+description = "Uninstall rustc-docs so a follow-up `component add` actually re-extracts."
+# rustup tracks installed components via its manifest, not filesystem state.
+# A bare `rm -rf` of the docs dir leaves the manifest saying "installed", so
+# `rustup component add rustc-docs` no-ops and never re-extracts the files.
+# Going through `component remove` keeps rustup's view in sync with the disk.
+script_runner = "bash"
+script = '''
+rustup component remove rustc-docs 2>/dev/null || true
+'''
