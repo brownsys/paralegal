@@ -17,7 +17,7 @@ use rustc_middle::{
 use rustc_span::Span;
 
 pub use super::partial_graph::PartialGraph;
-use crate::{analysis::global::partial_graph::NodeKey, constants::PlaceOrConst};
+use crate::{analysis::pdg::partial_graph::NodeKey, constants::PlaceOrConst};
 
 /// Usually a location in a MIR body but can also cross "one hop" into a called function.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]

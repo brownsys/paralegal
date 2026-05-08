@@ -16,7 +16,7 @@ use paralegal_rustc_utils::{AdtDefExt, OperandExt, PlaceExt};
 
 use crate::mir::{placeinfo::PlaceInfo, utils::AsyncHack};
 
-use crate::{analysis::Use, constants::PlaceOrConst, utils::ty_resolve};
+use crate::{analysis::pdg::Use, constants::PlaceOrConst, utils::ty_resolve};
 
 /// Indicator of certainty about whether a place is being mutated.
 /// Used to determine whether an update should be strong or weak.

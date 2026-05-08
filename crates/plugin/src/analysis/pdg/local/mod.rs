@@ -25,23 +25,22 @@ use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 use rustc_span::{DesugaringKind, Span, Spanned};
 
 use crate::{
-    analysis::{MemoPdgConstructor, global::Use},
+    analysis::{
+        async_support::{self, *},
+        calling_convention::*,
+        mutation::{ModularMutationVisitor, Mutation, Time},
+    },
     callback::{CallChangeCallback, CallChanges, CallInfo, InlineMissReason, SkipCall},
     source_access::CachedBody,
     utils::{
         self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize, ShimResult,
-        ShimType, TyAsFnResult,
+        TyAsFnResult,
     },
 };
 
 mod approximation;
 
-use super::{
-    async_support::{self, *},
-    calling_convention::*,
-    global::{DepEdge, DepNode, NodeKey, OneHopLocation, PartialGraph},
-    mutation::{ModularMutationVisitor, Mutation, Time},
-};
+use super::{DepEdge, DepNode, MemoPdgConstructor, NodeKey, OneHopLocation, PartialGraph, Use};
 use approximation::ApproximationHandler;
 
 #[derive(PartialEq, Eq, Default, Clone, Debug)]

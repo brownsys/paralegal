@@ -27,18 +27,22 @@ use crate::{
 };
 
 use super::{
-    InlineJudge, MemoPdgConstructor, assemble_pdg,
+    InlineJudge,
     callback_adapter::MyCallback,
     def_info::{
         def_info_for_item, def_kind_for_item, dirty_try_resolve_func_id, src_loc_for_span,
         type_info_sanity_check,
     },
+    graph_converter::assemble_pdg,
     inline_judge::K,
+    pdg::MemoPdgConstructor,
 };
 
-/// Read-only database of information the analysis needs.
+/// Drives SPDG generation across the configured analysis targets.
 ///
-/// [`Self::analyze`] serves as the main entrypoint to SPDG generation.
+/// Owns the (memoized) PDG constructor and the auxiliary state required to
+/// turn a finished call-tree PDG into the [`ProgramDescription`] consumed by
+/// policies. [`Self::analyze`] is the entry point.
 pub struct SPDGGenerator<'tcx> {
     ctx: Pctx<'tcx>,
     stats: Stats,

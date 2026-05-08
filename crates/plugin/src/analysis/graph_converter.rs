@@ -1,8 +1,11 @@
 use super::{
-    DepEdge, DepEdgeKind, DepNode, DepNodeKind, MemoPdgConstructor, OneHopLocation, PartialGraph,
-    Use, VisitDriver, Visitor,
     async_support::match_coroutine_assign,
     determine_async,
+    pdg::{
+        DepEdge, DepEdgeKind, DepNode, DepNodeKind, MemoPdgConstructor, OneHopLocation,
+        PartialGraph, Use,
+        call_tree_visit::{VisitDriver, Visitor},
+    },
 };
 use super::def_info::{path_for_item, src_loc_for_span};
 use crate::{

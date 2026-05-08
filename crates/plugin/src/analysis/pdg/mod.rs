@@ -18,9 +18,9 @@ use rustc_mir_dataflow as df;
 use super::{
     async_support::*,
     calling_convention::PlaceTranslator,
-    local::{CallHandling, InstructionState, LocalAnalysis},
     mutation::{ModularMutationVisitor, Mutation, Time},
 };
+use self::local::{CallHandling, InstructionState, LocalAnalysis};
 use crate::{
     callback::{CallChangeCallback, DefaultCallback},
     constants::PlaceOrConst,
@@ -29,6 +29,7 @@ use crate::{
 };
 
 pub mod call_tree_visit;
+pub mod local;
 mod graph_elems;
 mod partial_graph;
 

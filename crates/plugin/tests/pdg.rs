@@ -11,7 +11,7 @@ use either::Either;
 use itertools::Itertools;
 use paralegal_flow::{
     Args, Pctx,
-    analysis::MemoPdgConstructor,
+    analysis::pdg::MemoPdgConstructor,
     callback::{CallChangeCallback, CallChangeCallbackFn, CallChanges, SkipCall},
     mir::FlowistryInput,
     source_access::BodyCache,
@@ -74,7 +74,7 @@ fn pdg(
             memo.with_call_change_callback(LocalLoadingOnly(policy));
             memo.with_dump_mir(std::env::var("DUMP_MIR").is_ok());
             let args = Box::leak(Box::new(Args::default()));
-            let pdg = paralegal_flow::analysis::assemble_pdg(
+            let pdg = paralegal_flow::analysis::graph_converter::assemble_pdg(
                 &Pctx::new_test(tcx, args, false),
                 &memo,
                 &mut HashSet::default(),
