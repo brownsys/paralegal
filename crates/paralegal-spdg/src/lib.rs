@@ -1207,13 +1207,39 @@ impl Display for DisplayNode<'_> {
     }
 }
 
+/// Interned [`Identifier`]s for markers the analysis attaches automatically
+/// (without a user annotation) at sites that may *effectuate* side effects the
+/// SPDG cannot otherwise capture — calls into code whose body is invisible
+/// (foreign, virtual, indirect, intrinsic), or operations that bypass the
+/// type system's aliasing/visibility guarantees (raw-pointer writes,
+/// `transmute` to types containing `&mut`).
+///
+/// They behave like any other marker downstream; grouping them here gives a
+/// single source of truth for their canonical names (see [`Default`]) and lets
+/// policies enumerate the full set via [`AutoMarkers::all`] — e.g. to flag any
+/// flow that reaches a node where an unobservable side effect could occur.
 pub struct AutoMarkers {
+    /// Call to a virtual (trait-object) method whose concrete impl could not
+    /// be resolved, so the callee's body is not visible to the analysis.
     pub side_effect_unknown_virtual: Identifier,
+    /// Call into a foreign item (e.g. `extern "C"`) whose body the compiler
+    /// does not have, so its effects are unknown.
     pub side_effect_foreign: Identifier,
+    /// Indirect call (function pointer / `dyn Fn`) whose target could not be
+    /// determined statically, so no callee body is available.
     pub side_effect_unknown_fn_ptr: Identifier,
+    /// Dereference of a `*mut T` raw pointer — treated as a potential write
+    /// through aliasing the analysis cannot track.
     pub side_effect_raw_ptr: Identifier,
+    /// `transmute` (intrinsic or `Rvalue::Cast(Transmute, ..)`) producing a
+    /// type that contains a `&mut` — bypasses the borrow checker's aliasing
+    /// guarantees, so downstream effects are not safely inferable.
     pub side_effect_transmute: Identifier,
+    /// Fallback used when a callee could not be resolved for some other reason
+    /// (resolution failed, or a compiler shim that the analysis cannot model).
     pub side_effect_unknown: Identifier,
+    /// Call to a compiler intrinsic that is not on the allow-list of intrinsics
+    /// known to be side-effect-free.
     pub side_effect_intrinsic: Identifier,
 }
 
@@ -1232,6 +1258,7 @@ impl Default for AutoMarkers {
 }
 
 impl AutoMarkers {
+    /// All auto-marker identifiers, in declaration order.
     pub fn all(&self) -> [Identifier; 7] {
         [
             self.side_effect_unknown_virtual,
