@@ -270,7 +270,6 @@ fn field_sensitivity_across_clone() {
 }
 
 #[test]
-#[ignore = "Field level precision across function calls is broken. See https://github.com/willcrichton/flowistry/issues/94."]
 fn no_overtaint_over_fn_call() {
     inline_test! {
         #[paralegal_flow::marker(noinline)]
@@ -318,7 +317,6 @@ fn no_overtaint_over_fn_call() {
 }
 
 #[test]
-#[ignore = "Field level precision across function calls is broken. See https://github.com/willcrichton/flowistry/issues/94."]
 fn no_overtaint_over_generic_fn_call() {
     inline_test! {
         #[paralegal_flow::marker(noinline)]
@@ -366,7 +364,6 @@ fn no_overtaint_over_generic_fn_call() {
 }
 
 #[test]
-#[ignore = "Field level precision across function calls is broken. See https://github.com/willcrichton/flowistry/issues/94."]
 fn no_overtaint_over_nested_fn_call() {
     inline_test! {
         #[paralegal_flow::marker(noinline)]
@@ -553,7 +550,6 @@ fn no_overtaint_over_in_place_field_update() {
 // existing identity tests (`no_overtaint_over_fn_call` etc.) but on the
 // projection axis.
 #[test]
-#[ignore = "Field level precision across function calls is broken. See https://github.com/willcrichton/flowistry/issues/94."]
 fn no_overtaint_over_nested_field_projection_in_callee() {
     inline_test! {
         #[paralegal_flow::marker(noinline)]
@@ -601,7 +597,6 @@ fn no_overtaint_over_nested_field_projection_in_callee() {
 // builds an outer aggregate one of whose fields is itself a whole aggregate
 // passed in by argument, producing `_0 = Aggregate([move _1, ...])` in MIR.
 #[test]
-#[ignore = "Field level precision across function calls is broken. See https://github.com/willcrichton/flowistry/issues/94."]
 fn no_overtaint_over_nested_aggregate_construction_in_callee() {
     inline_test! {
         #[paralegal_flow::marker(noinline)]
@@ -647,7 +642,6 @@ fn no_overtaint_over_nested_aggregate_construction_in_callee() {
 // overwrites a field whose own type is an aggregate, so `(*_1).0 = move _2`
 // is a whole-aggregate copy.
 #[test]
-#[ignore = "Field level precision across function calls is broken. See https://github.com/willcrichton/flowistry/issues/94."]
 fn no_overtaint_over_nested_in_place_field_update() {
     inline_test! {
         #[paralegal_flow::marker(noinline)]

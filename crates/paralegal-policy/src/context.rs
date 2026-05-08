@@ -838,17 +838,27 @@ where
     }
 
     /// Call sites that consume this node directly. E.g. the outgoing edges.
+    ///
+    /// Returns unique call sites: when call-boundary handling decomposes a
+    /// destination into per-field nodes, a single source node can have
+    /// multiple outgoing edges all sharing the same `CallString`. Those
+    /// represent one call site, not several, so we dedupe.
     fn consuming_call_sites(
         self,
         ctx: &'a RootContext,
     ) -> Box<dyn Iterator<Item = CallString> + 'a> {
         let ctrl = &ctx.desc.controllers[&self.controller_id()];
 
-        Box::new(self.iter_nodes().flat_map(move |local| {
-            ctrl.graph
-                .edges_directed(local, Direction::Outgoing)
-                .map(|e| e.weight().at)
-        }))
+        let mut seen: std::collections::HashSet<CallString> = std::collections::HashSet::new();
+        Box::new(
+            self.iter_nodes()
+                .flat_map(move |local| {
+                    ctrl.graph
+                        .edges_directed(local, Direction::Outgoing)
+                        .map(|e| e.weight().at)
+                })
+                .filter(move |cs| seen.insert(*cs)),
+        )
     }
 
     /// Returns whether there is direct control flow influence from influencer to sink, or there is some node which is data-flow influenced by `influencer` and has direct control flow influence on `target`. Or as expressed in code:

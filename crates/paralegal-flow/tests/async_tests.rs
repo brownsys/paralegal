@@ -555,8 +555,6 @@ fn remove_poll_match() {
 }
 
 #[test]
-#[ignore = "Field level precision across function calls is broken.
-    See https://github.com/willcrichton/flowistry/issues/94."]
 fn no_overtaint_over_poll() {
     inline_test! {
         #[paralegal_flow::marker(noinline)]

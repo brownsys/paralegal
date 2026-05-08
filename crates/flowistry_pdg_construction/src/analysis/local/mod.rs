@@ -749,6 +749,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
     ) -> ModularMutationVisitor<'b, 'tcx, impl FnMut(Location, Mutation<'tcx>) + 'b> {
         ModularMutationVisitor::new(
             &self.place_info,
+            &self.mono_body,
             self.param_env,
             move |location, mutation: Mutation<'tcx>| {
                 self.apply_mutation(state, location, mutation.mutated)

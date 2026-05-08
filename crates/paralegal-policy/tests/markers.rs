@@ -187,7 +187,6 @@ fn generics() -> Result<()> {
 }
 
 #[test]
-#[ignore = "Function return values are not tracked at the level of precision of fields/variants. See https://github.com/brownsys/paralegal/issues/138"]
 fn generics_precision() -> Result<()> {
     let test = Test::new(stringify!(
         #[paralegal::marker(dangerous)]
@@ -414,7 +413,6 @@ fn hidden_generics_enums() -> Result<()> {
 }
 
 #[test]
-#[ignore = "Function return values are not tracked at the level of precision of fields/variants. See https://github.com/brownsys/paralegal/issues/138"]
 fn enum_precision() -> Result<()> {
     let mut test = Test::new(stringify!(
         enum Parent {
@@ -448,7 +446,6 @@ fn enum_precision() -> Result<()> {
 }
 
 #[test]
-#[ignore = "Function return values are not tracked at the level of precision of fields/variants. See https://github.com/brownsys/paralegal/issues/138"]
 fn field_precision() -> Result<()> {
     let mut test = Test::new(stringify!(
         struct Parent {
@@ -480,7 +477,6 @@ fn field_precision() -> Result<()> {
 }
 
 #[test]
-#[ignore = "Function return values are not tracked at the level of precision of fields/variants. See https://github.com/brownsys/paralegal/issues/138"]
 fn nested_field_precision() -> Result<()> {
     let mut test = Test::new(stringify!(
         #[paralegal::marker(dangerous)]
@@ -517,7 +513,6 @@ fn nested_field_precision() -> Result<()> {
 }
 
 #[test]
-#[ignore = "Function return values are not tracked at the level of precision of fields/variants. See https://github.com/brownsys/paralegal/issues/138"]
 fn tuple_struct_precision() -> Result<()> {
     let mut test = Test::new(stringify!(
         #[paralegal::marker(dangerous)]
@@ -546,7 +541,6 @@ fn tuple_struct_precision() -> Result<()> {
 }
 
 #[test]
-#[ignore = "Function return values are not tracked at the level of precision of fields/variants. See https://github.com/brownsys/paralegal/issues/138"]
 fn multi_payload_enum_precision() -> Result<()> {
     let mut test = Test::new(stringify!(
         #[paralegal::marker(dangerous)]

@@ -20,7 +20,7 @@ use crate::{constants::PlaceOrConst, utils::ty_resolve, Use};
 
 /// Indicator of certainty about whether a place is being mutated.
 /// Used to determine whether an update should be strong or weak.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum MutationStatus {
     /// A place is definitely mutated, e.g. `x = y` definitely mutates `x`.
     Definitely,
@@ -55,6 +55,11 @@ where
 {
     f: F,
     place_info: &'a PlaceInfo<'tcx>,
+    /// Monomorphized body used for typing places. `place_info.body` is the
+    /// pre-monomorphization body (kept for region-aware alias analysis), so
+    /// types looked up through it carry generic params; aggregate
+    /// destructuring needs the post-substitution types.
+    mono_body: &'a Body<'tcx>,
     ty_env: ty::TypingEnv<'tcx>,
     time: Time,
     strict: bool,
@@ -89,12 +94,14 @@ where
     /// Constructs a new visitor.
     pub fn new(
         place_info: &'a PlaceInfo<'tcx>,
+        mono_body: &'a Body<'tcx>,
         ty_env: ty::TypingEnv<'tcx>,
         f: F,
         strict: bool,
     ) -> Self {
         ModularMutationVisitor {
             place_info,
+            mono_body,
             ty_env,
             f,
             time: Time::Unspecified,
@@ -113,7 +120,7 @@ where
         rvalue: &Rvalue<'tcx>,
         location: Location,
     ) -> bool {
-        let body = self.place_info.body;
+        let body = self.mono_body;
         let tcx = self.place_info.tcx;
 
         match rvalue {
@@ -216,6 +223,11 @@ where
                             })
                             .collect_vec()
                     }
+                    TyKind::Tuple(tys) => tys
+                        .iter()
+                        .enumerate()
+                        .map(|(i, ty)| PlaceElem::Field(FieldIdx::from_usize(i), ty))
+                        .collect_vec(),
                     TyKind::Coroutine(_, args) => {
                         let ty = args.as_coroutine().prefix_tys();
                         ty.iter()
@@ -319,6 +331,12 @@ where
                 };
                 for arg_mut in self.place_info.reachable_values(arg, Mutability::Mut) {
                     if *arg_mut != arg {
+                        // Emit a whole-aggregate mutation so downstream
+                        // whole reads see this update. Then expand into
+                        // per-leaf-field mutations so disjoint subfield
+                        // reads of `*arg_mut` can be distinguished and any
+                        // earlier per-field writes from upstream calls
+                        // don't bypass this one.
                         (self.f)(
                             location,
                             Mutation {
@@ -327,22 +345,149 @@ where
                                 status: MutationStatus::Possibly,
                                 is_arg: Use::Other,
                             },
-                        )
+                        );
+                        self.emit_destructured_or_leaf(
+                            *arg_mut,
+                            &arg_place_inputs,
+                            location,
+                            MutationStatus::Possibly,
+                            Use::Other,
+                        );
                     }
                 }
             }
-            (self.f)(
-                location,
-                Mutation {
-                    mutated: destination,
-                    inputs: arg_place_inputs,
-                    status: MutationStatus::Definitely,
-                    is_arg: Use::Return,
-                },
-            );
+            // Emit the destination mutation. For aggregate types this
+            // recurses into per-leaf-field mutations so disjoint subfield
+            // reads downstream can be distinguished. For non-aggregate
+            // types it emits a single whole mutation. We deliberately do
+            // NOT emit a whole-aggregate mutation alongside the per-field
+            // ones for an aggregate destination: a downstream read of one
+            // subfield would otherwise pull in the whole-aggregate node
+            // (which carries every type marker that any subfield carries)
+            // through `places_conflict`, defeating field precision.
+            self.emit_call_destination_mutation(destination, &arg_place_inputs, location);
         }
     }
+
+    /// Emit the call destination mutation. For aggregate types with
+    /// visible subfields this recurses into per-leaf-field mutations; for
+    /// non-aggregate or opaque-aggregate types it emits a single whole
+    /// mutation. We deliberately do NOT emit a whole-aggregate mutation
+    /// alongside the per-field ones for an aggregate destination: a
+    /// downstream read of one subfield would otherwise pull in the
+    /// whole-aggregate node (which carries every type marker any subfield
+    /// carries) through `places_conflict`, defeating field precision.
+    fn emit_call_destination_mutation(
+        &mut self,
+        destination: Place<'tcx>,
+        inputs: &[(PlaceOrConst<'tcx>, Option<u16>)],
+        location: Location,
+    ) {
+        self.emit_destructured_or_leaf(
+            destination,
+            inputs,
+            location,
+            MutationStatus::Definitely,
+            Use::Return,
+        );
+    }
+
+    /// Recursively decompose `mutated` by field, emitting one mutation per
+    /// leaf place. If `mutated` is non-aggregate, opaque (no visible
+    /// subfields), or a variantless enum, emit a single whole mutation at
+    /// this level. For enums, decomposition uses `Downcast` so per-variant
+    /// payloads remain distinct.
+    fn emit_destructured_or_leaf(
+        &mut self,
+        mutated: Place<'tcx>,
+        inputs: &[(PlaceOrConst<'tcx>, Option<u16>)],
+        location: Location,
+        status: MutationStatus,
+        is_arg: Use,
+    ) {
+        let body = self.mono_body;
+        let tcx = self.place_info.tcx;
+        let mutated_ty = ty_resolve(mutated.ty(&body.local_decls, tcx).ty, tcx);
+        let mut emitted_subfield = false;
+        match mutated_ty.kind() {
+            TyKind::Adt(adt_def, substs) if adt_def.is_struct() => {
+                for (i, field_def) in adt_def
+                    .all_visible_fields(self.place_info.def_id, self.place_info.tcx)
+                    .enumerate()
+                {
+                    let field = PlaceElem::Field(FieldIdx::from_usize(i), field_def.ty(tcx, substs));
+                    let mutated_field = mutated.project_deeper(&[field], tcx);
+                    self.emit_destructured_or_leaf(
+                        mutated_field,
+                        inputs,
+                        location,
+                        status,
+                        is_arg,
+                    );
+                    emitted_subfield = true;
+                }
+            }
+            TyKind::Adt(adt_def, substs) if adt_def.is_enum() => {
+                for (idx, variant) in adt_def.variants().iter_enumerated() {
+                    let downcast = mutated.project_deeper(
+                        &[ProjectionElem::Downcast(Some(variant.name), idx)],
+                        tcx,
+                    );
+                    for (field_idx, field_def) in variant.fields.iter_enumerated() {
+                        let field = PlaceElem::Field(field_idx, field_def.ty(tcx, substs));
+                        let mutated_field = downcast.project_deeper(&[field], tcx);
+                        self.emit_destructured_or_leaf(
+                            mutated_field,
+                            inputs,
+                            location,
+                            status,
+                            is_arg,
+                        );
+                        emitted_subfield = true;
+                    }
+                }
+            }
+            TyKind::Tuple(tys) if !tys.is_empty() => {
+                for (i, ty) in tys.iter().enumerate() {
+                    let field = PlaceElem::Field(FieldIdx::from_usize(i), ty);
+                    let mutated_field = mutated.project_deeper(&[field], tcx);
+                    self.emit_destructured_or_leaf(
+                        mutated_field,
+                        inputs,
+                        location,
+                        status,
+                        is_arg,
+                    );
+                    emitted_subfield = true;
+                }
+            }
+            _ => {}
+        }
+        if !emitted_subfield {
+            self.emit_leaf_field_mutation(mutated, inputs, location, status, is_arg);
+        }
+    }
+
+    fn emit_leaf_field_mutation(
+        &mut self,
+        mutated: Place<'tcx>,
+        inputs: &[(PlaceOrConst<'tcx>, Option<u16>)],
+        location: Location,
+        status: MutationStatus,
+        is_arg: Use,
+    ) {
+        (self.f)(
+            location,
+            Mutation {
+                mutated,
+                inputs: inputs.to_vec(),
+                status,
+                is_arg,
+            },
+        );
+    }
 }
+
 
 impl<'tcx, F> Visitor<'tcx> for ModularMutationVisitor<'_, 'tcx, F>
 where
