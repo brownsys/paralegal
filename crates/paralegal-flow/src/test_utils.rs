@@ -1374,7 +1374,6 @@ pub trait FlowsTo {
             .copied()
             .any(|n| self.spdg().graph.neighbors(n).next().is_some())
     }
-
 }
 
 fn influences_ctrl_impl(

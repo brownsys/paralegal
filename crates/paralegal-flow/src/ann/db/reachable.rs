@@ -79,10 +79,18 @@ impl<'tcx> MarkerCtx<'tcx> {
         }
         let non_direct = (!is_self_marked).then(|| self.get_reachable_markers(res));
 
-        let filter_std_markers = self.db().config.marker_control().elide_on_whitelist_markers();
+        let filter_std_markers = self
+            .db()
+            .config
+            .marker_control()
+            .elide_on_whitelist_markers();
 
-        direct_markers.chain(non_direct.into_iter().flatten().copied())
-            .filter(move |m| !filter_std_markers || !(m.as_str().starts_with("std:") || m.as_str().starts_with("safe-libs:")))
+        direct_markers
+            .chain(non_direct.into_iter().flatten().copied())
+            .filter(move |m| {
+                !filter_std_markers
+                    || !(m.as_str().starts_with("std:") || m.as_str().starts_with("safe-libs:"))
+            })
     }
 
     /// If the transitive marker cache did not contain the answer, this is what

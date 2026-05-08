@@ -521,7 +521,8 @@ fn dont_inline_on_std_marker() {
             intermediate1();
             intermediate2(0);
         }
-    }.with_marker_file(Path::new("tests/fixtures/dont-inline-on-std-marker.toml"))
+    }
+    .with_marker_file(Path::new("tests/fixtures/dont-inline-on-std-marker.toml"))
     .with_extra_args(["--elide-on-whitelist-markers"])
     .check_ctrl(|ctrl| {
         assert!(ctrl.marked("std:test").is_empty());

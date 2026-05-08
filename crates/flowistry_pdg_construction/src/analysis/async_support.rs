@@ -6,7 +6,7 @@ use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
-        visit, AggregateKind, BasicBlock, Body, Location, Operand, Place, Rvalue, Statement,
+        AggregateKind, BasicBlock, Body, Location, Operand, Place, Rvalue, Statement,
         StatementKind, Terminator, TerminatorKind,
     },
     ty::{self, GenericArgsRef, Instance, TyCtxt},

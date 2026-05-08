@@ -830,7 +830,7 @@ pub mod node_cluster {
         pub fn new(controller_id: Endpoint, nodes: impl IntoIterator<Item = Node>) -> Self {
             Self {
                 controller_id,
-                nodes: nodes.into_iter().collect::<Vec<_>>().into(),
+                nodes: nodes.into_iter().collect::<Vec<_>>(),
             }
         }
 

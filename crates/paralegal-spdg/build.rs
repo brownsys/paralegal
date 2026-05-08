@@ -5,8 +5,6 @@ use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
-use std::time::SystemTime;
-
 
 fn hash_via_content(path: &Path, hasher: &mut DefaultHasher) -> std::io::Result<()> {
     use std::io::Read;

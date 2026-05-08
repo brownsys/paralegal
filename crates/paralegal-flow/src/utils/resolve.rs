@@ -8,7 +8,10 @@ use hir::{
     def_id::LOCAL_CRATE,
     def_id::LocalDefId,
 };
-use rustc_ast::{self as ast, ExprKind, GenericBound, PathSegment, QSelf, TraitObjectSyntax, Ty, TyKind, token::TokenKind};
+use rustc_ast::{
+    self as ast, ExprKind, GenericBound, PathSegment, QSelf, TraitObjectSyntax, Ty, TyKind,
+    token::TokenKind,
+};
 use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_hir::{self as hir, def_id::DefId};
 use rustc_middle::ty::{self, FloatTy, IntTy, TyCtxt, UintTy, fast_reject::SimplifiedType};
@@ -77,9 +80,9 @@ fn prim_ty_to_simp_ty(pt: PrimTy) -> SimplifiedType {
         PrimTy::Bool => SimplifiedType::Bool,
         PrimTy::Char => SimplifiedType::Char,
         PrimTy::Str => SimplifiedType::Str,
-        PrimTy::Int(i) => SimplifiedType::Int(i.into()),
-        PrimTy::Uint(u) => SimplifiedType::Uint(u.into()),
-        PrimTy::Float(f) => SimplifiedType::Float(f.into()),
+        PrimTy::Int(i) => SimplifiedType::Int(i),
+        PrimTy::Uint(u) => SimplifiedType::Uint(u),
+        PrimTy::Float(f) => SimplifiedType::Float(f),
     }
 }
 
@@ -300,7 +303,9 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
                     .warn(format!("Ignoring const argument {const_:?} in array type"));
             }
             let our_len = 42;
-            warn!("Array types may not behave properly with instance markers because we always use the instance of arrays of length {our_len}");
+            warn!(
+                "Array types may not behave properly with instance markers because we always use the instance of arrays of length {our_len}"
+            );
             Ok(ty::Ty::new_array(
                 tcx,
                 ty::Ty::new_param(tcx, 0, Symbol::intern("T")),

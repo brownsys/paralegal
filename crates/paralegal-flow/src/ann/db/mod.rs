@@ -846,7 +846,7 @@ fn resolve_external_markers(opts: &Args, tcx: TyCtxt) -> ExternalMarkers {
             })
             .into_grouping_map()
             .reduce(|mut one: Vec<_>, _, mut other| {
-                one.extend(other.drain(..));
+                one.append(&mut other);
                 one
             });
         // let mut f = std::io::BufWriter::new(

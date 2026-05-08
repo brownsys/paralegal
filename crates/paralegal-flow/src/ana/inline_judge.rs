@@ -142,21 +142,20 @@ impl<'tcx> InlineJudge<'tcx> {
 
             InliningDepth::Unconstrained => InlineJudgement::Inline(false),
         };
-        if let InlineJudgement::AbstractViaType(reason) = judgement {
-            if !self
+        if let InlineJudgement::AbstractViaType(reason) = judgement
+            && !self
                 .marker_ctx()
                 .all_markers_associated_with(marker_target_def_id)
                 .any(|m| m.as_str().starts_with("std:"))
-            {
-                let emit_err = !(is_marked || self.ctx.opts().relaxed());
-                self.ensure_is_safe_to_approximate(
-                    info.param_env,
-                    info.callee,
-                    info.span,
-                    emit_err,
-                    reason,
-                )
-            }
+        {
+            let emit_err = !(is_marked || self.ctx.opts().relaxed());
+            self.ensure_is_safe_to_approximate(
+                info.param_env,
+                info.callee,
+                info.span,
+                emit_err,
+                reason,
+            )
         }
         judgement
     }

@@ -8,7 +8,9 @@ use crate::{
 use flowistry_pdg::rustc_portable::Location;
 use flowistry_pdg_construction::{
     DepEdge, DepEdgeKind, DepNode, DepNodeKind, MemoPdgConstructor, OneHopLocation, PartialGraph,
-    Use, VisitDriver, Visitor, async_support::match_coroutine_assign, determine_async,
+    Use, VisitDriver, Visitor,
+    async_support::match_coroutine_assign,
+    determine_async,
     utils::{
         ShimResult, handle_shims, manufacture_substs_for, try_monomorphize, try_resolve_function,
         type_as_fn,
@@ -613,7 +615,10 @@ impl<'tcx, 'a> GraphAssembler<'tcx, 'a> {
         // is the corresponding outer-fn arg, but for `Box::pin(async move
         // {…})` the closure only captures the upvars it actually uses, so
         // env fields don't line up 1:1 with outer args.
-        let coroutine_operands = base_body.stmt_at(loc).left().and_then(match_coroutine_assign);
+        let coroutine_operands = base_body
+            .stmt_at(loc)
+            .left()
+            .and_then(match_coroutine_assign);
         let outer_arg_count = args_as_nodes.len() as u32;
         let outer_args_for_capture = |field: usize| -> Vec<usize> {
             // Map a generator-env field index to the outer-fn arg indices

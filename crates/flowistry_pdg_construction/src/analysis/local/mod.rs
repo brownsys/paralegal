@@ -394,7 +394,12 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
     }
 
     fn fmt_fn(&self, def_id: DefId) -> String {
-        format!("{} ({}:{})", self.tcx().def_path_str(def_id), def_id.krate.as_u32(), def_id.index.as_u32())
+        format!(
+            "{} ({}:{})",
+            self.tcx().def_path_str(def_id),
+            def_id.krate.as_u32(),
+            def_id.index.as_u32()
+        )
     }
 }
 
