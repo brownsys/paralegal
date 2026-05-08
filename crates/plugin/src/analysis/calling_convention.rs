@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, fmt::Display};
 
 use paralegal_pdg::rustc_portable::DefId;
 use rustc_abi::FieldIdx;
@@ -10,8 +10,34 @@ use rustc_middle::{
 };
 use rustc_span::Spanned;
 
-use super::{async_support::AsyncInfo, local::CallKind};
+use super::async_support::{AsyncFnPollEnv, AsyncInfo};
 use crate::utils::{self, ShimType};
+
+/// Classifies a call site for the purposes of selecting a [`CallingConvention`].
+pub enum CallKind<'tcx> {
+    /// A standard function call like `f(x)`.
+    Direct,
+    /// A call to a function variable, like `fn foo(f: impl Fn()) { f() }`
+    Indirect {
+        /// The call takes place via a shim that implements `FnOnce` for a `Fn`
+        /// or `FnMut` closure.
+        shim: Option<ShimType>,
+    },
+    /// A poll to an async function, like `f.await`.
+    AsyncPoll(AsyncFnPollEnv<'tcx>),
+}
+
+impl Display for CallKind<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Direct => f.write_str("direct")?,
+            Self::AsyncPoll(_) => f.write_str("async poll")?,
+            Self::Indirect { shim: None } => f.write_str("indirect")?,
+            Self::Indirect { shim: Some(shim) } => write!(f, "({} shim)", shim.as_ref())?,
+        }
+        Ok(())
+    }
+}
 
 /// Describes how the formal parameters of a given function call relate to the
 /// actual parameters.

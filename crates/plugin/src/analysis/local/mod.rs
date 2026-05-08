@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashSet, fmt::Display, hash::Hash, iter};
+use std::{borrow::Cow, collections::HashSet, hash::Hash, iter};
 
 use either::Either;
 use paralegal_pdg::RichLocation;
@@ -940,31 +940,6 @@ impl<'a, 'tcx, K: Hash + Eq + Clone> df::Analysis<'tcx> for &'a LocalAnalysis<'t
         _block: BasicBlock,
         _return_places: rustc_middle::mir::CallReturnPlaces<'_, 'tcx>,
     ) {
-    }
-}
-
-pub enum CallKind<'tcx> {
-    /// A standard function call like `f(x)`.
-    Direct,
-    /// A call to a function variable, like `fn foo(f: impl Fn()) { f() }`
-    Indirect {
-        /// The call takes place via a shim that implements `FnOnce` for a `Fn`
-        /// or `FnMut` closure.
-        shim: Option<ShimType>,
-    },
-    /// A poll to an async function, like `f.await`.
-    AsyncPoll(AsyncFnPollEnv<'tcx>),
-}
-
-impl Display for CallKind<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Direct => f.write_str("direct")?,
-            Self::AsyncPoll(_) => f.write_str("async poll")?,
-            Self::Indirect { shim: None } => f.write_str("indirect")?,
-            Self::Indirect { shim: Some(shim) } => write!(f, "({} shim)", shim.as_ref())?,
-        }
-        Ok(())
     }
 }
 

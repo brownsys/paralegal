@@ -4,7 +4,7 @@ use super::{
     async_support::match_coroutine_assign,
     determine_async,
 };
-use super::{path_for_item, src_loc_for_span};
+use super::def_info::{path_for_item, src_loc_for_span};
 use crate::{
     HashMap, HashSet, MarkerCtx, Pctx,
     ann::{db::AutoMarkers, side_effect_detection},
