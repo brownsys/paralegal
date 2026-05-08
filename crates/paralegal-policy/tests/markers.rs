@@ -480,6 +480,110 @@ fn field_precision() -> Result<()> {
 }
 
 #[test]
+#[ignore = "Function return values are not tracked at the level of precision of fields/variants. See https://github.com/brownsys/paralegal/issues/138"]
+fn nested_field_precision() -> Result<()> {
+    let mut test = Test::new(stringify!(
+        #[paralegal::marker(dangerous)]
+        struct Secret {
+            x: usize,
+        }
+
+        struct Inner {
+            secret: Secret,
+            neutral: u32,
+        }
+
+        struct Outer {
+            inner: Inner,
+            flag: bool,
+        }
+
+        #[paralegal::marker(noinline)]
+        fn source() -> Outer {
+            unreachable!()
+        }
+
+        #[paralegal::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        #[paralegal::analyze]
+        fn main() {
+            let o = source();
+            sink(o.flag);
+        }
+    ))?;
+    test.expect_fail();
+    test.run(policy)
+}
+
+#[test]
+#[ignore = "Function return values are not tracked at the level of precision of fields/variants. See https://github.com/brownsys/paralegal/issues/138"]
+fn tuple_struct_precision() -> Result<()> {
+    let mut test = Test::new(stringify!(
+        #[paralegal::marker(dangerous)]
+        struct Secret {
+            x: usize,
+        }
+
+        struct Wrap(Secret, u32);
+
+        #[paralegal::marker(noinline)]
+        fn source() -> Wrap {
+            unreachable!()
+        }
+
+        #[paralegal::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        #[paralegal::analyze]
+        fn main() {
+            let w = source();
+            sink(w.1);
+        }
+    ))?;
+    test.expect_fail();
+    test.run(policy)
+}
+
+#[test]
+#[ignore = "Function return values are not tracked at the level of precision of fields/variants. See https://github.com/brownsys/paralegal/issues/138"]
+fn multi_payload_enum_precision() -> Result<()> {
+    let mut test = Test::new(stringify!(
+        #[paralegal::marker(dangerous)]
+        struct Bad {
+            x: usize,
+        }
+
+        struct Good {
+            y: u32,
+        }
+
+        enum E {
+            B(Bad),
+            G(Good),
+        }
+
+        #[paralegal::marker(noinline)]
+        fn source() -> E {
+            unreachable!()
+        }
+
+        #[paralegal::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        #[paralegal::analyze]
+        fn main() {
+            match source() {
+                E::G(g) => sink(g),
+                _ => (),
+            }
+        }
+    ))?;
+    test.expect_fail();
+    test.run(policy)
+}
+
+#[test]
 fn references() -> Result<()> {
     let test = Test::new(stringify!(
         #[paralegal::marker(dangerous)]

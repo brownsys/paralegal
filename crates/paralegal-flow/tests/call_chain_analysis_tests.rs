@@ -417,6 +417,289 @@ fn no_overtaint_over_nested_fn_call() {
 }
 
 #[test]
+fn no_overtaint_over_field_projection_in_callee() {
+    inline_test! {
+        #[paralegal_flow::marker(noinline)]
+        fn input() -> usize { 0 }
+
+        #[paralegal_flow::marker(hello, return)]
+        fn source() -> usize { 0 }
+
+        fn first<T, G>(t: (T, G)) -> T { t.0 }
+
+        #[paralegal_flow::marker(noinline)]
+        fn target<T>(_t: T) {}
+
+        #[paralegal_flow::marker(noinline)]
+        fn another_target<T>(_t: T) {}
+
+        fn main() {
+            let p = source();
+            let q = input();
+            target(first((p, q)));
+            another_target(first((q, p)));
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let input_fn = graph.function("input");
+        let input = graph.call_site(&input_fn);
+        let source_fn = graph.function("source");
+        let source = graph.call_site(&source_fn);
+        let target_fn = graph.function("target");
+        let target = graph.call_site(&target_fn);
+        let another_target_fn = graph.function("another_target");
+        let another_target = graph.call_site(&another_target_fn);
+
+        assert!(source.output().flows_to_data(&target.input()));
+        assert!(input.output().flows_to_data(&another_target.input()));
+        assert!(!dbg!(input.output()).flows_to_data(&dbg!(target.input())));
+        assert!(!dbg!(source.output()).flows_to_data(&dbg!(another_target.input())));
+    });
+}
+
+#[test]
+fn no_overtaint_over_aggregate_construction_in_callee() {
+    inline_test! {
+        #[paralegal_flow::marker(noinline)]
+        fn input() -> usize { 0 }
+
+        #[paralegal_flow::marker(hello, return)]
+        fn source() -> usize { 0 }
+
+        fn pair<T, G>(a: T, b: G) -> (T, G) { (a, b) }
+
+        #[paralegal_flow::marker(noinline)]
+        fn target<T>(_t: T) {}
+
+        #[paralegal_flow::marker(noinline)]
+        fn another_target<T>(_t: T) {}
+
+        fn main() {
+            let p = input();
+            let q = source();
+            let r = pair(p, q);
+            target(r.0);
+            another_target(r.1);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let input_fn = graph.function("input");
+        let input = graph.call_site(&input_fn);
+        let source_fn = graph.function("source");
+        let source = graph.call_site(&source_fn);
+        let target_fn = graph.function("target");
+        let target = graph.call_site(&target_fn);
+        let another_target_fn = graph.function("another_target");
+        let another_target = graph.call_site(&another_target_fn);
+
+        assert!(input.output().flows_to_data(&target.input()));
+        assert!(source.output().flows_to_data(&another_target.input()));
+        assert!(!dbg!(input.output()).flows_to_data(&dbg!(another_target.input())));
+        assert!(!dbg!(source.output()).flows_to_data(&dbg!(target.input())));
+    });
+}
+
+#[test]
+fn no_overtaint_over_in_place_field_update() {
+    inline_test! {
+        #[paralegal_flow::marker(noinline)]
+        fn initial() -> usize { 0 }
+
+        #[paralegal_flow::marker(noinline)]
+        fn input() -> usize { 0 }
+
+        #[paralegal_flow::marker(hello, return)]
+        fn source() -> usize { 0 }
+
+        fn set_first<T, G>(t: &mut (T, G), v: T) { t.0 = v }
+
+        #[paralegal_flow::marker(noinline)]
+        fn target<T>(_t: T) {}
+
+        #[paralegal_flow::marker(noinline)]
+        fn another_target<T>(_t: T) {}
+
+        fn main() {
+            let q = input();
+            let mut t = (initial(), q);
+            set_first(&mut t, source());
+            target(t.0);
+            another_target(t.1);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let input_fn = graph.function("input");
+        let input = graph.call_site(&input_fn);
+        let source_fn = graph.function("source");
+        let source = graph.call_site(&source_fn);
+        let target_fn = graph.function("target");
+        let target = graph.call_site(&target_fn);
+        let another_target_fn = graph.function("another_target");
+        let another_target = graph.call_site(&another_target_fn);
+
+        assert!(source.output().flows_to_data(&target.input()));
+        assert!(input.output().flows_to_data(&another_target.input()));
+        assert!(!dbg!(input.output()).flows_to_data(&dbg!(target.input())));
+        assert!(!dbg!(source.output()).flows_to_data(&dbg!(another_target.input())));
+    });
+}
+
+// Whole-aggregate variant of the projection-in-callee case: the projected
+// field is itself an aggregate, so the inner MIR is `_0 = move _1.0` copying
+// a whole sub-tuple. Exercises the same field-aggregation bug as the
+// existing identity tests (`no_overtaint_over_fn_call` etc.) but on the
+// projection axis.
+#[test]
+#[ignore = "Field level precision across function calls is broken. See https://github.com/willcrichton/flowistry/issues/94."]
+fn no_overtaint_over_nested_field_projection_in_callee() {
+    inline_test! {
+        #[paralegal_flow::marker(noinline)]
+        fn input() -> usize { 0 }
+
+        #[paralegal_flow::marker(hello, return)]
+        fn source() -> usize { 0 }
+
+        fn first<T, G>(t: (T, G)) -> T { t.0 }
+
+        #[paralegal_flow::marker(noinline)]
+        fn target<T>(_t: T) {}
+
+        #[paralegal_flow::marker(noinline)]
+        fn another_target<T>(_t: T) {}
+
+        fn main() {
+            let s = source();
+            let i = input();
+            let inner = (s, i);
+            let r = first((inner, 0_usize));
+            target(r.0);
+            another_target(r.1);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let input_fn = graph.function("input");
+        let input = graph.call_site(&input_fn);
+        let source_fn = graph.function("source");
+        let source = graph.call_site(&source_fn);
+        let target_fn = graph.function("target");
+        let target = graph.call_site(&target_fn);
+        let another_target_fn = graph.function("another_target");
+        let another_target = graph.call_site(&another_target_fn);
+
+        assert!(source.output().flows_to_data(&target.input()));
+        assert!(input.output().flows_to_data(&another_target.input()));
+        assert!(!dbg!(input.output()).flows_to_data(&dbg!(target.input())));
+        assert!(!dbg!(source.output()).flows_to_data(&dbg!(another_target.input())));
+    });
+}
+
+// Whole-aggregate variant of the construction-in-callee case: the callee
+// builds an outer aggregate one of whose fields is itself a whole aggregate
+// passed in by argument, producing `_0 = Aggregate([move _1, ...])` in MIR.
+#[test]
+#[ignore = "Field level precision across function calls is broken. See https://github.com/willcrichton/flowistry/issues/94."]
+fn no_overtaint_over_nested_aggregate_construction_in_callee() {
+    inline_test! {
+        #[paralegal_flow::marker(noinline)]
+        fn input() -> usize { 0 }
+
+        #[paralegal_flow::marker(hello, return)]
+        fn source() -> usize { 0 }
+
+        fn wrap_first<T>(a: T) -> (T, usize) { (a, 0) }
+
+        #[paralegal_flow::marker(noinline)]
+        fn target<T>(_t: T) {}
+
+        #[paralegal_flow::marker(noinline)]
+        fn another_target<T>(_t: T) {}
+
+        fn main() {
+            let inner = (source(), input());
+            let r = wrap_first(inner);
+            target(r.0.0);
+            another_target(r.0.1);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let input_fn = graph.function("input");
+        let input = graph.call_site(&input_fn);
+        let source_fn = graph.function("source");
+        let source = graph.call_site(&source_fn);
+        let target_fn = graph.function("target");
+        let target = graph.call_site(&target_fn);
+        let another_target_fn = graph.function("another_target");
+        let another_target = graph.call_site(&another_target_fn);
+
+        assert!(source.output().flows_to_data(&target.input()));
+        assert!(input.output().flows_to_data(&another_target.input()));
+        assert!(!dbg!(input.output()).flows_to_data(&dbg!(target.input())));
+        assert!(!dbg!(source.output()).flows_to_data(&dbg!(another_target.input())));
+    });
+}
+
+// Whole-aggregate variant of the in-place-via-&mut case: the callee
+// overwrites a field whose own type is an aggregate, so `(*_1).0 = move _2`
+// is a whole-aggregate copy.
+#[test]
+#[ignore = "Field level precision across function calls is broken. See https://github.com/willcrichton/flowistry/issues/94."]
+fn no_overtaint_over_nested_in_place_field_update() {
+    inline_test! {
+        #[paralegal_flow::marker(noinline)]
+        fn initial1() -> usize { 0 }
+
+        #[paralegal_flow::marker(noinline)]
+        fn initial2() -> usize { 0 }
+
+        #[paralegal_flow::marker(noinline)]
+        fn input() -> usize { 0 }
+
+        #[paralegal_flow::marker(hello, return)]
+        fn source() -> usize { 0 }
+
+        #[paralegal_flow::marker(noinline)]
+        fn neutral() -> usize { 0 }
+
+        fn set_first<T, G>(t: &mut (T, G), v: T) { t.0 = v }
+
+        #[paralegal_flow::marker(noinline)]
+        fn target<T>(_t: T) {}
+
+        #[paralegal_flow::marker(noinline)]
+        fn another_target<T>(_t: T) {}
+
+        fn main() {
+            let q = input();
+            let mut t = ((initial1(), initial2()), q);
+            set_first(&mut t, (source(), neutral()));
+            target(t.0.0);
+            another_target(t.0.1);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|graph| {
+        let source_fn = graph.function("source");
+        let source = graph.call_site(&source_fn);
+        let neutral_fn = graph.function("neutral");
+        let neutral = graph.call_site(&neutral_fn);
+        let target_fn = graph.function("target");
+        let target = graph.call_site(&target_fn);
+        let another_target_fn = graph.function("another_target");
+        let another_target = graph.call_site(&another_target_fn);
+
+        assert!(source.output().flows_to_data(&target.input()));
+        assert!(neutral.output().flows_to_data(&another_target.input()));
+        assert!(!dbg!(neutral.output()).flows_to_data(&dbg!(target.input())));
+        assert!(!dbg!(source.output()).flows_to_data(&dbg!(another_target.input())));
+    });
+}
+
+#[test]
 fn recursion_breaking_with_k_depth() {
     let mut test = InlineTestBuilder::new(stringify!(
         fn recurses(i: u32) {
