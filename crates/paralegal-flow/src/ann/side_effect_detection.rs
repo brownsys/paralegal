@@ -123,6 +123,9 @@ const ALLOWED_INTRINSICS: &[&str] = &[
     "discriminant_value",
     // Variants.
     "variant_count",
+    // Pointer metadata extraction (slice length, trait-object vtable, etc.):
+    // pure, returns compile-time-known information about the pointer.
+    "ptr_metadata",
     // const* business.
     "ptr_offset_from",
     "ptr_offset_from_unsigned",
