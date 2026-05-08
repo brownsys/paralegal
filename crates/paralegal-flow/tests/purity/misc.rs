@@ -521,3 +521,17 @@ fn structs() {
         ctrl.assert_purity(true);
     });
 }
+
+#[test]
+fn array_iter_marker() {
+    inline_test! {
+        fn main() {
+            [1, 2, 3].into_iter();
+        }
+    }
+    .with_dependency_environment(stdlib_environment())
+    .check_ctrl(|ctrl| {
+        ctrl.assert_purity(true);
+        assert!(ctrl.has_function("into_iter"));
+    });
+}

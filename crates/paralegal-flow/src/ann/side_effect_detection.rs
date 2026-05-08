@@ -13,6 +13,7 @@ use tracing::trace;
 use crate::{MarkerCtx, ann::db::AutoMarkers};
 
 const ALLOWED_INTRINSICS: &[&str] = &[
+    "three_way_compare",
     // Prefetching.
     "prefetch_read_data",
     "prefetch_write_data",
@@ -122,6 +123,9 @@ const ALLOWED_INTRINSICS: &[&str] = &[
     "discriminant_value",
     // Variants.
     "variant_count",
+    // Pointer metadata extraction (slice length, trait-object vtable, etc.):
+    // pure, returns compile-time-known information about the pointer.
+    "ptr_metadata",
     // const* business.
     "ptr_offset_from",
     "ptr_offset_from_unsigned",
@@ -153,6 +157,7 @@ const ALLOWED_INTRINSICS: &[&str] = &[
     // I disallow this, though I still special case it with it's own effect
     // type.
     // "transmute",
+    "ub_checks",
 ];
 
 pub(super) fn allowed_intrinsics() -> FxHashSet<rustc_span::Symbol> {

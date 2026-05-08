@@ -36,6 +36,10 @@ impl<'tcx> MarkerCtx<'tcx> {
     pub fn get_reachable_markers(&self, res: impl Into<MaybeMonomorphized<'tcx>>) -> &[Identifier] {
         let res = res.into();
         let def_id = res.def_id();
+        trace!(
+            "Checking reachable markers for {}",
+            self.tcx().def_path_str(def_id)
+        );
         let mark_side_effects = self.db().config.marker_control().mark_side_effects();
         if self.is_marked(def_id) {
             trace!("  Is marked");
@@ -75,7 +79,18 @@ impl<'tcx> MarkerCtx<'tcx> {
         }
         let non_direct = (!is_self_marked).then(|| self.get_reachable_markers(res));
 
-        direct_markers.chain(non_direct.into_iter().flatten().copied())
+        let filter_std_markers = self
+            .db()
+            .config
+            .marker_control()
+            .elide_on_whitelist_markers();
+
+        direct_markers
+            .chain(non_direct.into_iter().flatten().copied())
+            .filter(move |m| {
+                !filter_std_markers
+                    || !(m.as_str().starts_with("std:") || m.as_str().starts_with("safe-libs:"))
+            })
     }
 
     /// If the transitive marker cache did not contain the answer, this is what
@@ -120,6 +135,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         use mir::visit::Visitor;
         vis.visit_body(&mono_body);
         let found = vis.found_markers;
+        trace!("Found markers {found:?}");
         found.into_iter().collect()
     }
 
@@ -211,7 +227,7 @@ impl<'tcx> MarkerCtx<'tcx> {
         // because we are not given the closure function, instead
         // we are provided the id of the function that creates the
         // future. As such we can't just monomorphize and traverse,
-        // we have to find the generator first.
+        // we have to find the generator firstparalegal_.
         if let ty::TyKind::Alias(alias) = local_decls[mir::RETURN_PLACE].ty.kind()
             && matches!(alias.kind, ty::AliasTyKind::Opaque { .. })
             && let ty::AliasTyKind::Opaque { def_id, .. } = alias.kind

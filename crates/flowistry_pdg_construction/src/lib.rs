@@ -26,7 +26,7 @@ pub mod constants;
 pub mod source_access;
 pub mod utils;
 
-pub use analysis::async_support::{determine_async, is_async_trait_fn, match_async_trait_assign};
+pub use analysis::async_support::{self, determine_async, is_async_trait_fn};
 pub use analysis::global::call_tree_visit::{VisitDriver, Visitor};
 pub use analysis::global::{
     DepEdge, DepEdgeKind, DepNode, DepNodeKind, MemoPdgConstructor, Node, OneHopLocation,

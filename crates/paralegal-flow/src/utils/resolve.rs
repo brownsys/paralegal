@@ -1,4 +1,4 @@
-use std::hash::Hash;
+use std::{hash::Hash, panic};
 
 use ast::Mutability;
 use hir::{
@@ -8,17 +8,21 @@ use hir::{
     def_id::LOCAL_CRATE,
     def_id::LocalDefId,
 };
-use rustc_ast::{self as ast, ExprKind, PathSegment, QSelf, Ty, TyKind, token::TokenKind};
+use rustc_ast::{
+    self as ast, ExprKind, GenericBound, PathSegment, QSelf, TraitObjectSyntax, Ty, TyKind,
+    token::TokenKind,
+};
 use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_hir::{self as hir, def_id::DefId};
 use rustc_middle::ty::{self, FloatTy, IntTy, TyCtxt, UintTy, fast_reject::SimplifiedType};
 use rustc_parse::{lexer::StripTokens, new_parser_from_source_str};
 use rustc_span::Symbol;
+use tracing::{trace, warn};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Res {
     Def(DefKind, DefId),
-    PrimTy(PrimTy),
+    PrimTy(SimplifiedType),
 }
 
 #[derive(Clone, Debug)]
@@ -50,7 +54,7 @@ impl Res {
     fn from_def_res(res: def::Res) -> Result<Self> {
         match res {
             def::Res::Def(k, i) => Ok(Res::Def(k, i)),
-            def::Res::PrimTy(t) => Ok(Res::PrimTy(t)),
+            def::Res::PrimTy(t) => Ok(Res::PrimTy(prim_ty_to_simp_ty(t))),
             other => Err(ResolutionError::UnconvertibleRes(other)),
         }
     }
@@ -61,6 +65,24 @@ impl Res {
         } else {
             panic!("Not a def")
         }
+    }
+
+    pub fn as_string(&self, tcx: TyCtxt<'_>) -> String {
+        match self {
+            Res::Def(_, id) => tcx.def_path_str(*id),
+            Res::PrimTy(ty) => format!("{ty:?}"),
+        }
+    }
+}
+
+fn prim_ty_to_simp_ty(pt: PrimTy) -> SimplifiedType {
+    match pt {
+        PrimTy::Bool => SimplifiedType::Bool,
+        PrimTy::Char => SimplifiedType::Char,
+        PrimTy::Str => SimplifiedType::Str,
+        PrimTy::Int(i) => SimplifiedType::Int(i),
+        PrimTy::Uint(u) => SimplifiedType::Uint(u),
+        PrimTy::Float(f) => SimplifiedType::Float(f),
     }
 }
 
@@ -103,7 +125,7 @@ fn find_primitive_impls(tcx: TyCtxt<'_>, name: Symbol) -> impl Iterator<Item = D
 /// that `def_path_res` is used. In the case of errors they are reported to the
 /// user and `None` is returned so the caller has the option of making progress
 /// before exiting.
-pub fn expect_resolve_string_to_def_id(tcx: TyCtxt, path: &str, relaxed: bool) -> Option<DefId> {
+pub fn expect_resolve_string_to_def_id(tcx: TyCtxt, path: &str, relaxed: bool) -> Vec<DefId> {
     report_resolution_err(tcx, path, relaxed, resolve_string_to_def_id(tcx, path))
 }
 
@@ -111,8 +133,8 @@ pub fn report_resolution_err(
     tcx: TyCtxt<'_>,
     path: &str,
     relaxed: bool,
-    obj: Result<Res>,
-) -> Option<DefId> {
+    obj: Result<Vec<Res>>,
+) -> Vec<DefId> {
     let report_err = if relaxed {
         |tcx: TyCtxt<'_>, err: String| {
             tcx.dcx().warn(err);
@@ -122,20 +144,25 @@ pub fn report_resolution_err(
             tcx.dcx().err(err);
         }
     };
-    let res = obj
+    let Some(res) = obj
         .map_err(|e| report_err(tcx, format!("Could not resolve {path}: {e:?}")))
-        .ok()?;
-    match res {
-        Res::Def(_, did) => Some(did),
-        other => {
-            let msg = format!("expected {path} to resolve to an item, got {other:?}");
-            report_err(tcx, msg);
-            None
-        }
-    }
+        .ok()
+    else {
+        return vec![];
+    };
+    res.into_iter()
+        .filter_map(|res| match res {
+            Res::Def(_, did) => Some(did),
+            other => {
+                let msg = format!("expected {path} to resolve to an item, got {other:?}");
+                report_err(tcx, msg);
+                None
+            }
+        })
+        .collect()
 }
 
-pub fn resolve_string_to_def_id(tcx: TyCtxt, path: &str) -> Result<Res> {
+pub fn resolve_string_to_def_id(tcx: TyCtxt, path: &str) -> Result<Vec<Res>> {
     let mut hasher = StableHasher::new();
     path.hash(&mut hasher);
     let mut parser = new_parser_from_source_str(
@@ -242,16 +269,20 @@ fn find_crates(tcx: TyCtxt<'_>, name: Symbol) -> impl Iterator<Item = DefId> + '
 fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
     match &t.kind {
         TyKind::Path(qslf, pth) => {
-            let adt = def_path_res(tcx, qslf.as_deref(), pth.segments.as_slice())?;
+            let results = def_path_res(tcx, qslf.as_deref(), pth.segments.as_slice())?;
+            let [adt] = results.as_slice() else {
+                return Err(ResolutionError::UnsupportedType(t.clone()));
+            };
             Ok(match adt {
-                Res::Def(_, did) => ty::Ty::new_adt(tcx, tcx.adt_def(did), ty::List::empty()),
-                Res::PrimTy(t) => match t {
-                    PrimTy::Bool => tcx.types.bool,
-                    PrimTy::Char => tcx.types.char,
-                    PrimTy::Str => tcx.types.str_,
-                    PrimTy::Int(i) => ty::Ty::new_int(tcx, i),
-                    PrimTy::Uint(u) => ty::Ty::new_uint(tcx, u),
-                    PrimTy::Float(f) => ty::Ty::new_float(tcx, f),
+                Res::Def(_, did) => ty::Ty::new_adt(tcx, tcx.adt_def(*did), ty::List::empty()),
+                Res::PrimTy(simp) => match simp {
+                    SimplifiedType::Bool => tcx.types.bool,
+                    SimplifiedType::Char => tcx.types.char,
+                    SimplifiedType::Str => tcx.types.str_,
+                    SimplifiedType::Int(i) => ty::Ty::new_int(tcx, *i),
+                    SimplifiedType::Uint(u) => ty::Ty::new_uint(tcx, *u),
+                    SimplifiedType::Float(f) => ty::Ty::new_float(tcx, *f),
+                    _ => return Err(ResolutionError::UnsupportedType(t.clone())),
                 },
             })
         }
@@ -262,6 +293,46 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
                 .collect::<Result<Vec<_>>>()?
                 .as_ref(),
         )),
+        TyKind::Array(inner, const_) => {
+            if !matches!(inner.kind, TyKind::Infer) {
+                tcx.dcx()
+                    .warn(format!("Ignoring non-wildcard slice type {inner:?}"));
+            }
+            if !matches!(const_.value.kind, rustc_ast::ExprKind::Underscore) {
+                tcx.dcx()
+                    .warn(format!("Ignoring const argument {const_:?} in array type"));
+            }
+            let our_len = 42;
+            warn!(
+                "Array types may not behave properly with instance markers because we always use the instance of arrays of length {our_len}"
+            );
+            Ok(ty::Ty::new_array(
+                tcx,
+                ty::Ty::new_param(tcx, 0, Symbol::intern("T")),
+                our_len,
+            ))
+        }
+        TyKind::Slice(inner) => {
+            if !matches!(inner.kind, TyKind::Infer) {
+                tcx.dcx()
+                    .warn(format!("Ignoring non-wildcard slice type {inner:?}"));
+            }
+            Ok(ty::Ty::new_slice(
+                tcx,
+                ty::Ty::new_param(tcx, 0, Symbol::intern("T")),
+            ))
+        }
+        TyKind::Ref(lt, mt) => {
+            if lt.is_some() {
+                tcx.dcx().warn("Ignoring lifetimes in reference types");
+            }
+            let inner = resolve_ty(tcx, &mt.ty)?;
+            let lt = ty::Region::new_var(tcx, ty::RegionVid::ZERO);
+            Ok(match mt.mutbl {
+                hir::Mutability::Mut => ty::Ty::new_mut_ref(tcx, lt, inner),
+                hir::Mutability::Not => ty::Ty::new_imm_ref(tcx, lt, inner),
+            })
+        }
         _ => Err(ResolutionError::UnsupportedType(t.clone())),
     }
 }
@@ -290,7 +361,8 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
 ///    non-deterministically.
 /// 2. It probably cannot resolve a qualified path if the base is a primitive
 ///    type. E.g. `usize::abs_diff` resolves but `<usize>::abs_diff` does not.
-pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) -> Result<Res> {
+pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) -> Result<Vec<Res>> {
+    trace!("Resolving {qself:?} {path:?}");
     let no_generics_supported = |segment: &PathSegment| {
         if segment.args.is_some() {
             tcx.dcx().err(format!(
@@ -303,9 +375,14 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
             [primitive] => {
                 /* Start here for issue 1 */
                 let sym = primitive.ident.name;
-                return PrimTy::from_name(sym)
-                    .map(Res::PrimTy)
-                    .ok_or(ResolutionError::CannotResolvePrimitiveType(sym));
+                if let Some(sim_ty) = as_primitive_ty(sym) {
+                    return Ok(vec![Res::PrimTy(sim_ty)]);
+                } else {
+                    (
+                        Box::new(find_crates(tcx, sym)) as Box<dyn Iterator<Item = DefId>>,
+                        &[],
+                    )
+                }
             }
             [base, path @ ..] => {
                 /* This is relevant for issue 2 */
@@ -331,31 +408,52 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
         Some(slf) => (
             if slf.position == 0 {
                 /* this is relevant for 3 */
-                let TyKind::Path(qslf, pth) = &slf.ty.kind else {
-                    return Err(ResolutionError::UnsupportedType((*slf.ty).clone()));
-                };
-                let ty = def_path_res(tcx, qslf.as_deref(), &pth.segments)?;
-                let impls = tcx.inherent_impls(ty.def_id());
-                Box::new(impls.iter().copied()) as Box<_>
-            } else {
-                let r#trait = def_path_res(tcx, None, &path[..slf.position])?;
-                let r#type = resolve_ty(tcx, &slf.ty)?;
-                let mut impls = vec![];
-                /* This is relevant for issue 2 */
-                tcx.for_each_relevant_impl(r#trait.def_id(), r#type, |i| impls.push(i));
-                if impls.is_empty() {
-                    if tcx
-                        .lang_items()
-                        .clone_fn()
-                        .is_some_and(|c| c == r#trait.def_id())
-                        && r#type.is_unit()
-                    {
-                        tcx.dcx().err("Cannot assign markers to the Clone instance of (), is not a real function");
+                let t = &*slf.ty;
+                match &slf.ty.kind {
+                    TyKind::Path(qslf, pth) => Box::new(
+                        def_path_res(tcx, qslf.as_deref(), &pth.segments)?
+                            .into_iter()
+                            .flat_map(|def_id| tcx.inherent_impls(def_id.def_id()).iter().copied()),
+                    )
+                        as Box<dyn Iterator<Item = DefId>>,
+                    TyKind::TraitObject(bounds, TraitObjectSyntax::Dyn) => {
+                        let [GenericBound::Trait(t_ref)] = bounds.as_slice() else {
+                            return Err(ResolutionError::UnsupportedType(t.clone()));
+                        };
+                        let resolved_trait =
+                            def_path_res(tcx, None, &t_ref.trait_ref.path.segments)?;
+                        let any_sym = Symbol::intern("Any");
+                        let Some(t) = resolved_trait
+                            .iter()
+                            .find(|t| tcx.is_diagnostic_item(any_sym, t.def_id()))
+                        else {
+                            return Err(ResolutionError::UnsupportedType(t.clone()));
+                        };
+                        let impls = tcx.inherent_impls(t.def_id());
+                        Box::new(impls.iter().cloned()) as Box<_>
                     }
-                    return Err(ResolutionError::NoImplsFound(
-                        r#trait.def_id(),
-                        (*slf.ty).clone(),
-                    ));
+                    _ => return Err(ResolutionError::UnsupportedType((*slf.ty).clone())),
+                }
+            } else {
+                let mut impls = vec![];
+                for r#trait in def_path_res(tcx, None, &path[..slf.position])? {
+                    let r#type = resolve_ty(tcx, &slf.ty)?;
+                    /* This is relevant for issue 2 */
+                    tcx.for_each_relevant_impl(r#trait.def_id(), r#type, |i| impls.push(i));
+                    if impls.is_empty() {
+                        if tcx
+                            .lang_items()
+                            .clone_fn()
+                            .is_some_and(|c| c == r#trait.def_id())
+                            && r#type.is_unit()
+                        {
+                            tcx.dcx().err("Cannot assign markers to the Clone instance of (), is not a real function");
+                        }
+                        return Err(ResolutionError::NoImplsFound(
+                            r#trait.def_id(),
+                            (*slf.ty).clone(),
+                        ));
+                    }
                 }
                 Box::new(impls.into_iter()) as Box<_>
             },
@@ -364,45 +462,59 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
     };
 
     let starts = starts.collect::<Vec<_>>();
+    trace!("starts: {:?}", starts);
     let starts = starts.into_iter();
 
-    let mut last = Err(if let Some(f) = path.first() {
+    let empty_err = Err(if let Some(f) = path.first() {
         ResolutionError::CouldNotResolveCrate(f.ident.name)
     } else {
         ResolutionError::EmptyStarts
     });
-    for first in starts {
-        last = path
-            .iter()
-            // for each segment, find the child item
-            .try_fold(Res::Def(tcx.def_kind(first), first), |res, segment| {
-                no_generics_supported(segment);
-                let segment = segment.ident.name;
-                let def_id = res.def_id();
-                if let Some(item) = item_child_by_name(tcx, def_id, segment) {
-                    item
-                } else if matches!(res, Res::Def(DefKind::Enum | DefKind::Struct, _)) {
-                    // it is not a child item so check inherent impl items
-                    tcx.inherent_impls(def_id)
-                        .iter()
-                        .find_map(|&impl_def_id| item_child_by_name(tcx, impl_def_id, segment))
-                        .unwrap_or(Err(ResolutionError::CouldNotFindChild {
+    let mut found = starts
+        .map(|first| {
+            path.iter()
+                // for each segment, find the child item
+                .try_fold(Res::Def(tcx.def_kind(first), first), |res, segment| {
+                    no_generics_supported(segment);
+                    let segment = segment.ident.name;
+                    let def_id = res.def_id();
+                    if let Some(item) = item_child_by_name(tcx, def_id, segment) {
+                        item
+                    } else if matches!(res, Res::Def(DefKind::Enum | DefKind::Struct, _)) {
+                        // it is not a child item so check inherent impl items
+                        tcx.inherent_impls(def_id)
+                            .iter()
+                            .find_map(|&impl_def_id| item_child_by_name(tcx, impl_def_id, segment))
+                            .unwrap_or(Err(ResolutionError::CouldNotFindChild {
+                                item: def_id,
+                                segment,
+                                search_space: SearchSpace::InherentImpl,
+                            }))
+                    } else {
+                        Err(ResolutionError::CouldNotFindChild {
                             item: def_id,
                             segment,
-                            search_space: SearchSpace::InherentImpl,
-                        }))
-                } else {
-                    Err(ResolutionError::CouldNotFindChild {
-                        item: def_id,
-                        segment,
-                        search_space: SearchSpace::Mod,
-                    })
-                }
-            });
+                            search_space: SearchSpace::Mod,
+                        })
+                    }
+                })
+        })
+        .collect::<Vec<_>>();
 
-        if last.is_ok() {
-            return last;
-        }
+    if found.is_empty() {
+        empty_err
+    } else if found.iter().all(|f| f.is_err()) {
+        found.pop().unwrap().map(|_| vec![])
+    } else {
+        Ok(found
+            .into_iter()
+            .filter_map(|f| f.ok())
+            .inspect(|res| {
+                trace!("  Resolved to {res:?}");
+                if let Res::Def(_, did) = res {
+                    trace!("    {} at {:?}", tcx.def_path_str(*did), tcx.def_span(*did));
+                }
+            })
+            .collect())
     }
-    last
 }

@@ -331,11 +331,38 @@ pub enum Constant {
     Uint(u64),
     Char(char),
     // Placeholder. Floats in the rust compiler are a bit weird so I'll skip them for now.
-    //Float(f64),
+    Float(FloatWrapper),
     Bool(bool),
     String(Intern<String>),
     //Unknown(Intern<String>),
     Zst(Intern<String>),
+}
+
+/// This is an unsafe wrapper around f64 in that it defines hash and equality
+/// based on bit representation. This is not in line with float semantics.
+///
+/// But I really need this to be hash and eq, hence the hack.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug)]
+#[serde(transparent)]
+pub struct FloatWrapper(pub f64);
+
+impl std::cmp::PartialEq for FloatWrapper {
+    fn eq(&self, other: &Self) -> bool {
+        unsafe {
+            std::mem::transmute::<&f64, &u64>(&self.0)
+                == std::mem::transmute::<&f64, &u64>(&other.0)
+        }
+    }
+}
+
+impl std::cmp::Eq for FloatWrapper {}
+
+impl std::hash::Hash for FloatWrapper {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        unsafe {
+            std::mem::transmute::<&f64, &u64>(&self.0).hash(state);
+        }
+    }
 }
 
 impl Constant {
@@ -368,6 +395,7 @@ impl std::fmt::Display for Constant {
             Self::Uint(u) => Display::fmt(u, f),
             Self::Char(c) => Display::fmt(c, f),
             Self::String(s) => Debug::fmt(s, f),
+            Self::Float(fl) => Display::fmt(&fl.0, f),
             Self::Zst(s) => f.write_str(s),
             //Self::Unknown(u) => write!(f, "Unsupported constant: {u}"),
         }

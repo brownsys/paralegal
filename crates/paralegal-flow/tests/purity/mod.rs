@@ -9,6 +9,7 @@ mod leaky;
 mod misc;
 mod raw_ptr;
 mod recursive;
+mod side_effects;
 mod r#static;
 
 use paralegal_flow::test_utils::{DependencyEnvironment, DependencyEnvironmentBuilder};

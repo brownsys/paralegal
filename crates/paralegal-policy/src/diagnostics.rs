@@ -96,7 +96,9 @@ use indexmap::IndexMap;
 use std::rc::Rc;
 use std::{io::Write, sync::Arc};
 
-use paralegal_spdg::{DisplayPath, Endpoint, GlobalNode, Identifier, Span, SpanCoord, SPDG};
+use paralegal_spdg::{
+    DisplayPath, Endpoint, GlobalNode, Identifier, Node, NodeCluster, Span, SpanCoord, SPDG,
+};
 
 use crate::{Context, NodeExt, RootContext};
 
@@ -106,16 +108,11 @@ macro_rules! assert_error {
     ($ctx:expr, $cond: expr $(,)?) => {
         assert_error!($ctx, $cond, "Error: {}", stringify!($cond))
     };
-    ($ctx:expr, $cond: expr, $msg:expr $(,)?) => {
+
+    ($ctx:expr, $cond: expr, $msg:expr $(, $($frag:expr),+ )? $(,)?) => {
         if !$cond {
             use $crate::diagnostics::Diagnostics;
-            Diagnostics::error(&$ctx, $msg);
-        }
-    };
-    ($ctx:expr, $cond: expr, $msg:expr, $($frag:expr),+ $(,)?) => {
-        if !$cond {
-            use $crate::diagnostics::Diagnostics;
-            Diagnostics::error(&$ctx, format!($msg, $($frag),+));
+            Diagnostics::error(&$ctx, format!($msg, $( $($frag),+ )? ));
         }
     };
 }
@@ -892,6 +889,30 @@ impl ControllerContext {
             })
             .map(Arc::new)
     }
+
+    /// Get the nodes representing the `idx`'th argument to this controller (if
+    /// the argument exists).
+    pub fn argument(&self, idx: u32) -> Option<NodeCluster> {
+        self.controller_argument(self.id, idx)
+    }
+
+    /// Get all arguments for this controller grouped by argument index
+    pub fn arguments_by_index(&self) -> Vec<NodeCluster> {
+        let ctrl_id = self.id();
+        let g = &self.current().graph;
+        let mut args: Vec<Vec<Node>> = vec![];
+        for &n in self.current().arguments.iter() {
+            let w = g.node_weight(n).unwrap();
+            let Some(a) = w.is_arg else { continue };
+            if (a as usize) >= args.len() {
+                args.resize_with((a as usize) + 1, Vec::new);
+            }
+            args[a as usize].push(n);
+        }
+        args.into_iter()
+            .map(|nodes| NodeCluster::new(ctrl_id, nodes))
+            .collect()
+    }
 }
 
 impl HasDiagnosticsBase for ControllerContext {
@@ -914,7 +935,10 @@ impl Context for ControllerContext {
         self.as_ctx()
     }
 
-    fn marked_nodes(&self, marker: crate::Marker) -> impl Iterator<Item = GlobalNode> + '_ {
+    fn marked_nodes(
+        &self,
+        marker: impl Into<crate::Marker>,
+    ) -> impl Iterator<Item = GlobalNode> + '_ {
         self.root()
             .marked_nodes(marker)
             .filter(|n| n.controller_id() == self.id)

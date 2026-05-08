@@ -85,3 +85,13 @@ fn ctrl_influence(a: Foo, b: Foo) {
         sink1(b_prime);
     }
 }
+
+// Async counterpart of `controller_data_ctrl`, used to exercise
+// `controller_argument` against the synthesized arg nodes that
+// `fix_async_args` produces (rather than the body's own root-Start nodes).
+#[paralegal::analyze]
+async fn controller_async(a: Foo, b: Foo) {
+    if cond(a) {
+        sink1(b);
+    }
+}

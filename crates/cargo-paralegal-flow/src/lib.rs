@@ -151,6 +151,8 @@ pub struct MarkerControl {
     /// Implies `--include-std`.
     #[clap(long, env)]
     side_effect_markers: bool,
+    #[clap(long)]
+    elide_on_whitelist_markers: bool,
 }
 
 /// Arguments that control the flow analysis
@@ -196,5 +198,9 @@ impl MarkerControl {
 
     pub fn mark_side_effects(&self) -> bool {
         self.side_effect_markers
+    }
+
+    pub fn elide_on_whitelist_markers(&self) -> bool {
+        self.elide_on_whitelist_markers
     }
 }

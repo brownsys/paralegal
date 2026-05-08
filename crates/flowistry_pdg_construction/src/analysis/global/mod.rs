@@ -667,7 +667,7 @@ impl GraphSizeEstimator {
         }
     }
 
-    fn format_size(&self) -> String {
+    pub fn format_size(&self) -> String {
         format!(
             "nodes: {}, edges: {}, functions: {}, call_string_length: {}",
             HumanInt(self.nodes),

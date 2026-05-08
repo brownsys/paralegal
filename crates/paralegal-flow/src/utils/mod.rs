@@ -5,7 +5,7 @@ use flowistry_pdg::RichLocation;
 use flowistry_pdg_construction::{is_async_trait_fn, source_access::BodyCache, utils::type_as_fn};
 use paralegal_flowistry::mir::FlowistryInput;
 use thiserror::Error;
-use tracing::info;
+use tracing::{info, trace};
 
 use crate::{Either, Symbol, TyCtxt, desc::Identifier, rustc_span::ErrorGuaranteed};
 pub use flowistry_pdg_construction::utils::is_virtual;
@@ -794,14 +794,21 @@ pub fn flatten_child_items(
 ) -> FxHashSet<DefId> {
     use rustc_hir::def::DefKind;
     let mut queue: Vec<_> = modules.into_iter().collect();
+    trace!("flatten_child_items starting with: {:?}", queue);
     let mut seen = FxHashSet::default();
     seen.extend(queue.iter().cloned());
     let mut result = FxHashSet::default();
 
     while let Some(module) = queue.pop() {
-        let children = match tcx.def_kind(module) {
-            DefKind::Mod => Box::new(
-                if let Some(local) = module.as_local() {
+        let def_kind = tcx.def_kind(module);
+        trace!(
+            "Processing item: {} with def kind {:?}",
+            tcx.def_path_str(module),
+            def_kind
+        );
+        let children = match def_kind {
+            DefKind::Mod => {
+                let it = if let Some(local) = module.as_local() {
                     tcx.module_children_local(local)
                 } else {
                     tcx.module_children(module)
@@ -811,8 +818,28 @@ pub fn flatten_child_items(
                 // Only follow items directly defined in this module, not
                 // re-exports. Re-exported items have their defining module as
                 // parent, not this one, so they should not inherit its markers.
-                .filter(move |did| tcx.parent(*did) == module),
-            ) as Box<dyn Iterator<Item = DefId>>,
+                .filter(|c| {
+                    let parent = tcx.opt_parent(*c);
+                    assert!(
+                        parent.is_some() || c.is_crate_root(),
+                        "{c:?} has no parent but isn't a crate (is {:?})",
+                        tcx.def_kind(*c)
+                    );
+                    parent.is_some_and(|parent| parent == module)
+                })
+                .chain(
+                    // Trait impls are not contained in `module_children` where
+                    // they are defined, but instead associated with the crate
+                    // itself.
+                    module
+                        .as_crate_root()
+                        .map(|c| tcx.trait_impls_in_crate(c))
+                        .into_iter()
+                        .flatten()
+                        .copied(),
+                );
+                Box::new(it) as Box<dyn Iterator<Item = DefId>>
+            }
             DefKind::Impl { .. } => Box::new(
                 tcx.associated_items(module)
                     .in_definition_order()
@@ -821,10 +848,18 @@ pub fn flatten_child_items(
             DefKind::Struct | DefKind::Enum => {
                 Box::new(tcx.inherent_impls(module).iter().copied()) as Box<_>
             }
-            _ => continue,
+            _ => {
+                continue;
+            }
         };
         for id in children {
-            match tcx.def_kind(id) {
+            let def_kind = tcx.def_kind(id);
+            trace!(
+                "Processing child item: {} with def kind {:?}",
+                tcx.def_path_str(id),
+                def_kind
+            );
+            match def_kind {
                 DefKind::Struct | DefKind::Enum | DefKind::Mod | DefKind::Impl { .. }
                     if !seen.contains(&id) =>
                 {

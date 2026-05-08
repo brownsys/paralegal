@@ -2,6 +2,7 @@
 
 use paralegal_flow::{inline_test, test_utils::*};
 use paralegal_spdg::Identifier;
+use std::path::Path;
 
 const EXTRA_ARGS: &[&str] = &["--no-interprocedural-analysis"];
 
@@ -461,5 +462,72 @@ fn async_fn_marker() {
         assert!(!source.is_empty());
         assert!(!sink.is_empty());
         assert!(source.flows_to_data(&sink));
+    });
+}
+
+#[test]
+fn lifetime_resolving() {
+    inline_test! {
+        use std::marker::PhantomData;
+
+        trait Test {
+            fn test_method(&self);
+        }
+
+        struct Ref<'a> {
+            _marker: PhantomData<&'a ()>,
+        }
+
+        impl Test for Ref<'_> {
+            fn test_method(&self) {
+                todo!()
+            }
+        }
+
+        fn main() {
+            Ref { _marker: PhantomData }.test_method();
+        }
+    }
+    .with_marker_file(Path::new("tests/fixtures/lifetime-resolving-markers.toml"))
+    .check_ctrl(|ctrl| assert!(dbg!(ctrl.markers()).contains(&Identifier::new_intern("present"))));
+}
+
+#[test]
+fn dont_inline_on_std_marker() {
+    inline_test! {
+        #[paralegal_flow::marker(target1)]
+        fn canary1 () {}
+
+        #[paralegal_flow::marker(target2)]
+        fn canary2 (arg: usize) {}
+
+        fn hidden1() {
+            canary1()
+        }
+
+        fn hidden2(arg: usize) {
+            canary2(arg)
+        }
+
+        fn intermediate1() {
+            hidden1()
+        }
+
+        fn intermediate2(arg: usize) {
+            hidden2(arg)
+        }
+
+        fn main() {
+            intermediate1();
+            intermediate2(0);
+        }
+    }
+    .with_marker_file(Path::new("tests/fixtures/dont-inline-on-std-marker.toml"))
+    .with_extra_args(["--elide-on-whitelist-markers"])
+    .check_ctrl(|ctrl| {
+        assert!(ctrl.marked("std:test").is_empty());
+        assert!(ctrl.marked("safe-libs:test").is_empty());
+        assert!(ctrl.marked("target1").is_empty());
+        assert!(ctrl.marked("target2").is_empty());
     });
 }

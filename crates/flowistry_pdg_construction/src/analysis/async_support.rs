@@ -9,7 +9,7 @@ use rustc_middle::{
         AggregateKind, BasicBlock, Body, Location, Operand, Place, Rvalue, Statement,
         StatementKind, Terminator, TerminatorKind,
     },
-    ty::{GenericArgsRef, Instance, TyCtxt},
+    ty::{self, GenericArgsRef, Instance, TyCtxt},
 };
 use rustc_span::{Span, Spanned};
 
@@ -26,6 +26,17 @@ use crate::utils;
 pub enum AsyncType {
     Fn,
     Trait,
+    Tool,
+}
+
+impl AsyncType {
+    pub fn describe(&self) -> &'static str {
+        match self {
+            AsyncType::Fn => "async function",
+            AsyncType::Trait => "async trait",
+            AsyncType::Tool => "async tool",
+        }
+    }
 }
 
 /// Context for a call to [`Future::poll`](std::future::Future::poll), when
@@ -70,37 +81,22 @@ pub fn try_as_async_trait_function<'tcx>(
     if !has_async_trait_signature(tcx, def_id) {
         return None;
     }
-    let mut matching_statements =
-        body.basic_blocks
-            .iter_enumerated()
-            .flat_map(|(block, bbdat)| {
-                bbdat.statements.iter().enumerate().filter_map(
-                    move |(statement_index, statement)| {
-                        let (def_id, generics) = match_async_trait_assign(statement)?;
-                        Some((
-                            def_id,
-                            generics,
-                            Location {
-                                block,
-                                statement_index,
-                            },
-                        ))
-                    },
-                )
-            })
-            .collect::<Vec<_>>();
-    assert_eq!(matching_statements.len(), 1);
-    matching_statements.pop()
+    let (def_id, generics, loc, _) = find_coroutine_assign(body);
+    Some((def_id, generics, loc))
 }
 
-pub fn match_async_trait_assign<'tcx>(
-    statement: &Statement<'tcx>,
-) -> Option<(DefId, GenericArgsRef<'tcx>)> {
+pub fn match_coroutine_assign<'tcx, 'a>(
+    statement: &'a Statement<'tcx>,
+) -> Option<(
+    DefId,
+    GenericArgsRef<'tcx>,
+    &'a rustc_index::IndexVec<FieldIdx, Operand<'tcx>>,
+)> {
     match &statement.kind {
         StatementKind::Assign(box (
             _,
-            Rvalue::Aggregate(box AggregateKind::Coroutine(def_id, generic_args), _args),
-        )) => Some((*def_id, *generic_args)),
+            Rvalue::Aggregate(box AggregateKind::Coroutine(def_id, generic_args), args),
+        )) => Some((*def_id, *generic_args, args)),
         _ => None,
     }
 }
@@ -121,7 +117,6 @@ fn has_async_trait_signature(tcx: TyCtxt, def_id: DefId) -> bool {
     }
 }
 
-use rustc_middle::ty;
 fn match_pin_box_dyn_ty(lang_items: &rustc_hir::LanguageItems, t: ty::Ty) -> bool {
     let ty::TyKind::Adt(pin_ty, args) = t.kind() else {
         return false;
@@ -166,6 +161,79 @@ fn get_async_generator<'tcx>(body: &Body<'tcx>) -> (DefId, GenericArgsRef<'tcx>,
     (*def_id, generic_args, location)
 }
 
+// matches std::pin::Pin<std::boxed::Box<dyn std::future::Future<_>>
+fn has_async_tool_signature(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    use rustc_hir::def::DefKind;
+    if !matches!(tcx.def_kind(def_id), DefKind::Fn | DefKind::AssocFn) {
+        return false;
+    }
+    let sig = tcx.fn_sig(def_id);
+    let lang_items = tcx.lang_items();
+    let ty::TyKind::Adt(adt_def, inner) = sig.skip_binder().output().skip_binder().kind() else {
+        return false;
+    };
+    if !lang_items.pin_type().is_some_and(|p| p == adt_def.did()) {
+        return false;
+    }
+    let [b_ty] = inner.as_slice() else {
+        return false;
+    };
+    let Some(f_ty) = b_ty.as_type().and_then(ty::Ty::boxed_ty) else {
+        return false;
+    };
+    let ty::TyKind::Dynamic(preds, _) = f_ty.kind() else {
+        return false;
+    };
+    let Some(ty::ExistentialPredicate::Trait(t)) = preds.first().map(|b| b.skip_binder()) else {
+        return false;
+    };
+    lang_items.future_trait().is_some_and(|f| f == t.def_id)
+}
+
+pub fn find_coroutine_assign<'tcx, 'a>(
+    body: &'a Body<'tcx>,
+) -> (
+    DefId,
+    GenericArgsRef<'tcx>,
+    Location,
+    &'a rustc_index::IndexVec<FieldIdx, Operand<'tcx>>,
+) {
+    let mut matching_statements =
+        body.basic_blocks
+            .iter_enumerated()
+            .flat_map(|(block, bbdat)| {
+                bbdat.statements.iter().enumerate().filter_map(
+                    move |(statement_index, statement)| {
+                        let (def_id, generics, args) = match_coroutine_assign(statement)?;
+                        Some((
+                            def_id,
+                            generics,
+                            Location {
+                                block,
+                                statement_index,
+                            },
+                            args,
+                        ))
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+    assert_eq!(matching_statements.len(), 1);
+    matching_statements.pop().unwrap()
+}
+
+fn try_as_async_tool<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+    body: &Body<'tcx>,
+) -> Option<(DefId, GenericArgsRef<'tcx>, Location)> {
+    if !has_async_tool_signature(tcx, def_id) {
+        return None;
+    }
+    let (def_id, gargs, loc, _) = find_coroutine_assign(body);
+    Some((def_id, gargs, loc))
+}
+
 /// Try to interpret this function as an async function.
 ///
 /// If this is an async function it returns the [`Instance`] of the generator,
@@ -178,11 +246,10 @@ pub fn determine_async<'tcx>(
 ) -> Option<(Instance<'tcx>, Location, AsyncType)> {
     let ((generator_def_id, args, loc), asyncness) = if is_async(tcx, def_id) {
         (get_async_generator(body), AsyncType::Fn)
+    } else if let Some(g) = try_as_async_trait_function(tcx, def_id, body) {
+        (g, AsyncType::Trait)
     } else {
-        (
-            try_as_async_trait_function(tcx, def_id, body)?,
-            AsyncType::Trait,
-        )
+        (try_as_async_tool(tcx, def_id, body)?, AsyncType::Tool)
     };
     let typing_env = body.typing_env(tcx).with_post_analysis_normalized(tcx);
     let generator_fn = utils::try_resolve_function(tcx, generator_def_id, typing_env, args)?;

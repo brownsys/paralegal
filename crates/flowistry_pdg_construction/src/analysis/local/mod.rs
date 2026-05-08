@@ -150,6 +150,17 @@ impl<'tcx, 'a, K> LocalAnalysis<'tcx, 'a, K> {
         is_arg: Use,
     ) -> DepNode<'tcx, OneHopLocation> {
         let location = location.into();
+        // A body's argument place at its Start location is the canonical
+        // boundary node for parameter `local-1` of this body. Tag it as such
+        // so consumers (notably `controller_argument`) can identify
+        // controller arguments without needing a side fallback.
+        let is_arg = if matches!(location, RichLocation::Start)
+            && self.mono_body.local_kind(place.local) == LocalKind::Arg
+        {
+            Use::Arg((place.local.as_u32() - 1) as u16)
+        } else {
+            is_arg
+        };
         debug!(
             "Creating dep node for {place:?} (base ty {:?}) in {} at {:?}",
             Place::from(place.local)
@@ -777,7 +788,17 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
                     } else {
                         continue;
                     };
-                    let src = final_state.get_place_node(*place, location.into()).unwrap();
+                    let Some(src) = final_state.get_place_node(*place, location.into()) else {
+                        let span = match location {
+                            RichLocation::Location(l) => self.mono_body.source_info(*l).span,
+                            _ => self.mono_body.span,
+                        };
+                        // CORNER CUTTING: we should investigate why this happens.
+                        self.tcx()
+                            .dcx()
+                            .span_warn(span, format!("could not find reference to {place:?} here"));
+                        continue;
+                    };
                     let eloc = RichLocation::End;
                     let key = NodeKey::for_place(*place, eloc.into());
                     let prior = final_state.get_node(&key);
