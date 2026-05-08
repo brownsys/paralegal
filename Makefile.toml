@@ -12,7 +12,7 @@
 # The CI actually runs some of these checks in separate steps to provide easier
 # insight into which part failed.
 [env]
-TEST_DIR = "crates/paralegal-flow/tests"
+TEST_DIR = "crates/plugin/tests"
 CARGO_TERM_VERBOSE = { condition = { env_true = ["CI"] }, value = "true" }
 
 [config]
@@ -23,11 +23,11 @@ dependencies = ["install-cargo-wrapper", "install-rustc-wrapper"]
 
 [tasks.install-cargo-wrapper]
 command = "cargo"
-args = ["install", "--locked", "-f", "--path", "crates/cargo-paralegal-flow"]
+args = ["install", "--locked", "-f", "--path", "crates/cli"]
 
 [tasks.install-rustc-wrapper]
 command = "cargo"
-args = ["install", "--locked", "-f", "--path", "crates/paralegal-flow"]
+args = ["install", "--locked", "-f", "--path", "crates/plugin"]
 
 [tasks.ci-tests]
 description = "The suite of tests we run in CI"
@@ -76,10 +76,6 @@ dependencies = ["format-all", "clippy-all"]
 [tasks.cargo-tests]
 command = "cargo"
 args = ["test", "--no-fail-fast"]
-
-[tasks.flowistry-tests]
-command = "cargo"
-args = ["test", "-pflowistry_pdg", "-pflowistry_pdg_construction"]
 
 [tasks.paralegal-flow-tests]
 command = "cargo"
@@ -230,7 +226,7 @@ for dir in ${test_dirs}
         cd ${wd}
     end
 end
-cd crates/paralegal-policy/tests/test-crate
+cd crates/policy/tests/test-crate
 exec --fail-on-error %{COMMAND} %{COMMAND_ARGS}
 '''
 
