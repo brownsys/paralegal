@@ -57,7 +57,6 @@ fn top_level_inlining_happens() {
 }
 
 #[test]
-#[ignore = "Need to make instruction info more robust. Doesn't monomorphize properly"]
 fn awaiting_works() {
     inline_test! {
 
