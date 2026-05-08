@@ -240,8 +240,10 @@ script_runner = "@duckscript"
 script = '''
 source_path = concat ${RUSTUP_HOME} /toolchains/ ${RUSTUP_TOOLCHAIN} /share/doc/rust/html/rustc-docs
 mkdir docs
-mv doc-src/index.html docs
-mv ${source_path} docs/compiler
+# Delegate to the shell `mv` instead of duckscript's, which is just
+# rename(2) and fails when ~/.rustup and the repo are on different mounts.
+exec --fail-on-error mv doc-src/index.html docs
+exec --fail-on-error mv ${source_path} docs/compiler
 '''
 
 [tasks.build-public-docs]
@@ -299,10 +301,14 @@ dependencies = ["clean-rustc-docs-location"]
 [tasks.clean-rustc-docs-location]
 description = "Uninstall rustc-docs so a follow-up `component add` actually re-extracts."
 # rustup tracks installed components via its manifest, not filesystem state.
-# A bare `rm -rf` of the docs dir leaves the manifest saying "installed", so
-# `rustup component add rustc-docs` no-ops and never re-extracts the files.
-# Going through `component remove` keeps rustup's view in sync with the disk.
+# A bare `rm -rf` leaves the manifest saying "installed", so the next
+# `component add` no-ops. Two more wrinkles: if the docs dir is missing
+# (e.g. moved by an earlier `populate-doc-dir`), `component remove` errors
+# trying to delete files that aren't there; if the component was never
+# installed, `remove` errors too. Recreate an empty dir to satisfy the
+# first case, and suppress the error from the second.
 script_runner = "bash"
 script = '''
+mkdir -p "$(rustc --print sysroot)/share/doc/rust/html/rustc-docs"
 rustup component remove rustc-docs 2>/dev/null || true
 '''
