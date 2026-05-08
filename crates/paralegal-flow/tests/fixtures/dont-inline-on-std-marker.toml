@@ -1,7 +1,0 @@
-[["crate::hidden1"]]
-marker = "std:test"
-on_return = true
-
-[["crate::hidden2"]]
-marker = "safe-libs:test"
-on_argument = [0]

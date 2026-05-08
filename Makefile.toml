@@ -83,7 +83,7 @@ args = ["test", "-pflowistry_pdg", "-pflowistry_pdg_construction"]
 
 [tasks.paralegal-flow-tests]
 command = "cargo"
-args = ["test", "-pparalegal-flow", "-pparalegal-spdg"]
+args = ["test", "-pparalegal-flow", "-pparalegal-pdg"]
 
 [tasks.policy-tests]
 command = "cargo"
@@ -104,7 +104,7 @@ dependencies = ["install"]
 
 [tasks.doc-check]
 dependencies = [
-    "rustdoc-paralegal-spdg",
+    "rustdoc-paralegal-pdg",
     "rustdoc-paralegal-policy",
     "rustdoc-paralegal",
 ]
@@ -114,9 +114,9 @@ private = true
 command = "cargo"
 args = ["rustdoc", "-p", "${RUSTDOC_TARGET}", "--", "-Drustdoc::all"]
 
-[tasks.rustdoc-paralegal-spdg]
+[tasks.rustdoc-paralegal-pdg]
 extend = "rustdoc-one"
-env = { "RUSTDOC_TARGET" = "paralegal-spdg" }
+env = { "RUSTDOC_TARGET" = "paralegal-pdg" }
 
 [tasks.rustdoc-paralegal-policy]
 extend = "rustdoc-one"
