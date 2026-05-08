@@ -3,13 +3,15 @@
 //! While this is technically a "library", it only is so for the purposes of
 //! being able to reference the same code in the two executables `paralegal_flow` and
 //! `cargo-paralegal-flow` (a structure suggested by [rustc_plugin]).
-#![feature(rustc_private, min_specialization)]
+#![feature(rustc_private, min_specialization, box_patterns)]
 #![recursion_limit = "256"]
 
+extern crate polonius_engine;
 extern crate rustc_abi;
 extern crate rustc_arena;
 extern crate rustc_ast;
 extern crate rustc_borrowck;
+extern crate rustc_const_eval;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_driver_impl;
@@ -30,10 +32,8 @@ extern crate rustc_stable_hash;
 extern crate rustc_target;
 extern crate rustc_type_ir;
 
-use flowistry_pdg_construction::source_access::{
-    dump_mir_and_borrowck_facts, intermediate_out_dir, mir_borrowck,
-};
-use paralegal_spdg::{AnalyzerStats, FLOW_GRAPH_EXT, ProgramDescription, STAT_FILE_EXT};
+use crate::source_access::{dump_mir_and_borrowck_facts, intermediate_out_dir, mir_borrowck};
+use paralegal_pdg::{AnalyzerStats, FLOW_GRAPH_EXT, ProgramDescription, STAT_FILE_EXT};
 
 use rustc_interface::Config;
 use rustc_middle::ty::TyCtxt;
@@ -56,19 +56,23 @@ pub use either::Either;
 
 pub use rustc_span::Symbol;
 
-pub mod ana;
+pub mod analysis;
 pub mod ann;
 mod args;
+pub mod callback;
+pub mod constants;
 mod ctx;
 pub mod dbg;
 mod discover;
+pub mod mir;
+pub mod source_access;
 mod stats;
 #[macro_use]
 pub mod utils;
 #[cfg(feature = "test")]
 pub mod test_utils;
 
-pub use paralegal_spdg as desc;
+pub use paralegal_pdg as desc;
 
 pub use crate::ann::db::MarkerCtx;
 use crate::{
@@ -330,7 +334,7 @@ impl Callbacks {
             pb.push("paralegal-dump");
             pb.push("graph");
             std::fs::create_dir_all(&pb).unwrap();
-            paralegal_spdg::dot::dump_all_separate(&desc, |name| {
+            paralegal_pdg::dot::dump_all_separate(&desc, |name| {
                 let mut pb = pb.clone();
                 pb.push(format!(
                     "{}",

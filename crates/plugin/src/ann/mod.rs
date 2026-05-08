@@ -1,7 +1,7 @@
 use std::fmt::{Display, Write};
 
 use either::Either;
-use flowistry_pdg_construction::source_access::{ParalegalEncoder, intermediate_out_dir};
+use crate::source_access::{ParalegalEncoder, intermediate_out_dir};
 use rustc_hir::{
     Attribute,
     def_id::DefIndex,
@@ -12,7 +12,7 @@ use rustc_middle::ty::TyCtxt;
 use rustc_serialize::Encodable;
 use serde::{Deserialize, Serialize};
 
-use paralegal_spdg::{
+use paralegal_pdg::{
     Identifier, TinyBitSet, TypeId, rustc_proxies, tiny_bitset_pretty, utils::write_sep,
 };
 

@@ -19,7 +19,6 @@ use std::{fs::File, io::BufReader, rc::Rc, time::Instant};
 use anyhow::Result;
 use inline_judge::{InlineJudgement, K};
 use itertools::Itertools;
-use mir::FlowistryInput;
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::{
@@ -33,19 +32,31 @@ use rustc_middle::{
 use rustc_span::{ErrorGuaranteed, Span as RustSpan, Symbol};
 use tracing::{debug, info};
 
-mod analysis;
-mod callback;
-mod graph_converter;
-mod inline_judge;
-mod mir;
-mod source_access;
-mod utils;
+pub mod async_support;
+mod calling_convention;
+pub mod global;
+pub mod graph_converter;
+pub mod inline_judge;
+pub mod local;
+mod mutation;
 
 use std::time::Duration;
 
 pub use self::inline_judge::InlineJudge;
-pub use analysis::global::MemoPdgConstructor;
+pub use async_support::{determine_async, is_async_trait_fn};
+pub use calling_convention::CallingConvention;
+pub use global::call_tree_visit::{VisitDriver, Visitor};
+pub use global::{
+    DepEdge, DepEdgeKind, DepNode, DepNodeKind, MemoPdgConstructor, Node, OneHopLocation,
+    PartialGraph, Use,
+};
 pub use graph_converter::assemble_pdg;
+
+use crate::callback::{
+    CallChangeCallback, CallChanges, CallInfo, InlineMissReason, SkipCall,
+};
+use crate::mir::FlowistryInput;
+use crate::source_access::local_or_remote_paths;
 
 /// Read-only database of information the analysis needs.
 ///
@@ -413,7 +424,7 @@ impl<'tcx> SPDGGenerator<'tcx> {
     }
 }
 
-fn src_loc_for_span(span: RustSpan, tcx: TyCtxt) -> Span {
+pub(crate) fn src_loc_for_span(span: RustSpan, tcx: TyCtxt) -> Span {
     let (source_file, start_line, start_col, end_line, end_col) =
         tcx.sess.source_map().span_to_location_info(span);
     let file_path = source_file.map_or_else(
@@ -476,7 +487,7 @@ fn def_kind_for_item(id: DefId, tcx: TyCtxt) -> DefKind {
     }
 }
 
-fn path_for_item(id: DefId, tcx: TyCtxt) -> Box<[Identifier]> {
+pub(crate) fn path_for_item(id: DefId, tcx: TyCtxt) -> Box<[Identifier]> {
     let def_path = tcx.def_path(id);
     std::iter::once(Identifier::new(tcx.crate_name(def_path.krate)))
         .chain(def_path.data.iter().filter_map(|segment| {
@@ -499,7 +510,7 @@ fn def_info_for_item(id: DefId, markers: &MarkerCtx, tcx: TyCtxt) -> DefInfo {
         src_info: src_loc_for_span(tcx.def_span(id), tcx),
         markers: markers
             .all_markers_on_item(id)
-            .map(|ann| paralegal_spdg::MarkerAnnotation {
+            .map(|ann| paralegal_pdg::MarkerAnnotation {
                 marker: ann.marker,
                 on_return: ann.refinement.on_return(),
                 on_argument: ann.refinement.on_argument(),
@@ -510,9 +521,9 @@ fn def_info_for_item(id: DefId, markers: &MarkerCtx, tcx: TyCtxt) -> DefInfo {
 
 fn dirty_try_resolve_func_id<'tcx>(
     tcx: TyCtxt<'tcx>,
-    term: &mir::Terminator<'tcx>,
+    term: &rustc_mir::Terminator<'tcx>,
 ) -> Option<DefId> {
-    let mir::TerminatorKind::Call { func, .. } = &term.kind else {
+    let rustc_mir::TerminatorKind::Call { func, .. } = &term.kind else {
         return None;
     };
     let c = func.constant()?;
@@ -549,7 +560,7 @@ impl Stub {
                 };
                 let ty = function.args[param_index].expect_ty();
                 let (def_id, args) =
-                    flowistry_pdg_construction::utils::type_as_fn(tcx, ty).unwrap();
+                    crate::utils::type_as_fn(tcx, ty).unwrap();
                 Ok(Instance::expect_resolve(tcx, param_env, def_id, args, at))
             }
         }
@@ -699,29 +710,3 @@ impl<'tcx> CallChangeCallback<'tcx, K> for MyCallback<'tcx> {
         0
     }
 }
-
-//type StatStracker = Rc<RefCell<(SPDGStats, HashSet<LocalDefId>)>>;
-
-// fn record_inlining(tracker: &StatStracker, tcx: TyCtxt<'_>, def_id: LocalDefId, is_in_cache: bool) {
-//     let mut borrow = tracker.borrow_mut();
-//     let (stats, loc_set) = &mut *borrow;
-//     stats.inlinings_performed += 1;
-//     let is_new = loc_set.insert(def_id);
-
-//     if !is_new || is_in_cache {
-//         return;
-//     }
-
-//     let src_map = tcx.sess.source_map();
-//     let span = body_span(&tcx.body_for_def_id(def_id).unwrap().body);
-//     let (_, start_line, _, end_line, _) = src_map.span_to_location_info(span);
-//     let body_lines = (end_line - start_line + 1) as u32;
-//     if is_new {
-//         stats.unique_functions += 1;
-//         stats.unique_locs += body_lines;
-//     }
-//     if !is_in_cache {
-//         stats.analyzed_functions += 1;
-//         stats.analyzed_locs += body_lines;
-//     }
-// }

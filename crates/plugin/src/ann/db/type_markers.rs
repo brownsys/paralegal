@@ -1,6 +1,6 @@
 use crate::{Either, utils::TyExt};
 
-use paralegal_spdg::Identifier;
+use paralegal_pdg::Identifier;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty;

@@ -3,7 +3,7 @@
 use anyhow::Result;
 use helpers::Test;
 use paralegal_policy::{assert_error, Context, Diagnostics, EdgeSelection, NodeExt, RootContext};
-use paralegal_spdg::{GlobalNode, Identifier};
+use paralegal_pdg::{GlobalNode, Identifier};
 use std::sync::Arc;
 
 mod helpers;

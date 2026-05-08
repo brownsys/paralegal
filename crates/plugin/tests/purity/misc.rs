@@ -1,5 +1,5 @@
 use paralegal_flow::{ann::db::AutoMarkers, inline_test, test_utils::*};
-use paralegal_spdg::DisplayPath;
+use paralegal_pdg::DisplayPath;
 
 fn stdlib_environment() -> &'static DependencyEnvironment {
     super::stdlib_environment()

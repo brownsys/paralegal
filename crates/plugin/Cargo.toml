@@ -27,6 +27,8 @@ pretty = "0.12"
 nom = "7"
 tracing.workspace = true
 tracing-subscriber.workspace = true
+log = "0.4"
+internment = { version = "0.8.6", features = ["serde"] }
 num-derive.workspace = true
 num-traits.workspace = true
 petgraph = { workspace = true }

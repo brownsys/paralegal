@@ -45,7 +45,7 @@
 //! ```no_run
 //! use paralegal_policy::{
 //!     Context, RootContext, assert_error, assert_warning,
-//!     paralegal_spdg::Identifier
+//!     paralegal_pdg::Identifier
 //! };
 //! use std::sync::Arc;
 //!
@@ -96,7 +96,7 @@ use indexmap::IndexMap;
 use std::rc::Rc;
 use std::{io::Write, sync::Arc};
 
-use paralegal_spdg::{
+use paralegal_pdg::{
     DisplayPath, Endpoint, GlobalNode, Identifier, Node, NodeCluster, Span, SpanCoord, SPDG,
 };
 

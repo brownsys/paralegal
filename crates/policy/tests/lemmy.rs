@@ -9,7 +9,7 @@ use paralegal_policy::{
     assert_error, assert_warning, Context, Diagnostics, EdgeSelection, NodeExt, NodeQueries,
     RootContext,
 };
-use paralegal_spdg::{GlobalNode, Identifier};
+use paralegal_pdg::{GlobalNode, Identifier};
 
 const ASYNC_TRAIT_CODE: &str = stringify!(
     pub struct SaveComment {

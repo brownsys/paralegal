@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use paralegal_spdg::utils::TruncatedHumanTime;
+use paralegal_pdg::utils::TruncatedHumanTime;
 use trait_enum::DerefMut;
 
 /// Statsistics that are counted as durations
@@ -16,7 +16,7 @@ pub enum TimedStat {
     /// How long the flowistry PDG cosntruction took in total.
     Flowistry,
     /// How long it took to convert the flowistry graph to a
-    /// [`paralegal_spdg::ProgramDescription`]
+    /// [`paralegal_pdg::ProgramDescription`]
     Conversion,
     /// How long it took to serialize the SPDG
     Serialization,

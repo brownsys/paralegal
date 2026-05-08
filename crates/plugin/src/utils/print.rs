@@ -1,7 +1,13 @@
-pub use paralegal_spdg::utils::write_sep;
+pub use paralegal_pdg::utils::write_sep;
 use std::fmt::{Debug, Display, Formatter, Result};
 
-pub use flowistry_pdg_construction::utils::Print;
+pub struct Print<F: Fn(&mut Formatter<'_>) -> std::fmt::Result>(pub F);
+
+impl<F: Fn(&mut Formatter<'_>) -> std::fmt::Result> std::fmt::Display for Print<F> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        (self.0)(f)
+    }
+}
 
 #[derive(Hash, Eq, Ord, PartialEq, PartialOrd, Clone, Copy)]
 pub struct DisplayViaDebug<T>(pub T);

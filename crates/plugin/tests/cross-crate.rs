@@ -3,7 +3,7 @@
 extern crate lazy_static;
 
 use paralegal_flow::test_utils::*;
-use paralegal_spdg::Identifier;
+use paralegal_pdg::Identifier;
 
 const CRATE_DIR: &str = "tests/cross-crate";
 

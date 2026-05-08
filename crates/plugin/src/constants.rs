@@ -1,6 +1,6 @@
 use std::hash::Hash;
 
-use flowistry_pdg::Constant;
+use paralegal_pdg::Constant;
 use internment::Intern;
 
 use rustc_middle::{

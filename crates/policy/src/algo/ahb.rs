@@ -3,9 +3,9 @@
 use std::borrow::Cow;
 use std::{collections::HashSet, sync::Arc};
 
-pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
+pub use paralegal_pdg::rustc_portable::{DefId, LocalDefId};
 
-use paralegal_spdg::{Endpoint, GlobalNode, Identifier, Node, SPDGImpl};
+use paralegal_pdg::{Endpoint, GlobalNode, Identifier, Node, SPDGImpl};
 
 use anyhow::{ensure, Result};
 use itertools::Itertools;

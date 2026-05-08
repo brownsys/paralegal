@@ -23,7 +23,7 @@ use nom_supreme::{
     error::ErrorTree,
     final_parser::{RecreateContext, final_parser},
 };
-use paralegal_spdg::Identifier;
+use paralegal_pdg::Identifier;
 
 use rustc_ast::{
     ExprKind,

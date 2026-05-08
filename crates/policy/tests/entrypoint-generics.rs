@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use helpers::Test;
 use paralegal_policy::{assert_error, Context, RootContext};
-use paralegal_spdg::Identifier;
+use paralegal_pdg::Identifier;
 
 mod helpers;
 

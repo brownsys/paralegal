@@ -3,7 +3,7 @@ use std::{borrow::Cow, fmt, hash::Hash, rc::Rc};
 use either::Either;
 use tracing::trace;
 
-use flowistry_pdg::{Constant, GlobalLocation};
+use paralegal_pdg::{Constant, GlobalLocation};
 
 use df::ResultsVisitor;
 use rustc_errors::DiagMessage;
@@ -22,11 +22,10 @@ use super::{
     mutation::{ModularMutationVisitor, Mutation, Time},
 };
 use crate::{
-    callback::DefaultCallback,
+    callback::{CallChangeCallback, DefaultCallback},
     constants::PlaceOrConst,
     source_access::{self, BodyCache, CachedBody},
     utils::{PlaceConflictContext, TwoLevelCache},
-    CallChangeCallback,
 };
 
 pub mod call_tree_visit;

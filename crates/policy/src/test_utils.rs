@@ -1,9 +1,9 @@
 use crate::RootContext;
 use paralegal_flow::test_utils::PreFrg;
-use paralegal_spdg::Endpoint;
-use paralegal_spdg::IntoIterGlobalNodes;
-use paralegal_spdg::NodeCluster;
-use paralegal_spdg::{Identifier, InstructionKind, Node as SPDGNode, SPDG};
+use paralegal_pdg::Endpoint;
+use paralegal_pdg::IntoIterGlobalNodes;
+use paralegal_pdg::NodeCluster;
+use paralegal_pdg::{Identifier, InstructionKind, Node as SPDGNode, SPDG};
 use std::sync::Arc;
 use std::sync::OnceLock;
 

@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use flowistry_pdg::rustc_portable::DefId;
+use paralegal_pdg::rustc_portable::DefId;
 use rustc_abi::FieldIdx;
 use tracing::trace;
 

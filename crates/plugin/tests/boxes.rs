@@ -1,7 +1,7 @@
 #![feature(rustc_private)]
 
 use paralegal_flow::{inline_test, test_utils::*};
-use paralegal_spdg::Identifier;
+use paralegal_pdg::Identifier;
 
 const EXTRA_ARGS: [&str; 2] = ["--include=crate", "--no-adaptive-approximation"];
 

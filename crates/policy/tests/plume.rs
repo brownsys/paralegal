@@ -7,7 +7,7 @@ use helpers::Test;
 use anyhow::Result;
 
 use paralegal_policy::{Diagnostics, EdgeSelection, NodeExt};
-use paralegal_spdg::Identifier;
+use paralegal_pdg::Identifier;
 
 macro_rules! marker {
     ($id:ident) => {

@@ -1,6 +1,6 @@
 //! Callbacks to influence graph construction and their supporting types.
 
-use flowistry_pdg::rustc_portable::Location;
+use paralegal_pdg::rustc_portable::Location;
 
 use rustc_middle::{
     mir,

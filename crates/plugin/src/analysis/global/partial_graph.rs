@@ -1,4 +1,4 @@
-use flowistry_pdg::Constant;
+use paralegal_pdg::Constant;
 use petgraph::visit::IntoNodeReferences;
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};

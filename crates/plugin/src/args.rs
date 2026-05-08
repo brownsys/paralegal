@@ -28,8 +28,8 @@ use std::sync::OnceLock;
 use cargo_paralegal_flow::{
     ClapAnalysisCtrl, ClapArgs, Debugger, DumpOption, MarkerControl, ParseableDumpArgs,
 };
-use flowistry_pdg_construction::source_access::std_crates;
-use paralegal_spdg::utils::setup_logging;
+use crate::source_access::std_crates;
+use paralegal_pdg::utils::setup_logging;
 
 use crate::utils::TinyBitSet;
 
@@ -143,7 +143,7 @@ pub struct Args {
 impl Default for Args {
     fn default() -> Self {
         Self {
-            result_path: PathBuf::from(paralegal_spdg::FLOW_GRAPH_OUT_NAME),
+            result_path: PathBuf::from(paralegal_pdg::FLOW_GRAPH_OUT_NAME),
             relaxed: true,
             target: None,
             abort_after_analysis: false,

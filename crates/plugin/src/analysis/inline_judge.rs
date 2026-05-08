@@ -1,7 +1,7 @@
 use std::{fmt::Display, sync::Arc};
 
-use flowistry_pdg_construction::CallInfo;
-use paralegal_spdg::{Identifier, utils::write_sep};
+use crate::callback::CallInfo;
+use paralegal_pdg::{Identifier, utils::write_sep};
 use rustc_hir::def_id::{CrateNum, DefId};
 use rustc_middle::ty::{
     self, AssocKind, BoundVariableKind, Clause, ClauseKind, Instance, ProjectionPredicate,
@@ -12,8 +12,8 @@ use rustc_type_ir::{PredicatePolarity, TyKind};
 
 use crate::{
     MarkerCtx, Pctx,
-    ana::Print,
     args::{InliningDepth, Stub},
+    utils::Print,
 };
 
 pub type K = u32;

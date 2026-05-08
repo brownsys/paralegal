@@ -5,7 +5,7 @@
 
 use crate::{
     Pctx,
-    ana::{InlineJudge, SPDGGenerator},
+    analysis::{InlineJudge, SPDGGenerator},
     stats::Stats,
     sym_vec,
     utils::*,

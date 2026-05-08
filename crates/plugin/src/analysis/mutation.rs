@@ -1,7 +1,7 @@
 //! Identifies the mutated places in a MIR instruction via modular approximation based on types.
 
 use either::Either;
-use flowistry_pdg::rustc_portable::Place;
+use paralegal_pdg::rustc_portable::Place;
 use itertools::Itertools;
 use rustc_abi::FieldIdx;
 use rustc_hir::def_id::DefId;
@@ -14,9 +14,9 @@ use tracing::{debug, trace};
 
 use paralegal_rustc_utils::{AdtDefExt, OperandExt, PlaceExt};
 
-use paralegal_flowistry::mir::{placeinfo::PlaceInfo, utils::AsyncHack};
+use crate::mir::{placeinfo::PlaceInfo, utils::AsyncHack};
 
-use crate::{constants::PlaceOrConst, utils::ty_resolve, Use};
+use crate::{analysis::Use, constants::PlaceOrConst, utils::ty_resolve};
 
 /// Indicator of certainty about whether a place is being mutated.
 /// Used to determine whether an update should be strong or weak.

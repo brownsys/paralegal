@@ -6,11 +6,11 @@ use std::vec;
 use std::{io::Write, process::exit, sync::Arc};
 
 use fixedbitset::FixedBitSet;
-pub use paralegal_spdg::rustc_portable::{DefId, LocalDefId};
-use paralegal_spdg::traverse::{
+pub use paralegal_pdg::rustc_portable::{DefId, LocalDefId};
+use paralegal_pdg::traverse::{
     edge_generic_flows_to, generic_influencees, generic_influencers, EdgeSelection,
 };
-use paralegal_spdg::{
+use paralegal_pdg::{
     CallString, DefKind, DisplayNode, Endpoint, FunctionHandling, GlobalNode, HashMap, HashSet,
     Identifier, InstructionInfo, IntoIterGlobalNodes, NodeCluster, NodeInfo, ProgramDescription,
     Span, TypeId, SPDG,
@@ -575,7 +575,7 @@ impl RootContext {
         &self,
         n: usize,
         src: impl IntoIterGlobalNodes,
-    ) -> paralegal_spdg::NodeCluster {
+    ) -> paralegal_pdg::NodeCluster {
         let mut start: Vec<_> = src.iter_nodes().collect();
         let ctrl = &self.desc.controllers[&src.controller_id()].graph;
 

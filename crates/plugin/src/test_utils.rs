@@ -25,14 +25,14 @@ use std::{
     sync::atomic::AtomicU32,
 };
 
-use paralegal_spdg::{
+use paralegal_pdg::{
     traverse::{edge_generic_flows_to, generic_influencers, EdgeSelection},
     utils::{display_list, write_sep},
     DefInfo, DisplayPath, EdgeInfo, Endpoint, FileSystemStorable, InstructionInfo, InstructionKind,
     Node, NodeInfo, NodeKind, ParalegalArtifact, TypeId, SPDG,
 };
 
-use flowistry_pdg::{CallString, Constant, GlobalLocation};
+use paralegal_pdg::{CallString, Constant, GlobalLocation};
 use itertools::Itertools;
 use petgraph::visit::{Control, Data, DfsEvent, EdgeRef, FilterEdge, GraphBase, IntoEdges};
 use petgraph::visit::{IntoNeighbors, IntoNodeReferences};

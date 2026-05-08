@@ -6,7 +6,7 @@ use std::{
 
 use tracing::debug;
 
-use paralegal_flowistry::mir::FlowistryInput;
+use crate::mir::FlowistryInput;
 
 use polonius_engine::FactTypes;
 use rustc_borrowck::consumers::{BodyWithBorrowckFacts, ConsumerOptions, RustcFacts};

@@ -10,7 +10,7 @@ use anyhow::Result;
 use paralegal_policy::{
     assert_error, Context, Diagnostics as _, EdgeSelection, NodeExt as _, RootContext,
 };
-use paralegal_spdg::{Identifier, NodeCluster};
+use paralegal_pdg::{Identifier, NodeCluster};
 
 macro_rules! marker {
     ($name:ident) => {{

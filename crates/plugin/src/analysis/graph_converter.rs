@@ -3,20 +3,19 @@ use super::{
     Use, VisitDriver, Visitor,
     async_support::match_coroutine_assign,
     determine_async,
-    utils::{
-        ShimResult, handle_shims, manufacture_substs_for, try_monomorphize, try_resolve_function,
-        type_as_fn,
-    },
 };
 use super::{path_for_item, src_loc_for_span};
 use crate::{
     HashMap, HashSet, MarkerCtx, Pctx,
     ann::{db::AutoMarkers, side_effect_detection},
     desc::*,
-    utils::*,
+    utils::{
+        ShimResult, handle_shims, manufacture_substs_for, try_monomorphize, try_resolve_function,
+        type_as_fn, *,
+    },
 };
-use flowistry_pdg::rustc_portable::Location;
-use paralegal_spdg::Node;
+use paralegal_pdg::rustc_portable::Location;
+use paralegal_pdg::Node;
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;
@@ -26,7 +25,7 @@ use rustc_middle::{
 };
 
 use either::Either;
-use paralegal_flowistry::mir::FlowistryInput;
+use crate::mir::FlowistryInput;
 use petgraph::visit::{IntoNodeReferences, NodeRef};
 use tracing::{debug, trace};
 

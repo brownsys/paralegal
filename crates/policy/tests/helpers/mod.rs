@@ -12,7 +12,7 @@ use anyhow::anyhow;
 pub use anyhow::{ensure, Result};
 
 use paralegal_policy::{GraphLocation, RootContext};
-use paralegal_spdg::utils::{prepare_analyzer_command, CommandFactory};
+use paralegal_pdg::utils::{prepare_analyzer_command, CommandFactory};
 
 static ANALYZER_COMMAND: LazyLock<CommandFactory> =
     LazyLock::new(|| prepare_analyzer_command(Path::new("../..")).unwrap());

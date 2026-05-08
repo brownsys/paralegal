@@ -1,9 +1,9 @@
 #![feature(rustc_private)]
 
-use flowistry_pdg::CallString;
+use paralegal_pdg::CallString;
 use paralegal_flow::inline_test;
 use paralegal_flow::test_utils::*;
-use paralegal_spdg::Identifier;
+use paralegal_pdg::Identifier;
 use std::sync::OnceLock;
 
 const EXTRA_ARGS: [&str; 2] = ["--include=crate", "--no-adaptive-approximation"];

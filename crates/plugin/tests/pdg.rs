@@ -8,17 +8,18 @@ extern crate rustc_span;
 use std::{collections::HashSet, rc::Rc};
 
 use either::Either;
-use flowistry_pdg_construction::{
-    source_access::BodyCache, CallChangeCallback, CallChangeCallbackFn, CallChanges,
-    MemoPdgConstructor, SkipCall,
-};
 use itertools::Itertools;
-use paralegal_flow::{Args, Pctx};
-use paralegal_flowistry::mir::FlowistryInput;
+use paralegal_flow::{
+    Args, Pctx,
+    analysis::MemoPdgConstructor,
+    callback::{CallChangeCallback, CallChangeCallbackFn, CallChanges, SkipCall},
+    mir::FlowistryInput,
+    source_access::BodyCache,
+};
 use paralegal_rustc_utils::{
     source_map::find_bodies::find_bodies, test_utils::CompileResult, PlaceExt,
 };
-use paralegal_spdg::{NodeKind, SPDG};
+use paralegal_pdg::{NodeKind, SPDG};
 use paralegal_utils::setup_logging;
 use rustc_hir::def_id::LocalDefId;
 use rustc_middle::{
@@ -43,7 +44,7 @@ struct LocalLoadingOnly<'tcx>(Rc<dyn CallChangeCallback<'tcx, u32> + 'tcx>);
 impl<'tcx> CallChangeCallback<'tcx, u32> for LocalLoadingOnly<'tcx> {
     fn on_inline(
         &self,
-        info: flowistry_pdg_construction::CallInfo<'tcx, '_, u32>,
+        info: paralegal_flow::callback::CallInfo<'tcx, '_, u32>,
     ) -> CallChanges<'tcx, u32> {
         let is_local = info.callee.def_id().is_local();
         let mut changes = self.0.on_inline(info);
@@ -73,7 +74,7 @@ fn pdg(
             memo.with_call_change_callback(LocalLoadingOnly(policy));
             memo.with_dump_mir(std::env::var("DUMP_MIR").is_ok());
             let args = Box::leak(Box::new(Args::default()));
-            let pdg = paralegal_flow::ana::assemble_pdg(
+            let pdg = paralegal_flow::analysis::assemble_pdg(
                 &Pctx::new_test(tcx, args, false),
                 &memo,
                 &mut HashSet::default(),

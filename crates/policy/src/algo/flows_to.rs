@@ -1,18 +1,18 @@
 //! Precomputed reachability queries
 
-use paralegal_spdg::{Node as SPDGNode, SPDGImpl, SPDG};
+use paralegal_pdg::{Node as SPDGNode, SPDGImpl, SPDG};
 
 use bitvec::vec::BitVec;
 
 use std::fmt;
 
 #[cfg(test)]
-use paralegal_spdg::traverse::EdgeSelection;
+use paralegal_pdg::traverse::EdgeSelection;
 
 /// Precomputed indices for common queries of a PDG.
 pub struct CtrlFlowsTo {
     /// The densely packed transitive closure of the
-    /// [`paralegal_spdg::EdgeKind::Data`] edges.
+    /// [`paralegal_pdg::EdgeKind::Data`] edges.
     pub data_flows_to: Vec<BitVec>,
 }
 
@@ -112,7 +112,7 @@ impl fmt::Debug for CtrlFlowsTo {
 
 #[test]
 fn test_data_flows_to() {
-    use paralegal_spdg::Identifier;
+    use paralegal_pdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx
         .controller_by_name(Identifier::new_intern("controller"))
@@ -128,7 +128,7 @@ fn test_data_flows_to() {
 /// replaced by something more robust.
 #[test]
 fn test_ctrl_flows_to() {
-    use paralegal_spdg::Identifier;
+    use paralegal_pdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx
         .controller_by_name(Identifier::new_intern("controller_ctrl"))
@@ -149,7 +149,7 @@ fn test_ctrl_flows_to() {
 
 #[test]
 fn test_flows_to() {
-    use paralegal_spdg::Identifier;
+    use paralegal_pdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx
         .controller_by_name(Identifier::new_intern("controller_data_ctrl"))
@@ -172,7 +172,7 @@ fn test_flows_to() {
 // `is_arg`-population path through `controller_argument`.
 #[test]
 fn test_async_controller_argument() {
-    use paralegal_spdg::Identifier;
+    use paralegal_pdg::Identifier;
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx
         .controller_by_name(Identifier::new_intern("controller_async"))

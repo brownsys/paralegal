@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
-use flowistry_pdg_construction::utils::is_virtual;
-use paralegal_spdg::Identifier;
+use crate::utils::is_virtual;
+use paralegal_pdg::Identifier;
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;

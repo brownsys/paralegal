@@ -3,12 +3,10 @@ use crate::{
     ann::side_effect_detection,
     utils::{func_of_term, type_for_constructor},
 };
-use flowistry_pdg_construction::{
-    determine_async,
-    utils::{ShimResult, handle_shims, try_monomorphize, try_resolve_function},
-};
-use paralegal_flowistry::mir::FlowistryInput;
-use paralegal_spdg::Identifier;
+use crate::analysis::determine_async;
+use crate::utils::{ShimResult, handle_shims, try_monomorphize, try_resolve_function};
+use crate::mir::FlowistryInput;
+use paralegal_pdg::Identifier;
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_middle::{

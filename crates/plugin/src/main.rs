@@ -2,7 +2,7 @@
 use std::path::Path;
 
 use cargo_paralegal_flow::{ClapArgs, EXEC_HASH_ARG, PARALEGAL_ARGS};
-use paralegal_spdg::utils::setup_logging;
+use paralegal_pdg::utils::setup_logging;
 use rustc_session::{EarlyDiagCtxt, config::ErrorOutputType};
 use tracing::debug;
 

@@ -1,9 +1,9 @@
 use std::{borrow::Cow, collections::HashSet, fmt::Display, hash::Hash, iter};
 
 use either::Either;
-use flowistry_pdg::RichLocation;
+use paralegal_pdg::RichLocation;
 use itertools::Itertools;
-use paralegal_flowistry::mir::{placeinfo::PlaceInfo, FlowistryInput};
+use crate::mir::{placeinfo::PlaceInfo, FlowistryInput};
 use tracing::{debug, trace};
 
 use paralegal_rustc_utils::{
@@ -25,13 +25,13 @@ use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
 use rustc_span::{DesugaringKind, Span, Spanned};
 
 use crate::{
-    analysis::global::Use,
+    analysis::{MemoPdgConstructor, global::Use},
+    callback::{CallChangeCallback, CallChanges, CallInfo, InlineMissReason, SkipCall},
     source_access::CachedBody,
     utils::{
         self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize, ShimResult,
         ShimType, TyAsFnResult,
     },
-    CallChangeCallback, CallChanges, CallInfo, InlineMissReason, MemoPdgConstructor, SkipCall,
 };
 
 mod approximation;

@@ -12,10 +12,10 @@
 
 use std::{borrow::Cow, hash::Hash, rc::Rc};
 
-use flowistry_pdg::{CallString, GlobalLocation, RichLocation};
+use paralegal_pdg::{CallString, GlobalLocation, RichLocation};
 use rustc_middle::{mir::Location, ty::Instance};
 
-use crate::{analysis::global::partial_graph::NodeKey, DepNodeKind, MemoPdgConstructor};
+use crate::analysis::{DepNodeKind, MemoPdgConstructor, global::partial_graph::NodeKey};
 
 use super::{
     graph_elems::{DepEdge, DepNode, OneHopLocation, PartialGraph},

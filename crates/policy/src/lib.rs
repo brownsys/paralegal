@@ -53,12 +53,12 @@
 extern crate core;
 
 use anyhow::{bail, ensure, Result};
-pub use paralegal_spdg;
-use paralegal_spdg::utils::TruncatedHumanTime;
-pub use paralegal_spdg::{
+pub use paralegal_pdg;
+use paralegal_pdg::utils::TruncatedHumanTime;
+pub use paralegal_pdg::{
     traverse::EdgeSelection, GlobalNode, IntoIterGlobalNodes, ProgramDescription,
 };
-use paralegal_spdg::{FileSystemStorable, ParalegalArtifact, STAT_FILE_EXT};
+use paralegal_pdg::{FileSystemStorable, ParalegalArtifact, STAT_FILE_EXT};
 use std::time::{Duration, Instant};
 use std::{
     path::{Path, PathBuf},
@@ -209,13 +209,13 @@ impl GraphLocation {
     /// Use the default graph file name in the specified directory.
     pub fn std(dir: impl AsRef<Path>) -> Self {
         Self {
-            path: dir.as_ref().join(paralegal_spdg::ARTIFACT_NAME),
+            path: dir.as_ref().join(paralegal_pdg::ARTIFACT_NAME),
             construction_time: None,
         }
     }
 
     /// Get the path where the analyzzer wrote statistics to. Use this path to
-    /// read a [paralegal_spdg::AnalyzerStats::load].
+    /// read a [paralegal_pdg::AnalyzerStats::load].
     pub fn stats_path(&self) -> PathBuf {
         self.path.with_extension(STAT_FILE_EXT)
     }

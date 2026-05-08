@@ -6,7 +6,7 @@
 #![feature(rustc_private)]
 
 use paralegal_flow::{inline_test, test_utils::*};
-use paralegal_spdg::Identifier;
+use paralegal_pdg::Identifier;
 use std::{path::Path, sync::OnceLock};
 
 /// Dependency environment configured with external crates (tokio, actix_web, etc.)

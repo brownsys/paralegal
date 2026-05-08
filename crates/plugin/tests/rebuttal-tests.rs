@@ -1,7 +1,7 @@
 #![feature(rustc_private)]
 
 use paralegal_flow::test_utils::{CtrlRef, FlowsTo, HasGraph, InlineTestBuilder, NodeRefs};
-use paralegal_spdg::Identifier;
+use paralegal_pdg::Identifier;
 
 fn policy(ctx: CtrlRef, quantifier: impl Fn(&NodeRefs, &NodeRefs) -> bool) -> Result<(), String> {
     let user_data_types = (&ctx).marked_types(Identifier::new_intern("user_data"));

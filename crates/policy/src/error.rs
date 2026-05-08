@@ -1,6 +1,6 @@
 use std::{fmt::Display, sync::Arc};
 
-use paralegal_spdg::{
+use paralegal_pdg::{
     traverse::EdgeSelection, DisplayPath, Endpoint, GlobalNode, Identifier, IntoIterGlobalNodes,
     NodeCluster,
 };

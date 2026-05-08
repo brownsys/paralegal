@@ -19,14 +19,14 @@ use crate::{
         resolve::{self, expect_resolve_string_to_def_id, resolve_string_to_def_id},
     },
 };
-use flowistry_pdg_construction::source_access::{
+use crate::source_access::{
     BodyCache, ParalegalDecoder, local_or_remote_paths,
 };
 use itertools::Itertools;
-use paralegal_flowistry::mir::FlowistryInput;
-use paralegal_spdg::{Identifier, TypeId};
+use crate::mir::FlowistryInput;
+use paralegal_pdg::{Identifier, TypeId};
 
-pub use paralegal_spdg::AutoMarkers;
+pub use paralegal_pdg::AutoMarkers;
 
 use paralegal_rustc_utils::cache::Cache;
 use rustc_data_structures::fx::FxHashMap;
@@ -67,7 +67,7 @@ type ExternalMarkers = HashMap<DefId, Vec<MarkerAnnotation>>;
 /// The idea is that this struct provides basic information about the presence
 /// of markers and takes care of memoizing and caching such information
 /// efficiently but it does not interpret what this information means.
-/// Interpretation is done by [`crate::ana::inline::InlineJudge`].
+/// Interpretation is done by [`crate::analysis::inline_judge::InlineJudge`].
 ///
 /// This is a smart-pointer wrapper around the actual payload ([`MarkerDatabase`]).
 #[derive(Clone)]

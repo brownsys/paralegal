@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use helpers::Test;
 use paralegal_policy::{algo::ahb, assert_error, Context, RootContext};
-use paralegal_spdg::{HashSet, Identifier};
+use paralegal_pdg::{HashSet, Identifier};
 
 mod helpers;
 
