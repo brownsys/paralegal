@@ -1,0 +1,33 @@
+[package]
+name = "paralegal-pdg"
+version = "0.1.0"
+edition = "2021"
+description = "Graph structure created by the `paralegal-flow` extractor and consumed by policies written with the `paralegal-policy` framework."
+
+[package.metadata.rust-analyzer]
+rustc_private = true
+
+[features]
+rustc = []
+binenc = ["dep:bincode"]
+default = ["binenc"]
+
+[dependencies]
+paralegal-utils = { path = "../utils" }
+serde = { workspace = true, features = ["derive"] }
+log = "0.4"
+internment = { version = "0.8.6", features = ["serde"] }
+itertools = "0.13.0"
+strum = { workspace = true }
+cfg-if = "1"
+petgraph = { workspace = true }
+static_assertions = "1"
+dot = { git = "https://github.com/JustusAdam/dot-rust", rev = "ff2b42ceda98c639c8ea3cbfc56b83d6e06e8106" }
+serde_json.workspace = true
+bincode = { version = "1.1.3", optional = true }
+anyhow = { workspace = true }
+allocative = { workspace = true }
+
+[build-dependencies]
+anyhow = "1"
+paralegal-utils = { path = "../utils" }

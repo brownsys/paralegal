@@ -1,0 +1,9 @@
+// flows-to
+
+CauseBuilder::new("{{span}}", "{{clause_num}}")
+{{#if sink-all-method}}
+    .goes_to_all
+{{else}}
+    .goes_to
+{{/if}}
+        ({{{src}}}, {{{sink}}}, ctx.as_ref())

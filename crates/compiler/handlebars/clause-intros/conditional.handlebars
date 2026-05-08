@@ -1,0 +1,8 @@
+// conditional
+
+CauseBuilder::new("{{span}}", "{{clause_num}}")
+    .or(|| 
+        CauseBuilder::new("", "{{clause_num}}")
+            .not({ {{{intro}}} }),
+        || { {{{body}}} }
+    )

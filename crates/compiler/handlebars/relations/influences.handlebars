@@ -1,0 +1,9 @@
+// influences
+
+CauseBuilder::new("{{span}}", "{{clause_num}}")
+{{#if sink-all-method}}
+    .influences_all
+{{else}}
+    .influences
+{{/if}}
+    ({{{src}}}, {{{sink}}}, ctx.as_ref())

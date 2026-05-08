@@ -1,0 +1,9 @@
+// everywhere
+
+{{{global-definitions}}}
+
+let is_compliant = CauseBuilder::new("Scope everywhere", "").all(ctx.controller_contexts(), |ctx| { 
+    {{{definitions}}}
+    {{{body}}}
+});
+error::report(is_compliant, ctx.root());

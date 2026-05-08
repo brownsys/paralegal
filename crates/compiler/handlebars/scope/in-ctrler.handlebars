@@ -1,0 +1,17 @@
+// in-ctrler
+
+{{{global-definitions}}}
+
+let found = CauseBuilder::new("In controller {{ctrler}}", "{{cause_num}}").any(
+    ctx.controller_contexts(),
+    |ctx| {
+        if ctx.current().name.as_str() != "{{ctrler}}" {
+
+            return (false, CauseBuilder::new("", "").with_type(CauseTy::empty_quantifier(Connective::Or)));
+        }
+        {{{definitions}}}
+        {{{body}}}
+    }
+)
+
+error::report(found, ctx.root());
