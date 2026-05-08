@@ -183,7 +183,6 @@ fn simple_monomorphization() -> Result<()> {
 }
 
 #[test]
-#[ignore = "Marker assignment in generic functions that need monomorphization are broken."]
 fn markers_on_generic_calls() -> Result<()> {
     let test = Test::new(stringify!(
         struct Donator;
@@ -233,27 +232,16 @@ fn markers_on_generic_calls() -> Result<()> {
                 .collect();
 
             let expect_connect = ctx.current().name.as_str() == "has_connection";
+            let has_flow = ctx
+                .any_flows(&sources, &targets, EdgeSelection::Data)
+                .is_some();
 
             assert_error!(
                 ctx,
-                !expect_connect || !sources.is_empty(),
-                "Source presence. Expectation: {}",
-                expect_connect
-            );
-            assert_error!(
-                ctx,
-                !expect_connect || !targets.is_empty(),
-                "Target presence. Expectation: {}",
-                expect_connect
-            );
-            assert_error!(
-                ctx,
-                !expect_connect
-                    || ctx
-                        .any_flows(&sources, &targets, EdgeSelection::Data)
-                        .is_some(),
-                "Flow. Expectation: {}",
-                expect_connect
+                expect_connect == has_flow,
+                "Flow. Expectation: {}, found: {}",
+                expect_connect,
+                has_flow
             );
             for &src in sources.iter() {
                 ctx.node_note(src, format!("This is a source {}", src.describe(&ctx)));
