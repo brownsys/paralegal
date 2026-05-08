@@ -4,6 +4,7 @@
 //! being able to reference the same code in the two executables `paralegal_flow` and
 //! `cargo-paralegal-flow` (a structure suggested by [rustc_plugin]).
 #![feature(rustc_private, min_specialization)]
+#![recursion_limit = "256"]
 
 extern crate rustc_abi;
 extern crate rustc_arena;

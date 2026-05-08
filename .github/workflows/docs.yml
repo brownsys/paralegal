@@ -23,14 +23,12 @@ jobs:
         git config --local user.name "github-actions[bot]"
     - name: Install cargo-make
       run: rustup run stable cargo install --force --debug cargo-make
-    - name: Prepare
+    - name: Build and assemble docs
+      env:
+        RUSTC_DOCS_URL: https://brownsys.github.io/paralegal/compiler/
       run: |
-        cargo doc --document-private-items
-        mkdir docs
-        cp -R target/doc docs/libs
+        cargo make assemble-deploy-docs
         rm -R .github
-    - name: Copy rustc docs and index page
-      run: cargo make populate-doc-dir
     - name: Commit Doc Generation
       run: |
         git add docs
