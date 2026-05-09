@@ -408,6 +408,8 @@ where
         let body = self.mono_body;
         let tcx = self.place_info.tcx;
         let mutated_ty = ty_resolve(mutated.ty(&body.local_decls, tcx).ty, tcx);
+        // Via mutable value so that we use whole-place mutation when e.g.
+        // the struct has no fields.
         let mut emitted_subfield = false;
         match mutated_ty.kind() {
             TyKind::Adt(adt_def, substs) if adt_def.is_struct() => {
