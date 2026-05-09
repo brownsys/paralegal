@@ -2,7 +2,7 @@
 //! `rustc` feature is enabled.
 //!
 //! The idea is that you can then define your data structure over this
-//! (including serialization) like so, using `cfg_attr:
+//! (including serialization) like so, using `cfg_attr`:
 //!
 //! ```ignore
 //! pub struct GlobalLocationS {
@@ -13,6 +13,11 @@
 //!     pub location: Location,
 //! }
 //! ```
+
+// The aliases below are conditionally re-exported under both feature flags;
+// the module doc above is the relevant context, so per-alias docs would just
+// restate the rustc type's documentation.
+#![allow(missing_docs)]
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "rustc")] {

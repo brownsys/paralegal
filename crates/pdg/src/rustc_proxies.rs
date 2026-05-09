@@ -31,8 +31,10 @@ macro_rules! proxy_struct {
                 $(
                     #[cfg(feature = "rustc")]
                     #[serde(with = $proxy_str)]
+                    #[allow(missing_docs)]
                     pub $field: $rustc_ty,
                     #[cfg(not(feature = "rustc"))]
+                    #[allow(missing_docs)]
                     pub $field: $proxy_ty,
                 )*
             }
@@ -57,6 +59,7 @@ macro_rules! proxy_index {
 
             #[cfg(not(feature = "rustc"))]
             impl $name {
+                #[allow(missing_docs)]
                 pub fn index(self) -> usize {
                     self.private as usize
                 }
@@ -141,6 +144,8 @@ impl PartialOrd for HirId {
 pub(crate) const LOCAL_CRATE: CrateNum = CrateNum { private: 0 };
 
 impl LocalDefId {
+    /// Lifts a `LocalDefId` into a [`DefId`] by tagging it with the
+    /// `LOCAL_CRATE` proxy crate number.
     #[cfg(not(feature = "rustc"))]
     pub fn to_def_id(self) -> DefId {
         DefId {

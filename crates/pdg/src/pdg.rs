@@ -19,7 +19,7 @@ pub enum RichLocation {
 
     /// The start of the body.
     ///
-    /// Note that [`Location::START`] is different from [`RichLocation::Start`]!
+    /// Note that `Location::START` is different from [`RichLocation::Start`]!
     /// The latter is *before* the former in time.
     Start,
 
@@ -44,6 +44,8 @@ impl RichLocation {
         matches!(self, RichLocation::End)
     }
 
+    /// Returns true if this is a [`RichLocation::Location`] (i.e. not a
+    /// synthetic `Start`/`End`).
     pub fn is_real(self) -> bool {
         matches!(self, RichLocation::Location(_))
     }
@@ -129,6 +131,12 @@ thread_local! {
     }
 }
 
+/// Visitor adapter for [`Intern<T>`] used by `Allocative`.
+///
+/// Honours the `ALLOCATIVE_TRACK_INTERN_AS_UNIQUE` env var: when unset
+/// (default) interned values are reported as shared so the same payload is
+/// not double-counted across handles; when set, each `Intern` handle is
+/// charged its full size.
 pub fn allocative_visit_intern_t<T: Allocative + ?Sized>(
     intern: Intern<T>,
     visitor: &mut allocative::Visitor<'_>,
@@ -231,6 +239,7 @@ impl CallString {
         CallString::new(&string)
     }
 
+    /// Adds a new call site to the front (root) of the call string.
     pub fn push_front(self, loc: GlobalLocation) -> Self {
         CallString::new(
             [loc]
@@ -241,14 +250,19 @@ impl CallString {
         )
     }
 
+    /// Returns true if this call string has a single (root) location.
     pub fn is_at_root(self) -> bool {
         self.0.len() == 1
     }
 
+    /// Returns the root (outermost) location in the call string.
     pub fn root(self) -> GlobalLocation {
         *self.0.first().unwrap()
     }
 
+    /// Returns an integer that uniquely identifies the interned backing
+    /// storage. Stable across clones of the same [`CallString`]; suitable as
+    /// a hashmap key when you need an opaque, copyable identity.
     pub fn stable_id(self) -> usize {
         let r: &'static CallStringInner = self.0.as_ref();
         r.as_ptr() as usize
@@ -260,10 +274,12 @@ impl CallString {
         self.0.iter().copied()
     }
 
+    /// Number of locations in the call string.
     pub fn len(self) -> usize {
         self.0.len()
     }
 
+    /// Returns true if the call string contains no locations.
     pub fn is_empty(self) -> bool {
         self.0.is_empty()
     }
@@ -325,16 +341,28 @@ impl<T> Allocative for SimpleSizedAllocativeWrapper<T> {
     }
 }
 
+/// A serialized representation of a MIR `Const` value.
+///
+/// Captures the kinds of constants the analyzer surfaces in PDG nodes; richer
+/// forms (e.g. ADTs, references) are not tracked here.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy, Serialize, Deserialize)]
 pub enum Constant {
+    /// A signed integer constant.
     Int(i64),
+    /// An unsigned integer constant.
     Uint(u64),
+    /// A `char` constant.
     Char(char),
     // Placeholder. Floats in the rust compiler are a bit weird so I'll skip them for now.
+    /// A floating-point constant. See [`FloatWrapper`] for the bit-equality
+    /// caveat.
     Float(FloatWrapper),
+    /// A boolean constant.
     Bool(bool),
+    /// A string constant, interned to deduplicate identical literals.
     String(Intern<String>),
     //Unknown(Intern<String>),
+    /// A zero-sized constant identified by its rendered type name (interned).
     Zst(Intern<String>),
 }
 
@@ -366,21 +394,27 @@ impl std::hash::Hash for FloatWrapper {
 }
 
 impl Constant {
+    /// Constructs a [`Constant::Int`] from anything convertible to `i64`.
     pub fn int(i: impl Into<i64>) -> Self {
         Self::Int(i.into())
     }
+    /// Constructs a [`Constant::Uint`] from anything convertible to `u64`.
     pub fn uint(u: impl Into<u64>) -> Self {
         Self::Uint(u.into())
     }
+    /// Constructs a [`Constant::Char`].
     pub fn char(c: impl Into<char>) -> Self {
         Self::Char(c.into())
     }
+    /// Constructs a [`Constant::Bool`].
     pub fn bool(b: impl Into<bool>) -> Self {
         Self::Bool(b.into())
     }
+    /// Constructs a [`Constant::String`], interning the contents.
     pub fn string(s: impl AsRef<str>) -> Self {
         Self::String(Intern::from_ref(s.as_ref()))
     }
+    /// Constructs a [`Constant::Zst`] tagged with the given (interned) type name.
     pub fn zst(s: impl AsRef<str>) -> Self {
         Self::Zst(Intern::from_ref(s.as_ref()))
     }
