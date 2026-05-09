@@ -415,24 +415,17 @@ where
                     .all_visible_fields(self.place_info.def_id, self.place_info.tcx)
                     .enumerate()
                 {
-                    let field = PlaceElem::Field(FieldIdx::from_usize(i), field_def.ty(tcx, substs));
+                    let field =
+                        PlaceElem::Field(FieldIdx::from_usize(i), field_def.ty(tcx, substs));
                     let mutated_field = mutated.project_deeper(&[field], tcx);
-                    self.emit_destructured_or_leaf(
-                        mutated_field,
-                        inputs,
-                        location,
-                        status,
-                        is_arg,
-                    );
+                    self.emit_destructured_or_leaf(mutated_field, inputs, location, status, is_arg);
                     emitted_subfield = true;
                 }
             }
             TyKind::Adt(adt_def, substs) if adt_def.is_enum() => {
                 for (idx, variant) in adt_def.variants().iter_enumerated() {
-                    let downcast = mutated.project_deeper(
-                        &[ProjectionElem::Downcast(Some(variant.name), idx)],
-                        tcx,
-                    );
+                    let downcast = mutated
+                        .project_deeper(&[ProjectionElem::Downcast(Some(variant.name), idx)], tcx);
                     for (field_idx, field_def) in variant.fields.iter_enumerated() {
                         let field = PlaceElem::Field(field_idx, field_def.ty(tcx, substs));
                         let mutated_field = downcast.project_deeper(&[field], tcx);
@@ -451,13 +444,7 @@ where
                 for (i, ty) in tys.iter().enumerate() {
                     let field = PlaceElem::Field(FieldIdx::from_usize(i), ty);
                     let mutated_field = mutated.project_deeper(&[field], tcx);
-                    self.emit_destructured_or_leaf(
-                        mutated_field,
-                        inputs,
-                        location,
-                        status,
-                        is_arg,
-                    );
+                    self.emit_destructured_or_leaf(mutated_field, inputs, location, status, is_arg);
                     emitted_subfield = true;
                 }
             }
@@ -487,7 +474,6 @@ where
         );
     }
 }
-
 
 impl<'tcx, F> Visitor<'tcx> for ModularMutationVisitor<'_, 'tcx, F>
 where
