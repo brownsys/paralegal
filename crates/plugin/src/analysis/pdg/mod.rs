@@ -354,6 +354,7 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
     > {
         ModularMutationVisitor::new(
             &analysis.place_info,
+            &analysis.mono_body,
             analysis.param_env,
             move |location, mutation| {
                 let place = analysis.normalize_place(&mutation.mutated);

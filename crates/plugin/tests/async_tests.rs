@@ -57,9 +57,11 @@ fn top_level_inlining_happens() {
 }
 
 #[test]
-#[ignore = "Need to make instruction info more robust. Doesn't monomorphize properly"]
 fn awaiting_works() {
     inline_test! {
+
+        #[paralegal_flow::marker(sensitive)]
+        struct UserData { pub data: Vec<i64> }
 
         #[paralegal_flow::marker(source)]
         async fn async_get_user_data() -> UserData {
@@ -78,7 +80,7 @@ fn awaiting_works() {
             }
         }
         #[paralegal_flow::marker{ sink, arguments = [0] }]
-        fn send_user_data(user_data: &UserData) {}
+        async fn async_send_user_data(user_data: &UserData) {}
 
 
         async fn main() {
@@ -153,6 +155,9 @@ fn two_data_over_boundary() {
 #[ignore = "Odd aliasing behavior with async. See https://github.com/brownsys/paralegal/issues/144"]
 fn inlining_crate_local_async_fns() {
     inline_test! {
+        #[paralegal_flow::marker(sensitive)]
+        struct UserData { pub data: Vec<i64> }
+
         async fn inlineable_async_dp_user_data(user_data: &mut UserData) {
             dp_user_data(user_data)
         }
@@ -210,6 +215,9 @@ fn inlining_crate_local_async_fns() {
     See https://github.com/willcrichton/flowistry/issues/93"]
 fn no_inlining_overtaint() {
     inline_test! {
+        #[paralegal_flow::marker(sensitive)]
+        struct UserData { pub data: Vec<i64> }
+
         #[paralegal_flow::marker(source)]
         fn get_user_data() -> UserData {
             return UserData {
@@ -278,6 +286,9 @@ fn no_inlining_overtaint() {
 #[ignore = "Odd aliasing behavior with async. See https://github.com/brownsys/paralegal/issues/144"]
 fn no_immutable_inlining_overtaint() {
     inline_test! {
+        #[paralegal_flow::marker(sensitive)]
+        struct UserData { pub data: Vec<i64> }
+
         #[paralegal_flow::marker(source)]
         fn get_user_data() -> UserData {
             return UserData {
@@ -327,10 +338,11 @@ fn no_immutable_inlining_overtaint() {
 }
 
 #[test]
-#[ignore = "Alias analysis is problematic with async.
-    See https://github.com/willcrichton/flowistry/issues/93"]
 fn no_mixed_mutability_borrow_inlining_overtaint() {
     inline_test! {
+        #[paralegal_flow::marker(sensitive)]
+        struct UserData { pub data: Vec<i64> }
+
         #[paralegal_flow::marker(source)]
         fn get_user_data() -> UserData {
             return UserData {
@@ -395,6 +407,9 @@ fn no_mixed_mutability_borrow_inlining_overtaint() {
     See https://github.com/willcrichton/flowistry/issues/93"]
 fn no_mixed_mutability_inlining_overtaint() {
     inline_test! {
+        #[paralegal_flow::marker(sensitive)]
+        struct UserData { pub data: Vec<i64> }
+
         #[paralegal_flow::marker(source)]
         fn get_user_data() -> UserData {
             return UserData {
@@ -540,8 +555,6 @@ fn remove_poll_match() {
 }
 
 #[test]
-#[ignore = "Field level precision across function calls is broken.
-    See https://github.com/willcrichton/flowistry/issues/94."]
 fn no_overtaint_over_poll() {
     inline_test! {
         #[paralegal_flow::marker(noinline)]
@@ -746,7 +759,6 @@ fn await_with_inner_generic_sanity() {
 }
 
 #[test]
-#[ignore = "This relies on resolving a `dyn` to the default method, but I'm doubtful now that's even the right policy."]
 fn await_with_inner_generic() {
     InlineTestBuilder::new(stringify!(
         use std::{
@@ -777,7 +789,6 @@ fn await_with_inner_generic() {
 }
 
 #[test]
-#[ignore = "This relies on resolving a `dyn` to the default method, but I'm doubtful now that's even the right policy."]
 fn await_with_inner_generic_constrained() {
     InlineTestBuilder::new(stringify!(
         use std::{
@@ -899,13 +910,13 @@ fn field_precision_at_future_creation() {
 
     ))
     .check_ctrl(|ctrl| {
-        let sources = ctrl.marked(Identifier::new_intern("source"));
-        let sinks = ctrl.marked(Identifier::new_intern("source_2"));
-        assert!(!sources.is_empty());
-        assert!(!sinks.is_empty());
-        // Ignored until https://github.com/brownsys/paralegal/issues/138 is fixed
-        // assert!(!sources.flows_to_any(&ctrl.marked(Identifier::new_intern("sink"))));
-        // assert!(sinks.flows_to_any(&ctrl.marked(Identifier::new_intern("sink"))));
+        let captured = ctrl.marked(Identifier::new_intern("source"));
+        let dropped = ctrl.marked(Identifier::new_intern("source_2"));
+        let sink = ctrl.marked(Identifier::new_intern("sink"));
+        assert!(!captured.is_empty());
+        assert!(!dropped.is_empty());
+        assert!(captured.flows_to_any(&sink));
+        assert!(!dropped.flows_to_any(&sink));
     })
 }
 

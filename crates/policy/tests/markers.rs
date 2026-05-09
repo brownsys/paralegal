@@ -56,6 +56,27 @@ fn policy(ctx: Arc<RootContext>) -> Result<()> {
     Ok(())
 }
 
+/// Inverse of [`policy`]: errors when a `dangerous` source overtaints a
+/// `sink`. Use for precision tests that should pass exactly when no
+/// dangerous → sink flow exists.
+fn no_overtaint_policy(ctx: Arc<RootContext>) -> Result<()> {
+    let m_dangerous = Identifier::new_intern("dangerous");
+    let m_sink = Identifier::new_intern("sink");
+    let srcs = ctx.nodes_marked_any_way(m_dangerous).collect::<Box<_>>();
+    let sinks = ctx.nodes_marked_any_way(m_sink).collect::<Box<_>>();
+    assert_error!(ctx, !srcs.is_empty());
+    assert_error!(ctx, !sinks.is_empty());
+    if let Some((src, sink)) = ctx.any_flows(&srcs, &sinks, EdgeSelection::Data) {
+        let mut msg = ctx.struct_node_error(
+            src,
+            format!("This source overtaints into a sink: {}", src.describe(&ctx)),
+        );
+        msg.with_node_note(sink, "This is the reached sink");
+        msg.emit();
+    }
+    Ok(())
+}
+
 #[test]
 fn plain() -> Result<()> {
     let test = Test::new(stringify!(
@@ -187,7 +208,6 @@ fn generics() -> Result<()> {
 }
 
 #[test]
-#[ignore = "Function return values are not tracked at the level of precision of fields/variants. See https://github.com/brownsys/paralegal/issues/138"]
 fn generics_precision() -> Result<()> {
     let test = Test::new(stringify!(
         #[paralegal::marker(dangerous)]
@@ -414,9 +434,8 @@ fn hidden_generics_enums() -> Result<()> {
 }
 
 #[test]
-#[ignore = "Function return values are not tracked at the level of precision of fields/variants. See https://github.com/brownsys/paralegal/issues/138"]
 fn enum_precision() -> Result<()> {
-    let mut test = Test::new(stringify!(
+    let test = Test::new(stringify!(
         enum Parent {
             Child(Child),
             Alternate(usize),
@@ -443,14 +462,12 @@ fn enum_precision() -> Result<()> {
             }
         }
     ))?;
-    test.expect_fail();
-    test.run(policy)
+    test.run(no_overtaint_policy)
 }
 
 #[test]
-#[ignore = "Function return values are not tracked at the level of precision of fields/variants. See https://github.com/brownsys/paralegal/issues/138"]
 fn field_precision() -> Result<()> {
-    let mut test = Test::new(stringify!(
+    let test = Test::new(stringify!(
         struct Parent {
             child: Child,
             other: usize,
@@ -475,8 +492,105 @@ fn field_precision() -> Result<()> {
             sink(p.other);
         }
     ))?;
-    test.expect_fail();
-    test.run(policy)
+    test.run(no_overtaint_policy)
+}
+
+#[test]
+fn nested_field_precision() -> Result<()> {
+    let test = Test::new(stringify!(
+        #[paralegal::marker(dangerous)]
+        struct Secret {
+            x: usize,
+        }
+
+        struct Inner {
+            secret: Secret,
+            neutral: u32,
+        }
+
+        struct Outer {
+            inner: Inner,
+            flag: bool,
+        }
+
+        #[paralegal::marker(noinline)]
+        fn source() -> Outer {
+            unreachable!()
+        }
+
+        #[paralegal::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        #[paralegal::analyze]
+        fn main() {
+            let o = source();
+            sink(o.flag);
+        }
+    ))?;
+    test.run(no_overtaint_policy)
+}
+
+#[test]
+fn tuple_struct_precision() -> Result<()> {
+    let test = Test::new(stringify!(
+        #[paralegal::marker(dangerous)]
+        struct Secret {
+            x: usize,
+        }
+
+        struct Wrap(Secret, u32);
+
+        #[paralegal::marker(noinline)]
+        fn source() -> Wrap {
+            unreachable!()
+        }
+
+        #[paralegal::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        #[paralegal::analyze]
+        fn main() {
+            let w = source();
+            sink(w.1);
+        }
+    ))?;
+    test.run(no_overtaint_policy)
+}
+
+#[test]
+fn multi_payload_enum_precision() -> Result<()> {
+    let test = Test::new(stringify!(
+        #[paralegal::marker(dangerous)]
+        struct Bad {
+            x: usize,
+        }
+
+        struct Good {
+            y: u32,
+        }
+
+        enum E {
+            B(Bad),
+            G(Good),
+        }
+
+        #[paralegal::marker(noinline)]
+        fn source() -> E {
+            unreachable!()
+        }
+
+        #[paralegal::marker(sink, arguments = [0])]
+        fn sink<T>(_: T) {}
+
+        #[paralegal::analyze]
+        fn main() {
+            match source() {
+                E::G(g) => sink(g),
+                _ => (),
+            }
+        }
+    ))?;
+    test.run(no_overtaint_policy)
 }
 
 #[test]

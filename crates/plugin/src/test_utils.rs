@@ -615,7 +615,6 @@ pub trait HasGraph<'g>: Sized + Copy {
             .collect()
     }
 
-    /// Use [Self::async_function] for async functions
     fn function(self, name: impl AsRef<str>) -> FnRef<'g> {
         let name = Identifier::new_intern(name.as_ref());
         let id = match self.graph().name_map.get(&name).map(Vec::as_slice) {
@@ -629,8 +628,12 @@ pub trait HasGraph<'g>: Sized + Copy {
         }
     }
 
+    /// An async fn `foo` is desugared to a sync fn that builds a coroutine.
+    /// Call sites in the SPDG carry the outer fn's `DefId`, not the inner
+    /// coroutine's, so this is a thin alias over [`Self::function`] that exists
+    /// to keep callers' intent (`graph.async_function("foo")`) readable.
     fn async_function(self, name: impl AsRef<str>) -> FnRef<'g> {
-        self.function(format!("{}_coroutine", name.as_ref()))
+        self.function(name)
     }
 
     fn info_for(self, id: DefId) -> &'g DefInfo {
