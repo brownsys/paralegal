@@ -4,8 +4,8 @@ mod helpers;
 
 use anyhow::Result;
 use helpers::Test;
-use paralegal_policy::{assert_error, Context, Diagnostics, EdgeSelection, NodeExt};
 use paralegal_pdg::Identifier;
+use paralegal_policy::{assert_error, Context, Diagnostics, EdgeSelection, NodeExt};
 
 #[test]
 fn return_markers_on_no_arg_functions() -> Result<()> {

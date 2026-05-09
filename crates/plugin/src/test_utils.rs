@@ -10,10 +10,10 @@ use rustc_middle::ty::TyCtxt;
 use tracing::debug;
 
 use crate::{
+    Callbacks, EXTRA_RUSTC_ARGS, HashSet,
     ann::{db::AutoMarkers, dump_markers},
     desc::{Identifier, ProgramDescription},
     utils::Print,
-    Callbacks, HashSet, EXTRA_RUSTC_ARGS,
 };
 use std::{ffi::OsString, fmt::Display, io::Write, path::PathBuf, sync::atomic::Ordering};
 use std::{
@@ -26,14 +26,14 @@ use std::{
 };
 
 use paralegal_pdg::{
-    traverse::{edge_generic_flows_to, generic_influencers, EdgeSelection},
-    utils::{display_list, write_sep},
     DefInfo, DisplayPath, EdgeInfo, Endpoint, FileSystemStorable, InstructionInfo, InstructionKind,
-    Node, NodeInfo, NodeKind, ParalegalArtifact, TypeId, SPDG,
+    Node, NodeInfo, NodeKind, ParalegalArtifact, SPDG, TypeId,
+    traverse::{EdgeSelection, edge_generic_flows_to, generic_influencers},
+    utils::{display_list, write_sep},
 };
 
-use paralegal_pdg::{CallString, Constant, GlobalLocation};
 use itertools::Itertools;
+use paralegal_pdg::{CallString, Constant, GlobalLocation};
 use petgraph::visit::{Control, Data, DfsEvent, EdgeRef, FilterEdge, GraphBase, IntoEdges};
 use petgraph::visit::{IntoNeighbors, IntoNodeReferences};
 use petgraph::visit::{NodeRef as _, Visitable};

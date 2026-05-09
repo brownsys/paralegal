@@ -1,11 +1,11 @@
+use crate::analysis::determine_async;
+use crate::mir::FlowistryInput;
+use crate::utils::{ShimResult, handle_shims, try_monomorphize, try_resolve_function};
 use crate::{
     HashSet,
     ann::side_effect_detection,
     utils::{func_of_term, type_for_constructor},
 };
-use crate::analysis::determine_async;
-use crate::utils::{ShimResult, handle_shims, try_monomorphize, try_resolve_function};
-use crate::mir::FlowistryInput;
 use paralegal_pdg::Identifier;
 
 use rustc_data_structures::fx::FxHashSet;

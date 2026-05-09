@@ -2,8 +2,8 @@
 
 use anyhow::Result;
 use helpers::Test;
-use paralegal_policy::{assert_error, Context, EdgeSelection};
 use paralegal_pdg::Identifier;
+use paralegal_policy::{assert_error, Context, EdgeSelection};
 
 mod helpers;
 

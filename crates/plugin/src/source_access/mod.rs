@@ -12,15 +12,15 @@ use polonius_engine::FactTypes;
 use rustc_borrowck::consumers::{BodyWithBorrowckFacts, ConsumerOptions, RustcFacts};
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::{
-    def_id::{CrateNum, DefId, DefIndex, LocalDefId, LOCAL_CRATE},
+    def_id::{CrateNum, DefId, DefIndex, LOCAL_CRATE, LocalDefId},
     intravisit::{self},
 };
 use rustc_macros::{Decodable, Encodable, TyDecodable, TyEncodable};
 use rustc_middle::{
     hir::nested_filter::OnlyBodies,
     mir::{
-        coverage::{BlockMarkerId, CoverageKind},
         Body, ClearCrossCrate, Statement, StatementKind,
+        coverage::{BlockMarkerId, CoverageKind},
     },
     ty::TyCtxt,
     util::Providers,
@@ -278,8 +278,7 @@ impl<'tcx> BodyCache<'tcx> {
         } else if self.std_crates.contains(&key.krate) || self.tcx.is_foreign_item(key) {
             return None;
         } else {
-            let res = self
-                .cache
+            self.cache
                 .get(&key.krate, |_| {
                     let result = load_body_and_facts(self.tcx, key.krate);
                     debug!(
@@ -292,8 +291,7 @@ impl<'tcx> BodyCache<'tcx> {
                 .get(&key.index)
                 .unwrap_or_else(|| {
                     panic!("INVARIANT VIOLATION: body map loaded but {key:?} not found")
-                });
-            res
+                })
         };
 
         // SAFETY: Theoretically this struct may not outlive the body, but

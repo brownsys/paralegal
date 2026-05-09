@@ -3,10 +3,10 @@
 mod helpers;
 
 use helpers::{Result, Test};
+use paralegal_pdg::{traverse::EdgeSelection, IntoIterGlobalNodes};
 use paralegal_policy::{
     algo::ahb, loc, paralegal_pdg, Context, Diagnostics, Marker, NodeExt, NodeQueries,
 };
-use paralegal_pdg::{traverse::EdgeSelection, IntoIterGlobalNodes};
 macro_rules! marker {
     ($id:ident) => {
         Marker::new_intern(stringify!($id))

@@ -1,8 +1,8 @@
 //! Identifies the mutated places in a MIR instruction via modular approximation based on types.
 
 use either::Either;
-use paralegal_pdg::rustc_portable::Place;
 use itertools::Itertools;
+use paralegal_pdg::rustc_portable::Place;
 use rustc_abi::FieldIdx;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{

@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::{hash_map::Entry, HashMap},
+    collections::{HashMap, hash_map::Entry},
     hash::Hash,
     pin::Pin,
 };
@@ -140,7 +140,9 @@ impl<T> Retrieval<T> {
 }
 
 fn recursion_panic<A>() -> A {
-    panic!("Recursion detected! The computation of a value tried to retrieve the same from the cache. Using `get_maybe_recursive` to handle this case gracefully.")
+    panic!(
+        "Recursion detected! The computation of a value tried to retrieve the same from the cache. Using `get_maybe_recursive` to handle this case gracefully."
+    )
 }
 
 impl<K1, K2, Out> Default for TwoLevelCache<K1, K2, Out> {

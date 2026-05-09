@@ -5,8 +5,8 @@
 //! [`analyze`](SPDGGenerator::analyze).
 
 pub mod async_support;
-mod calling_convention;
 mod callback_adapter;
+mod calling_convention;
 mod def_info;
 mod driver;
 pub mod graph_converter;

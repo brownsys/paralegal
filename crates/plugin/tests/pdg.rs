@@ -16,10 +16,10 @@ use paralegal_flow::{
     mir::FlowistryInput,
     source_access::BodyCache,
 };
-use paralegal_rustc_utils::{
-    source_map::find_bodies::find_bodies, test_utils::CompileResult, PlaceExt,
-};
 use paralegal_pdg::{NodeKind, SPDG};
+use paralegal_rustc_utils::{
+    PlaceExt, source_map::find_bodies::find_bodies, test_utils::CompileResult,
+};
 use paralegal_utils::setup_logging;
 use rustc_hir::def_id::LocalDefId;
 use rustc_middle::{

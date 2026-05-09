@@ -2,8 +2,8 @@
 
 extern crate rustc_span;
 
-use paralegal_pdg::GlobalLocation;
 use paralegal_flow::{inline_test, test_utils::*};
+use paralegal_pdg::GlobalLocation;
 use paralegal_pdg::utils::display_list;
 use rustc_span::Symbol;
 

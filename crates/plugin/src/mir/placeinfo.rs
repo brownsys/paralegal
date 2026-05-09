@@ -3,9 +3,9 @@
 use std::ops::ControlFlow;
 
 use paralegal_rustc_utils::{
+    MutabilityExt, PlaceExt,
     cache::{Cache, CopyCache},
     mir::place::UNKNOWN_REGION,
-    MutabilityExt, PlaceExt,
 };
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
@@ -13,7 +13,7 @@ use rustc_middle::{
     ty::{Region, RegionKind, RegionVid, Ty, TyCtxt, TyKind, TypeSuperVisitable, TypeVisitor},
 };
 
-use super::{aliases::Aliases, utils::PlaceSet, FlowistryInput};
+use super::{FlowistryInput, aliases::Aliases, utils::PlaceSet};
 
 /// Utilities for analyzing places: children, aliases, etc.
 pub struct PlaceInfo<'tcx> {
@@ -240,7 +240,7 @@ impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for LoanCollector<'_, 'tcx> {
 mod test {
     use paralegal_rustc_utils::{
         hashset,
-        test_utils::{self, compare_sets, Placer},
+        test_utils::{self, Placer, compare_sets},
     };
 
     use super::*;

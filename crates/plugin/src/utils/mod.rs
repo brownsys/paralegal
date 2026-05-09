@@ -2,14 +2,7 @@
 
 extern crate smallvec;
 
-use std::{
-    cell::RefCell,
-    cmp::Ordering,
-    collections::hash_map::Entry,
-    fmt::Formatter,
-    hash::Hash,
-    pin::Pin,
-};
+use std::{cell::RefCell, collections::hash_map::Entry, hash::Hash, pin::Pin};
 
 use either::Either;
 use itertools::Itertools;
@@ -41,12 +34,13 @@ use rustc_middle::{
         InstanceKind, Region, Ty, TyCtxt, TyKind, TypeVisitable, TypeVisitor, TypingEnv,
     },
 };
-use rustc_span::{Span as RustSpan, ErrorGuaranteed, Span, Spanned as RustcSpanned, Symbol, symbol::Ident};
+use rustc_span::{
+    ErrorGuaranteed, Span as RustSpan, Span, Spanned as RustcSpanned, Symbol, symbol::Ident,
+};
 use rustc_type_ir::{AliasTyKind, PredicatePolarity, RegionKind, TypeFoldable, TypeFolder};
 
 use crate::{
-    analysis::is_async_trait_fn, desc::Identifier, mir::FlowistryInput,
-    source_access::BodyCache,
+    analysis::is_async_trait_fn, desc::Identifier, mir::FlowistryInput, source_access::BodyCache,
 };
 
 pub use paralegal_pdg::{ShortHash, TinyBitSet};
@@ -1025,24 +1019,23 @@ pub fn retype_place<'tcx>(
         }
 
         // Don't continue if we reach a private field
-        if let ProjectionElem::Field(field, _) = elem {
-            if let Some(adt_def) = ty.ty.ty_adt_def() {
-                let field = adt_def
-                    .all_fields()
-                    .nth(field.as_usize())
-                    .unwrap_or_else(|| {
-                        panic!("ADT for {:?} does not have field {field:?}", ty.ty);
-                    });
-                if !field.vis.is_accessible_from(def_id, tcx) {
-                    break;
-                }
+        if let ProjectionElem::Field(field, _) = elem
+            && let Some(adt_def) = ty.ty.ty_adt_def()
+        {
+            let field = adt_def
+                .all_fields()
+                .nth(field.as_usize())
+                .unwrap_or_else(|| {
+                    panic!("ADT for {:?} does not have field {field:?}", ty.ty);
+                });
+            if !field.vis.is_accessible_from(def_id, tcx) {
+                break;
             }
         }
 
         trace!(
             "    Projecting {:?}.{new_projection:?} : {:?} with {elem:?}",
-            orig.local,
-            ty.ty,
+            orig.local, ty.ty,
         );
         ty = ty.projection_ty_core(
             tcx,
@@ -1161,13 +1154,13 @@ pub fn manufacture_substs_for<'tcx>(
                 return Ok(GenericArg::from(Region::new_from_kind(
                     tcx,
                     RegionKind::ReErased,
-                )))
+                )));
             }
             GenericParamDefKind::Const { .. } => {
                 return Err(tcx.dcx().span_err(
                     tcx.def_span(param.def_id),
                     "Cannot use constants as generic parameters in controllers",
-                ))
+                ));
             }
             GenericParamDefKind::Type { .. } => (),
         };

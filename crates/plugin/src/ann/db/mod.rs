@@ -10,6 +10,8 @@
 //!
 //! All interactions happen through the central database object: [`MarkerCtx`].
 
+use crate::mir::FlowistryInput;
+use crate::source_access::{BodyCache, ParalegalDecoder, local_or_remote_paths};
 use crate::{
     Either, HashMap,
     ann::{Annotation, ExceptionAnnotation, MarkerAnnotation, side_effect_detection},
@@ -19,11 +21,7 @@ use crate::{
         resolve::{self, expect_resolve_string_to_def_id, resolve_string_to_def_id},
     },
 };
-use crate::source_access::{
-    BodyCache, ParalegalDecoder, local_or_remote_paths,
-};
 use itertools::Itertools;
-use crate::mir::FlowistryInput;
 use paralegal_pdg::{Identifier, TypeId};
 
 pub use paralegal_pdg::AutoMarkers;

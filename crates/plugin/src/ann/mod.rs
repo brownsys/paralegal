@@ -1,7 +1,7 @@
 use std::fmt::{Display, Write};
 
-use either::Either;
 use crate::source_access::{ParalegalEncoder, intermediate_out_dir};
+use either::Either;
 use rustc_hir::{
     Attribute,
     def_id::DefIndex,

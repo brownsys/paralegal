@@ -343,17 +343,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
-name = "flowistry_pdg"
-version = "0.1.0"
-dependencies = [
- "allocative",
- "cfg-if",
- "internment",
- "serde",
- "strum",
-]
-
-[[package]]
 name = "foldhash"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -604,14 +593,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4895175b425cb1f87721b59f0f286c2092bd4af812243672510e1ac53e2e0ad"
 
 [[package]]
-name = "paralegal-non-rustc-utils"
-version = "0.0.1"
+name = "paralegal-pdg"
+version = "0.1.0"
 dependencies = [
+ "allocative",
  "anyhow",
+ "bincode",
+ "cfg-if",
+ "dot",
+ "internment",
+ "itertools 0.13.0",
+ "log",
+ "paralegal-utils",
+ "petgraph",
  "serde",
  "serde_json",
- "tracing",
- "tracing-subscriber",
+ "static_assertions",
+ "strum",
 ]
 
 [[package]]
@@ -627,8 +625,8 @@ dependencies = [
  "itertools 0.12.1",
  "lazy_static",
  "log",
- "paralegal-non-rustc-utils",
- "paralegal-spdg",
+ "paralegal-pdg",
+ "paralegal-utils",
  "petgraph",
  "serde_json",
  "simple_logger",
@@ -636,24 +634,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "paralegal-spdg"
-version = "0.1.0"
+name = "paralegal-utils"
+version = "0.0.1"
 dependencies = [
- "allocative",
  "anyhow",
- "bincode",
- "cfg-if",
- "dot",
- "flowistry_pdg",
- "internment",
- "itertools 0.13.0",
- "log",
- "paralegal-non-rustc-utils",
- "petgraph",
  "serde",
  "serde_json",
- "static_assertions",
- "strum",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

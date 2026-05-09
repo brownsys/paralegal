@@ -28,12 +28,12 @@ use rustc_macros::{TyDecodable, TyEncodable};
 use rustc_middle::ty::codec::{TyDecoder, TyEncoder};
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_serialize::{
-    opaque::{FileEncoder, MemDecoder},
     Decodable, Decoder, Encodable, Encoder,
+    opaque::{FileEncoder, MemDecoder},
 };
 use rustc_span::{
-    BlobDecoder, BytePos, ByteSymbol, ExpnId, FileName, RelativeBytePos, SourceFile, Span,
-    SpanData, SpanDecoder, SpanEncoder, Symbol, SyntaxContext, DUMMY_SP,
+    BlobDecoder, BytePos, ByteSymbol, DUMMY_SP, ExpnId, FileName, RelativeBytePos, SourceFile,
+    Span, SpanData, SpanDecoder, SpanEncoder, Symbol, SyntaxContext,
 };
 
 macro_rules! encoder_methods {

@@ -7,9 +7,7 @@ const COMPILER_EXECUTABLE: &str = env!("CARGO_BIN_EXE_paralegal-compiler");
 const CARGO_TMPDIR: &str = env!("CARGO_TARGET_TMPDIR");
 
 fn cargo_toml(name: &str) -> String {
-    let policy_path = Path::new("../../crates/policy")
-        .canonicalize()
-        .unwrap();
+    let policy_path = Path::new("../../crates/policy").canonicalize().unwrap();
     include_str!("Cargo.toml")
         .replace("PATH", &policy_path.display().to_string())
         .replace("NAME", name)

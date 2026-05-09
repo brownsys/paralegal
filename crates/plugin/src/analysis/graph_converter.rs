@@ -1,3 +1,4 @@
+use super::def_info::{path_for_item, src_loc_for_span};
 use super::{
     async_support::match_coroutine_assign,
     determine_async,
@@ -7,7 +8,6 @@ use super::{
         call_tree_visit::{VisitDriver, Visitor},
     },
 };
-use super::def_info::{path_for_item, src_loc_for_span};
 use crate::{
     HashMap, HashSet, MarkerCtx, Pctx,
     ann::{db::AutoMarkers, side_effect_detection},
@@ -17,8 +17,8 @@ use crate::{
         type_as_fn, *,
     },
 };
-use paralegal_pdg::rustc_portable::Location;
 use paralegal_pdg::Node;
+use paralegal_pdg::rustc_portable::Location;
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;
@@ -27,8 +27,8 @@ use rustc_middle::{
     ty::{self, Instance, TyCtxt, TypingEnv},
 };
 
-use either::Either;
 use crate::mir::FlowistryInput;
+use either::Either;
 use petgraph::visit::{IntoNodeReferences, NodeRef};
 use tracing::{debug, trace};
 

@@ -1,8 +1,8 @@
 #![feature(rustc_private)]
 
-use paralegal_pdg::CallString;
 use paralegal_flow::inline_test;
 use paralegal_flow::test_utils::*;
+use paralegal_pdg::CallString;
 use paralegal_pdg::Identifier;
 use std::sync::OnceLock;
 

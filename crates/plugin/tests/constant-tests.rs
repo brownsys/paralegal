@@ -1,7 +1,7 @@
 #![feature(rustc_private)]
 
-use paralegal_pdg::Constant;
 use paralegal_flow::test_utils::FlowsTo;
+use paralegal_pdg::Constant;
 
 use paralegal_flow::inline_test;
 

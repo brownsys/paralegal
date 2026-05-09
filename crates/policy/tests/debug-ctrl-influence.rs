@@ -3,8 +3,8 @@
 mod helpers;
 
 use helpers::{Result, Test};
-use paralegal_policy::{assert_error, loc, Context, Diagnostics, Marker, NodeQueries};
 use paralegal_pdg::{Identifier, IntoIterGlobalNodes, NodeCluster};
+use paralegal_policy::{assert_error, loc, Context, Diagnostics, Marker, NodeQueries};
 
 macro_rules! marker {
     ($id:ident) => {

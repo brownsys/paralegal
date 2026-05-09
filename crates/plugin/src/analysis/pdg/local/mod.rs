@@ -1,13 +1,13 @@
 use std::{borrow::Cow, collections::HashSet, hash::Hash, iter};
 
+use crate::mir::{FlowistryInput, placeinfo::PlaceInfo};
 use either::Either;
-use paralegal_pdg::RichLocation;
 use itertools::Itertools;
-use crate::mir::{placeinfo::PlaceInfo, FlowistryInput};
+use paralegal_pdg::RichLocation;
 use tracing::{debug, trace};
 
 use paralegal_rustc_utils::{
-    mir::control_dependencies::ControlDependencies, AdtDefExt, BodyExt, PlaceExt,
+    AdtDefExt, BodyExt, PlaceExt, mir::control_dependencies::ControlDependencies,
 };
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_errors::DiagCtxtHandle;
@@ -15,13 +15,13 @@ use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{
-        visit::Visitor, AggregateKind, BasicBlock, Body, HasLocalDecls, LocalKind, Location,
-        Operand, Place, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind,
-        RETURN_PLACE,
+        AggregateKind, BasicBlock, Body, HasLocalDecls, LocalKind, Location, Operand, Place,
+        RETURN_PLACE, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind,
+        visit::Visitor,
     },
     ty::{AdtKind, EarlyBinder, GenericArgsRef, Instance, Ty, TyCtxt, TyKind, TypingEnv},
 };
-use rustc_mir_dataflow::{self as df, fmt::DebugWithContext, Analysis};
+use rustc_mir_dataflow::{self as df, Analysis, fmt::DebugWithContext};
 use rustc_span::{DesugaringKind, Span, Spanned};
 
 use crate::{
@@ -33,8 +33,8 @@ use crate::{
     callback::{CallChangeCallback, CallChanges, CallInfo, InlineMissReason, SkipCall},
     source_access::CachedBody,
     utils::{
-        self, handle_shims, is_async, is_virtual, place_ty_eq, try_monomorphize, ShimResult,
-        TyAsFnResult,
+        self, ShimResult, TyAsFnResult, handle_shims, is_async, is_virtual, place_ty_eq,
+        try_monomorphize,
     },
 };
 
@@ -885,17 +885,16 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
             destination,
             ..
         } = &terminator.kind
-        {
-            if self.handle_call(
+            && self.handle_call(
                 state,
                 location,
                 func,
                 args,
                 *destination,
                 terminator.source_info.span,
-            ) {
-                return;
-            }
+            )
+        {
+            return;
         }
         // Fallback: call the visitor
         self.terminator_visitor(state, time)

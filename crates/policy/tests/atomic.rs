@@ -7,10 +7,10 @@ use std::{collections::HashSet, sync::Arc};
 use helpers::Test;
 
 use anyhow::Result;
+use paralegal_pdg::{Identifier, NodeCluster};
 use paralegal_policy::{
     assert_error, Context, Diagnostics as _, EdgeSelection, NodeExt as _, RootContext,
 };
-use paralegal_pdg::{Identifier, NodeCluster};
 
 macro_rules! marker {
     ($name:ident) => {{

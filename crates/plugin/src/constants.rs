@@ -1,7 +1,7 @@
 use std::hash::Hash;
 
-use paralegal_pdg::Constant;
 use internment::Intern;
+use paralegal_pdg::Constant;
 
 use rustc_middle::{
     mir::{self, Place},
@@ -208,9 +208,9 @@ fn constant_from_const_value<'tcx>(
                     ty::IntTy::I64 => int.to_u64() as i64,
                     ty::IntTy::Isize => int.to_target_isize(tcx),
                     ty::IntTy::I128 => {
-                        return Err(ConstConversionError::Integer128NotSupported { signed: true })
+                        return Err(ConstConversionError::Integer128NotSupported { signed: true });
                     }
-                }))
+                }));
             }
             ty::Uint(uty) => {
                 return Ok(Constant::Uint(match uty {
@@ -220,9 +220,9 @@ fn constant_from_const_value<'tcx>(
                     ty::UintTy::U64 => int.to_u64(),
                     ty::UintTy::Usize => int.to_target_usize(tcx),
                     ty::UintTy::U128 => {
-                        return Err(ConstConversionError::Integer128NotSupported { signed: false })
+                        return Err(ConstConversionError::Integer128NotSupported { signed: false });
                     }
-                }))
+                }));
             }
             ty::Char => {
                 return Ok(Constant::Char(int.to_u32() as u8 as char));

@@ -10,17 +10,17 @@ use rustc_errors::DiagMessage;
 use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
 use rustc_middle::{
-    mir::{visit::Visitor, AggregateKind, Location, Place, Rvalue, Terminator, TerminatorKind},
+    mir::{AggregateKind, Location, Place, Rvalue, Terminator, TerminatorKind, visit::Visitor},
     ty::{Instance, TyCtxt},
 };
 use rustc_mir_dataflow as df;
 
+use self::local::{CallHandling, InstructionState, LocalAnalysis};
 use super::{
     async_support::*,
     calling_convention::PlaceTranslator,
     mutation::{ModularMutationVisitor, Mutation, Time},
 };
-use self::local::{CallHandling, InstructionState, LocalAnalysis};
 use crate::{
     callback::{CallChangeCallback, DefaultCallback},
     constants::PlaceOrConst,
@@ -29,8 +29,8 @@ use crate::{
 };
 
 pub mod call_tree_visit;
-pub mod local;
 mod graph_elems;
+pub mod local;
 mod partial_graph;
 
 use call_tree_visit::VisitDriver;

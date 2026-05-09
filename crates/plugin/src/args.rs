@@ -25,10 +25,10 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::OnceLock;
 
+use crate::source_access::std_crates;
 use cargo_paralegal_flow::{
     ClapAnalysisCtrl, ClapArgs, Debugger, DumpOption, MarkerControl, ParseableDumpArgs,
 };
-use crate::source_access::std_crates;
 use paralegal_pdg::utils::setup_logging;
 
 use crate::utils::TinyBitSet;

@@ -13,7 +13,7 @@ use rustc_middle::{
 };
 use rustc_span::{Span, Spanned};
 
-use crate::utils::{is_async, ArgSlice, TyAsFnResult};
+use crate::utils::{ArgSlice, TyAsFnResult, is_async};
 
 use super::pdg::local::LocalAnalysis;
 use crate::utils;
