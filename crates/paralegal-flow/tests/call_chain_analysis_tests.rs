@@ -9,6 +9,38 @@ use rustc_span::Symbol;
 
 const EXTRA_ARGS: [&str; 2] = ["--include=crate", "--no-adaptive-approximation"];
 
+/// Property shared by every `no_overtaint_over_*` test below: two distinct
+/// sources `left` and `right` are routed through some construction and read
+/// back by `left_sink` / `right_sink`. Precision is preserved iff each
+/// source flows only to its matching sink.
+fn assert_disjoint_flows(graph: &CtrlRef<'_>) {
+    let left_fn = graph.function("left");
+    let right_fn = graph.function("right");
+    let left_sink_fn = graph.function("left_sink");
+    let right_sink_fn = graph.function("right_sink");
+    let left = graph.call_site(&left_fn);
+    let right = graph.call_site(&right_fn);
+    let left_sink = graph.call_site(&left_sink_fn);
+    let right_sink = graph.call_site(&right_sink_fn);
+
+    assert!(
+        left.output().flows_to_data(&left_sink.input()),
+        "expected `left` to reach `left_sink`",
+    );
+    assert!(
+        right.output().flows_to_data(&right_sink.input()),
+        "expected `right` to reach `right_sink`",
+    );
+    assert!(
+        !left.output().flows_to_data(&right_sink.input()),
+        "precision violation: `left` reaches `right_sink`",
+    );
+    assert!(
+        !right.output().flows_to_data(&left_sink.input()),
+        "precision violation: `right` reaches `left_sink`",
+    );
+}
+
 #[test]
 fn without_return() {
     inline_test! {
@@ -269,279 +301,138 @@ fn field_sensitivity_across_clone() {
     });
 }
 
+// Boilerplate shared by every `no_overtaint_over_*` test: each sets up
+// `left`/`right` source functions and `left_sink`/`right_sink` consumer
+// functions, all marked `noinline` so they remain as named call sites.
+// `assert_disjoint_flows` (above) checks the precision invariant.
+
 #[test]
 fn no_overtaint_over_fn_call() {
     inline_test! {
-        #[paralegal_flow::marker(noinline)]
-        fn input() -> usize { 0 }
-
-        #[paralegal_flow::marker(hello, return)]
-        fn source() -> i32 { 0 }
+        #[paralegal_flow::marker(noinline)] fn left() -> u32 { 0 }
+        #[paralegal_flow::marker(noinline)] fn right() -> u64 { 0 }
+        #[paralegal_flow::marker(noinline)] fn left_sink<T>(_: T) {}
+        #[paralegal_flow::marker(noinline)] fn right_sink<T>(_: T) {}
 
         fn id_fun<T, G>(t: (T, G)) -> (T, G) { t }
 
-        #[paralegal_flow::marker(noinline)]
-        fn target<T>(_t: T) {}
-
-        #[paralegal_flow::marker(noinline)]
-        fn another_target<T>(_t: T) {}
-
         fn main() {
-            let p = input();
-            let q = source();
-            let t = id_fun((p, q));
-            target(t.0);
-            another_target(t.1);
+            let t = id_fun((left(), right()));
+            left_sink(t.0);
+            right_sink(t.1);
         }
     }
     .with_extra_args(EXTRA_ARGS)
-    .check_ctrl(|graph| {
-        let input_fn = graph.function("input");
-        let input = graph.call_site(&input_fn);
-        let another_input_fn = graph.function("source");
-        let another_input = graph.call_site(&another_input_fn);
-        let target_fn = graph.function("target");
-        let target = graph.call_site(&target_fn);
-        let another_target_fn = graph.function("another_target");
-        let another_target = graph.call_site(&another_target_fn);
-
-        assert!(input.output().flows_to_data(&target.input()));
-        assert!(
-            another_input
-                .output()
-                .flows_to_data(&another_target.input())
-        );
-        assert!(!dbg!(input.output()).flows_to_data(&dbg!(another_target.input())));
-        assert!(!another_input.output().flows_to_data(&target.input()));
-    });
+    .check_ctrl(|graph| assert_disjoint_flows(&graph));
 }
 
 #[test]
 fn no_overtaint_over_generic_fn_call() {
     inline_test! {
-        #[paralegal_flow::marker(noinline)]
-        fn input() -> usize { 0 }
-
-        #[paralegal_flow::marker(hello, return)]
-        fn source() -> i32 { 0 }
+        #[paralegal_flow::marker(noinline)] fn left() -> u32 { 0 }
+        #[paralegal_flow::marker(noinline)] fn right() -> u64 { 0 }
+        #[paralegal_flow::marker(noinline)] fn left_sink<T>(_: T) {}
+        #[paralegal_flow::marker(noinline)] fn right_sink<T>(_: T) {}
 
         fn generic_id_fun<T>(t: T) -> T { t }
 
-        #[paralegal_flow::marker(noinline)]
-        fn target<T>(_t: T) {}
-
-        #[paralegal_flow::marker(noinline)]
-        fn another_target<T>(_t: T) {}
-
         fn main() {
-            let p = input();
-            let q = source();
-            let t = generic_id_fun((p, q));
-            target(t.0);
-            another_target(t.1);
+            let t = generic_id_fun((left(), right()));
+            left_sink(t.0);
+            right_sink(t.1);
         }
     }
     .with_extra_args(EXTRA_ARGS)
-    .check_ctrl(|graph| {
-        let input_fn = graph.function("input");
-        let input = graph.call_site(&input_fn);
-        let another_input_fn = graph.function("source");
-        let another_input = graph.call_site(&another_input_fn);
-        let target_fn = graph.function("target");
-        let target = graph.call_site(&target_fn);
-        let another_target_fn = graph.function("another_target");
-        let another_target = graph.call_site(&another_target_fn);
-
-        assert!(input.output().flows_to_data(&target.input()));
-        assert!(
-            another_input
-                .output()
-                .flows_to_data(&another_target.input())
-        );
-        assert!(!dbg!(input.output()).flows_to_data(&dbg!(another_target.input())));
-        assert!(!another_input.output().flows_to_data(&target.input()));
-    });
+    .check_ctrl(|graph| assert_disjoint_flows(&graph));
 }
 
 #[test]
 fn no_overtaint_over_nested_fn_call() {
     inline_test! {
-        #[paralegal_flow::marker(noinline)]
-        fn input() -> usize { 0 }
+        #[paralegal_flow::marker(noinline)] fn left() -> u32 { 0 }
+        #[paralegal_flow::marker(noinline)] fn right() -> u64 { 0 }
+        #[paralegal_flow::marker(noinline)] fn left_sink<T>(_: T) {}
+        #[paralegal_flow::marker(noinline)] fn right_sink<T>(_: T) {}
 
-        #[paralegal_flow::marker(hello, return)]
-        fn source() -> i32 { 0 }
+        fn forwarder(t: (u32, u64)) { acceptor(t) }
 
-        fn forwarder(t: (usize, i32)) { acceptor(t) }
-
-        fn acceptor(t: (usize, i32)) {
-            target(t.0);
-            another_target(t.1);
+        fn acceptor(t: (u32, u64)) {
+            left_sink(t.0);
+            right_sink(t.1);
         }
 
-        #[paralegal_flow::marker(noinline)]
-        fn target<T>(_t: T) {}
-
-        #[paralegal_flow::marker(noinline)]
-        fn another_target<T>(_t: T) {}
-
         fn main() {
-            let p = input();
-            let q = source();
-            forwarder((p, q));
+            forwarder((left(), right()));
         }
     }
     .with_extra_args(EXTRA_ARGS)
-    .check_ctrl(|graph| {
-        let input_fn = graph.function("input");
-        let input = graph.call_site(&input_fn);
-        let another_input_fn = graph.function("source");
-        let another_input = graph.call_site(&another_input_fn);
-        let target_fn = graph.function("target");
-        let target = graph.call_site(&target_fn);
-        let another_target_fn = graph.function("another_target");
-        let another_target = graph.call_site(&another_target_fn);
-
-        assert!(input.output().flows_to_data(&target.input()));
-        assert!(
-            another_input
-                .output()
-                .flows_to_data(&another_target.input())
-        );
-        assert!(!dbg!(input.output()).flows_to_data(&dbg!(another_target.input())));
-        assert!(!another_input.output().flows_to_data(&target.input()));
-    });
+    .check_ctrl(|graph| assert_disjoint_flows(&graph));
 }
 
 #[test]
 fn no_overtaint_over_field_projection_in_callee() {
     inline_test! {
-        #[paralegal_flow::marker(noinline)]
-        fn input() -> usize { 0 }
-
-        #[paralegal_flow::marker(hello, return)]
-        fn source() -> usize { 0 }
+        #[paralegal_flow::marker(noinline)] fn left() -> u32 { 0 }
+        #[paralegal_flow::marker(noinline)] fn right() -> u64 { 0 }
+        #[paralegal_flow::marker(noinline)] fn left_sink<T>(_: T) {}
+        #[paralegal_flow::marker(noinline)] fn right_sink<T>(_: T) {}
 
         fn first<T, G>(t: (T, G)) -> T { t.0 }
 
-        #[paralegal_flow::marker(noinline)]
-        fn target<T>(_t: T) {}
-
-        #[paralegal_flow::marker(noinline)]
-        fn another_target<T>(_t: T) {}
-
         fn main() {
-            let p = source();
-            let q = input();
-            target(first((p, q)));
-            another_target(first((q, p)));
+            let l = left();
+            let r = right();
+            // first returns the .0 element, so each sink sees its own
+            // source. Precision check: the dropped field must not leak.
+            left_sink(first((l, r)));
+            right_sink(first((r, l)));
         }
     }
     .with_extra_args(EXTRA_ARGS)
-    .check_ctrl(|graph| {
-        let input_fn = graph.function("input");
-        let input = graph.call_site(&input_fn);
-        let source_fn = graph.function("source");
-        let source = graph.call_site(&source_fn);
-        let target_fn = graph.function("target");
-        let target = graph.call_site(&target_fn);
-        let another_target_fn = graph.function("another_target");
-        let another_target = graph.call_site(&another_target_fn);
-
-        assert!(source.output().flows_to_data(&target.input()));
-        assert!(input.output().flows_to_data(&another_target.input()));
-        assert!(!dbg!(input.output()).flows_to_data(&dbg!(target.input())));
-        assert!(!dbg!(source.output()).flows_to_data(&dbg!(another_target.input())));
-    });
+    .check_ctrl(|graph| assert_disjoint_flows(&graph));
 }
 
 #[test]
 fn no_overtaint_over_aggregate_construction_in_callee() {
     inline_test! {
-        #[paralegal_flow::marker(noinline)]
-        fn input() -> usize { 0 }
-
-        #[paralegal_flow::marker(hello, return)]
-        fn source() -> usize { 0 }
+        #[paralegal_flow::marker(noinline)] fn left() -> u32 { 0 }
+        #[paralegal_flow::marker(noinline)] fn right() -> u64 { 0 }
+        #[paralegal_flow::marker(noinline)] fn left_sink<T>(_: T) {}
+        #[paralegal_flow::marker(noinline)] fn right_sink<T>(_: T) {}
 
         fn pair<T, G>(a: T, b: G) -> (T, G) { (a, b) }
 
-        #[paralegal_flow::marker(noinline)]
-        fn target<T>(_t: T) {}
-
-        #[paralegal_flow::marker(noinline)]
-        fn another_target<T>(_t: T) {}
-
         fn main() {
-            let p = input();
-            let q = source();
-            let r = pair(p, q);
-            target(r.0);
-            another_target(r.1);
+            let r = pair(left(), right());
+            left_sink(r.0);
+            right_sink(r.1);
         }
     }
     .with_extra_args(EXTRA_ARGS)
-    .check_ctrl(|graph| {
-        let input_fn = graph.function("input");
-        let input = graph.call_site(&input_fn);
-        let source_fn = graph.function("source");
-        let source = graph.call_site(&source_fn);
-        let target_fn = graph.function("target");
-        let target = graph.call_site(&target_fn);
-        let another_target_fn = graph.function("another_target");
-        let another_target = graph.call_site(&another_target_fn);
-
-        assert!(input.output().flows_to_data(&target.input()));
-        assert!(source.output().flows_to_data(&another_target.input()));
-        assert!(!dbg!(input.output()).flows_to_data(&dbg!(another_target.input())));
-        assert!(!dbg!(source.output()).flows_to_data(&dbg!(target.input())));
-    });
+    .check_ctrl(|graph| assert_disjoint_flows(&graph));
 }
 
 #[test]
 fn no_overtaint_over_in_place_field_update() {
     inline_test! {
-        #[paralegal_flow::marker(noinline)]
-        fn initial() -> usize { 0 }
-
-        #[paralegal_flow::marker(noinline)]
-        fn input() -> usize { 0 }
-
-        #[paralegal_flow::marker(hello, return)]
-        fn source() -> usize { 0 }
+        #[paralegal_flow::marker(noinline)] fn left() -> u32 { 0 }
+        #[paralegal_flow::marker(noinline)] fn right() -> u64 { 0 }
+        #[paralegal_flow::marker(noinline)] fn left_sink<T>(_: T) {}
+        #[paralegal_flow::marker(noinline)] fn right_sink<T>(_: T) {}
 
         fn set_first<T, G>(t: &mut (T, G), v: T) { t.0 = v }
 
-        #[paralegal_flow::marker(noinline)]
-        fn target<T>(_t: T) {}
-
-        #[paralegal_flow::marker(noinline)]
-        fn another_target<T>(_t: T) {}
-
         fn main() {
-            let q = input();
-            let mut t = (initial(), q);
-            set_first(&mut t, source());
-            target(t.0);
-            another_target(t.1);
+            // Start with an arbitrary value in .0; `set_first` overwrites
+            // it with `left()`. After the write, t == (left, right).
+            let mut t = (0_u32, right());
+            set_first(&mut t, left());
+            left_sink(t.0);
+            right_sink(t.1);
         }
     }
     .with_extra_args(EXTRA_ARGS)
-    .check_ctrl(|graph| {
-        let input_fn = graph.function("input");
-        let input = graph.call_site(&input_fn);
-        let source_fn = graph.function("source");
-        let source = graph.call_site(&source_fn);
-        let target_fn = graph.function("target");
-        let target = graph.call_site(&target_fn);
-        let another_target_fn = graph.function("another_target");
-        let another_target = graph.call_site(&another_target_fn);
-
-        assert!(source.output().flows_to_data(&target.input()));
-        assert!(input.output().flows_to_data(&another_target.input()));
-        assert!(!dbg!(input.output()).flows_to_data(&dbg!(target.input())));
-        assert!(!dbg!(source.output()).flows_to_data(&dbg!(another_target.input())));
-    });
+    .check_ctrl(|graph| assert_disjoint_flows(&graph));
 }
 
 // Whole-aggregate variant of the projection-in-callee case: the projected
@@ -552,45 +443,23 @@ fn no_overtaint_over_in_place_field_update() {
 #[test]
 fn no_overtaint_over_nested_field_projection_in_callee() {
     inline_test! {
-        #[paralegal_flow::marker(noinline)]
-        fn input() -> usize { 0 }
-
-        #[paralegal_flow::marker(hello, return)]
-        fn source() -> usize { 0 }
+        #[paralegal_flow::marker(noinline)] fn left() -> u32 { 0 }
+        #[paralegal_flow::marker(noinline)] fn right() -> u64 { 0 }
+        #[paralegal_flow::marker(noinline)] fn left_sink<T>(_: T) {}
+        #[paralegal_flow::marker(noinline)] fn right_sink<T>(_: T) {}
 
         fn first<T, G>(t: (T, G)) -> T { t.0 }
 
-        #[paralegal_flow::marker(noinline)]
-        fn target<T>(_t: T) {}
-
-        #[paralegal_flow::marker(noinline)]
-        fn another_target<T>(_t: T) {}
-
         fn main() {
-            let s = source();
-            let i = input();
-            let inner = (s, i);
-            let r = first((inner, 0_usize));
-            target(r.0);
-            another_target(r.1);
+            // T = (u32, u64) is itself an aggregate, so `_0 = move _1.0`
+            // inside `first` is a whole-sub-aggregate copy.
+            let r = first(((left(), right()), 0_u8));
+            left_sink(r.0);
+            right_sink(r.1);
         }
     }
     .with_extra_args(EXTRA_ARGS)
-    .check_ctrl(|graph| {
-        let input_fn = graph.function("input");
-        let input = graph.call_site(&input_fn);
-        let source_fn = graph.function("source");
-        let source = graph.call_site(&source_fn);
-        let target_fn = graph.function("target");
-        let target = graph.call_site(&target_fn);
-        let another_target_fn = graph.function("another_target");
-        let another_target = graph.call_site(&another_target_fn);
-
-        assert!(source.output().flows_to_data(&target.input()));
-        assert!(input.output().flows_to_data(&another_target.input()));
-        assert!(!dbg!(input.output()).flows_to_data(&dbg!(target.input())));
-        assert!(!dbg!(source.output()).flows_to_data(&dbg!(another_target.input())));
-    });
+    .check_ctrl(|graph| assert_disjoint_flows(&graph));
 }
 
 // Whole-aggregate variant of the construction-in-callee case: the callee
@@ -599,43 +468,21 @@ fn no_overtaint_over_nested_field_projection_in_callee() {
 #[test]
 fn no_overtaint_over_nested_aggregate_construction_in_callee() {
     inline_test! {
-        #[paralegal_flow::marker(noinline)]
-        fn input() -> usize { 0 }
+        #[paralegal_flow::marker(noinline)] fn left() -> u32 { 0 }
+        #[paralegal_flow::marker(noinline)] fn right() -> u64 { 0 }
+        #[paralegal_flow::marker(noinline)] fn left_sink<T>(_: T) {}
+        #[paralegal_flow::marker(noinline)] fn right_sink<T>(_: T) {}
 
-        #[paralegal_flow::marker(hello, return)]
-        fn source() -> usize { 0 }
-
-        fn wrap_first<T>(a: T) -> (T, usize) { (a, 0) }
-
-        #[paralegal_flow::marker(noinline)]
-        fn target<T>(_t: T) {}
-
-        #[paralegal_flow::marker(noinline)]
-        fn another_target<T>(_t: T) {}
+        fn wrap<T>(a: T) -> (T, u8) { (a, 0) }
 
         fn main() {
-            let inner = (source(), input());
-            let r = wrap_first(inner);
-            target(r.0.0);
-            another_target(r.0.1);
+            let r = wrap((left(), right()));
+            left_sink(r.0.0);
+            right_sink(r.0.1);
         }
     }
     .with_extra_args(EXTRA_ARGS)
-    .check_ctrl(|graph| {
-        let input_fn = graph.function("input");
-        let input = graph.call_site(&input_fn);
-        let source_fn = graph.function("source");
-        let source = graph.call_site(&source_fn);
-        let target_fn = graph.function("target");
-        let target = graph.call_site(&target_fn);
-        let another_target_fn = graph.function("another_target");
-        let another_target = graph.call_site(&another_target_fn);
-
-        assert!(source.output().flows_to_data(&target.input()));
-        assert!(input.output().flows_to_data(&another_target.input()));
-        assert!(!dbg!(input.output()).flows_to_data(&dbg!(target.input())));
-        assert!(!dbg!(source.output()).flows_to_data(&dbg!(another_target.input())));
-    });
+    .check_ctrl(|graph| assert_disjoint_flows(&graph));
 }
 
 // Whole-aggregate variant of the in-place-via-&mut case: the callee
@@ -644,53 +491,25 @@ fn no_overtaint_over_nested_aggregate_construction_in_callee() {
 #[test]
 fn no_overtaint_over_nested_in_place_field_update() {
     inline_test! {
-        #[paralegal_flow::marker(noinline)]
-        fn initial1() -> usize { 0 }
-
-        #[paralegal_flow::marker(noinline)]
-        fn initial2() -> usize { 0 }
-
-        #[paralegal_flow::marker(noinline)]
-        fn input() -> usize { 0 }
-
-        #[paralegal_flow::marker(hello, return)]
-        fn source() -> usize { 0 }
-
-        #[paralegal_flow::marker(noinline)]
-        fn neutral() -> usize { 0 }
+        #[paralegal_flow::marker(noinline)] fn left() -> u32 { 0 }
+        #[paralegal_flow::marker(noinline)] fn right() -> u64 { 0 }
+        #[paralegal_flow::marker(noinline)] fn left_sink<T>(_: T) {}
+        #[paralegal_flow::marker(noinline)] fn right_sink<T>(_: T) {}
 
         fn set_first<T, G>(t: &mut (T, G), v: T) { t.0 = v }
 
-        #[paralegal_flow::marker(noinline)]
-        fn target<T>(_t: T) {}
-
-        #[paralegal_flow::marker(noinline)]
-        fn another_target<T>(_t: T) {}
-
         fn main() {
-            let q = input();
-            let mut t = ((initial1(), initial2()), q);
-            set_first(&mut t, (source(), neutral()));
-            target(t.0.0);
-            another_target(t.0.1);
+            // Inner tuple has aggregate type (u32, u64); `set_first`
+            // overwrites it as a whole. After the write,
+            // t.0 == (left, right).
+            let mut t = ((0_u32, 0_u64), 0_u8);
+            set_first(&mut t, (left(), right()));
+            left_sink(t.0.0);
+            right_sink(t.0.1);
         }
     }
     .with_extra_args(EXTRA_ARGS)
-    .check_ctrl(|graph| {
-        let source_fn = graph.function("source");
-        let source = graph.call_site(&source_fn);
-        let neutral_fn = graph.function("neutral");
-        let neutral = graph.call_site(&neutral_fn);
-        let target_fn = graph.function("target");
-        let target = graph.call_site(&target_fn);
-        let another_target_fn = graph.function("another_target");
-        let another_target = graph.call_site(&another_target_fn);
-
-        assert!(source.output().flows_to_data(&target.input()));
-        assert!(neutral.output().flows_to_data(&another_target.input()));
-        assert!(!dbg!(neutral.output()).flows_to_data(&dbg!(target.input())));
-        assert!(!dbg!(source.output()).flows_to_data(&dbg!(another_target.input())));
-    });
+    .check_ctrl(|graph| assert_disjoint_flows(&graph));
 }
 
 #[test]
