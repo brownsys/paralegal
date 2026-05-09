@@ -83,7 +83,7 @@ args = ["test", "-pparalegal-flow", "-pparalegal-pdg"]
 
 [tasks.policy-tests]
 command = "cargo"
-args = ["test", "-pparalegal-policy"]
+args = ["test", "-ppolicy"]
 
 [tasks.guide-project]
 description = "Build and run the policy from the guide."
