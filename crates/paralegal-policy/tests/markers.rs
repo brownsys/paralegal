@@ -69,10 +69,7 @@ fn no_overtaint_policy(ctx: Arc<RootContext>) -> Result<()> {
     if let Some((src, sink)) = ctx.any_flows(&srcs, &sinks, EdgeSelection::Data) {
         let mut msg = ctx.struct_node_error(
             src,
-            format!(
-                "This source overtaints into a sink: {}",
-                src.describe(&ctx)
-            ),
+            format!("This source overtaints into a sink: {}", src.describe(&ctx)),
         );
         msg.with_node_note(sink, "This is the reached sink");
         msg.emit();
