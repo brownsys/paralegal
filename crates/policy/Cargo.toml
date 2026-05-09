@@ -1,0 +1,32 @@
+[package]
+name = "paralegal-policy"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "A framework for writing policies over graphs defined in `paralegal-pdg` and extracted from Rust programs with `paralegal-flow`."
+
+[dependencies]
+paralegal-pdg = { path = "../pdg" }
+log = "0.4"
+anyhow = { workspace = true }
+itertools = "0.12"
+serde_json = "1"
+simple_logger = "5"
+lazy_static = "1"
+bitvec = "1"
+petgraph = { workspace = true }
+colored = "2"
+strum = { workspace = true }
+indexmap = "2.2.6"
+fixedbitset = "0.5.7"
+
+[dev-dependencies]
+paralegal-flow = { path = "../plugin", features = ["test"] }
+rand = "0.8.5"
+
+[build-dependencies]
+autocfg = "1"
+paralegal-utils = { path = "../utils" }
+
+[features]
+post-rust-175 = []
