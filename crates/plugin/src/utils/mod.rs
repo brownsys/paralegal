@@ -1018,16 +1018,17 @@ pub fn retype_place<'tcx>(
             break;
         }
 
-        // Don't continue if we reach a private field
+        // Don't continue if we reach a private field. If the field index is
+        // out of range for the ADT (e.g. projecting through a coroutine state
+        // or a type whose layout deviates from a normal struct, like
+        // `backtrace::Backtrace`), bail out the same way — we can't reason
+        // about accessibility and any further projection would be unsound.
         if let ProjectionElem::Field(field, _) = elem
             && let Some(adt_def) = ty.ty.ty_adt_def()
         {
-            let field = adt_def
-                .all_fields()
-                .nth(field.as_usize())
-                .unwrap_or_else(|| {
-                    panic!("ADT for {:?} does not have field {field:?}", ty.ty);
-                });
+            let Some(field) = adt_def.all_fields().nth(field.as_usize()) else {
+                break;
+            };
             if !field.vis.is_accessible_from(def_id, tcx) {
                 break;
             }

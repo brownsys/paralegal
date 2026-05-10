@@ -266,7 +266,20 @@ impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
                                 }
                             };
 
-                            fields[field].ident(tcx).to_string()
+                            // The field index can be out of range when projecting through
+                            // a type whose layout deviates from a normal struct (e.g.
+                            // `backtrace::Backtrace` saw this in the contile case study).
+                            // Bail out of `to_string` rather than panicking — the caller
+                            // already handles the `None` return as "can't render this place".
+                            let Some(field_def) = fields.get(field) else {
+                                log::debug!(
+                                    "place::to_string field index {} out of range for {ty:?} ({} fields)",
+                                    field.as_usize(),
+                                    fields.len()
+                                );
+                                return None;
+                            };
+                            field_def.ident(tcx).to_string()
                         }
 
                         TyKind::Tuple(_) => field.as_usize().to_string(),
