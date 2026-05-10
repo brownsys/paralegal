@@ -466,8 +466,15 @@ impl<'tcx, 'a> Decodable<ParalegalDecoder<'tcx, 'a>> for SpanData {
                 parent: None,
             };
         };
-        let hi = source_file.absolute_position(hi);
-        let lo = source_file.absolute_position(lo);
+        // The encoder side calls `original_relative_byte_pos`, which counts
+        // *original* (un-normalized) bytes — e.g. CRLF as 2 bytes — relative
+        // to the file start. The symmetric inverse is `normalized_byte_pos`,
+        // which maps an original-byte offset back to a normalized absolute
+        // BytePos. Using `absolute_position` here would skip the normalization
+        // step and produce a position past the file's end whenever the source
+        // contained CRLF or similar normalized characters.
+        let hi = source_file.normalized_byte_pos(hi.0);
+        let lo = source_file.normalized_byte_pos(lo.0);
         assert!(
             source_file.contains(lo),
             "Byte position (low) {} not found in file {} (from {} to {})",
