@@ -5,7 +5,11 @@ use std::process::Command;
 extern crate chrono;
 use std::env;
 
-const COMPILER_DEPENDENT_BINARIES: &[&str] = &["paralegal-flow"];
+// The binary name is `paralegal-flow-impl` because the user-facing
+// `paralegal-flow` is a symlink to `cargo-paralegal-flow` that filters
+// trivial RUSTC_WRAPPER invocations before they reach the rustc_driver-
+// linked binary (see crates/cli/src/main.rs).
+const COMPILER_DEPENDENT_BINARIES: &[&str] = &["paralegal-flow-impl"];
 
 fn add_link_arg_for_compiler_binaries(s: impl std::fmt::Display) {
     for bin in COMPILER_DEPENDENT_BINARIES {
