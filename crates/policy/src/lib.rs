@@ -173,6 +173,11 @@ impl SPDGGenCommand {
 
     /// Abort compilation once the analysis artifacts have been created. Also
     /// sets the expectation for the compilation to succeed to `false`.
+    ///
+    /// This is genuinely useful: it lets the analyzer skip typeck/MIR/codegen
+    /// on the target crate, which matters when the case-study source contains
+    /// errors that the analyzer doesn't care about (e.g. a frozen case study
+    /// whose source no longer typechecks under a newer toolchain).
     pub fn abort_after_analysis(&mut self) -> &mut Self {
         self.0.arg("--abort-after-analysis");
         self
