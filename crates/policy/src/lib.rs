@@ -171,15 +171,16 @@ impl SPDGGenCommand {
         self
     }
 
-    /// Abort compilation once the analysis artifacts have been created. Also
-    /// sets the expectation for the compilation to succeed to `false`.
-    ///
-    /// This is genuinely useful: it lets the analyzer skip typeck/MIR/codegen
-    /// on the target crate, which matters when the case-study source contains
-    /// errors that the analyzer doesn't care about (e.g. a frozen case study
-    /// whose source no longer typechecks under a newer toolchain).
+    /// No-op. Previously this passed `--abort-after-analysis` to the cargo
+    /// command, which made the plugin halt before metadata emission. That
+    /// broke the artifact-discovery path (no rmeta → no `CompilerArtifact`
+    /// → empty `targets`); the CLI now scans the deps dir for `.fgo` files
+    /// as a fallback, but `cargo paralegal-flow` already drives `cargo
+    /// check` (which doesn't reach codegen anyway), so the flag never saved
+    /// real work. The plugin still recognizes `--abort-after-analysis` for
+    /// direct CLI invocations.
+    #[deprecated(note = "no-op; cargo check already stops before codegen")]
     pub fn abort_after_analysis(&mut self) -> &mut Self {
-        self.0.arg("--abort-after-analysis");
         self
     }
 
