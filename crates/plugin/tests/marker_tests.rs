@@ -603,3 +603,84 @@ fn dont_inline_on_std_marker() {
         assert!(ctrl.marked("target2").is_empty());
     });
 }
+
+/// Regression: when a call's argument or return shares a NodeKey
+/// `(place, call_loc)` with an input-side node materialised by a *later*
+/// register_mutation visit, the call's own `Use::Arg(i)` / `Use::Return`
+/// stamp must still win. Otherwise `graph_converter`'s `match weight.use_`
+/// drops the marker, because input-side creation tags the node `Use::Other`.
+///
+/// Two triggers hit this in practice. Both are exercised below by a single
+/// `for` body that calls a marker-bearing function on the loop variable:
+///
+/// 1. **Intra-call clash from loop back-edge.** Dataflow's fixed point records
+///    `last_mutation[arg] = call_loc` because of the loop back-edge, so when
+///    `register_mutation` for the synthetic per-arg `Use::Arg(0)` mutation
+///    runs `find_data_inputs(state, arg)`, the input side asks for the same
+///    `(arg, call_loc)` NodeKey it is about to construct.
+/// 2. **Cross-call clash from CFG joins.** Even straight-line `if num < 90 {
+///    a() } else { b() }` shapes can land the join's downstream consumers in
+///    a visit order where bb_consumer runs between bb_a (output stamped) and
+///    bb_b (output not yet visited), creating `(local, bb_b_call_loc)` as
+///    `Use::Other` first; this surfaced in websubmit's
+///    `recipients = if num < 90 { get_staff(config) } else { get_admins(config) }`.
+///
+/// The fix is in `PartialGraph::register_mutation`: it constructs outputs
+/// **before** inputs (so the intra-call case never visits the input first),
+/// and the output side calls `refine_node_use` to upgrade an existing
+/// `Use::Other` to the call-site-specific use_ (covering the cross-call case).
+#[test]
+fn regression_marker_on_call_arg_in_loop() {
+    inline_test! {
+        pub struct Item {
+            pub a: u32,
+            pub b: u32,
+            pub c: u32,
+            pub d: u32,
+            pub e: u32,
+        }
+
+        #[paralegal_flow::marker(source, return)]
+        fn make_item() -> Item {
+            Item { a: 0, b: 0, c: 0, d: 0, e: 0 }
+        }
+
+        #[paralegal_flow::marker(deletes, arguments = [0])]
+        fn delete(_: Item) {}
+
+        fn main() {
+            let items = [make_item(), make_item(), make_item()];
+            for x in items {
+                // bb_loop_body's call to `delete(move _x, …)` is the offending
+                // site. The synthetic `Use::Arg(0)` mutation for `_x` updates
+                // `state.last_mutation[_x] = call_loc` (whole place); the
+                // iterator's per-iteration write to `_x` only touches the
+                // visible fields `_x.a..=_x.e`, never the whole place, so the
+                // back-edge carries the call_loc into the next iteration. The
+                // next iteration's input-side `find_data_inputs(state, _x)`
+                // then creates `(_x, call_loc)` with `Use::Other` before the
+                // synthetic mutation can stamp `Use::Arg(0)`.
+                delete(x);
+            }
+        }
+    }
+    .with_extra_args(EXTRA_ARGS.iter().copied())
+    .check_ctrl(|ctrl| {
+        let src = ctrl.marked("source");
+        let snk = ctrl.marked("deletes");
+        assert!(!src.is_empty(), "source marker not present");
+        assert!(
+            !snk.is_empty(),
+            "expected at least one node with the `deletes` marker — the call to \
+             `delete(x)` inside the for body. Missing means the synthetic \
+             `Use::Arg(0)` for the call's first operand was silently demoted to \
+             `Use::Other` (because the loop back-edge made `state.last_mutation[x] \
+             = call_loc` before the synthetic mutation registered), so \
+             `markers_on_argument(delete, 0)` never attached."
+        );
+        assert!(
+            src.flows_to_data(&snk),
+            "expected `make_item()` taint to flow to the `delete(x)` argument"
+        );
+    });
+}
