@@ -339,6 +339,78 @@ fn no_overtaint_from_sibling_markers() {
     });
 }
 
+/// Regression: visibility-filtered field-index mis-emission in
+/// `ModularMutationVisitor`'s `Rvalue::Use(Move|Copy)` struct branch
+/// (`crates/plugin/src/analysis/mutation.rs:218`). It calls
+/// `all_visible_fields(..).enumerate()` and feeds the enumeration index into
+/// `FieldIdx::from_usize`, but `all_visible_fields` filters by visibility, so
+/// the index is the position **within the visible subset**, not the actual MIR
+/// field index. When a private field at MIR index 0 shifts the visible
+/// enumeration, the per-field mutations are emitted at the wrong projections
+/// (only `Field(0)` and `Field(1)` are ever emitted; `Field(2)` is dropped
+/// entirely), so a struct-to-struct move loses the field at the highest MIR
+/// index — causing the analyzer to miss flow that goes through that field.
+///
+/// `Outer` lives in `mod inner` with a private `_kind: Hidden` at MIR field 0
+/// and two public siblings `vis_a` / `vis_b` at MIR fields 1 / 2. From `main`,
+/// `all_visible_fields` yields `[vis_a, vis_b]`, so the bug enumerates them as
+/// indices 0 and 1 and emits mutations `_y.0 = _x.0` and `_y.1 = _x.1` for
+/// `let y = x` — never `_y.2 = _x.2`. A subsequent read of `y.vis_b` (MIR
+/// `_y.2`) finds no matching mutation in the dep graph, so the source taint
+/// stored at `_x.vis_b` is dropped.
+///
+/// The fix should iterate `non_enum_variant().fields` (or otherwise use real
+/// MIR indices), emitting `_y.1 = _x.1` and `_y.2 = _x.2`; the read of
+/// `y.vis_b` then picks up the source taint and the assertion passes.
+#[test]
+fn regression_visibility_filter_use_move_struct_overtaint() {
+    inline_test! {
+        mod inner {
+            pub struct Hidden;
+            pub struct Outer {
+                _kind: Hidden,
+                pub vis_a: u32,
+                pub vis_b: u32,
+            }
+            pub fn empty() -> Outer {
+                Outer { _kind: Hidden, vis_a: 0, vis_b: 0 }
+            }
+        }
+
+        #[paralegal_flow::marker(source, return)]
+        fn source() -> u32 { 0 }
+
+        #[paralegal_flow::marker(sink, arguments = [0])]
+        fn sink(_: u32) {}
+
+        fn main() {
+            let mut x = inner::empty();
+            // Taint `x.vis_b` — that's MIR `_x.2`, which the bug never
+            // decomposes through.
+            x.vis_b = source();
+            // MIR `_y = move _x` — the trigger for the buggy struct
+            // decomposition in mutation.rs.
+            let y = x;
+            sink(y.vis_b);
+        }
+    }
+    .with_extra_args(EXTRA_ARGS.iter().copied())
+    .check_ctrl(|ctrl| {
+        let src = ctrl.marked("source");
+        let snk = ctrl.marked("sink");
+        assert!(!src.is_empty(), "source marker not present");
+        assert!(!snk.is_empty(), "sink marker not present");
+        assert!(
+            src.flows_to_data(&snk),
+            "missed flow: `source` taints `x.vis_b` (MIR `_x.2`), then `let y = x` \
+             should propagate that taint to `y.vis_b` (MIR `_y.2`) and on to the \
+             sink. The buggy struct decomposition in mutation.rs never emits a \
+             mutation at MIR field 2 because `all_visible_fields` enumeration only \
+             yields indices 0 and 1, so the `_y.2` read finds nothing."
+        );
+    });
+}
+
 /// `get_parent` is supposed to return the trait method DefId when given an impl
 /// method DefId. This directly tests the function: given an impl method, it
 /// must return `Some(trait_method_defid)` — not `None` (the stub value).

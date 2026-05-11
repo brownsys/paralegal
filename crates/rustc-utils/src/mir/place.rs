@@ -266,18 +266,23 @@ impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
                                 }
                             };
 
-                            // The field index can be out of range when projecting through
-                            // a type whose layout deviates from a normal struct (e.g.
-                            // `backtrace::Backtrace` saw this in the contile case study).
-                            // Bail out of `to_string` rather than panicking — the caller
-                            // already handles the `None` return as "can't render this place".
+                            // Out-of-range silent-skip replaced with a hard panic
+                            // (mirrors retype_place) to localize the upstream emitter
+                            // of the malformed projection. See queue #3 in
+                            // case-study-sweep-followup-queue.md.
                             let Some(field_def) = fields.get(field) else {
-                                log::debug!(
-                                    "place::to_string field index {} out of range for {ty:?} ({} fields)",
+                                panic!(
+                                    "[paralegal/place::to_string] field index {} out of range \
+                                     for {ty:?} ({} fields)\n\
+                                     place projection: {:?}\n\
+                                     place: {:?}\n\
+                                     backtrace:\n{}",
                                     field.as_usize(),
-                                    fields.len()
+                                    fields.len(),
+                                    self.projection,
+                                    self,
+                                    std::backtrace::Backtrace::force_capture(),
                                 );
-                                return None;
                             };
                             field_def.ident(tcx).to_string()
                         }
@@ -489,10 +494,10 @@ impl<'tcx, Dispatcher: RegionVisitorDispatcher<'tcx>> TypeVisitor<TyCtxt<'tcx>>
 
             TyKind::Adt(adt_def, subst) => match adt_def.adt_kind() {
                 ty::AdtKind::Struct => {
-                    for (i, field) in adt_def.all_visible_fields(self.def_id, tcx).enumerate() {
+                    for (field_idx, field) in adt_def.visible_struct_fields(self.def_id, tcx) {
                         let ty = field.ty(tcx, subst);
                         self.place_stack
-                            .push(ProjectionElem::Field(FieldIdx::from_usize(i), ty));
+                            .push(ProjectionElem::Field(field_idx, ty));
                         self.visit_ty(ty);
                         self.place_stack.pop();
                     }
@@ -802,6 +807,52 @@ fn main() {
                     .flat_map(|vs| vs.into_iter().map(|(p, _)| p)),
                 [y1],
             );
+        }
+        test_utils::compile_body(input, callback);
+    }
+
+    /// Regression: the `RegionVisitor` ADT-struct branch used to walk
+    /// `all_visible_fields(...).enumerate()` and emit projections at the
+    /// enumeration index (position within the visible subset), not the
+    /// source-declaration MIR `FieldIdx`. With a private field shifting
+    /// the visible enumeration, the visitor emitted projections pointing
+    /// at the wrong actual fields. Callers like `interior_pointers`,
+    /// `interior_places`, and `interior_paths` propagated those bogus
+    /// projections into flowistry's alias map.
+    #[test]
+    fn test_place_visitors_visibility_filtered_struct() {
+        let input = r"
+fn main() {
+    let x = inner::make();
+}
+
+mod inner {
+    pub struct Hidden;
+    pub struct Outer {
+        _kind: Hidden,
+        pub vis_a: u32,
+        pub vis_b: u32,
+    }
+    pub fn make() -> Outer {
+        Outer { _kind: Hidden, vis_a: 0, vis_b: 0 }
+    }
+}
+";
+        fn callback<'tcx>(
+            tcx: TyCtxt<'tcx>,
+            body_id: BodyId,
+            body_with_facts: &BodyWithBorrowckFacts<'tcx>,
+        ) {
+            let body = &body_with_facts.body;
+            let def_id = tcx.hir_body_owner_def_id(body_id).to_def_id();
+            let p = Placer::new(tcx, body);
+
+            let x = p.local("x").mk();
+            let x_a = p.local("x").field(1).mk();
+            let x_b = p.local("x").field(2).mk();
+
+            compare_sets(x.interior_paths(tcx, body, def_id), [x, x_a, x_b]);
+            compare_sets(x.interior_places(tcx, body, def_id), [x, x_a, x_b]);
         }
         test_utils::compile_body(input, callback);
     }

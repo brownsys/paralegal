@@ -1018,16 +1018,30 @@ pub fn retype_place<'tcx>(
             break;
         }
 
-        // Don't continue if we reach a private field. If the field index is
-        // out of range for the ADT (e.g. projecting through a coroutine state
-        // or a type whose layout deviates from a normal struct, like
-        // `backtrace::Backtrace`), bail out the same way — we can't reason
-        // about accessibility and any further projection would be unsound.
+        // Don't continue if we reach a private field. The previous
+        // out-of-range silent-skip has been replaced with a hard panic to
+        // localize the upstream emitter of the malformed projection — see
+        // case-study-sweep-followup-queue.md (queue #3).
         if let ProjectionElem::Field(field, _) = elem
             && let Some(adt_def) = ty.ty.ty_adt_def()
         {
             let Some(field) = adt_def.all_fields().nth(field.as_usize()) else {
-                break;
+                panic!(
+                    "[paralegal/retype_place] ADT field index {} out of range for {} \
+                     ({} fields, ty {:?})\n\
+                     walking projection {:?} of place {:?}\n\
+                     in body {} (def_id {:?})\n\
+                     backtrace:\n{}",
+                    field.as_usize(),
+                    tcx.def_path_str(adt_def.did()),
+                    adt_def.all_fields().count(),
+                    ty.ty,
+                    orig.projection,
+                    orig,
+                    tcx.def_path_str(def_id),
+                    def_id,
+                    std::backtrace::Backtrace::force_capture(),
+                );
             };
             if !field.vis.is_accessible_from(def_id, tcx) {
                 break;
@@ -1045,11 +1059,43 @@ pub fn retype_place<'tcx>(
             |self_ty, variant_index, field, _| match self_ty.kind() {
                 TyKind::Closure(_, args) => {
                     let upvar_tys = args.as_closure().upvar_tys();
-                    upvar_tys.iter().nth(field.as_usize()).unwrap()
+                    upvar_tys.iter().nth(field.as_usize()).unwrap_or_else(|| {
+                        panic!(
+                            "[paralegal/retype_place] closure upvar index {} out of range \
+                             ({} upvars, self_ty {:?})\n\
+                             walking projection {:?} of place {:?}\n\
+                             in body {} (def_id {:?})\n\
+                             backtrace:\n{}",
+                            field.as_usize(),
+                            upvar_tys.len(),
+                            self_ty,
+                            orig.projection,
+                            orig,
+                            tcx.def_path_str(def_id),
+                            def_id,
+                            std::backtrace::Backtrace::force_capture(),
+                        )
+                    })
                 }
                 TyKind::Coroutine(_, args) => {
                     let upvar_tys = args.as_coroutine().upvar_tys();
-                    upvar_tys.iter().nth(field.as_usize()).unwrap()
+                    upvar_tys.iter().nth(field.as_usize()).unwrap_or_else(|| {
+                        panic!(
+                            "[paralegal/retype_place] coroutine upvar index {} out of range \
+                             ({} upvars, self_ty {:?})\n\
+                             walking projection {:?} of place {:?}\n\
+                             in body {} (def_id {:?})\n\
+                             backtrace:\n{}",
+                            field.as_usize(),
+                            upvar_tys.len(),
+                            self_ty,
+                            orig.projection,
+                            orig,
+                            tcx.def_path_str(def_id),
+                            def_id,
+                            std::backtrace::Backtrace::force_capture(),
+                        )
+                    })
                 }
                 _ => PlaceTy::field_ty(tcx, self_ty, variant_index, field),
             },

@@ -883,3 +883,55 @@ pdg_test! {
   },
   (i -> h)
 }
+
+// Regression: visibility-filtered field-index mis-emission in
+// `emit_destructured_or_leaf` (mutation.rs). The struct decomposition used
+// `all_visible_fields(...).enumerate()` and treated the enumeration index as
+// the MIR `FieldIdx`, so a struct with a private field at index 0 caused the
+// emitted projection to point at the wrong actual field. When the wrong actual
+// field was *also* visible (so retype_place's private-field bail didn't fire)
+// and had a smaller field count than the bogus annotation, retype_place
+// overflowed `all_fields().nth(...)` and panicked.
+//
+// `inner::make` is forced to skip-inline so the `let _ = inner::make()` call
+// terminator falls through to the modular mutation visitor (handle_call only
+// reaches `emit_call_destination_mutation` for non-inlined calls).
+#[test]
+fn regression_visibility_filter_struct_decomp_oor() {
+    pdg(
+        stringify! {
+            mod inner {
+                pub struct Hidden;
+                pub struct Small;
+                pub struct Big {
+                    pub a: i32,
+                    pub b: i32,
+                    pub c: i32,
+                }
+                pub struct Outer {
+                    _kind: Hidden,
+                    pub vis_a: Small,
+                    pub vis_b: Big,
+                }
+                pub fn make() -> Outer {
+                    Outer { _kind: Hidden, vis_a: Small, vis_b: Big { a: 0, b: 0, c: 0 } }
+                }
+            }
+
+            fn main() {
+                let _x = inner::make();
+            }
+        },
+        |tcx, params| {
+            params.with_call_change_callback(CallChangeCallbackFn::new(move |info| {
+                let name = tcx.opt_item_name(info.callee.def_id());
+                let mut changes = CallChanges::default();
+                if name.as_ref().is_some_and(|n| n.as_str() == "make") {
+                    changes = changes.with_skip(SkipCall::Skip);
+                }
+                changes
+            }));
+        },
+        |_, _, _| (),
+    );
+}
