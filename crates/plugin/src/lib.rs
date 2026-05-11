@@ -457,7 +457,10 @@ fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>)
         info.handling = CrateHandling::CompileAndDump;
     }
     if let Some(target) = plugin_args.target() {
-        if target == name {
+        // Cargo package names use hyphens; rustc passes the corresponding
+        // crate name with hyphens normalized to underscores. Normalize the
+        // user-supplied target the same way so the convention matches.
+        if target.replace('-', "_") == *name {
             info.handling = CrateHandling::Analyze;
         }
     } else if std::env::var("CARGO_PRIMARY_PACKAGE").is_ok() {
