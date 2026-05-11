@@ -76,7 +76,6 @@ pub mod error;
 mod test_utils;
 
 pub use self::{
-    algo::flows_to::CtrlFlowsTo,
     algo::flows_to::DataAndControlInfluencees,
     context::*,
     diagnostics::{CombinatorContext, Diagnostics, PolicyContext},
@@ -309,16 +308,12 @@ impl GraphLocation {
 pub struct Config {
     /// How much information to retain for error messages in `always_happens_before`
     pub always_happens_before_tracing: algo::ahb::TraceLevel,
-    /// Whether tho precompute an index for `flows_to` queries with
-    /// `EdgeSelection::Data` or whether to use a new DFS every time.
-    pub use_flows_to_index: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Config {
             always_happens_before_tracing: algo::ahb::TraceLevel::StartAndEnd,
-            use_flows_to_index: false,
         }
     }
 }

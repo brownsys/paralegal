@@ -1,6 +1,6 @@
 //! Utilities for traversing an SPDG
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 use petgraph::visit::{
     Bfs, Data, EdgeFiltered, EdgeRef, IntoEdgeReferences, IntoEdges, IntoEdgesDirected,
@@ -12,7 +12,7 @@ use crate::{EdgeInfo, EdgeKind, Node, SPDGImpl};
 use super::SPDG;
 
 /// Which type of edges should be considered for a given traversal
-#[derive(Clone, Copy, Eq, PartialEq, strum::EnumIs)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug, strum::EnumIs)]
 pub enum EdgeSelection {
     /// Consider only edges with [`crate::EdgeKind::Data`]
     Data,
@@ -65,46 +65,74 @@ impl EdgeSelection {
     }
 }
 
-/// A primitive that queries whether we can reach from one set of nodes to
-/// another
-pub fn edge_generic_flows_to(
-    from: impl IntoIterator<Item = Node>,
-    edge_selection: EdgeSelection,
-    spdg: &SPDG,
-    other: impl IntoIterator<Item = Node>,
-) -> Option<(Node, Node)> {
-    let graph = edge_selection.filter_graph(&spdg.graph);
-    generic_flows_to(from, &graph, other)
-}
-
 use petgraph::visit as pgv;
 
-/// A primitive that queries whether we can reach from one set of nodes to
-/// another
-pub fn generic_flows_to<G>(
-    from: impl IntoIterator<Item = Node>,
+/// Multi-source forward BFS that reports the first node in `targets` it reaches.
+///
+/// `on_discover(child, parent)` runs exactly once per discovered non-source
+/// node, when that node is first reached via a real edge. Pass `|_, _| {}` to
+/// opt out of predecessor tracking (it compiles away, so `flows_to`-style
+/// callers don't pay for the bookkeeping `shortest_path` needs).
+///
+/// **Source ∩ targets**: if a source itself is in `targets`, the primitive
+/// returns that source immediately. This is the "same SPDG node carries both
+/// source and sink markers" case — semantically the dangerous value already is
+/// at the sink, so the flow is trivially present. Callers that want to suppress
+/// this (e.g. `flows_to(N, N)` of a single node onto itself) should pre-filter
+/// the source/target sets.
+pub fn bfs_reach<G, F>(
     graph: G,
-    other: impl IntoIterator<Item = Node>,
-) -> Option<(Node, Node)>
+    sources: impl IntoIterator<Item = Node>,
+    targets: impl IntoIterator<Item = Node>,
+    mut on_discover: F,
+) -> Option<Node>
 where
-    G: pgv::Visitable + pgv::IntoNeighbors + pgv::GraphBase<NodeId = Node>,
+    G: pgv::Visitable<Map = <SPDGImpl as pgv::Visitable>::Map>
+        + pgv::IntoNeighbors
+        + pgv::GraphBase<NodeId = Node>,
+    F: FnMut(Node, Node),
 {
-    let targets = other.into_iter().collect::<HashSet<_>>();
-    let mut from = from.into_iter().peekable();
-    if from.peek().is_none() || targets.is_empty() {
+    let targets: HashSet<Node> = targets.into_iter().collect();
+    if targets.is_empty() {
         return None;
     }
-
-    let mut search = petgraph::visit::Dfs::from_parts(vec![], graph.visit_map());
-    for n in from {
-        search.move_to(n);
-        while let Some(end) = search.next(&graph) {
-            if targets.contains(&end) {
-                return Some((n, end));
+    let mut discovered = graph.visit_map();
+    let mut queue: VecDeque<Node> = VecDeque::new();
+    for src in sources {
+        if discovered.visit(src) {
+            if targets.contains(&src) {
+                return Some(src);
+            }
+            queue.push_back(src);
+        }
+    }
+    while let Some(node) = queue.pop_front() {
+        for next in graph.neighbors(node) {
+            if discovered.visit(next) {
+                on_discover(next, node);
+                if targets.contains(&next) {
+                    return Some(next);
+                }
+                queue.push_back(next);
             }
         }
     }
     None
+}
+
+/// `bfs_reach` filtered by `edge_selection` on the given controller's graph.
+pub fn edge_bfs_reach<F>(
+    from: impl IntoIterator<Item = Node>,
+    edge_selection: EdgeSelection,
+    spdg: &SPDG,
+    other: impl IntoIterator<Item = Node>,
+    on_discover: F,
+) -> Option<Node>
+where
+    F: FnMut(Node, Node),
+{
+    let graph = edge_selection.filter_graph(&spdg.graph);
+    bfs_reach(&graph, from, other, on_discover)
 }
 
 /// The current policy for this iterator is that it does not return the start

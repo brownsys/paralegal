@@ -28,7 +28,7 @@ use std::{
 use paralegal_pdg::{
     DefInfo, DisplayPath, EdgeInfo, Endpoint, FileSystemStorable, InstructionInfo, InstructionKind,
     Node, NodeInfo, NodeKind, ParalegalArtifact, SPDG, TypeId,
-    traverse::{EdgeSelection, edge_generic_flows_to, generic_influencers},
+    traverse::{EdgeSelection, edge_bfs_reach, generic_influencers},
     utils::{display_list, write_sep},
 };
 
@@ -1394,11 +1394,12 @@ fn influences_ctrl_impl(
         EdgeSelection::Control,
     );
 
-    edge_generic_flows_to(
+    edge_bfs_reach(
         slf.nodes().iter().copied(),
         edge_selection,
         slf.spdg(),
         dbg!(ctrl_influencing),
+        |_, _| {},
     )
     .is_some()
 }
@@ -1438,11 +1439,12 @@ fn flows_to_impl(
     if slf.spdg_ident() != other.spdg_ident() {
         return false;
     }
-    edge_generic_flows_to(
+    edge_bfs_reach(
         slf.nodes().iter().copied(),
         edge_selection,
         slf.spdg(),
         other.nodes().iter().copied(),
+        |_, _| {},
     )
     .is_some()
 }
