@@ -81,7 +81,7 @@ pub fn try_as_async_trait_function<'tcx>(
     if !has_async_trait_signature(tcx, def_id) {
         return None;
     }
-    let (def_id, generics, loc, _) = find_coroutine_assign(body);
+    let (def_id, generics, loc, _) = find_coroutine_assign(body)?;
     Some((def_id, generics, loc))
 }
 
@@ -190,14 +190,25 @@ fn has_async_tool_signature(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     lang_items.future_trait().is_some_and(|f| f == t.def_id)
 }
 
+/// Find the unique top-level `Aggregate(Coroutine(..))` statement in `body`.
+///
+/// Returns `None` if `body` has no such statement — e.g. a trait method
+/// declared to return `Pin<Box<dyn Future>>` that just forwards a future from
+/// another call without constructing its own coroutine. Callers should treat
+/// `None` as "this function is not an async wrapper we can peel into a
+/// coroutine"; analysis falls back to the body as written.
+///
+/// Panics if `body` has more than one such statement — that signals a body
+/// shape we genuinely don't expect (e.g. multiple top-level `async {}` blocks
+/// in the same fn) and we'd rather surface it than silently pick one.
 pub fn find_coroutine_assign<'tcx, 'a>(
     body: &'a Body<'tcx>,
-) -> (
+) -> Option<(
     DefId,
     GenericArgsRef<'tcx>,
     Location,
     &'a rustc_index::IndexVec<FieldIdx, Operand<'tcx>>,
-) {
+)> {
     let mut matching_statements =
         body.basic_blocks
             .iter_enumerated()
@@ -218,8 +229,35 @@ pub fn find_coroutine_assign<'tcx, 'a>(
                 )
             })
             .collect::<Vec<_>>();
-    assert_eq!(matching_statements.len(), 1);
-    matching_statements.pop().unwrap()
+    match matching_statements.len() {
+        0 => None,
+        1 => Some(matching_statements.pop().unwrap()),
+        n => {
+            let def_id = body.source.def_id();
+            let mut dump = String::new();
+            for (block, bbdat) in body.basic_blocks.iter_enumerated() {
+                use std::fmt::Write;
+                let _ = writeln!(dump, "  {block:?}:");
+                for (i, st) in bbdat.statements.iter().enumerate() {
+                    let _ = writeln!(dump, "    [{i}] {:?}", st.kind);
+                }
+                if let Some(t) = &bbdat.terminator {
+                    let _ = writeln!(dump, "    T {:?}", t.kind);
+                }
+            }
+            panic!(
+                "find_coroutine_assign: expected at most one `Aggregate(Coroutine(..))` \
+                 statement in body of {def_id:?} (span {span:?}), found {n}.\n\
+                 body dump:\n{dump}\n\
+                 matched locations: {locs:?}",
+                span = body.span,
+                locs = matching_statements
+                    .iter()
+                    .map(|(d, _, l, _)| (l, d))
+                    .collect::<Vec<_>>(),
+            );
+        }
+    }
 }
 
 fn try_as_async_tool<'tcx>(
@@ -230,7 +268,7 @@ fn try_as_async_tool<'tcx>(
     if !has_async_tool_signature(tcx, def_id) {
         return None;
     }
-    let (def_id, gargs, loc, _) = find_coroutine_assign(body);
+    let (def_id, gargs, loc, _) = find_coroutine_assign(body)?;
     Some((def_id, gargs, loc))
 }
 
