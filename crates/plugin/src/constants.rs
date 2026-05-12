@@ -139,7 +139,12 @@ impl<'tcx> ConstConversionError<'tcx> {
                 _ => (),
             }
         }
-        tcx.dcx().span_err(span, format!("{self}"));
+        // Fallback (Integer128NotSupported, EvalFailed, or an unrecognized
+        // `Val` payload such as an f32/f64 literal) also belongs under
+        // `--strict`: a representation gap is a soundness risk, but not a
+        // reason to break analysis runs against codebases that contain
+        // legitimate constants paralegal can't yet model.
+        emit(format!("{self}"));
     }
 }
 
