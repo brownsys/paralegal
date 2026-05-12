@@ -496,8 +496,7 @@ impl<'tcx, Dispatcher: RegionVisitorDispatcher<'tcx>> TypeVisitor<TyCtxt<'tcx>>
                 ty::AdtKind::Struct => {
                     for (field_idx, field) in adt_def.visible_struct_fields(self.def_id, tcx) {
                         let ty = field.ty(tcx, subst);
-                        self.place_stack
-                            .push(ProjectionElem::Field(field_idx, ty));
+                        self.place_stack.push(ProjectionElem::Field(field_idx, ty));
                         self.visit_ty(ty);
                         self.place_stack.pop();
                     }
