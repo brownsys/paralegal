@@ -5,6 +5,7 @@
 /// features that scrutinizer has.
 // Ignored for now because it needs an external crate.
 // mod foreign;
+mod atomic_alias;
 mod leaky;
 mod misc;
 mod raw_ptr;
