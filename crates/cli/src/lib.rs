@@ -30,9 +30,6 @@ pub struct ClapArgs {
     /// Run paralegal only on this crate
     #[clap(long, env = "PARALEGAL_TARGET")]
     pub target: Option<String>,
-    /// Abort the compilation after finishing the analysis
-    #[clap(long, env)]
-    pub abort_after_analysis: bool,
     /// Attach to a debugger before running the analyses
     #[clap(long)]
     pub attach_to_debugger: Option<Debugger>,

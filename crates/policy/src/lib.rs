@@ -150,8 +150,8 @@ impl SPDGGenCommand {
     ///
     /// This gives you raw access to the underlying command. Be aware that if
     /// you pass `--` with [`Command::arg`] or [`Command::args`] then methods
-    /// such as [`Self::external_annotations`] and
-    /// [`Self::abort_after_analysis`] not longer work properly after this call.
+    /// such as [`Self::external_annotations`] no longer work properly after
+    /// this call.
     pub fn get_command(&mut self) -> &mut Command {
         &mut self.0
     }
@@ -167,19 +167,6 @@ impl SPDGGenCommand {
     /// the `#[analyze]` annotation.
     pub fn analysis_target(&mut self, target: impl AsRef<str>) -> &mut Self {
         self.0.args(["--analyze", target.as_ref()]);
-        self
-    }
-
-    /// No-op. Previously this passed `--abort-after-analysis` to the cargo
-    /// command, which made the plugin halt before metadata emission. That
-    /// broke the artifact-discovery path (no rmeta → no `CompilerArtifact`
-    /// → empty `targets`); the CLI now scans the deps dir for `.fgo` files
-    /// as a fallback, but `cargo paralegal-flow` already drives `cargo
-    /// check` (which doesn't reach codegen anyway), so the flag never saved
-    /// real work. The plugin still recognizes `--abort-after-analysis` for
-    /// direct CLI invocations.
-    #[deprecated(note = "no-op; cargo check already stops before codegen")]
-    pub fn abort_after_analysis(&mut self) -> &mut Self {
         self
     }
 

@@ -100,13 +100,6 @@ fn cargo_orchestrator_main() -> anyhow::Result<()> {
         .other_options(["--offline".into()])
         .exec()?;
 
-    let cargo_start = std::time::SystemTime::now();
-    let deps_dir = metadata
-        .target_directory
-        .join("paralegal")
-        .join("debug")
-        .join("deps");
-
     let mut cmd = Command::new(&cargo);
     cmd.args(["check", "--message-format=json"]) // or "build"
         .arg("--target-dir")
@@ -218,39 +211,6 @@ fn cargo_orchestrator_main() -> anyhow::Result<()> {
             // should be forwarded so callers don't silently lose output.
             Err(_) if !args.forward_json => println!("{line}"),
             _ => (),
-        }
-    }
-
-    // Fallback: when `--abort-after-analysis` is set, the plugin returns
-    // `Compilation::Stop` from `after_expansion` before metadata emission, so
-    // cargo emits no `CompilerArtifact` for the target crate, and the rmeta-
-    // driven discovery above misses the `.fgo` the plugin still wrote to disk.
-    // Scan the paralegal deps dir for `.fgo` files modified during this run.
-    if deps_dir.exists() {
-        let already: std::collections::HashSet<_> = targets.iter().cloned().collect();
-        if let Ok(entries) = std::fs::read_dir(deps_dir.as_std_path()) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().is_some_and(|e| e == FLOW_GRAPH_EXT)
-                    && entry
-                        .metadata()
-                        .and_then(|m| m.modified())
-                        .is_ok_and(|mt| mt >= cargo_start)
-                {
-                    let stem_matches = args.target.as_deref().is_none_or(|target_name| {
-                        path.file_stem()
-                            .and_then(|s| s.to_str())
-                            .is_some_and(|stem| {
-                                let stem = stem.strip_prefix("lib").unwrap_or(stem);
-                                stem.rsplit_once('-')
-                                    .is_some_and(|(name, _)| name == target_name)
-                            })
-                    });
-                    if stem_matches && !already.contains(&path) {
-                        targets.push(path);
-                    }
-                }
-            }
         }
     }
 

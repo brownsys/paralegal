@@ -67,7 +67,6 @@ impl TryFrom<ClapArgs> for Args {
             result_path,
             relaxed,
             target,
-            abort_after_analysis,
             mut anactrl,
             dump,
             marker_control,
@@ -106,7 +105,6 @@ impl TryFrom<ClapArgs> for Args {
             result_path,
             relaxed: !strict,
             target,
-            abort_after_analysis,
             anactrl: anactrl.try_into()?,
             dump,
             build_config,
@@ -124,8 +122,6 @@ pub struct Args {
     relaxed: bool,
     /// Target a specific package
     target: Option<String>,
-    /// Abort the compilation after finishing the analysis
-    abort_after_analysis: bool,
     /// Make the compiler attach to a debugger
     attach_to_debugger: Option<Debugger>,
     /// Additional arguments on marker assignment and discovery
@@ -146,7 +142,6 @@ impl Default for Args {
             result_path: PathBuf::from(paralegal_pdg::FLOW_GRAPH_OUT_NAME),
             relaxed: true,
             target: None,
-            abort_after_analysis: false,
             marker_control: Default::default(),
             anactrl: Default::default(),
             dump: Default::default(),
@@ -213,9 +208,6 @@ impl Args {
     /// Warn instead of crashing the program in case of non-fatal errors
     pub fn relaxed(&self) -> bool {
         self.relaxed
-    }
-    pub fn abort_after_analysis(&self) -> bool {
-        self.abort_after_analysis
     }
     pub fn build_config(&self) -> &BuildConfig {
         &self.build_config.1
