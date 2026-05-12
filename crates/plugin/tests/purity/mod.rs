@@ -8,6 +8,7 @@
 mod atomic_alias;
 mod leaky;
 mod misc;
+mod path_eq_resolver;
 mod raw_ptr;
 mod recursive;
 mod side_effects;

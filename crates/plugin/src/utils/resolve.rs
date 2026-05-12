@@ -206,11 +206,29 @@ fn non_local_item_children_by_name(
     name: Symbol,
 ) -> Option<Result<Res>> {
     match tcx.def_kind(def_id) {
-        DefKind::Mod | DefKind::Enum | DefKind::Trait => tcx
-            .module_children(def_id)
-            .iter()
-            .find(|item| item.ident.name == name)
-            .map(|child| Res::from_def_res(child.res.expect_non_local())),
+        DefKind::Mod | DefKind::Enum | DefKind::Trait => {
+            // Names can collide across namespaces (e.g. `core::cmp::PartialEq`
+            // refers to both the trait and the derive-macro re-export). Marker
+            // paths never target macros, so when ambiguity exists we discard
+            // macro candidates in favor of types/values; if only macros match,
+            // fall back to those so the error message still describes the
+            // user's literal path.
+            let mut chosen = None;
+            let mut macro_fallback = None;
+            for child in tcx.module_children(def_id).iter() {
+                if child.ident.name != name {
+                    continue;
+                }
+                let res = child.res.expect_non_local();
+                if matches!(res, def::Res::Def(DefKind::Macro(_), _)) {
+                    macro_fallback.get_or_insert(res);
+                } else {
+                    chosen = Some(res);
+                    break;
+                }
+            }
+            chosen.or(macro_fallback).map(Res::from_def_res)
+        }
         DefKind::Impl { .. } => tcx
             .associated_item_def_ids(def_id)
             .iter()
