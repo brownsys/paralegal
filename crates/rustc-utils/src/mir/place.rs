@@ -229,99 +229,10 @@ impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
             Cow::Owned(local_name)
         };
 
-        #[derive(Copy, Clone)]
-        enum ElemPosition {
-            Prefix,
-            Suffix,
-        }
-
-        // Turn each PlaceElem into a prefix (e.g. * for deref) or a suffix
-        // (e.g. .field for projection).
-        let elem_to_string = |(index, (place, elem)): (
-            usize,
-            (PlaceRef<'tcx>, PlaceElem<'tcx>),
-        )|
-         -> Option<(ElemPosition, Cow<'static, str>)> {
-            Some(match elem {
-                ProjectionElem::Deref => (ElemPosition::Prefix, "*".into()),
-
-                ProjectionElem::Field(field, _) => {
-                    let ty = place.ty(&body.local_decls, tcx).ty;
-
-                    let field_name = match ty.kind() {
-                        TyKind::Adt(def, _substs) => {
-                            let fields = match def.adt_kind() {
-                                AdtKind::Struct => &def.non_enum_variant().fields,
-                                AdtKind::Enum => {
-                                    let Some(PlaceElem::Downcast(_, variant_idx)) =
-                                        self.projection.get(index - 1)
-                                    else {
-                                        unimplemented!()
-                                    };
-                                    &def.variant(*variant_idx).fields
-                                }
-                                kind => {
-                                    log::debug!("place::to_string unimplemented for {kind:?}");
-                                    return None;
-                                }
-                            };
-
-                            // Out-of-range silent-skip replaced with a hard panic
-                            // (mirrors retype_place) to localize the upstream emitter
-                            // of the malformed projection. See queue #3 in
-                            // case-study-sweep-followup-queue.md.
-                            let Some(field_def) = fields.get(field) else {
-                                panic!(
-                                    "[paralegal/place::to_string] field index {} out of range \
-                                     for {ty:?} ({} fields)\n\
-                                     place projection: {:?}\n\
-                                     place: {:?}\n\
-                                     backtrace:\n{}",
-                                    field.as_usize(),
-                                    fields.len(),
-                                    self.projection,
-                                    self,
-                                    std::backtrace::Backtrace::force_capture(),
-                                );
-                            };
-                            field_def.ident(tcx).to_string()
-                        }
-
-                        TyKind::Tuple(_) => field.as_usize().to_string(),
-
-                        TyKind::Closure(def_id, _substs) => match def_id.as_local() {
-                            Some(local_def_id) => {
-                                let captures = tcx.closure_captures(local_def_id);
-                                captures[field.as_usize()].var_ident.to_string()
-                            }
-                            None => field.as_usize().to_string(),
-                        },
-
-                        kind => {
-                            log::debug!("place::to_string unimplemented for {kind:?}");
-                            return None;
-                        }
-                    };
-
-                    (ElemPosition::Suffix, format!(".{field_name}").into())
-                }
-                ProjectionElem::Downcast(sym, _) => {
-                    let variant = sym.map(|s| s.to_string()).unwrap_or_else(|| "??".into());
-                    (ElemPosition::Suffix, format!("@{variant}").into())
-                }
-
-                ProjectionElem::Index(_) => (ElemPosition::Suffix, "[_]".into()),
-                kind => {
-                    log::debug!("place::to_string unimplemented for {kind:?}");
-                    return None;
-                }
-            })
-        };
-
         let tuples = self
             .iter_projections()
             .enumerate()
-            .map(elem_to_string)
+            .map(|(idx, (r, p))| elem_to_string(tcx, *self, body, idx, r, p))
             .collect::<Option<Vec<_>>>()?;
         let (positions, contents): (Vec<_>, Vec<_>) = tuples.into_iter().unzip();
 
@@ -379,6 +290,94 @@ impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
         // 3. Not be from a macro expansion (basically also a desugaring).
         is_loc && !from_desugaring && !from_expansion
     }
+}
+
+#[derive(Copy, Clone)]
+enum ElemPosition {
+    Prefix,
+    Suffix,
+}
+
+/// Turn each PlaceElem into a prefix (e.g. * for deref) or a suffix
+/// (e.g. .field for projection).
+fn elem_to_string<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    base: Place<'tcx>,
+    body: &Body<'tcx>,
+    index: usize,
+    place: PlaceRef<'tcx>,
+    elem: PlaceElem<'tcx>,
+) -> Option<(ElemPosition, Cow<'static, str>)> {
+    Some(match elem {
+        ProjectionElem::Deref => (ElemPosition::Prefix, "*".into()),
+
+        ProjectionElem::Field(field, _) => {
+            let ty = place.ty(&body.local_decls, tcx).ty;
+
+            let field_name = match ty.kind() {
+                TyKind::Adt(def, _substs) => {
+                    let fields = match def.adt_kind() {
+                        AdtKind::Struct => &def.non_enum_variant().fields,
+                        AdtKind::Enum => {
+                            let Some(PlaceElem::Downcast(_, variant_idx)) =
+                                base.projection.get(index - 1)
+                            else {
+                                unimplemented!()
+                            };
+                            &def.variant(*variant_idx).fields
+                        }
+                        kind => {
+                            log::debug!("place::to_string unimplemented for {kind:?}");
+                            return None;
+                        }
+                    };
+
+                    let Some(field_def) = fields.get(field) else {
+                        panic!(
+                            "[paralegal/place::to_string] field index {} out of range \
+                                     for {ty:?} ({} fields)\n\
+                                     place projection: {:?}\n\
+                                     place: {:?}\n\
+                                     backtrace:\n{}",
+                            field.as_usize(),
+                            fields.len(),
+                            base.projection,
+                            base,
+                            std::backtrace::Backtrace::force_capture(),
+                        );
+                    };
+                    field_def.ident(tcx).to_string()
+                }
+
+                TyKind::Tuple(_) => field.as_usize().to_string(),
+
+                TyKind::Closure(def_id, _substs) => match def_id.as_local() {
+                    Some(local_def_id) => {
+                        let captures = tcx.closure_captures(local_def_id);
+                        captures[field.as_usize()].var_ident.to_string()
+                    }
+                    None => field.as_usize().to_string(),
+                },
+
+                kind => {
+                    log::debug!("place::to_string unimplemented for {kind:?}");
+                    return None;
+                }
+            };
+
+            (ElemPosition::Suffix, format!(".{field_name}").into())
+        }
+        ProjectionElem::Downcast(sym, _) => {
+            let variant = sym.map(|s| s.to_string()).unwrap_or_else(|| "??".into());
+            (ElemPosition::Suffix, format!("@{variant}").into())
+        }
+
+        ProjectionElem::Index(_) => (ElemPosition::Suffix, "[_]".into()),
+        kind => {
+            log::debug!("place::to_string unimplemented for {kind:?}");
+            return None;
+        }
+    })
 }
 
 #[derive(Copy, Clone)]
