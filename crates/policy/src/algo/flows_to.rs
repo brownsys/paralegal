@@ -173,7 +173,9 @@ fn shortest_path_returns_valid_chain_data() {
     use paralegal_pdg::{traverse::EdgeSelection, IntoIterGlobalNodes};
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx
-        .controller_by_name(paralegal_pdg::Identifier::new_intern("controller_data_ctrl"))
+        .controller_by_name(paralegal_pdg::Identifier::new_intern(
+            "controller_data_ctrl",
+        ))
         .unwrap();
     let src_b = ctx.controller_argument(controller, 1).unwrap();
     let sink = crate::test_utils::get_sink_node(&ctx, controller, "sink1");
@@ -189,7 +191,9 @@ fn shortest_path_returns_none_for_data_unreachable() {
     use paralegal_pdg::{traverse::EdgeSelection, IntoIterGlobalNodes};
     let ctx = crate::test_utils::test_ctx();
     let controller = ctx
-        .controller_by_name(paralegal_pdg::Identifier::new_intern("controller_data_ctrl"))
+        .controller_by_name(paralegal_pdg::Identifier::new_intern(
+            "controller_data_ctrl",
+        ))
         .unwrap();
     let src_a = ctx.controller_argument(controller, 0).unwrap();
     let cs = crate::test_utils::get_callsite_node(&ctx, controller, "sink1");
@@ -240,8 +244,9 @@ fn shortest_path_flows_to_parity() {
             }
         }
         for name in *callsite_names {
-            sources
-                .extend(crate::test_utils::get_callsite_node(&ctx, controller, name).iter_global_nodes());
+            sources.extend(
+                crate::test_utils::get_callsite_node(&ctx, controller, name).iter_global_nodes(),
+            );
         }
         let mut sinks: Vec<GlobalNode> = Vec::new();
         for name in *sink_names {

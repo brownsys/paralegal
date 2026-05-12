@@ -1120,7 +1120,11 @@ impl NodeExt for GlobalNode {
             path.push(cur);
             cur = pred;
         }
-        debug_assert_eq!(cur, self.local_node(), "predecessor walk should terminate at source");
+        debug_assert_eq!(
+            cur,
+            self.local_node(),
+            "predecessor walk should terminate at source"
+        );
         path.reverse();
         Some(
             path.into_iter()

@@ -412,8 +412,8 @@ where
         let mut emitted_subfield = false;
         match mutated_ty.kind() {
             TyKind::Adt(adt_def, substs) if adt_def.is_struct() => {
-                for (field_idx, field_def) in adt_def
-                    .visible_struct_fields(self.place_info.def_id, self.place_info.tcx)
+                for (field_idx, field_def) in
+                    adt_def.visible_struct_fields(self.place_info.def_id, self.place_info.tcx)
                 {
                     let field = PlaceElem::Field(field_idx, field_def.ty(tcx, substs));
                     let mutated_field = mutated.project_deeper(&[field], tcx);

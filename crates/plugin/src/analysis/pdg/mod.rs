@@ -568,9 +568,8 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
                 .into_iter()
                 .map(|(place, at)| {
                     let key = NodeKey::for_place(place, at.into());
-                    let n = self.get_or_construct_node(&key, || {
-                        constructor.make_dep_node(place, at, use_)
-                    });
+                    let n = self
+                        .get_or_construct_node(&key, || constructor.make_dep_node(place, at, use_));
                     // If a prior input-side creation registered this node with
                     // `Use::Other`, upgrade to the call-site-specific `use_`
                     // so marker_on_argument / marker_on_return assignment
