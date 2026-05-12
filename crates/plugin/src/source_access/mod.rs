@@ -68,6 +68,28 @@ fn for_each_reachable_statement<'tcx>(
     }
 }
 
+/// Statement kinds that `rustc_borrowck::polonius::legacy::loan_invalidations`
+/// hits with `bug!("Statement not allowed in this MIR phase")` (see
+/// `rustc_borrowck/src/polonius/legacy/loan_invalidations.rs` — grep the
+/// `bug!` literal; line numbers drift on toolchain bumps). We feed it
+/// `mir_promoted` bodies, which still carry statements the pipeline only
+/// filters out before the borrowck-input phase; strip them before the call
+/// and restore them after so downstream passes still see the original MIR.
+///
+/// **Keep this set in sync with upstream's match arm.** If rustc adds a
+/// new `StatementKind` to its `bug!` list, paralegal will start ICEing
+/// on it until the kind is mirrored here.
+fn is_borrowck_phase_incompatible(kind: &StatementKind<'_>) -> bool {
+    matches!(
+        kind,
+        StatementKind::BackwardIncompatibleDropHint { .. }
+            | StatementKind::ConstEvalCounter
+            | StatementKind::Nop
+            | StatementKind::Retag(..)
+            | StatementKind::SetDiscriminant { .. }
+    )
+}
+
 fn with_incompatible_instructions_removed<'tcx, R>(
     tcx: TyCtxt<'tcx>,
     def_id: LocalDefId,
@@ -77,7 +99,7 @@ fn with_incompatible_instructions_removed<'tcx, R>(
     for_each_reachable_statement(tcx, def_id, |stmt| {
         let kind = &mut stmt.kind;
         assert_ne!(kind, &replacement_statement!());
-        if matches!(kind, StatementKind::BackwardIncompatibleDropHint { .. }) {
+        if is_borrowck_phase_incompatible(kind) {
             original_statements.push(std::mem::replace(kind, replacement_statement!()));
         }
     });
@@ -110,9 +132,12 @@ fn get_bodies_associated_with<'tcx>(
         );
         return None;
     }
-    // HACK: We remove all BackwardIncompatibleDropHint instructions, because
-    // they trigger an ICE when computing the borrowcheck instruction
-    let mut bodies = with_incompatible_instructions_removed(tcx, def_id, || {
+    // HACK: borrowck panics on phase-incompatible statements (see
+    // `is_borrowck_phase_incompatible`); we strip them before and restore
+    // after. Scope must be `root_id` because `get_bodies_with_borrowck_facts`
+    // borrowchecks the entire typeck root, including sibling nested bodies
+    // that wouldn't be reached from `def_id`'s `nested_bodies_within`.
+    let mut bodies = with_incompatible_instructions_removed(tcx, root_id, || {
         rustc_borrowck::consumers::get_bodies_with_borrowck_facts(
             tcx,
             root_id,
