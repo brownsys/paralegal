@@ -997,11 +997,7 @@ pub fn type_as_fn<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> TyAsFnResult<'tcx> {
     }
 }
 
-fn retype_place_context<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-    orig: Place<'tcx>,
-) -> String {
+fn retype_place_context<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, orig: Place<'tcx>) -> String {
     format!(
         "walking projection {:?} of place {orig:?} in body {} ({def_id:?})",
         orig.projection,

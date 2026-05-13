@@ -10,8 +10,7 @@ use hir::{
 };
 use rustc_ast::{
     self as ast, AngleBracketedArg, ExprKind, GenericArg, GenericArgs, GenericBound, PathSegment,
-    QSelf, TraitObjectSyntax, Ty, TyKind,
-    token::TokenKind,
+    QSelf, TraitObjectSyntax, Ty, TyKind, token::TokenKind,
 };
 use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_hir::{self as hir, def_id::DefId};
@@ -370,10 +369,7 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
 /// plumbing). `Parenthesized` / `ParenthesizedElided` arg forms (`Fn(A,
 /// B) -> C` and return-type-notation) aren't supported here and produce
 /// an empty result, which the caller treats as "no filter to apply".
-fn extract_angle_type_args<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    ga: &GenericArgs,
-) -> Result<Vec<ty::Ty<'tcx>>> {
+fn extract_angle_type_args<'tcx>(tcx: TyCtxt<'tcx>, ga: &GenericArgs) -> Result<Vec<ty::Ty<'tcx>>> {
     let GenericArgs::AngleBracketed(ab) = ga else {
         return Ok(vec![]);
     };
@@ -398,17 +394,20 @@ fn match_ty_with_wildcard<'tcx>(supplied: ty::Ty<'tcx>, impl_ty: ty::Ty<'tcx>) -
     match (supplied.kind(), impl_ty.kind()) {
         (ty::Adt(s_def, s_args), ty::Adt(i_def, i_args)) if s_def.did() == i_def.did() => {
             s_args.len() == i_args.len()
-                && s_args.iter().zip(i_args.iter()).all(|(s, i)| match (s.kind(), i.kind()) {
-                    (ty::GenericArgKind::Type(s), ty::GenericArgKind::Type(i)) => {
-                        match_ty_with_wildcard(s, i)
-                    }
-                    // Lifetimes and consts: bail to equality. With the
-                    // resolver's lifetime erasure (resolve_ty replaces
-                    // refs' lifetimes with RegionVid::ZERO) this will
-                    // typically mismatch for `&'a T` vs `&'b T`; matching
-                    // those properly would need an InferCtxt.
-                    _ => s == i,
-                })
+                && s_args
+                    .iter()
+                    .zip(i_args.iter())
+                    .all(|(s, i)| match (s.kind(), i.kind()) {
+                        (ty::GenericArgKind::Type(s), ty::GenericArgKind::Type(i)) => {
+                            match_ty_with_wildcard(s, i)
+                        }
+                        // Lifetimes and consts: bail to equality. With the
+                        // resolver's lifetime erasure (resolve_ty replaces
+                        // refs' lifetimes with RegionVid::ZERO) this will
+                        // typically mismatch for `&'a T` vs `&'b T`; matching
+                        // those properly would need an InferCtxt.
+                        _ => s == i,
+                    })
         }
         (ty::RawPtr(s_inner, s_mut), ty::RawPtr(i_inner, i_mut)) if s_mut == i_mut => {
             match_ty_with_wildcard(*s_inner, *i_inner)
@@ -636,8 +635,8 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
                     // filtering. Failing to extract segment args is a
                     // safe error: skip the filter and behave like before
                     // (find_map first-match), per `_internal_can_fail_…`.
-                    let segment_args = prev_args
-                        .and_then(|ga| extract_angle_type_args(tcx, ga).ok());
+                    let segment_args =
+                        prev_args.and_then(|ga| extract_angle_type_args(tcx, ga).ok());
                     let supplied_args: Option<&[ty::Ty<'_>]> =
                         segment_args.as_deref().or(alias_filter.as_deref());
                     let impls = tcx.inherent_impls(adt_did);

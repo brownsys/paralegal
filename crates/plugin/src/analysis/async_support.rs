@@ -209,24 +209,25 @@ pub fn find_coroutine_assign<'tcx, 'a>(
     Location,
     &'a rustc_index::IndexVec<FieldIdx, Operand<'tcx>>,
 )> {
-    let mut iter = body.basic_blocks.iter_enumerated().flat_map(|(block, bbdat)| {
-        bbdat
-            .statements
-            .iter()
-            .enumerate()
-            .filter_map(move |(statement_index, statement)| {
-                let (def_id, generics, args) = match_coroutine_assign(statement)?;
-                Some((
-                    def_id,
-                    generics,
-                    Location {
-                        block,
-                        statement_index,
+    let mut iter =
+        body.basic_blocks
+            .iter_enumerated()
+            .flat_map(|(block, bbdat)| {
+                bbdat.statements.iter().enumerate().filter_map(
+                    move |(statement_index, statement)| {
+                        let (def_id, generics, args) = match_coroutine_assign(statement)?;
+                        Some((
+                            def_id,
+                            generics,
+                            Location {
+                                block,
+                                statement_index,
+                            },
+                            args,
+                        ))
                     },
-                    args,
-                ))
-            })
-    });
+                )
+            });
     let first = iter.next()?;
     let Some(second) = iter.next() else {
         return Some(first);
