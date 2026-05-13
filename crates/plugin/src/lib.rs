@@ -354,7 +354,7 @@ impl Callbacks {
     }
 
     fn run_the_analyzer(&mut self, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
-        let abort = (|| {
+        (|| {
             assert!(
                 self.output_location
                     .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
@@ -373,18 +373,14 @@ impl Callbacks {
             });
 
             assert!(self.stat_ref.replace(stats).is_none());
-            anyhow::Ok(self.opts.abort_after_analysis())
+            anyhow::Ok(())
         })()
         .unwrap();
 
-        if abort {
-            rustc_driver::Compilation::Stop
-        } else {
-            self.stats.measure(TimedStat::MirEmission, || {
-                dump_mir_and_update_stats(tcx, &mut self.dump_stats);
-            });
-            rustc_driver::Compilation::Continue
-        }
+        self.stats.measure(TimedStat::MirEmission, || {
+            dump_mir_and_update_stats(tcx, &mut self.dump_stats);
+        });
+        rustc_driver::Compilation::Continue
     }
 }
 
@@ -457,7 +453,10 @@ fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>)
         info.handling = CrateHandling::CompileAndDump;
     }
     if let Some(target) = plugin_args.target() {
-        if target == name {
+        // Cargo package names use hyphens; rustc passes the corresponding
+        // crate name with hyphens normalized to underscores. Normalize the
+        // user-supplied target the same way so the convention matches.
+        if target.replace('-', "_") == *name {
             info.handling = CrateHandling::Analyze;
         }
     } else if std::env::var("CARGO_PRIMARY_PACKAGE").is_ok() {

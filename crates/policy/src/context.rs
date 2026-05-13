@@ -8,7 +8,7 @@ use std::{io::Write, process::exit, sync::Arc};
 use fixedbitset::FixedBitSet;
 pub use paralegal_pdg::rustc_portable::{DefId, LocalDefId};
 use paralegal_pdg::traverse::{
-    edge_generic_flows_to, generic_influencees, generic_influencers, EdgeSelection,
+    edge_bfs_reach, generic_influencees, generic_influencers, EdgeSelection,
 };
 use paralegal_pdg::{
     CallString, DefKind, DisplayNode, Endpoint, FunctionHandling, GlobalNode, HashMap, HashSet,
@@ -19,11 +19,8 @@ use paralegal_pdg::{
 use anyhow::{anyhow, bail, Result};
 use itertools::{Either, Itertools};
 use petgraph::graph::NodeIndex;
-use petgraph::visit::{EdgeRef, IntoNeighborsDirected, Reversed, Topo, Visitable, Walker};
-use petgraph::Direction::Outgoing;
+use petgraph::visit::{EdgeRef, IntoNeighborsDirected, Topo, Visitable, Walker};
 use petgraph::{Direction, Incoming};
-
-use crate::algo::flows_to::CtrlFlowsTo;
 
 use crate::diagnostics::HasDiagnosticsBase;
 use crate::{assert_warning, diagnostics::DiagnosticsRecorder};
@@ -39,7 +36,6 @@ pub type FunctionId = DefId;
 pub type MarkableId = GlobalNode;
 
 type MarkerIndex = HashMap<Marker, MarkerTargets>;
-type FlowsTo = HashMap<Endpoint, CtrlFlowsTo>;
 
 /// Collection of entities a particular marker has been applied to
 #[derive(Clone, Debug, Default)]
@@ -86,7 +82,6 @@ use self::private::Sealed;
 pub struct RootContext {
     marker_to_ids: MarkerIndex,
     desc: ProgramDescription,
-    flows_to: Option<FlowsTo>,
     pub(crate) diagnostics: DiagnosticsRecorder,
     name_map: HashMap<Identifier, Vec<DefId>>,
     pub(crate) config: Arc<super::Config>,
@@ -115,15 +110,11 @@ impl RootContext {
             .map(|(k, v)| (v.name, *k))
             .into_group_map();
         let marker_to_ids = Self::build_index_on_markers(&desc);
-        let flows_to = config
-            .use_flows_to_index
-            .then(|| Self::build_flows_to(&desc));
         // Make sure no expensive computation happens in the constructor call
         // below, otherwise the measurement of construction time will be off.
         Self {
             marker_to_ids,
             desc,
-            flows_to,
             diagnostics: Default::default(),
             name_map,
             config: Arc::new(config),
@@ -312,18 +303,13 @@ impl RootContext {
             })
     }
 
-    fn build_flows_to(desc: &ProgramDescription) -> FlowsTo {
-        desc.controllers
-            .iter()
-            .map(|(id, c)| (*id, CtrlFlowsTo::build(c)))
-            .collect()
-    }
-
     #[deprecated = "Use NodeQueries::flows_to instead"]
     /// Returns whether a node flows to a node through the configured edge type.
     ///
-    /// Nodes do not flow to themselves. CallArgument nodes do flow to their
-    /// respective CallSites.
+    /// A node flows to itself only if it appears in *both* `src` and `sink`
+    /// (e.g. one SPDG node carries both markers, or the same `GlobalNode` is
+    /// passed for both arguments) — single-node self-flow without that overlap
+    /// is `false`. CallArgument nodes flow to their respective CallSites.
     ///
     /// If you use flows_to with [`EdgeSelection::Control`], you might want to
     /// consider using [`RootContext::has_ctrl_influence`], which additionally
@@ -717,8 +703,10 @@ where
 
     /// Returns whether a node flows to a node through the configured edge type.
     ///
-    /// Nodes do not flow to themselves. CallArgument nodes do flow to their
-    /// respective CallSites.
+    /// A node flows to itself only if it appears in *both* `src` and `sink`
+    /// (e.g. one SPDG node carries both markers, or the same `GlobalNode` is
+    /// passed for both arguments) — single-node self-flow without that overlap
+    /// is `false`. CallArgument nodes flow to their respective CallSites.
     ///
     /// If you use flows_to with [`EdgeSelection::Control`], you might want to
     /// consider using [`RootContext::has_ctrl_influence`], which additionally
@@ -734,21 +722,12 @@ where
         if sink.controller_id() != cf_id {
             return false;
         }
-
-        if let Some(index) = ctx.flows_to.as_ref() {
-            if edge_type.is_data() {
-                let flows_to = &index[&cf_id];
-                return self.iter_nodes().any(|src| {
-                    sink.iter_nodes()
-                        .any(|sink| flows_to.data_flows_to[src.index()][sink.index()])
-                });
-            }
-        }
-        edge_generic_flows_to(
+        edge_bfs_reach(
             self.iter_nodes(),
             edge_type,
             &ctx.desc.controllers[&cf_id],
             sink.iter_nodes(),
+            |_, _| {},
         )
         .is_some()
     }
@@ -799,7 +778,10 @@ where
 
     /// Returns the sink node that is reached
     ///
-    /// Nodes do not flow to themselves. CallArgument nodes do flow to their respective CallSites.
+    /// A node flows to itself only if it appears in *both* `self` and `sink`
+    /// (e.g. one SPDG node carries both markers) — single-node self-flow without
+    /// that overlap is `None`. CallArgument nodes flow to their respective
+    /// CallSites.
     ///
     /// If you use flows_to with [`EdgeSelection::Control`], you might want to consider using [`RootContext::has_ctrl_influence`], which additionally considers intermediate nodes which the src node has data flow to and has ctrl influence on the sink.
     fn find_flow(
@@ -812,29 +794,27 @@ where
         if sink.controller_id() != cf_id {
             return None;
         }
-
-        // if let Some(index) = ctx.flows_to.as_ref() {
-        //     if edge_type.is_data() {
-        //         let flows_to = &index[&cf_id];
-        //         return self.iter_nodes().find_map(|src| {
-        //             sink.iter_nodes()
-        //                 .find(|sink| flows_to.data_flows_to[src.index()][sink.index()])
-        //                 .map(|n| GlobalNode::from_local_node(cf_id, n))
-        //         });
-        //     }
-        // }
-        edge_generic_flows_to(
+        // Predecessor walk recovers which source the matched target came from
+        // without changing the BFS itself — same primitive as `flows_to`.
+        let mut predecessors: HashMap<paralegal_pdg::Node, paralegal_pdg::Node> =
+            HashMap::default();
+        let end = edge_bfs_reach(
             self.iter_nodes(),
             edge_type,
             &ctx.desc.controllers[&cf_id],
             sink.iter_nodes(),
-        )
-        .map(|(start, end)| {
-            (
-                GlobalNode::from_local_node(cf_id, start),
-                GlobalNode::from_local_node(cf_id, end),
-            )
-        })
+            |child, parent| {
+                predecessors.insert(child, parent);
+            },
+        )?;
+        let mut start = end;
+        while let Some(&pred) = predecessors.get(&start) {
+            start = pred;
+        }
+        Some((
+            GlobalNode::from_local_node(cf_id, start),
+            GlobalNode::from_local_node(cf_id, end),
+        ))
     }
 
     /// Call sites that consume this node directly. E.g. the outgoing edges.
@@ -987,21 +967,7 @@ where
     /// Does not return the input node. A CallArgument src will return the associated CallSite.
     fn influencees(self, ctx: &RootContext, edge_type: EdgeSelection) -> Vec<GlobalNode> {
         let cf_id = self.controller_id();
-
         let graph = &ctx.desc.controllers[&cf_id].graph;
-
-        if let Some(index) = ctx.flows_to.as_ref() {
-            if edge_type == EdgeSelection::Data {
-                return self
-                    .iter_nodes()
-                    .flat_map(|src| {
-                        index[&cf_id].data_flows_to[src.index()]
-                            .iter_ones()
-                            .map(move |i| GlobalNode::unsafe_new(cf_id, i))
-                    })
-                    .collect::<Vec<_>>();
-            }
-        }
         generic_influencees(graph, self.iter_nodes(), edge_type)
             .into_iter()
             .map(move |n| GlobalNode::from_local_node(cf_id, n))
@@ -1039,8 +1005,12 @@ pub trait NodeExt: private::Sealed {
     fn get_location(self, ctx: &RootContext) -> &Span;
     /// Returns whether this Node has the marker applied to it directly or via its type.
     fn has_marker<C: HasDiagnosticsBase>(self, ctx: C, marker: Marker) -> bool;
-    /// The shortest path between this and a target node
-    #[deprecated = "This function is known to be buggy at the moment. Only use for debugging, don't rely on it for policy correctness."]
+    /// The shortest path from this node to `to`, or `None` if none exists.
+    ///
+    /// Returned in source→target order, **excluding** `self` and **including**
+    /// `to`. When `self == to` the returned slice is empty (the trivial
+    /// zero-edge path), since that case represents a single SPDG node carrying
+    /// both endpoints and there's nothing to traverse.
     fn shortest_path(
         self,
         to: GlobalNode,
@@ -1124,34 +1094,40 @@ impl NodeExt for GlobalNode {
         ctx: &RootContext,
         edge_selection: EdgeSelection,
     ) -> Option<Box<[Self]>> {
-        let g = if self.controller_id() != to.controller_id() {
+        if self.controller_id() != to.controller_id() {
             return None;
-        } else {
-            &ctx.desc.controllers[&self.controller_id()]
-        };
-        let mut ancestors = HashMap::new();
-        let filtered = edge_selection.filter_graph(&g.graph);
-        let fg = Reversed(&filtered);
-        let mut found = false;
-        'outer: for this in petgraph::visit::Bfs::new(&fg, self.local_node()).iter(&fg) {
-            for next in fg.neighbors_directed(this, Outgoing) {
-                if next != this {
-                    ancestors.entry(next).or_insert(this);
-                }
-                if next == to.local_node() {
-                    found = true;
-                    break 'outer;
-                }
-            }
         }
-        found.then(|| {
-            std::iter::successors(Some(to.local_node()), |elem| {
-                let n = ancestors.get(elem).copied()?;
-                (n != self.local_node()).then_some(n)
-            })
-            .map(|n| GlobalNode::from_local_node(self.controller_id(), n))
-            .collect()
-        })
+        let cf_id = self.controller_id();
+        let mut predecessors: HashMap<paralegal_pdg::Node, paralegal_pdg::Node> =
+            HashMap::default();
+        edge_bfs_reach(
+            std::iter::once(self.local_node()),
+            edge_selection,
+            &ctx.desc.controllers[&cf_id],
+            std::iter::once(to.local_node()),
+            |child, parent| {
+                predecessors.insert(child, parent);
+            },
+        )?;
+        // Walk predecessors back from `to` until we reach the source; collect
+        // [to, parent_of_to, ..., child_of_self] then reverse for src→dst order.
+        let mut path = Vec::new();
+        let mut cur = to.local_node();
+        while let Some(&pred) = predecessors.get(&cur) {
+            path.push(cur);
+            cur = pred;
+        }
+        debug_assert_eq!(
+            cur,
+            self.local_node(),
+            "predecessor walk should terminate at source"
+        );
+        path.reverse();
+        Some(
+            path.into_iter()
+                .map(|n| GlobalNode::from_local_node(cf_id, n))
+                .collect(),
+        )
     }
 }
 
@@ -1193,7 +1169,6 @@ impl<T: NodeExt + Copy> NodeExt for &'_ T {
         (*self).predecessors(ctx)
     }
 
-    #[allow(deprecated)]
     fn shortest_path(
         self,
         to: GlobalNode,

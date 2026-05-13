@@ -9,7 +9,7 @@ use rustc_middle::{
     ty::{GenericArgsRef, Instance},
 };
 
-use super::graph_elems::{DepEdge, DepNode, DepNodeKind, OneHopLocation};
+use super::graph_elems::{DepEdge, DepNode, DepNodeKind, OneHopLocation, Use};
 
 pub type Node = petgraph::graph::NodeIndex;
 
@@ -117,6 +117,32 @@ impl<'tcx, K> PartialGraph<'tcx, K> {
             let idx = self.graph.add_node(node);
             self.node_mapping.insert(key.clone(), idx);
             idx
+        }
+    }
+
+    /// Tag the existing node's `use_` with a more specific value when
+    /// register_mutation's output side knows the call-site role of this place.
+    ///
+    /// Input-side node creation happens with `Use::Other` (the input doesn't
+    /// know the call context). When the corresponding call's output mutation
+    /// is processed later, it must be able to upgrade that node to
+    /// `Use::Arg(i)` / `Use::Return`, otherwise marker assignment in
+    /// `graph_converter` (which switches on `weight.use_`) silently drops the
+    /// function's argument/return markers at that call site.
+    ///
+    /// Cross-CFG-block dataflow makes this collision real: when the analyzed
+    /// body has an if-else where both arms write to the same local, the join
+    /// at the merge point records both call-locations in `last_mutation`. A
+    /// downstream block's `find_data_inputs` then materialises both
+    /// `(_local, call_loc)` nodes as `Use::Other` before either call's
+    /// destination mutation is visited.
+    pub(crate) fn refine_node_use(&mut self, node: Node, new_use: Use) {
+        if matches!(new_use, Use::Other) {
+            return;
+        }
+        let props = self.graph.node_weight_mut(node).unwrap();
+        if matches!(props.use_, Use::Other) {
+            props.use_ = new_use;
         }
     }
 

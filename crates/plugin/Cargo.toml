@@ -4,6 +4,17 @@ version = "0.0.1"
 edition = "2024"
 publish = false
 description = "Extractor for precise semantic PDGs from rust code."
+# The binary is exposed under a non-default name so that `cargo-paralegal-flow`
+# can act as the user-facing `paralegal-flow` shim (a symlink it self-creates
+# in its own bin dir). The shim filters trivial RUSTC_WRAPPER invocations
+# (`-vV`, `--print …`) before they reach this binary, which DT_NEEDEDs
+# librustc_driver → libLLVM and so cannot start in environments where
+# libLLVM isn't on the loader path. See crates/cli/src/main.rs.
+autobins = false
+
+[[bin]]
+name = "paralegal-flow-impl"
+path = "src/main.rs"
 
 [package.metadata.rust-analyzer]
 rustc_private = true

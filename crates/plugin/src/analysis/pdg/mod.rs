@@ -553,6 +553,34 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
 
         trace!("  Found control inputs {ctrl_inputs:?}");
 
+        // Construct outputs BEFORE inputs. When a call argument is reachable
+        // from itself across a CFG back-edge (e.g. inside a for-loop), the
+        // dataflow fixed-point records `last_mutation[arg] = call_loc`, so
+        // `find_data_inputs(arg)` later returns `(arg, call_loc)` and would
+        // otherwise create the (arg, call_loc) node with `Use::Other` before
+        // the synthetic per-arg mutation can stamp it with `Use::Arg(i)` —
+        // clobbering the marker-on-argument signal that downstream marker
+        // assignment relies on.
+        let outputs = match mutated {
+            Either::Right(node) => vec![node],
+            Either::Left(place) => analysis
+                .find_outputs(place, location)
+                .into_iter()
+                .map(|(place, at)| {
+                    let key = NodeKey::for_place(place, at.into());
+                    let n = self
+                        .get_or_construct_node(&key, || constructor.make_dep_node(place, at, use_));
+                    // If a prior input-side creation registered this node with
+                    // `Use::Other`, upgrade to the call-site-specific `use_`
+                    // so marker_on_argument / marker_on_return assignment
+                    // applies.
+                    self.refine_node_use(n, use_);
+                    n
+                })
+                .collect(),
+        };
+        trace!("  Outputs: {outputs:?}");
+
         let data_inputs = inputs
             .iter()
             .flat_map(|i| match i {
@@ -592,19 +620,6 @@ impl<'tcx, K: Hash + Eq + Clone> PartialGraph<'tcx, K> {
             })
             .collect::<Vec<_>>();
         trace!("  Data inputs: {data_inputs:?}");
-
-        let outputs = match mutated {
-            Either::Right(node) => vec![node],
-            Either::Left(place) => analysis
-                .find_outputs(place, location)
-                .into_iter()
-                .map(|(place, at)| {
-                    let key = NodeKey::for_place(place, at.into());
-                    self.get_or_construct_node(&key, || constructor.make_dep_node(place, at, use_))
-                })
-                .collect(),
-        };
-        trace!("  Outputs: {outputs:?}");
 
         // Add data dependencies: data_input -> output
         for data_input in data_inputs {

@@ -239,15 +239,17 @@ impl CommandFactory {
     }
 }
 
-/// Makes sure `paralegal-flow` and `cargo-paralegal-flow` have been built, then returns
-/// a factory for [`Command`]s that invoke them properly
+/// Makes sure `paralegal-flow-impl` and `cargo-paralegal-flow` have been built, then returns
+/// a factory for [`Command`]s that invoke them properly. The user-facing
+/// `paralegal-flow` is a symlink to `cargo-paralegal-flow` that the latter
+/// self-creates on first orchestrator invocation.
 pub fn prepare_analyzer_command(paralegal_root: &Path) -> anyhow::Result<CommandFactory> {
     let paralegal_root = paralegal_root.canonicalize()?;
     let success = Command::new("cargo")
         .args([
             "build",
             "--bin",
-            "paralegal-flow",
+            "paralegal-flow-impl",
             "--bin",
             "cargo-paralegal-flow",
         ])

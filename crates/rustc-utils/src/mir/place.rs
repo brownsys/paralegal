@@ -229,81 +229,10 @@ impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
             Cow::Owned(local_name)
         };
 
-        #[derive(Copy, Clone)]
-        enum ElemPosition {
-            Prefix,
-            Suffix,
-        }
-
-        // Turn each PlaceElem into a prefix (e.g. * for deref) or a suffix
-        // (e.g. .field for projection).
-        let elem_to_string = |(index, (place, elem)): (
-            usize,
-            (PlaceRef<'tcx>, PlaceElem<'tcx>),
-        )|
-         -> Option<(ElemPosition, Cow<'static, str>)> {
-            Some(match elem {
-                ProjectionElem::Deref => (ElemPosition::Prefix, "*".into()),
-
-                ProjectionElem::Field(field, _) => {
-                    let ty = place.ty(&body.local_decls, tcx).ty;
-
-                    let field_name = match ty.kind() {
-                        TyKind::Adt(def, _substs) => {
-                            let fields = match def.adt_kind() {
-                                AdtKind::Struct => &def.non_enum_variant().fields,
-                                AdtKind::Enum => {
-                                    let Some(PlaceElem::Downcast(_, variant_idx)) =
-                                        self.projection.get(index - 1)
-                                    else {
-                                        unimplemented!()
-                                    };
-                                    &def.variant(*variant_idx).fields
-                                }
-                                kind => {
-                                    log::debug!("place::to_string unimplemented for {kind:?}");
-                                    return None;
-                                }
-                            };
-
-                            fields[field].ident(tcx).to_string()
-                        }
-
-                        TyKind::Tuple(_) => field.as_usize().to_string(),
-
-                        TyKind::Closure(def_id, _substs) => match def_id.as_local() {
-                            Some(local_def_id) => {
-                                let captures = tcx.closure_captures(local_def_id);
-                                captures[field.as_usize()].var_ident.to_string()
-                            }
-                            None => field.as_usize().to_string(),
-                        },
-
-                        kind => {
-                            log::debug!("place::to_string unimplemented for {kind:?}");
-                            return None;
-                        }
-                    };
-
-                    (ElemPosition::Suffix, format!(".{field_name}").into())
-                }
-                ProjectionElem::Downcast(sym, _) => {
-                    let variant = sym.map(|s| s.to_string()).unwrap_or_else(|| "??".into());
-                    (ElemPosition::Suffix, format!("@{variant}").into())
-                }
-
-                ProjectionElem::Index(_) => (ElemPosition::Suffix, "[_]".into()),
-                kind => {
-                    log::debug!("place::to_string unimplemented for {kind:?}");
-                    return None;
-                }
-            })
-        };
-
         let tuples = self
             .iter_projections()
             .enumerate()
-            .map(elem_to_string)
+            .map(|(idx, (r, p))| elem_to_string(tcx, *self, body, idx, r, p))
             .collect::<Option<Vec<_>>>()?;
         let (positions, contents): (Vec<_>, Vec<_>) = tuples.into_iter().unzip();
 
@@ -361,6 +290,94 @@ impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
         // 3. Not be from a macro expansion (basically also a desugaring).
         is_loc && !from_desugaring && !from_expansion
     }
+}
+
+#[derive(Copy, Clone)]
+enum ElemPosition {
+    Prefix,
+    Suffix,
+}
+
+/// Turn each PlaceElem into a prefix (e.g. * for deref) or a suffix
+/// (e.g. .field for projection).
+fn elem_to_string<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    base: Place<'tcx>,
+    body: &Body<'tcx>,
+    index: usize,
+    place: PlaceRef<'tcx>,
+    elem: PlaceElem<'tcx>,
+) -> Option<(ElemPosition, Cow<'static, str>)> {
+    Some(match elem {
+        ProjectionElem::Deref => (ElemPosition::Prefix, "*".into()),
+
+        ProjectionElem::Field(field, _) => {
+            let ty = place.ty(&body.local_decls, tcx).ty;
+
+            let field_name = match ty.kind() {
+                TyKind::Adt(def, _substs) => {
+                    let fields = match def.adt_kind() {
+                        AdtKind::Struct => &def.non_enum_variant().fields,
+                        AdtKind::Enum => {
+                            let Some(PlaceElem::Downcast(_, variant_idx)) =
+                                base.projection.get(index - 1)
+                            else {
+                                unimplemented!()
+                            };
+                            &def.variant(*variant_idx).fields
+                        }
+                        kind => {
+                            log::debug!("place::to_string unimplemented for {kind:?}");
+                            return None;
+                        }
+                    };
+
+                    let Some(field_def) = fields.get(field) else {
+                        panic!(
+                            "[paralegal/place::to_string] field index {} out of range \
+                                     for {ty:?} ({} fields)\n\
+                                     place projection: {:?}\n\
+                                     place: {:?}\n\
+                                     backtrace:\n{}",
+                            field.as_usize(),
+                            fields.len(),
+                            base.projection,
+                            base,
+                            std::backtrace::Backtrace::force_capture(),
+                        );
+                    };
+                    field_def.ident(tcx).to_string()
+                }
+
+                TyKind::Tuple(_) => field.as_usize().to_string(),
+
+                TyKind::Closure(def_id, _substs) => match def_id.as_local() {
+                    Some(local_def_id) => {
+                        let captures = tcx.closure_captures(local_def_id);
+                        captures[field.as_usize()].var_ident.to_string()
+                    }
+                    None => field.as_usize().to_string(),
+                },
+
+                kind => {
+                    log::debug!("place::to_string unimplemented for {kind:?}");
+                    return None;
+                }
+            };
+
+            (ElemPosition::Suffix, format!(".{field_name}").into())
+        }
+        ProjectionElem::Downcast(sym, _) => {
+            let variant = sym.map(|s| s.to_string()).unwrap_or_else(|| "??".into());
+            (ElemPosition::Suffix, format!("@{variant}").into())
+        }
+
+        ProjectionElem::Index(_) => (ElemPosition::Suffix, "[_]".into()),
+        kind => {
+            log::debug!("place::to_string unimplemented for {kind:?}");
+            return None;
+        }
+    })
 }
 
 #[derive(Copy, Clone)]
@@ -476,10 +493,9 @@ impl<'tcx, Dispatcher: RegionVisitorDispatcher<'tcx>> TypeVisitor<TyCtxt<'tcx>>
 
             TyKind::Adt(adt_def, subst) => match adt_def.adt_kind() {
                 ty::AdtKind::Struct => {
-                    for (i, field) in adt_def.all_visible_fields(self.def_id, tcx).enumerate() {
+                    for (field_idx, field) in adt_def.visible_struct_fields(self.def_id, tcx) {
                         let ty = field.ty(tcx, subst);
-                        self.place_stack
-                            .push(ProjectionElem::Field(FieldIdx::from_usize(i), ty));
+                        self.place_stack.push(ProjectionElem::Field(field_idx, ty));
                         self.visit_ty(ty);
                         self.place_stack.pop();
                     }
@@ -789,6 +805,52 @@ fn main() {
                     .flat_map(|vs| vs.into_iter().map(|(p, _)| p)),
                 [y1],
             );
+        }
+        test_utils::compile_body(input, callback);
+    }
+
+    /// Regression: the `RegionVisitor` ADT-struct branch used to walk
+    /// `all_visible_fields(...).enumerate()` and emit projections at the
+    /// enumeration index (position within the visible subset), not the
+    /// source-declaration MIR `FieldIdx`. With a private field shifting
+    /// the visible enumeration, the visitor emitted projections pointing
+    /// at the wrong actual fields. Callers like `interior_pointers`,
+    /// `interior_places`, and `interior_paths` propagated those bogus
+    /// projections into flowistry's alias map.
+    #[test]
+    fn test_place_visitors_visibility_filtered_struct() {
+        let input = r"
+fn main() {
+    let x = inner::make();
+}
+
+mod inner {
+    pub struct Hidden;
+    pub struct Outer {
+        _kind: Hidden,
+        pub vis_a: u32,
+        pub vis_b: u32,
+    }
+    pub fn make() -> Outer {
+        Outer { _kind: Hidden, vis_a: 0, vis_b: 0 }
+    }
+}
+";
+        fn callback<'tcx>(
+            tcx: TyCtxt<'tcx>,
+            body_id: BodyId,
+            body_with_facts: &BodyWithBorrowckFacts<'tcx>,
+        ) {
+            let body = &body_with_facts.body;
+            let def_id = tcx.hir_body_owner_def_id(body_id).to_def_id();
+            let p = Placer::new(tcx, body);
+
+            let x = p.local("x").mk();
+            let x_a = p.local("x").field(1).mk();
+            let x_b = p.local("x").field(2).mk();
+
+            compare_sets(x.interior_paths(tcx, body, def_id), [x, x_a, x_b]);
+            compare_sets(x.interior_places(tcx, body, def_id), [x, x_a, x_b]);
         }
         test_utils::compile_body(input, callback);
     }

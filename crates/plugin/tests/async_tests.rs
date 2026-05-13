@@ -1168,6 +1168,45 @@ fn control_flow_overtaint_async_trait_tracing() {
     .check_ctrl(control_flow_overtaint_check);
 }
 
+// Regression: a non-async trait method whose declared return type is
+// `Pin<Box<dyn Future>>` but whose body just forwards a future from another
+// call (no top-level `async {}` block) used to trip
+// `find_coroutine_assign`'s `assert_eq!(len, 1)` because the signature
+// satisfies `has_async_trait_signature` / `has_async_tool_signature`. This is
+// exactly the shape of `reqwest_middleware::Middleware::handle` reached
+// transitively from lemmy.
+#[test]
+fn pin_box_dyn_future_forwarder_does_not_panic() {
+    inline_test! {
+        use std::future::Future;
+        use std::pin::Pin;
+
+        #[paralegal_flow::marker(make_marker, return)]
+        fn make_future() -> Pin<Box<dyn Future<Output = usize> + 'static>> {
+            Box::pin(async { 42 })
+        }
+
+        trait Forwarder {
+            fn forward(&self) -> Pin<Box<dyn Future<Output = usize> + 'static>>;
+        }
+
+        struct Impl;
+
+        impl Forwarder for Impl {
+            fn forward(&self) -> Pin<Box<dyn Future<Output = usize> + 'static>> {
+                make_future()
+            }
+        }
+
+        async fn main() {
+            let i = Impl;
+            let _ = i.forward().await;
+        }
+    }
+    .with_extra_args(EXTRA_ARGS)
+    .check_ctrl(|_| ());
+}
+
 #[test]
 fn explicit_call_to_poll() {
     InlineTestBuilder::new(stringify!(

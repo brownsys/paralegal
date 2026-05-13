@@ -216,10 +216,9 @@ where
                             return false;
                         };
                         adt_def
-                            .all_visible_fields(self.place_info.def_id, self.place_info.tcx)
-                            .enumerate()
-                            .map(|(i, field_def)| {
-                                PlaceElem::Field(FieldIdx::from_usize(i), field_def.ty(tcx, substs))
+                            .visible_struct_fields(self.place_info.def_id, self.place_info.tcx)
+                            .map(|(field_idx, field_def)| {
+                                PlaceElem::Field(field_idx, field_def.ty(tcx, substs))
                             })
                             .collect_vec()
                     }
@@ -413,12 +412,10 @@ where
         let mut emitted_subfield = false;
         match mutated_ty.kind() {
             TyKind::Adt(adt_def, substs) if adt_def.is_struct() => {
-                for (i, field_def) in adt_def
-                    .all_visible_fields(self.place_info.def_id, self.place_info.tcx)
-                    .enumerate()
+                for (field_idx, field_def) in
+                    adt_def.visible_struct_fields(self.place_info.def_id, self.place_info.tcx)
                 {
-                    let field =
-                        PlaceElem::Field(FieldIdx::from_usize(i), field_def.ty(tcx, substs));
+                    let field = PlaceElem::Field(field_idx, field_def.ty(tcx, substs));
                     let mutated_field = mutated.project_deeper(&[field], tcx);
                     self.emit_destructured_or_leaf(mutated_field, inputs, location, status, is_arg);
                     emitted_subfield = true;

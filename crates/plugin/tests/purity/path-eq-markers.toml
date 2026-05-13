@@ -1,0 +1,10 @@
+# `<std::path::Path as std::cmp::PartialEq>::eq` used to fail with
+# `NoImplsFound` because `core::cmp::PartialEq` is *both* the trait and
+# a re-export of the derive macro, and the path resolver picked the
+# macro (which has no impls). After the namespace-preference fix in
+# `non_local_item_children_by_name`, the trait wins and `eq` binds.
+[["<std::path::Path as std::cmp::PartialEq>::eq"]]
+marker = "safe-libs:path-eq"
+_internal_can_fail_resolve_silently = false
+on_argument = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+on_return = true

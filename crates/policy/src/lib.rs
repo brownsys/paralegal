@@ -76,7 +76,6 @@ pub mod error;
 mod test_utils;
 
 pub use self::{
-    algo::flows_to::CtrlFlowsTo,
     algo::flows_to::DataAndControlInfluencees,
     context::*,
     diagnostics::{CombinatorContext, Diagnostics, PolicyContext},
@@ -151,8 +150,8 @@ impl SPDGGenCommand {
     ///
     /// This gives you raw access to the underlying command. Be aware that if
     /// you pass `--` with [`Command::arg`] or [`Command::args`] then methods
-    /// such as [`Self::external_annotations`] and
-    /// [`Self::abort_after_analysis`] not longer work properly after this call.
+    /// such as [`Self::external_annotations`] no longer work properly after
+    /// this call.
     pub fn get_command(&mut self) -> &mut Command {
         &mut self.0
     }
@@ -168,13 +167,6 @@ impl SPDGGenCommand {
     /// the `#[analyze]` annotation.
     pub fn analysis_target(&mut self, target: impl AsRef<str>) -> &mut Self {
         self.0.args(["--analyze", target.as_ref()]);
-        self
-    }
-
-    /// Abort compilation once the analysis artifacts have been created. Also
-    /// sets the expectation for the compilation to succeed to `false`.
-    pub fn abort_after_analysis(&mut self) -> &mut Self {
-        self.0.arg("--abort-after-analysis");
         self
     }
 
@@ -303,16 +295,12 @@ impl GraphLocation {
 pub struct Config {
     /// How much information to retain for error messages in `always_happens_before`
     pub always_happens_before_tracing: algo::ahb::TraceLevel,
-    /// Whether tho precompute an index for `flows_to` queries with
-    /// `EdgeSelection::Data` or whether to use a new DFS every time.
-    pub use_flows_to_index: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Config {
             always_happens_before_tracing: algo::ahb::TraceLevel::StartAndEnd,
-            use_flows_to_index: false,
         }
     }
 }

@@ -9,8 +9,8 @@ use hir::{
     def_id::LocalDefId,
 };
 use rustc_ast::{
-    self as ast, ExprKind, GenericBound, PathSegment, QSelf, TraitObjectSyntax, Ty, TyKind,
-    token::TokenKind,
+    self as ast, AngleBracketedArg, ExprKind, GenericArg, GenericArgs, GenericBound, PathSegment,
+    QSelf, TraitObjectSyntax, Ty, TyKind, token::TokenKind,
 };
 use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_hir::{self as hir, def_id::DefId};
@@ -205,11 +205,29 @@ fn non_local_item_children_by_name(
     name: Symbol,
 ) -> Option<Result<Res>> {
     match tcx.def_kind(def_id) {
-        DefKind::Mod | DefKind::Enum | DefKind::Trait => tcx
-            .module_children(def_id)
-            .iter()
-            .find(|item| item.ident.name == name)
-            .map(|child| Res::from_def_res(child.res.expect_non_local())),
+        DefKind::Mod | DefKind::Enum | DefKind::Trait => {
+            // Names can collide across namespaces (e.g. `core::cmp::PartialEq`
+            // refers to both the trait and the derive-macro re-export). Marker
+            // paths never target macros, so when ambiguity exists we discard
+            // macro candidates in favor of types/values; if only macros match,
+            // fall back to those so the error message still describes the
+            // user's literal path.
+            let mut chosen = None;
+            let mut macro_fallback = None;
+            for child in tcx.module_children(def_id).iter() {
+                if child.ident.name != name {
+                    continue;
+                }
+                let res = child.res.expect_non_local();
+                if matches!(res, def::Res::Def(DefKind::Macro(_), _)) {
+                    macro_fallback.get_or_insert(res);
+                } else {
+                    chosen = Some(res);
+                    break;
+                }
+            }
+            chosen.or(macro_fallback).map(Res::from_def_res)
+        }
         DefKind::Impl { .. } => tcx
             .associated_item_def_ids(def_id)
             .iter()
@@ -333,8 +351,102 @@ fn resolve_ty<'tcx>(tcx: TyCtxt<'tcx>, t: &Ty) -> Result<ty::Ty<'tcx>> {
                 hir::Mutability::Not => ty::Ty::new_imm_ref(tcx, lt, inner),
             })
         }
+        TyKind::Ptr(mt) => {
+            let inner = resolve_ty(tcx, &mt.ty)?;
+            Ok(match mt.mutbl {
+                hir::Mutability::Mut => ty::Ty::new_mut_ptr(tcx, inner),
+                hir::Mutability::Not => ty::Ty::new_imm_ptr(tcx, inner),
+            })
+        }
         _ => Err(ResolutionError::UnsupportedType(t.clone())),
     }
+}
+
+/// Pull just the `Ty` arguments out of an `AngleBracketed` generic-args
+/// list, resolved to `ty::Ty`. Lifetimes, consts, and associated-item
+/// constraints are silently skipped (a corner-cut: we only support
+/// generic-arg-based inherent-impl disambiguation, not full generic-arg
+/// plumbing). `Parenthesized` / `ParenthesizedElided` arg forms (`Fn(A,
+/// B) -> C` and return-type-notation) aren't supported here and produce
+/// an empty result, which the caller treats as "no filter to apply".
+fn extract_angle_type_args<'tcx>(tcx: TyCtxt<'tcx>, ga: &GenericArgs) -> Result<Vec<ty::Ty<'tcx>>> {
+    let GenericArgs::AngleBracketed(ab) = ga else {
+        return Ok(vec![]);
+    };
+    ab.args
+        .iter()
+        .filter_map(|arg| match arg {
+            AngleBracketedArg::Arg(GenericArg::Type(ty)) => Some(resolve_ty(tcx, ty)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Param-as-wildcard structural match: a `Param` on the *impl* side
+/// accepts any supplied type. Used to filter `inherent_impls(adt_did)`
+/// by whether each impl's `Self` substitution is compatible with a
+/// supplied type. Coverage is intentionally partial; unsupported `Ty`
+/// shapes return `false` (a safe error — the marker just won't bind).
+fn match_ty_with_wildcard<'tcx>(supplied: ty::Ty<'tcx>, impl_ty: ty::Ty<'tcx>) -> bool {
+    if matches!(impl_ty.kind(), ty::Param(_)) {
+        return true;
+    }
+    match (supplied.kind(), impl_ty.kind()) {
+        (ty::Adt(s_def, s_args), ty::Adt(i_def, i_args)) if s_def.did() == i_def.did() => {
+            s_args.len() == i_args.len()
+                && s_args
+                    .iter()
+                    .zip(i_args.iter())
+                    .all(|(s, i)| match (s.kind(), i.kind()) {
+                        (ty::GenericArgKind::Type(s), ty::GenericArgKind::Type(i)) => {
+                            match_ty_with_wildcard(s, i)
+                        }
+                        // Lifetimes and consts: bail to equality. With the
+                        // resolver's lifetime erasure (resolve_ty replaces
+                        // refs' lifetimes with RegionVid::ZERO) this will
+                        // typically mismatch for `&'a T` vs `&'b T`; matching
+                        // those properly would need an InferCtxt.
+                        _ => s == i,
+                    })
+        }
+        (ty::RawPtr(s_inner, s_mut), ty::RawPtr(i_inner, i_mut)) if s_mut == i_mut => {
+            match_ty_with_wildcard(*s_inner, *i_inner)
+        }
+        (ty::Ref(_, s_inner, s_mut), ty::Ref(_, i_inner, i_mut)) if s_mut == i_mut => {
+            match_ty_with_wildcard(*s_inner, *i_inner)
+        }
+        // Primitives and other leaf kinds: rely on `TyKind`-level equality.
+        _ => supplied.kind() == impl_ty.kind(),
+    }
+}
+
+/// Does the inherent impl's `Self`-type substitution match `supplied`
+/// args? Operates on the impl's `Self` viewed via `tcx.type_of`, which
+/// for `impl<T> AtomicPtr<T> { ... }` returns the alias-normalized
+/// `Atomic<*mut T>` (with `T` a `Param`).
+fn impl_self_args_match<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    impl_def_id: DefId,
+    supplied: &[ty::Ty<'tcx>],
+) -> bool {
+    let self_ty = tcx.type_of(impl_def_id).skip_binder();
+    let ty::Adt(_, impl_args) = self_ty.kind() else {
+        return false;
+    };
+    let impl_type_args: Vec<ty::Ty<'_>> = impl_args
+        .iter()
+        .filter_map(|a| match a.kind() {
+            ty::GenericArgKind::Type(t) => Some(t),
+            _ => None,
+        })
+        .collect();
+    if supplied.len() != impl_type_args.len() {
+        return false;
+    }
+    supplied
+        .iter()
+        .zip(impl_type_args.iter())
+        .all(|(s, i)| match_ty_with_wildcard(*s, *i))
 }
 
 /// Main algorithm lifted from `clippy_utils`. I've made additions so this can
@@ -471,33 +583,81 @@ pub fn def_path_res(tcx: TyCtxt, qself: Option<&QSelf>, path: &[PathSegment]) ->
         ResolutionError::EmptyStarts
     });
     let mut found = starts
-        .map(|first| {
-            path.iter()
-                // for each segment, find the child item
-                .try_fold(Res::Def(tcx.def_kind(first), first), |res, segment| {
-                    no_generics_supported(segment);
-                    let segment = segment.ident.name;
-                    let def_id = res.def_id();
-                    if let Some(item) = item_child_by_name(tcx, def_id, segment) {
-                        item
-                    } else if matches!(res, Res::Def(DefKind::Enum | DefKind::Struct, _)) {
-                        // it is not a child item so check inherent impl items
-                        tcx.inherent_impls(def_id)
-                            .iter()
-                            .find_map(|&impl_def_id| item_child_by_name(tcx, impl_def_id, segment))
-                            .unwrap_or(Err(ResolutionError::CouldNotFindChild {
+        .map(|first| -> Result<Res> {
+            let mut res = Res::Def(tcx.def_kind(first), first);
+            // Generic args attached to the segment that produced `res`.
+            // Used at the inherent-impl-descent step below to filter
+            // `inherent_impls(adt_did)` by `Self`-type compatibility,
+            // disambiguating which `impl<T> Foo<T>` block the marker
+            // should bind to (e.g. `Atomic::<*mut u8>::new`).
+            let mut prev_args: Option<&GenericArgs> = None;
+            for segment in path.iter() {
+                let segment_name = segment.ident.name;
+                let def_id = res.def_id();
+                let next = if let Some(item) = item_child_by_name(tcx, def_id, segment_name) {
+                    item
+                } else {
+                    // Either a struct/enum (descend into its inherent impls)
+                    // or a type alias (normalize to its target ADT first and
+                    // use the alias's own substitution as a default filter,
+                    // so `AtomicPtr::new` — alias of `Atomic<*mut T>` — picks
+                    // the `*mut T` impl rather than nondeterministically the
+                    // first overload).
+                    let (adt_did, alias_filter) = match res {
+                        Res::Def(DefKind::Enum | DefKind::Struct, _) => (def_id, None),
+                        Res::Def(DefKind::TyAlias, _) => {
+                            let target = tcx.type_of(def_id).skip_binder();
+                            let ty::Adt(adt_def, args) = target.kind() else {
+                                return Err(ResolutionError::CouldNotFindChild {
+                                    item: def_id,
+                                    segment: segment_name,
+                                    search_space: SearchSpace::Mod,
+                                });
+                            };
+                            let type_args: Vec<ty::Ty<'_>> = args
+                                .iter()
+                                .filter_map(|a| match a.kind() {
+                                    ty::GenericArgKind::Type(t) => Some(t),
+                                    _ => None,
+                                })
+                                .collect();
+                            (adt_def.did(), Some(type_args))
+                        }
+                        _ => {
+                            return Err(ResolutionError::CouldNotFindChild {
                                 item: def_id,
-                                segment,
-                                search_space: SearchSpace::InherentImpl,
-                            }))
-                    } else {
-                        Err(ResolutionError::CouldNotFindChild {
-                            item: def_id,
-                            segment,
-                            search_space: SearchSpace::Mod,
-                        })
-                    }
-                })
+                                segment: segment_name,
+                                search_space: SearchSpace::Mod,
+                            });
+                        }
+                    };
+                    // Explicit segment generics override alias-derived
+                    // filtering. Failing to extract segment args is a
+                    // safe error: skip the filter and behave like before
+                    // (find_map first-match), per `_internal_can_fail_…`.
+                    let segment_args =
+                        prev_args.and_then(|ga| extract_angle_type_args(tcx, ga).ok());
+                    let supplied_args: Option<&[ty::Ty<'_>]> =
+                        segment_args.as_deref().or(alias_filter.as_deref());
+                    let impls = tcx.inherent_impls(adt_did);
+                    let candidate = impls.iter().find_map(|&impl_def_id| {
+                        if let Some(args) = supplied_args
+                            && !impl_self_args_match(tcx, impl_def_id, args)
+                        {
+                            return None;
+                        }
+                        item_child_by_name(tcx, impl_def_id, segment_name)
+                    });
+                    candidate.unwrap_or(Err(ResolutionError::CouldNotFindChild {
+                        item: def_id,
+                        segment: segment_name,
+                        search_space: SearchSpace::InherentImpl,
+                    }))
+                };
+                res = next?;
+                prev_args = segment.args.as_deref();
+            }
+            Ok(res)
         })
         .collect::<Vec<_>>();
 

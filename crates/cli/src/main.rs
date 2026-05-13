@@ -1,7 +1,9 @@
 #![feature(exit_status_error)]
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::hash::{DefaultHasher, Hasher};
 use std::io::BufRead;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::Context;
@@ -16,6 +18,15 @@ use paralegal_utils::{
 };
 
 pub const CARGO_ENCODED_RUSTFLAGS: &str = "CARGO_ENCODED_RUSTFLAGS";
+
+/// File-name (no extension) of the symlink that fronts the rustc_driver-linked
+/// binary. Cargo's `RUSTC_WRAPPER` is set to this path; the binary it points to
+/// is `cargo-paralegal-flow` itself, which dispatches on argv[0] (see [`main`]).
+const WRAPPER_SHIM_NAME: &str = "paralegal-flow";
+
+/// File-name of the actual rustc_driver-linked analyzer binary that the shim
+/// hands real compile invocations to.
+const ANALYZER_IMPL_NAME: &str = "paralegal-flow-impl";
 
 fn get_rustflags() -> Result<Vec<String>, std::env::VarError> {
     use std::env::{var, VarError};
@@ -37,6 +48,24 @@ fn get_rustflags() -> Result<Vec<String>, std::env::VarError> {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Dispatch on argv[0] file name. The user-facing `paralegal-flow` is a
+    // symlink to this same binary, used as cargo's `RUSTC_WRAPPER`; running
+    // through the symlink lets us intercept trivial rustc invocations
+    // (`-vV`, `--print …`) before `librustc_driver` → `libLLVM` is resolved
+    // via DT_NEEDED. The actual analyzer lives in the sibling
+    // `paralegal-flow-impl` binary which only the launcher hands real
+    // compile invocations to.
+    let argv0 = std::env::args_os().next().unwrap_or_default();
+    if Path::new(&argv0)
+        .file_stem()
+        .is_some_and(|s| s == WRAPPER_SHIM_NAME)
+    {
+        return launcher_main();
+    }
+    cargo_orchestrator_main()
+}
+
+fn cargo_orchestrator_main() -> anyhow::Result<()> {
     let cargo = std::path::Path::new(env!("SYSROOT_PATH"))
         .join("bin")
         .join("cargo");
@@ -46,7 +75,7 @@ fn main() -> anyhow::Result<()> {
     if args.get(1).is_some_and(|p| p == "paralegal-flow") {
         args.remove(1);
     }
-    let rustc_wrapper_bin = std::env::current_exe()?.with_file_name("paralegal-flow");
+    let rustc_wrapper_bin = ensure_wrapper_symlink()?;
     let mut args = ClapArgs::parse_from(args);
 
     args.anactrl.include_std |= args.marker_control.mark_side_effects();
@@ -190,4 +219,141 @@ fn main() -> anyhow::Result<()> {
     child.wait()?.exit_ok().context("Cargo check command")?;
 
     Ok(())
+}
+
+/// Ensure `<exe_dir>/paralegal-flow` exists and points at this binary
+/// (`cargo-paralegal-flow`). Self-heals stale symlinks left over from
+/// older builds (or a real `paralegal-flow` binary from a pre-shim build).
+/// Returns the symlink path so callers can use it as `RUSTC_WRAPPER`.
+fn ensure_wrapper_symlink() -> anyhow::Result<PathBuf> {
+    let exe = std::env::current_exe().context("locating current executable")?;
+    let shim = exe.with_file_name(WRAPPER_SHIM_NAME);
+
+    let needs_create = match std::fs::symlink_metadata(&shim) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+        Err(e) => return Err(e).context("stat-ing wrapper shim"),
+        Ok(meta) if meta.file_type().is_symlink() => {
+            // Verify the symlink resolves to the same canonical path as us.
+            let same = std::fs::canonicalize(&shim)
+                .ok()
+                .zip(std::fs::canonicalize(&exe).ok())
+                .is_some_and(|(a, b)| a == b);
+            if !same {
+                std::fs::remove_file(&shim).context("removing stale wrapper symlink")?;
+            }
+            !same
+        }
+        Ok(_) => {
+            // Pre-shim leftover (or someone else's file) — replace it.
+            std::fs::remove_file(&shim).context("removing pre-shim wrapper file")?;
+            true
+        }
+    };
+
+    if needs_create {
+        create_shim(&exe, &shim)
+            .with_context(|| format!("creating wrapper shim at {}", shim.display()))?;
+    }
+    Ok(shim)
+}
+
+#[cfg(unix)]
+fn create_shim(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(not(unix))]
+fn create_shim(target: &Path, link: &Path) -> std::io::Result<()> {
+    // No POSIX symlinks; copy instead. Worse for self-heal across rebuilds
+    // (the copy can go stale), but keeps the dispatch working.
+    std::fs::copy(target, link).map(|_| ())
+}
+
+/// Launcher path: invoked when this binary runs through the
+/// `paralegal-flow` symlink as `RUSTC_WRAPPER`. Cargo passes argv as
+/// `<wrapper> <rustc_path> <rustc_args…>`. We dispatch trivial calls
+/// (anything that doesn't need codegen — version probes, `--print …`,
+/// help) directly to stock rustc; everything else is exec'd into the real
+/// `paralegal-flow-impl` binary.
+fn launcher_main() -> anyhow::Result<()> {
+    let mut argv = std::env::args_os();
+    let _self_path = argv.next();
+    let rustc_path = argv
+        .next()
+        .context("paralegal-flow shim invoked without a rustc-path argument")?;
+    let rest: Vec<OsString> = argv.collect();
+
+    if is_trivial_rustc_invocation(&rest) {
+        // Exec stock rustc as cargo intended. Never load librustc_driver,
+        // so the libLLVM DT_NEEDED resolution doesn't have to succeed.
+        let err = exec_replace(&rustc_path, &rest);
+        return Err(err)
+            .with_context(|| format!("exec stock rustc at {}", Path::new(&rustc_path).display()));
+    }
+
+    // Real compile: hand off to the analyzer. Preserve cargo's wrapper
+    // convention so paralegal-flow-impl's own argv-parsing (`wrapper_mode`
+    // detection in crates/plugin/src/main.rs) still strips the rustc-path
+    // arg before invoking rustc_driver.
+    let exe = std::env::current_exe().context("locating current executable")?;
+    let impl_path = exe.with_file_name(ANALYZER_IMPL_NAME);
+    let mut impl_argv: Vec<OsString> = Vec::with_capacity(rest.len() + 1);
+    impl_argv.push(rustc_path);
+    impl_argv.extend(rest);
+    let err = exec_replace(impl_path.as_os_str(), &impl_argv);
+    Err(err).with_context(|| format!("exec analyzer at {}", impl_path.display()))
+}
+
+/// Conservatively decide whether a rustc invocation is "trivial" — i.e.
+/// produces no codegen and so doesn't need the analyzer (or even
+/// librustc_driver) loaded. False negatives are harmless (fall through to
+/// the real analyzer); false positives skip analysis on a real compile,
+/// so this stays strict: every arg must be on the allow-list.
+fn is_trivial_rustc_invocation(args: &[OsString]) -> bool {
+    if args.is_empty() {
+        return false;
+    }
+    let mut seen_marker = false;
+    let mut i = 0;
+    while i < args.len() {
+        let Some(s) = args[i].to_str() else {
+            return false;
+        };
+        match s {
+            "-V" | "-v" | "-vV" | "-Vv" | "--version" | "--verbose" | "-h" | "--help" => {
+                seen_marker = true;
+                i += 1;
+            }
+            "--print" | "--explain" => {
+                seen_marker = true;
+                if i + 1 >= args.len() {
+                    return false;
+                }
+                i += 2;
+            }
+            _ if s.starts_with("--print=") || s.starts_with("--explain=") => {
+                seen_marker = true;
+                i += 1;
+            }
+            _ => return false,
+        }
+    }
+    seen_marker
+}
+
+/// On Unix, replace the current process; on other platforms, spawn-and-wait
+/// then exit with the child's status. Returns the underlying I/O error only
+/// when exec/spawn itself fails.
+#[cfg(unix)]
+fn exec_replace(prog: &std::ffi::OsStr, args: &[OsString]) -> std::io::Error {
+    use std::os::unix::process::CommandExt;
+    Command::new(prog).args(args).exec()
+}
+
+#[cfg(not(unix))]
+fn exec_replace(prog: &std::ffi::OsStr, args: &[OsString]) -> std::io::Error {
+    match Command::new(prog).args(args).status() {
+        Ok(status) => std::process::exit(status.code().unwrap_or(1)),
+        Err(e) => e,
+    }
 }

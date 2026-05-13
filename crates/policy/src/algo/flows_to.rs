@@ -1,72 +1,9 @@
-//! Precomputed reachability queries
+//! Reachability helpers and tests for [`NodeQueries`](crate::NodeQueries).
 
 use paralegal_pdg::{Node as SPDGNode, SPDGImpl, SPDG};
 
-use bitvec::vec::BitVec;
-
-use std::fmt;
-
 #[cfg(test)]
 use paralegal_pdg::traverse::EdgeSelection;
-
-/// Precomputed indices for common queries of a PDG.
-pub struct CtrlFlowsTo {
-    /// The densely packed transitive closure of the
-    /// [`paralegal_pdg::EdgeKind::Data`] edges.
-    pub data_flows_to: Vec<BitVec>,
-}
-
-impl CtrlFlowsTo {
-    /// Constructs the transitive closure from a [`SPDG`].
-    pub fn build(spdg: &SPDG) -> Self {
-        use petgraph::prelude::*;
-        let domain_size = spdg.graph.node_count();
-        // Connect each function-argument sink to its corresponding function sources.
-        // This lets us compute the transitive closure by following through the `sink_to_source` map.
-
-        fn iterate(flows_to: &mut [BitVec]) {
-            let mut changed = true;
-            // Safety: We never resize/reallocate any of the vectors, so
-            // mutating and reading them simultaneously is fine.
-            let unsafe_flow_ref: &'_ [BitVec] =
-                unsafe { std::mem::transmute::<&&mut [BitVec], &&[BitVec]>(&flows_to) };
-            while changed {
-                changed = false;
-                for src_idx in 0..flows_to.len() {
-                    for intermediate_idx in unsafe_flow_ref[src_idx].iter_ones() {
-                        for sink_idx in unsafe_flow_ref[intermediate_idx].iter_ones() {
-                            changed |= !flows_to[src_idx][sink_idx];
-                            flows_to[src_idx].set(sink_idx, true);
-                        }
-                    }
-                }
-            }
-        }
-
-        let mut data_flows_to = vec![BitVec::repeat(false, domain_size); domain_size];
-
-        // Nodes are considered to be flowing to themselves
-        for node in spdg.graph.node_indices() {
-            data_flows_to[node.index()].set(node.index(), true);
-        }
-
-        // Initialize the `flows_to` relation with the data provided by `Ctrl::data_flow`.
-        for edge in spdg
-            .graph
-            .edge_references()
-            .filter(|e| e.weight().is_data())
-        {
-            data_flows_to[edge.source().index()].set(edge.target().index(), true);
-        }
-
-        iterate(&mut data_flows_to);
-
-        CtrlFlowsTo {
-            //callsites_to_callargs,
-            data_flows_to,
-        }
-    }
-}
 
 use petgraph::visit::{Bfs, GraphBase, Visitable, Walker, WalkerIter};
 
@@ -99,14 +36,6 @@ impl Iterator for DataAndControlInfluencees<'_> {
     type Item = SPDGNode;
     fn next(&mut self) -> Option<Self::Item> {
         self.walker.next()
-    }
-}
-
-impl fmt::Debug for CtrlFlowsTo {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CtrlFlowsTo")
-            .field("data_flows_to", &self.data_flows_to)
-            .finish()
     }
 }
 
@@ -185,4 +114,171 @@ fn test_async_controller_argument() {
     assert!(!src_a.flows_to(&cs, &ctx, EdgeSelection::Data));
     assert!(src_b.flows_to(&sink, &ctx, EdgeSelection::Both));
     assert!(src_b.flows_to(&sink, &ctx, EdgeSelection::Data));
+}
+
+// ---- shortest_path / flows_to parity ----
+//
+// `NodeExt::shortest_path` and `NodeQueries::flows_to` share the same BFS
+// primitive ([`paralegal_pdg::traverse::bfs_reach`]) so they must agree on
+// reachability — `shortest_path(...).is_some() == flows_to(...)` for any
+// `(src, sink, edge_selection)`. These tests pin that invariant against the
+// in-tree test crate and additionally check that any returned path is a valid
+// forward edge chain in the chosen `EdgeSelection`.
+
+#[cfg(test)]
+fn path_is_valid_chain(
+    ctx: &crate::RootContext,
+    from: paralegal_pdg::GlobalNode,
+    to: paralegal_pdg::GlobalNode,
+    path: &[paralegal_pdg::GlobalNode],
+    edge_selection: EdgeSelection,
+) {
+    if path.is_empty() {
+        // The single-node case: source and target are the same SPDG node, so
+        // the "path" is zero edges. `shortest_path` and `flows_to` agree this
+        // is reachable; there are no edges to validate.
+        assert_eq!(
+            from, to,
+            "empty path is only valid when source == target, got {from:?}→{to:?}"
+        );
+        return;
+    }
+    assert_eq!(
+        *path.last().unwrap(),
+        to,
+        "path should end at the target: {from:?}→{to:?}, got {path:?}"
+    );
+    assert!(
+        path.iter().all(|n| *n != from),
+        "path must exclude the source: {from:?}→{to:?}, got {path:?}"
+    );
+    let spdg = &ctx.desc().controllers[&from.controller_id()];
+    let mut prev = from.local_node();
+    for step in path {
+        let next = step.local_node();
+        let has_edge = spdg
+            .graph
+            .edges_connecting(prev, next)
+            .any(|e| edge_selection.conforms(e.weight().kind));
+        assert!(
+            has_edge,
+            "no {edge_selection:?} edge from {prev:?} to {next:?} in path {from:?}→{to:?} (path so far: {path:?})"
+        );
+        prev = next;
+    }
+}
+
+#[test]
+fn shortest_path_returns_valid_chain_data() {
+    use paralegal_pdg::{traverse::EdgeSelection, IntoIterGlobalNodes};
+    let ctx = crate::test_utils::test_ctx();
+    let controller = ctx
+        .controller_by_name(paralegal_pdg::Identifier::new_intern(
+            "controller_data_ctrl",
+        ))
+        .unwrap();
+    let src_b = ctx.controller_argument(controller, 1).unwrap();
+    let sink = crate::test_utils::get_sink_node(&ctx, controller, "sink1");
+    let from = src_b.iter_global_nodes().next().expect("src_b is empty");
+    let to = sink.iter_global_nodes().next().expect("sink is empty");
+    let path = crate::NodeExt::shortest_path(from, to, &ctx, EdgeSelection::Data)
+        .expect("src_b should reach sink1 via Data");
+    path_is_valid_chain(&ctx, from, to, &path, EdgeSelection::Data);
+}
+
+#[test]
+fn shortest_path_returns_none_for_data_unreachable() {
+    use paralegal_pdg::{traverse::EdgeSelection, IntoIterGlobalNodes};
+    let ctx = crate::test_utils::test_ctx();
+    let controller = ctx
+        .controller_by_name(paralegal_pdg::Identifier::new_intern(
+            "controller_data_ctrl",
+        ))
+        .unwrap();
+    let src_a = ctx.controller_argument(controller, 0).unwrap();
+    let cs = crate::test_utils::get_callsite_node(&ctx, controller, "sink1");
+    // src_a reaches the sink1 callsite only by control flow, not data.
+    let from = src_a.iter_global_nodes().next().expect("src_a is empty");
+    for to in cs.iter_global_nodes() {
+        assert!(
+            crate::NodeExt::shortest_path(from, to, &ctx, EdgeSelection::Data).is_none(),
+            "src_a should not reach the sink1 callsite via Data: from={from:?} to={to:?}"
+        );
+        assert!(
+            crate::NodeExt::shortest_path(from, to, &ctx, EdgeSelection::Both).is_some(),
+            "src_a should reach the sink1 callsite via Both: from={from:?} to={to:?}"
+        );
+    }
+}
+
+#[test]
+fn shortest_path_flows_to_parity() {
+    // Exhaustive per-pair parity check across the controllers in the test crate:
+    // for every (src, sink) pair of nodes drawn from the marked clusters, and
+    // every EdgeSelection, `shortest_path(..).is_some()` and `flows_to(..)` must
+    // return the same answer. If they ever disagree, one of the two has drifted
+    // off the shared `bfs_reach` primitive.
+    use paralegal_pdg::{traverse::EdgeSelection, GlobalNode, Identifier, IntoIterGlobalNodes};
+    let ctx = crate::test_utils::test_ctx();
+    let selections = [
+        EdgeSelection::Data,
+        EdgeSelection::Control,
+        EdgeSelection::Both,
+    ];
+    let cases: &[(&str, &[&str], &[&str])] = &[
+        ("controller", &["sink1", "sink2"], &["sink1", "sink2"]),
+        ("controller_data_ctrl", &["sink1"], &["sink1", "cond"]),
+        ("controller_ctrl", &["sink1", "sink2"], &["sink1", "sink2"]),
+        ("controller_async", &["sink1"], &["sink1"]),
+    ];
+    let mut pair_count = 0u32;
+    for (ctrl_name, callsite_names, sink_names) in cases {
+        let controller = ctx
+            .controller_by_name(Identifier::new_intern(ctrl_name))
+            .expect(ctrl_name);
+        let mut sources: Vec<GlobalNode> = Vec::new();
+        // Controller arguments — query indices 0..3, skip any missing.
+        for idx in 0..3 {
+            if let Some(arg) = ctx.controller_argument(controller, idx) {
+                sources.extend(arg.iter_global_nodes());
+            }
+        }
+        for name in *callsite_names {
+            sources.extend(
+                crate::test_utils::get_callsite_node(&ctx, controller, name).iter_global_nodes(),
+            );
+        }
+        let mut sinks: Vec<GlobalNode> = Vec::new();
+        for name in *sink_names {
+            sinks.extend(
+                crate::test_utils::get_sink_node(&ctx, controller, name).iter_global_nodes(),
+            );
+            sinks.extend(
+                crate::test_utils::get_callsite_node(&ctx, controller, name).iter_global_nodes(),
+            );
+        }
+        for &src in &sources {
+            for &snk in &sinks {
+                for &sel in &selections {
+                    let sp = crate::NodeExt::shortest_path(src, snk, &ctx, sel);
+                    let ft = crate::NodeQueries::flows_to(src, snk, &ctx, sel);
+                    assert_eq!(
+                        sp.is_some(),
+                        ft,
+                        "parity break in {ctrl_name}: src={src:?} snk={snk:?} sel={sel:?} sp.is_some()={} ft={}",
+                        sp.is_some(),
+                        ft,
+                    );
+                    if let Some(path) = sp {
+                        path_is_valid_chain(&ctx, src, snk, &path, sel);
+                    }
+                    pair_count += 1;
+                }
+            }
+        }
+    }
+    assert!(
+        pair_count > 0,
+        "parity test exercised no pairs — fixture selection likely broken"
+    );
 }

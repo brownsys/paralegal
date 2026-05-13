@@ -1,6 +1,6 @@
 #![feature(rustc_private)]
 
-use paralegal_flow::test_utils::FlowsTo;
+use paralegal_flow::test_utils::{FlowsTo, InlineTestBuilder};
 use paralegal_pdg::Constant;
 
 use paralegal_flow::inline_test;
@@ -124,4 +124,54 @@ fn flow_with_intermediate() {
             panic!("Could not find constant");
         }
     });
+}
+
+// Regression: the fallback in `ConstConversionError::handle_default_policy`
+// (in `crates/plugin/src/constants.rs`) used to call
+// `tcx.dcx().span_err(span, ...)` directly instead of going through the
+// strict-respecting `emit` closure. Default-mode analysis (no `--strict`)
+// hard-errored on any unsupported constant reaching the fallback —
+// `Integer128NotSupported`, `EvalFailed`, and any `Val` payload that the
+// per-type match didn't recognize (the `_ => ()` arm at the bottom of
+// `UnsupportedConstType`'s inner match).
+//
+// We exercise both fallback shapes: f64 reaches the catch-all via the
+// `UnsupportedConstType(Val(..))` arm; u128 skips the outer if-let
+// entirely (`Integer128NotSupported`) and lands directly in the catch-all.
+#[test]
+fn unsupported_float_literal_silent_under_default() {
+    inline_test! {
+        fn sink(_: f64) {}
+        fn main() {
+            sink(3.14_f64);
+        }
+    }
+    .check_ctrl(|_| {});
+}
+
+#[test]
+fn unsupported_u128_literal_silent_under_default() {
+    inline_test! {
+        fn sink(_: u128) {}
+        fn main() {
+            sink(1_u128);
+        }
+    }
+    .check_ctrl(|_| {});
+}
+
+// Complementary negative test: `--strict` must still produce an error on
+// the fallback path. Pins the post-fix behavior so a future refactor that
+// overcorrects (e.g. routes everything through `emit` *and* removes the
+// `strict` gate) would be caught here.
+#[test]
+fn unsupported_float_literal_errors_under_strict() {
+    InlineTestBuilder::new(stringify!(
+        fn sink(_: f64) {}
+        fn main() {
+            sink(3.14_f64);
+        }
+    ))
+    .with_extra_args(["--strict".to_string()])
+    .expect_fail_compile();
 }
