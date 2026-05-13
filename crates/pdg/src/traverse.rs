@@ -70,9 +70,7 @@ use petgraph::visit as pgv;
 /// Multi-source forward BFS that reports the first node in `targets` it reaches.
 ///
 /// `on_discover(child, parent)` runs exactly once per discovered non-source
-/// node, when that node is first reached via a real edge. Pass `|_, _| {}` to
-/// opt out of predecessor tracking (it compiles away, so `flows_to`-style
-/// callers don't pay for the bookkeeping `shortest_path` needs).
+/// node, when that node is first reached via a real edge.
 ///
 /// **Source ∩ targets**: if a source itself is in `targets`, the primitive
 /// returns that source immediately. This is the "same SPDG node carries both

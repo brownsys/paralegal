@@ -1010,10 +1010,7 @@ pub trait NodeExt: private::Sealed {
     /// Returned in source→target order, **excluding** `self` and **including**
     /// `to`. When `self == to` the returned slice is empty (the trivial
     /// zero-edge path), since that case represents a single SPDG node carrying
-    /// both endpoints and there's nothing to traverse. Internally a BFS via
-    /// [`paralegal_pdg::traverse::bfs_reach`], so `flows_to(..., edge_selection)`
-    /// and `shortest_path(..., edge_selection).is_some()` agree by
-    /// construction on the same `(self, to)`.
+    /// both endpoints and there's nothing to traverse.
     fn shortest_path(
         self,
         to: GlobalNode,

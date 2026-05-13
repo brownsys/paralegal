@@ -209,55 +209,52 @@ pub fn find_coroutine_assign<'tcx, 'a>(
     Location,
     &'a rustc_index::IndexVec<FieldIdx, Operand<'tcx>>,
 )> {
-    let mut matching_statements =
-        body.basic_blocks
-            .iter_enumerated()
-            .flat_map(|(block, bbdat)| {
-                bbdat.statements.iter().enumerate().filter_map(
-                    move |(statement_index, statement)| {
-                        let (def_id, generics, args) = match_coroutine_assign(statement)?;
-                        Some((
-                            def_id,
-                            generics,
-                            Location {
-                                block,
-                                statement_index,
-                            },
-                            args,
-                        ))
+    let mut iter = body.basic_blocks.iter_enumerated().flat_map(|(block, bbdat)| {
+        bbdat
+            .statements
+            .iter()
+            .enumerate()
+            .filter_map(move |(statement_index, statement)| {
+                let (def_id, generics, args) = match_coroutine_assign(statement)?;
+                Some((
+                    def_id,
+                    generics,
+                    Location {
+                        block,
+                        statement_index,
                     },
-                )
+                    args,
+                ))
             })
-            .collect::<Vec<_>>();
-    match matching_statements.len() {
-        0 => None,
-        1 => Some(matching_statements.pop().unwrap()),
-        n => {
-            let def_id = body.source.def_id();
-            let mut dump = String::new();
-            for (block, bbdat) in body.basic_blocks.iter_enumerated() {
-                use std::fmt::Write;
-                let _ = writeln!(dump, "  {block:?}:");
-                for (i, st) in bbdat.statements.iter().enumerate() {
-                    let _ = writeln!(dump, "    [{i}] {:?}", st.kind);
-                }
-                if let Some(t) = &bbdat.terminator {
-                    let _ = writeln!(dump, "    T {:?}", t.kind);
-                }
-            }
-            panic!(
-                "find_coroutine_assign: expected at most one `Aggregate(Coroutine(..))` \
-                 statement in body of {def_id:?} (span {span:?}), found {n}.\n\
-                 body dump:\n{dump}\n\
-                 matched locations: {locs:?}",
-                span = body.span,
-                locs = matching_statements
-                    .iter()
-                    .map(|(d, _, l, _)| (l, d))
-                    .collect::<Vec<_>>(),
-            );
+    });
+    let first = iter.next()?;
+    let Some(second) = iter.next() else {
+        return Some(first);
+    };
+    // 2+ matches: gather the rest for the panic message.
+    let mut all = vec![first, second];
+    all.extend(iter);
+    let n = all.len();
+    let def_id = body.source.def_id();
+    let mut dump = String::new();
+    for (block, bbdat) in body.basic_blocks.iter_enumerated() {
+        use std::fmt::Write;
+        let _ = writeln!(dump, "  {block:?}:");
+        for (i, st) in bbdat.statements.iter().enumerate() {
+            let _ = writeln!(dump, "    [{i}] {:?}", st.kind);
+        }
+        if let Some(t) = &bbdat.terminator {
+            let _ = writeln!(dump, "    T {:?}", t.kind);
         }
     }
+    panic!(
+        "find_coroutine_assign: expected at most one `Aggregate(Coroutine(..))` \
+         statement in body of {def_id:?} (span {span:?}), found {n}.\n\
+         body dump:\n{dump}\n\
+         matched locations: {locs:?}",
+        span = body.span,
+        locs = all.iter().map(|(d, _, l, _)| (l, d)).collect::<Vec<_>>(),
+    );
 }
 
 fn try_as_async_tool<'tcx>(

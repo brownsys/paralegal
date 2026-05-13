@@ -997,6 +997,18 @@ pub fn type_as_fn<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> TyAsFnResult<'tcx> {
     }
 }
 
+fn retype_place_context<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+    orig: Place<'tcx>,
+) -> String {
+    format!(
+        "walking projection {:?} of place {orig:?} in body {} ({def_id:?})",
+        orig.projection,
+        tcx.def_path_str(def_id),
+    )
+}
+
 pub fn retype_place<'tcx>(
     orig: Place<'tcx>,
     tcx: TyCtxt<'tcx>,
@@ -1018,29 +1030,18 @@ pub fn retype_place<'tcx>(
             break;
         }
 
-        // Don't continue if we reach a private field. The previous
-        // out-of-range silent-skip has been replaced with a hard panic to
-        // localize the upstream emitter of the malformed projection — see
-        // case-study-sweep-followup-queue.md (queue #3).
+        // Don't continue if we reach a private field.
         if let ProjectionElem::Field(field, _) = elem
             && let Some(adt_def) = ty.ty.ty_adt_def()
         {
             let Some(field) = adt_def.all_fields().nth(field.as_usize()) else {
                 panic!(
-                    "[paralegal/retype_place] ADT field index {} out of range for {} \
-                     ({} fields, ty {:?})\n\
-                     walking projection {:?} of place {:?}\n\
-                     in body {} (def_id {:?})\n\
-                     backtrace:\n{}",
+                    "[paralegal/retype_place] ADT field index {} out of range for {} ({} fields, ty {:?}); {}",
                     field.as_usize(),
                     tcx.def_path_str(adt_def.did()),
                     adt_def.all_fields().count(),
                     ty.ty,
-                    orig.projection,
-                    orig,
-                    tcx.def_path_str(def_id),
-                    def_id,
-                    std::backtrace::Backtrace::force_capture(),
+                    retype_place_context(tcx, def_id, orig),
                 );
             };
             if !field.vis.is_accessible_from(def_id, tcx) {
@@ -1056,48 +1057,20 @@ pub fn retype_place<'tcx>(
             tcx,
             &elem,
             |ty| ty,
-            |self_ty, variant_index, field, _| match self_ty.kind() {
-                TyKind::Closure(_, args) => {
-                    let upvar_tys = args.as_closure().upvar_tys();
-                    upvar_tys.iter().nth(field.as_usize()).unwrap_or_else(|| {
-                        panic!(
-                            "[paralegal/retype_place] closure upvar index {} out of range \
-                             ({} upvars, self_ty {:?})\n\
-                             walking projection {:?} of place {:?}\n\
-                             in body {} (def_id {:?})\n\
-                             backtrace:\n{}",
-                            field.as_usize(),
-                            upvar_tys.len(),
-                            self_ty,
-                            orig.projection,
-                            orig,
-                            tcx.def_path_str(def_id),
-                            def_id,
-                            std::backtrace::Backtrace::force_capture(),
-                        )
-                    })
-                }
-                TyKind::Coroutine(_, args) => {
-                    let upvar_tys = args.as_coroutine().upvar_tys();
-                    upvar_tys.iter().nth(field.as_usize()).unwrap_or_else(|| {
-                        panic!(
-                            "[paralegal/retype_place] coroutine upvar index {} out of range \
-                             ({} upvars, self_ty {:?})\n\
-                             walking projection {:?} of place {:?}\n\
-                             in body {} (def_id {:?})\n\
-                             backtrace:\n{}",
-                            field.as_usize(),
-                            upvar_tys.len(),
-                            self_ty,
-                            orig.projection,
-                            orig,
-                            tcx.def_path_str(def_id),
-                            def_id,
-                            std::backtrace::Backtrace::force_capture(),
-                        )
-                    })
-                }
-                _ => PlaceTy::field_ty(tcx, self_ty, variant_index, field),
+            |self_ty, variant_index, field, _| {
+                let (kind, upvar_tys) = match self_ty.kind() {
+                    TyKind::Closure(_, args) => ("closure", args.as_closure().upvar_tys()),
+                    TyKind::Coroutine(_, args) => ("coroutine", args.as_coroutine().upvar_tys()),
+                    _ => return PlaceTy::field_ty(tcx, self_ty, variant_index, field),
+                };
+                upvar_tys.iter().nth(field.as_usize()).unwrap_or_else(|| {
+                    panic!(
+                        "[paralegal/retype_place] {kind} upvar index {} out of range ({} upvars, self_ty {self_ty:?}); {}",
+                        field.as_usize(),
+                        upvar_tys.len(),
+                        retype_place_context(tcx, def_id, orig),
+                    )
+                })
             },
             |ty| ty,
         );
