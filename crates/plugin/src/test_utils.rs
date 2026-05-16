@@ -10,7 +10,7 @@ use rustc_middle::ty::TyCtxt;
 use tracing::debug;
 
 use crate::{
-    Callbacks, EXTRA_RUSTC_ARGS, HashSet,
+    Callbacks, EXTRA_RUSTC_ARGS, HashSet, NoopExtension,
     ann::{db::AutoMarkers, dump_markers},
     desc::{Identifier, ProgramDescription},
     utils::Print,
@@ -567,7 +567,7 @@ impl InlineTestBuilder {
                 let args: &'static _ = Box::leak(Box::new(args));
                 dump_markers(result.tcx);
                 let tcx = result.tcx;
-                let (pdg, _) = Callbacks::new(args)
+                let (pdg, _) = Callbacks::new(args, Box::new(NoopExtension))
                     .run_in_context_without_writing_stats(tcx)
                     .unwrap();
                 let graph = PreFrg::from_description(pdg);

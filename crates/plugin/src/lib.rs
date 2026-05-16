@@ -64,6 +64,7 @@ pub mod constants;
 mod ctx;
 pub mod dbg;
 mod discover;
+pub mod extension;
 pub mod mir;
 pub mod source_access;
 mod stats;
@@ -83,6 +84,7 @@ use ann::dump_markers;
 pub use args::{AnalysisCtrl, Args, BuildConfig, DepConfig, DumpArgs};
 use cargo_paralegal_flow::{ClapArgs, Debugger};
 pub use ctx::Pctx;
+pub use extension::{DriverExtension, NoopExtension};
 use desc::utils::write_sep;
 
 pub const EXTRA_RUSTC_ARGS: &[&str] = &[
@@ -128,6 +130,7 @@ struct Callbacks {
     start: Instant,
     dump_stats: DumpStats,
     output_location: Option<PathBuf>,
+    extension: Box<dyn DriverExtension>,
 }
 
 struct NoopCallbacks;
@@ -141,7 +144,7 @@ impl FinalizingCallbacks for NoopCallbacks {
 }
 
 impl Callbacks {
-    pub fn new(opts: &'static Args) -> Self {
+    pub fn new(opts: &'static Args, extension: Box<dyn DriverExtension>) -> Self {
         Self {
             opts,
             stats: Default::default(),
@@ -150,6 +153,7 @@ impl Callbacks {
             start: Instant::now(),
             dump_stats: DumpStats::zero(),
             output_location: None,
+            extension,
         }
     }
 }
@@ -180,17 +184,28 @@ impl DumpStats {
 }
 
 struct DumpOnlyCallbacks {
+    /// Carried so `after_expansion` can construct a [`Pctx`] when the
+    /// extension opts in via `requires_dependency_markers`. Unused otherwise.
+    opts: &'static Args,
     time: DumpStats,
     start: Instant,
     output_location: Option<PathBuf>,
+    extension: Box<dyn DriverExtension>,
+    /// Captured at construction so the `after_expansion` hot path doesn't
+    /// re-dispatch through the extension trait just to check.
+    extension_wants_markers: bool,
 }
 
 impl DumpOnlyCallbacks {
-    fn new() -> Self {
+    fn new(opts: &'static Args, extension: Box<dyn DriverExtension>) -> Self {
+        let extension_wants_markers = extension.requires_dependency_markers();
         Self {
+            opts,
             time: DumpStats::zero(),
             start: Instant::now(),
             output_location: None,
+            extension,
+            extension_wants_markers,
         }
     }
 }
@@ -222,11 +237,22 @@ impl rustc_driver::Callbacks for DumpOnlyCallbacks {
         configure(config)
     }
 
-    fn after_expansion(
+    fn after_expansion<'tcx>(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
-        tcx: TyCtxt<'_>,
+        tcx: TyCtxt<'tcx>,
     ) -> rustc_driver::Compilation {
+        // `MarkerDatabase::init` reads this crate's `.pmeta` from disk, so
+        // markers must be dumped before `Pctx::new` runs. `dump_mir_and_update_stats`
+        // below dumps them again as part of its bundled emission — that's
+        // idempotent and matches pre-refactor behavior.
+        if self.extension_wants_markers {
+            let dump_marker_start = Instant::now();
+            dump_markers(tcx);
+            self.time.dump_time += dump_marker_start.elapsed();
+            let pctx = Pctx::new(tcx, self.opts);
+            self.extension.pre_pdg(tcx, pctx.marker_ctx());
+        }
         dump_mir_and_update_stats(tcx, &mut self.time);
         self.output_location = Some(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT));
         rustc_driver::Compilation::Continue
@@ -257,11 +283,22 @@ impl rustc_driver::Callbacks for Callbacks {
     fn after_expansion<'tcx>(
         &mut self,
         _compiler: &rustc_interface::interface::Compiler,
-        tcx: TyCtxt<'_>,
+        tcx: TyCtxt<'tcx>,
     ) -> rustc_driver::Compilation {
         self.stats
             .record_timed(TimedStat::Rustc, self.stats.elapsed());
-        let compilation = self.run_the_analyzer(tcx);
+        // `MarkerDatabase::init` (inside `Pctx::new`) loads every included
+        // crate's marker metadata from disk, including this crate's own
+        // `.pmeta`. So we must dump first, then construct Pctx.
+        let dump_marker_start = Instant::now();
+        dump_markers(tcx);
+        self.dump_stats.dump_time += dump_marker_start.elapsed();
+        // Share Pctx with both the extension hook and the analyzer below so
+        // `MarkerDatabase::init` runs only once per compilation. The
+        // extension may mutate MIR before the analyzer consumes it.
+        let pctx = Pctx::new(tcx, self.opts);
+        self.extension.pre_pdg(tcx, pctx.marker_ctx());
+        let compilation = self.run_the_analyzer(pctx);
         self.rustc_second_timer = Some(Instant::now());
         compilation
     }
@@ -307,15 +344,31 @@ impl FinalizingCallbacks for Callbacks {
 }
 
 impl Callbacks {
-    pub fn run_in_context_without_writing_stats(
+    /// In-process entry point used by `test_utils`. Dumps the local crate's
+    /// marker metadata, builds a fresh [`Pctx`], and delegates. Production
+    /// code shares a single `Pctx` with the extension hook and calls
+    /// [`Self::run_in_context_with_pctx`] directly instead.
+    #[cfg(feature = "test")]
+    pub fn run_in_context_without_writing_stats<'tcx>(
         &mut self,
-        tcx: TyCtxt<'_>,
+        tcx: TyCtxt<'tcx>,
     ) -> anyhow::Result<(ProgramDescription, AnalyzerStats)> {
         let dump_marker_start = Instant::now();
         dump_markers(tcx);
         self.dump_stats.dump_time += dump_marker_start.elapsed();
+        self.run_in_context_with_pctx(Pctx::new(tcx, self.opts))
+    }
+
+    /// Internal entry point used by the production path. Caller must have
+    /// already invoked `dump_markers(tcx)` before constructing `pctx`,
+    /// because `MarkerDatabase::init` reads `.pmeta` files from disk.
+    pub fn run_in_context_with_pctx<'tcx>(
+        &mut self,
+        pctx: Pctx<'tcx>,
+    ) -> anyhow::Result<(ProgramDescription, AnalyzerStats)> {
+        let tcx = pctx.tcx();
         tcx.dcx().abort_if_errors();
-        let vis = discover::CollectingVisitor::new(tcx, self.opts, self.stats.clone());
+        let vis = discover::CollectingVisitor::new(pctx, self.stats.clone());
         let mut generator = vis.run();
         let (desc, stats) = generator.analyze()?;
         info!(num_controllers = desc.controllers.len(), "All elems walked");
@@ -353,14 +406,15 @@ impl Callbacks {
         Ok((desc, stats))
     }
 
-    fn run_the_analyzer(&mut self, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
+    fn run_the_analyzer<'tcx>(&mut self, pctx: Pctx<'tcx>) -> rustc_driver::Compilation {
+        let tcx = pctx.tcx();
         (|| {
             assert!(
                 self.output_location
                     .replace(intermediate_out_dir(tcx, INTERMEDIATE_STAT_EXT))
                     .is_none()
             );
-            let (desc, mut stats) = self.run_in_context_without_writing_stats(tcx)?;
+            let (desc, mut stats) = self.run_in_context_with_pctx(pctx)?;
             self.stats.measure(TimedStat::Serialization, || {
                 desc.canonical_write(self.opts.result_path()).unwrap()
             });
@@ -465,16 +519,29 @@ fn how_to_handle_this_crate(plugin_args: &Args, compiler_args: &mut Vec<String>)
     info
 }
 
-pub fn run(mut compiler_args: Vec<String>, plugin_args: Args) -> Result<(), ErrorGuaranteed> {
+pub fn run(compiler_args: Vec<String>, plugin_args: Args) -> Result<(), ErrorGuaranteed> {
+    run_with_extension(compiler_args, plugin_args, Box::new(NoopExtension))
+}
+
+/// Same as [`run`] but with a [`DriverExtension`] that gets to mutate MIR
+/// before paralegal's PDG construction. Used by embedders like haven that
+/// need a pre-PDG hook.
+pub fn run_with_extension(
+    mut compiler_args: Vec<String>,
+    plugin_args: Args,
+    extension: Box<dyn DriverExtension>,
+) -> Result<(), ErrorGuaranteed> {
     let handling = how_to_handle_this_crate(&plugin_args, &mut compiler_args);
     debug!(?handling, "Crate handling");
     compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
-    let mut callbacks = match handling.handling {
-        CrateHandling::JustCompile => Box::new(NoopCallbacks) as Box<dyn FinalizingCallbacks>,
-        CrateHandling::CompileAndDump => Box::new(DumpOnlyCallbacks::new()),
+    // Leak unconditionally so both callback variants can take a `&'static
+    // Args`. The Analyze-only debugger setup below still needs to consult
+    // `opts` before we move into the match arm.
+    let opts: &'static Args = Box::leak(Box::new(plugin_args));
+    let mut callbacks: Box<dyn FinalizingCallbacks> = match handling.handling {
+        CrateHandling::JustCompile => Box::new(NoopCallbacks),
+        CrateHandling::CompileAndDump => Box::new(DumpOnlyCallbacks::new(opts, extension)),
         CrateHandling::Analyze => {
-            let opts = Box::leak(Box::new(plugin_args));
-
             const RERUN_VAR: &str = "RERUN_WITH_PROFILER";
             if let Ok(debugger) = std::env::var(RERUN_VAR) {
                 info!("Restarting with debugger '{debugger}'");
@@ -494,7 +561,7 @@ pub fn run(mut compiler_args: Vec<String>, plugin_args: Args) -> Result<(), Erro
                 attach_debugger(dbg)
             }
 
-            Box::new(Callbacks::new(opts))
+            Box::new(Callbacks::new(opts, extension))
         }
     };
 
