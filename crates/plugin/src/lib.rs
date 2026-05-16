@@ -37,6 +37,8 @@ use paralegal_pdg::{AnalyzerStats, FLOW_GRAPH_EXT, ProgramDescription, STAT_FILE
 
 use rustc_interface::Config;
 use rustc_middle::ty::TyCtxt;
+use rustc_middle::util::Providers;
+use rustc_session::Session;
 use rustc_span::ErrorGuaranteed;
 use tracing::{debug, error, info};
 
@@ -46,6 +48,7 @@ use std::{
     fs::File,
     io::BufWriter,
     path::PathBuf,
+    sync::OnceLock,
     time::{Duration, Instant},
 };
 
@@ -220,8 +223,21 @@ fn dump_mir_and_update_stats(tcx: TyCtxt, timer: &mut DumpStats) {
     timer.tycheck_time = tycheck_time;
 }
 
+/// Set by [`run_with_extension`] when the active [`DriverExtension`] returns
+/// `Some` from [`DriverExtension::query_providers`]. The override closure
+/// installed in [`configure`] reads it and layers the extension's providers
+/// on top of paralegal's own. `fn` (not `Fn`) because `Config::override_queries`
+/// is itself `Option<fn(..)>` — extensions stash any per-run state in their
+/// own statics.
+static EXTENSION_QUERY_PROVIDERS: OnceLock<fn(&Session, &mut Providers)> = OnceLock::new();
+
 fn configure(config: &mut Config) {
-    config.override_queries = Some(|_, providers| providers.queries.mir_borrowck = mir_borrowck);
+    config.override_queries = Some(|sess, providers| {
+        providers.queries.mir_borrowck = mir_borrowck;
+        if let Some(ext) = EXTENSION_QUERY_PROVIDERS.get() {
+            ext(sess, providers);
+        }
+    });
     assert_eq!(config.opts.unstable_opts.threads, 1);
     //config.opts.unstable_opts.polonius = Polonius::Next;
     // We don't care about emitting any lints. Users can get those when they
@@ -531,6 +547,14 @@ pub fn run_with_extension(
     plugin_args: Args,
     extension: Box<dyn DriverExtension>,
 ) -> Result<(), ErrorGuaranteed> {
+    // Snapshot the extension's provider overrides before any callback's
+    // `config()` hook fires — the override closure inside [`configure`] reads
+    // this OnceLock at compile time. Idempotent: second-and-later sets are
+    // discarded (matters only if a process ever runs multiple compilations,
+    // which paralegal currently doesn't).
+    if let Some(ext_providers) = extension.query_providers() {
+        let _ = EXTENSION_QUERY_PROVIDERS.set(ext_providers);
+    }
     let handling = how_to_handle_this_crate(&plugin_args, &mut compiler_args);
     debug!(?handling, "Crate handling");
     compiler_args.extend(EXTRA_RUSTC_ARGS.iter().copied().map(ToString::to_string));
