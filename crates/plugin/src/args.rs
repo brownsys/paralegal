@@ -75,6 +75,9 @@ impl TryFrom<ClapArgs> for Args {
             strict,
             build_config: _,
             forward_json: _,
+            // Only acted on by `cargo-paralegal-flow`'s orchestrator, before
+            // `PARALEGAL_ARGS` is serialised — the analyzer never reads it.
+            build: _,
         } = value;
         if relaxed {
             eprintln!(

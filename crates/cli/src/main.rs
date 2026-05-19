@@ -24,6 +24,12 @@ pub const CARGO_ENCODED_RUSTFLAGS: &str = "CARGO_ENCODED_RUSTFLAGS";
 /// is `cargo-paralegal-flow` itself, which dispatches on argv[0] (see [`main`]).
 const WRAPPER_SHIM_NAME: &str = "paralegal-flow";
 
+/// Env var; when set, overrides the path to the rustc_driver-linked analyzer
+/// binary that the wrapper-shim execs for real compiles. Defaults to the
+/// sibling `paralegal-flow-impl` next to this binary. Used by embedders like
+/// haven that ship their own analyzer binary built on top of `paralegal_flow`.
+const IMPL_BIN_OVERRIDE_ENV: &str = "PARALEGAL_IMPL_BIN";
+
 /// File-name of the actual rustc_driver-linked analyzer binary that the shim
 /// hands real compile invocations to.
 const ANALYZER_IMPL_NAME: &str = "paralegal-flow-impl";
@@ -84,6 +90,12 @@ fn cargo_orchestrator_main() -> anyhow::Result<()> {
     args.hash_config(&mut hasher);
     config_hash_for_file(std::env::current_exe().ok(), &mut hasher);
     config_hash_for_file(Some(&rustc_wrapper_bin), &mut hasher);
+    // If embedder swaps the impl binary (e.g. haven-driver), mix its identity
+    // into the build hash so artifacts compiled under different analyzers
+    // don't get reused.
+    if let Some(p) = std::env::var_os(IMPL_BIN_OVERRIDE_ENV) {
+        config_hash_for_file(Some(Path::new(&p)), &mut hasher);
+    }
 
     let exec_hash = hasher.finish();
 
@@ -100,8 +112,9 @@ fn cargo_orchestrator_main() -> anyhow::Result<()> {
         .other_options(["--offline".into()])
         .exec()?;
 
+    let cargo_subcommand = if args.build { "build" } else { "check" };
     let mut cmd = Command::new(&cargo);
-    cmd.args(["check", "--message-format=json"]) // or "build"
+    cmd.args([cargo_subcommand, "--message-format=json"])
         .arg("--target-dir")
         .arg(metadata.target_directory.join("paralegal"))
         .args(args.cargo_args.iter())
@@ -295,8 +308,13 @@ fn launcher_main() -> anyhow::Result<()> {
     // convention so paralegal-flow-impl's own argv-parsing (`wrapper_mode`
     // detection in crates/plugin/src/main.rs) still strips the rustc-path
     // arg before invoking rustc_driver.
-    let exe = std::env::current_exe().context("locating current executable")?;
-    let impl_path = exe.with_file_name(ANALYZER_IMPL_NAME);
+    let impl_path = match std::env::var_os(IMPL_BIN_OVERRIDE_ENV) {
+        Some(p) => PathBuf::from(p),
+        None => {
+            let exe = std::env::current_exe().context("locating current executable")?;
+            exe.with_file_name(ANALYZER_IMPL_NAME)
+        }
+    };
     let mut impl_argv: Vec<OsString> = Vec::with_capacity(rest.len() + 1);
     impl_argv.push(rustc_path);
     impl_argv.extend(rest);

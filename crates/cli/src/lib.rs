@@ -50,6 +50,14 @@ pub struct ClapArgs {
     /// for `cargo` when tools expect `--message-format=json` output.
     #[clap(long)]
     pub forward_json: bool,
+    /// Drive the wrapped compile as `cargo build` instead of the default
+    /// `cargo check`. Codegen runs after the analyzer's `pre_pdg` /
+    /// `after_analysis` hooks (both return `Compilation::Continue`), so any
+    /// MIR rewrites are picked up by codegen. Use this when an embedder
+    /// (e.g. haven) wants the rewritten binaries as build artifacts, not
+    /// just the analysis output.
+    #[clap(long)]
+    pub build: bool,
     #[clap(last = true)]
     pub cargo_args: Vec<String>,
 }
@@ -66,6 +74,9 @@ impl ClapArgs {
         self.relaxed.hash(hasher);
         self.target.hash(hasher);
         self.result_path.hash(hasher);
+        // `--build` vs default `cargo check` produce different artifacts;
+        // keep their caches disjoint.
+        self.build.hash(hasher);
         config_hash_for_file(self.marker_control.external_annotations().as_ref(), hasher);
     }
 
@@ -199,5 +210,118 @@ impl MarkerControl {
 
     pub fn elide_on_whitelist_markers(&self) -> bool {
         self.elide_on_whitelist_markers
+    }
+}
+
+/// Rustc-wrapper boilerplate shared by `paralegal-flow-impl` and embedders
+/// that link the analyzer as a library (e.g. `haven-driver`).
+///
+/// What it does, in order:
+///
+/// 1. Parses `--version`/`-V`/`-vV`/`--verbose` out of argv. If a version
+///    probe is requested, prints the (possibly spoofed) version string and
+///    calls [`std::process::exit(0)`]. By default the `-nightly` suffix is
+///    stripped — build scripts otherwise turn on unstable features that
+///    don't survive paralegal's pinned-toolchain build. Setting
+///    `PARALEGAL_USE_REAL_RUSTC_VERSION=1` disables the spoof for debugging.
+/// 2. Strips the [`EXEC_HASH_ARG`] pair injected by `cargo-paralegal-flow`
+///    (used only to bust cargo's incremental cache across analyzer configs).
+/// 3. Detects `RUSTC_WRAPPER` invocation mode — cargo prepends `rustc` as
+///    `argv[1]` — and removes that arg so the remaining args match a plain
+///    rustc invocation.
+/// 4. Appends `--sysroot <sysroot_path>` so the analyzer-linked binary uses
+///    the toolchain it was built against rather than whatever cargo picked.
+///
+/// `real_long_version`, `host`, and `sysroot_path` are typically baked into
+/// the calling binary at build time via `env!()` of `RUSTC_LONG_VERSION`,
+/// `HOST`, and `SYSROOT_PATH` (see paralegal's `plugin/build.rs`).
+pub fn prepare_compiler_args(
+    real_long_version: &str,
+    host: &str,
+    sysroot_path: &str,
+) -> Vec<String> {
+    let mut args: Vec<String> = std::env::args().collect();
+    let version_args = VersionArgs::parse(args.iter());
+
+    let use_real_version = matches!(
+        std::env::var("PARALEGAL_USE_REAL_RUSTC_VERSION"),
+        Ok(v) if v == "1" || v.eq_ignore_ascii_case("true")
+    );
+    let long_version_owned;
+    let long_version: &str = if use_real_version {
+        real_long_version
+    } else {
+        // Build scripts on nightly often opt into unstable features that
+        // paralegal's pinned toolchain can't honour during analysis.
+        long_version_owned = real_long_version.replace("-nightly", "");
+        &long_version_owned
+    };
+
+    if version_args.version {
+        let unescaped = long_version.replace("\\n", "\n");
+        if version_args.verbose {
+            print!("{}", unescaped.replace("no-host-defined", host));
+        } else {
+            let short = unescaped
+                .lines()
+                .next()
+                .expect("Expected at least one line in version string");
+            println!("{short}");
+        }
+        std::process::exit(0);
+    }
+
+    if let Some(idx) = args.iter().position(|a| a == EXEC_HASH_ARG) {
+        args.remove(idx);
+        // EXEC_HASH_ARG's payload follows it; remove that too.
+        args.remove(idx);
+    }
+
+    let wrapper_mode =
+        args.get(1).map(Path::new).and_then(Path::file_stem) == Some("rustc".as_ref());
+    if wrapper_mode {
+        args.remove(1);
+    }
+
+    args.extend(["--sysroot".into(), sysroot_path.to_owned()]);
+    args
+}
+
+#[derive(Default)]
+struct VersionArgs {
+    verbose: bool,
+    version: bool,
+}
+
+impl VersionArgs {
+    fn parse(args: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
+        let mut v = Self::default();
+        for a in args {
+            v.consume(a.as_ref());
+        }
+        v
+    }
+
+    fn consume(&mut self, a: &str) {
+        let mut chars = a.chars();
+        if chars.next() != Some('-') {
+            return;
+        }
+        match chars.next() {
+            Some('-') => match &a[2..] {
+                "verbose" => self.verbose = true,
+                "version" => self.version = true,
+                _ => {}
+            },
+            second => {
+                for c in second.into_iter().chain(chars) {
+                    match c {
+                        'V' => self.version = true,
+                        'v' => self.verbose = true,
+                        _ => {}
+                    }
+                }
+            }
+        }
     }
 }

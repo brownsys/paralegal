@@ -16,7 +16,7 @@ use rustc_hir::{
     def_id::LocalDefId,
     intravisit::{self, FnKind},
 };
-use rustc_middle::{hir::nested_filter::OnlyBodies, ty::TyCtxt};
+use rustc_middle::hir::nested_filter::OnlyBodies;
 use rustc_span::{Span, Symbol, symbol::Ident};
 use tracing::trace;
 
@@ -31,10 +31,10 @@ pub type AttrMatchT = Vec<Symbol>;
 /// actual analysis. All of this is conveniently encapsulated in the
 /// [`Self::run`] method.
 pub struct CollectingVisitor<'tcx> {
-    /// Reference to rust compiler queries.
-    pub tcx: TyCtxt<'tcx>,
-    /// Command line arguments.
-    pub opts: &'static crate::Args,
+    /// Compilation context shared with the analyzer. Carries `tcx`, `opts`,
+    /// the body cache, and the marker DB so we don't re-initialise any of
+    /// those when transitioning into the generator.
+    pctx: Pctx<'tcx>,
     /// Functions that are annotated with `#[paralegal_flow::analyze]`. For these we will
     /// later perform the analysis
     pub functions_to_analyze: Vec<FnToAnalyze>,
@@ -61,7 +61,9 @@ impl FnToAnalyze {
 }
 
 impl<'tcx> CollectingVisitor<'tcx> {
-    pub(crate) fn new(tcx: TyCtxt<'tcx>, opts: &'static crate::Args, stats: Stats) -> Self {
+    pub(crate) fn new(pctx: Pctx<'tcx>, stats: Stats) -> Self {
+        let tcx = pctx.tcx();
+        let opts = pctx.opts();
         let functions_to_analyze = opts
             .anactrl()
             .selected_targets()
@@ -79,8 +81,7 @@ impl<'tcx> CollectingVisitor<'tcx> {
             })
             .collect();
         Self {
-            tcx,
-            opts,
+            pctx,
             functions_to_analyze,
             stats,
             analyze_marker: sym_vec!["paralegal_flow", "analyze"],
@@ -90,26 +91,31 @@ impl<'tcx> CollectingVisitor<'tcx> {
     /// After running the discovery with `visit_all_item_likes_in_crate`, create
     /// the read-only [`SPDGGenerator`] upon which the analysis will run.
     fn into_generator(self) -> SPDGGenerator<'tcx> {
-        let ctx = Pctx::new(self.tcx, self.opts);
-        let inline_judge = InlineJudge::new(ctx.clone());
-        SPDGGenerator::new(ctx, inline_judge, self.stats, self.functions_to_analyze)
+        let inline_judge = InlineJudge::new(self.pctx.clone());
+        SPDGGenerator::new(
+            self.pctx,
+            inline_judge,
+            self.stats,
+            self.functions_to_analyze,
+        )
     }
 
     /// Driver function. Performs the data collection via visit, then calls
     /// [`Self::analyze`] to construct the Forge friendly description of all
     /// endpoints.
     pub fn run(mut self) -> SPDGGenerator<'tcx> {
-        let tcx = self.tcx;
+        let tcx = self.pctx.tcx();
         tcx.hir_visit_all_item_likes_in_crate(&mut self);
         self.into_generator()
     }
 
     /// Does the function named by this id have the `paralegal_flow::analyze` annotation
     fn should_analyze_function(&self, ident: LocalDefId) -> bool {
-        let attrs = self.tcx.hir_attrs(self.tcx.local_def_id_to_hir_id(ident));
+        let tcx = self.pctx.tcx();
+        let attrs = tcx.hir_attrs(tcx.local_def_id_to_hir_id(ident));
         let should_analyze = attrs.iter().any(|a| a.path_matches(&self.analyze_marker));
         trace!(
-            name = self.tcx.def_path_str(ident),
+            name = tcx.def_path_str(ident),
             should_analyze,
             ?attrs,
             "discovering function"
@@ -122,7 +128,7 @@ impl<'tcx> intravisit::Visitor<'tcx> for CollectingVisitor<'tcx> {
     type NestedFilter = OnlyBodies;
 
     fn maybe_tcx(&mut self) -> Self::MaybeTyCtxt {
-        self.tcx
+        self.pctx.tcx()
     }
 
     /// Finds the functions that have been marked as targets.
