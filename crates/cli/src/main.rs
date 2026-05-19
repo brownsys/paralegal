@@ -112,8 +112,9 @@ fn cargo_orchestrator_main() -> anyhow::Result<()> {
         .other_options(["--offline".into()])
         .exec()?;
 
+    let cargo_subcommand = if args.build { "build" } else { "check" };
     let mut cmd = Command::new(&cargo);
-    cmd.args(["check", "--message-format=json"]) // or "build"
+    cmd.args([cargo_subcommand, "--message-format=json"])
         .arg("--target-dir")
         .arg(metadata.target_directory.join("paralegal"))
         .args(args.cargo_args.iter())
