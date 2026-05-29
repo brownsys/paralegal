@@ -279,8 +279,8 @@ fn ensure_wrapper_symlink() -> anyhow::Result<PathBuf> {
             // A parallel `cargo paralegal-flow` just created an identical
             // shim between our stat and our create — accept it.
             Err(e)
-                if e.kind() == std::io::ErrorKind::AlreadyExists
-                    && shim_points_at(&shim, &exe) => {}
+                if e.kind() == std::io::ErrorKind::AlreadyExists && shim_points_at(&shim, &exe) => {
+            }
             Err(e) => {
                 return Err(e)
                     .with_context(|| format!("creating wrapper shim at {}", shim.display()));
