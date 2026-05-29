@@ -75,6 +75,7 @@ impl TryFrom<ClapArgs> for Args {
             strict,
             build_config: _,
             forward_json: _,
+            cargo_subcommand: _,
         } = value;
         if relaxed {
             eprintln!(

@@ -1,5 +1,5 @@
 #![feature(exit_status_error)]
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::hash::{DefaultHasher, Hasher};
 use std::io::BufRead;
@@ -101,7 +101,7 @@ fn cargo_orchestrator_main() -> anyhow::Result<()> {
         .exec()?;
 
     let mut cmd = Command::new(&cargo);
-    cmd.args(["check", "--message-format=json"]) // or "build"
+    cmd.args([args.cargo_subcommand.as_str(), "--message-format=json"])
         .arg("--target-dir")
         .arg(metadata.target_directory.join("paralegal"))
         .args(args.cargo_args.iter())
@@ -168,10 +168,18 @@ fn cargo_orchestrator_main() -> anyhow::Result<()> {
                         continue;
                     }
                 }
-                match artifact
+                // Look at every filename in the artifact, not just `.rmeta`:
+                // `cargo build` of a binary crate emits an executable in
+                // `filenames` with no `.rmeta` sibling, but the rustc wrapper
+                // still drops a `.fgo` alongside the deps-dir compilation
+                // output. The `.fgo` existence check below is the real
+                // discriminator; deduping via HashSet absorbs the case where
+                // multiple filenames for the same artifact (e.g. `.rlib` and
+                // `.rmeta` for libs, or executable and `.d` for bins) map to
+                // the same `.fgo` path.
+                let mut found: HashSet<PathBuf> = artifact
                     .filenames
                     .iter()
-                    .filter(|f| f.extension() == Some("rmeta"))
                     .flat_map(|p| {
                         let with_ext = p.with_extension(FLOW_GRAPH_EXT).into_std_path_buf();
                         let basename = with_ext.file_name();
@@ -186,9 +194,24 @@ fn cargo_orchestrator_main() -> anyhow::Result<()> {
                         [with_ext].into_iter().chain(without_lib)
                     })
                     .filter(|p| p.exists())
-                    .collect::<Box<[_]>>()
-                    .as_mut()
-                {
+                    .collect();
+                // Bin fallback. `cargo build` emits a bin artifact whose only
+                // filename is the final executable at `target/<profile>/<bin>`
+                // (not the deps-dir hashed copy). That path doesn't map back
+                // to the rustc output directory where the `.fgo` actually
+                // lives, so the filename-based filter above misses it.
+                // Cargo always hardlinks (or copies) the deps-dir output to
+                // the final location, so we walk `deps/` looking for the
+                // entry that shares an inode with the executable; its
+                // sibling `.fgo` is what we want.
+                if found.is_empty() {
+                    if let Some(exe) = artifact.executable.as_ref() {
+                        if let Some(p) = locate_bin_fgo(exe.as_std_path()) {
+                            found.insert(p);
+                        }
+                    }
+                }
+                match found.into_iter().collect::<Box<[_]>>().as_mut() {
                     [p] => {
                         targets.push(p.clone());
                         applicable = true;
@@ -225,6 +248,10 @@ fn cargo_orchestrator_main() -> anyhow::Result<()> {
 /// (`cargo-paralegal-flow`). Self-heals stale symlinks left over from
 /// older builds (or a real `paralegal-flow` binary from a pre-shim build).
 /// Returns the symlink path so callers can use it as `RUSTC_WRAPPER`.
+///
+/// Tolerates concurrent invocations against the same workspace: if a
+/// parallel process wins the create race we accept its symlink as long
+/// as it resolves to the same exe. Test fixtures hit this routinely.
 fn ensure_wrapper_symlink() -> anyhow::Result<PathBuf> {
     let exe = std::env::current_exe().context("locating current executable")?;
     let shim = exe.with_file_name(WRAPPER_SHIM_NAME);
@@ -233,11 +260,7 @@ fn ensure_wrapper_symlink() -> anyhow::Result<PathBuf> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
         Err(e) => return Err(e).context("stat-ing wrapper shim"),
         Ok(meta) if meta.file_type().is_symlink() => {
-            // Verify the symlink resolves to the same canonical path as us.
-            let same = std::fs::canonicalize(&shim)
-                .ok()
-                .zip(std::fs::canonicalize(&exe).ok())
-                .is_some_and(|(a, b)| a == b);
+            let same = shim_points_at(&shim, &exe);
             if !same {
                 std::fs::remove_file(&shim).context("removing stale wrapper symlink")?;
             }
@@ -251,10 +274,27 @@ fn ensure_wrapper_symlink() -> anyhow::Result<PathBuf> {
     };
 
     if needs_create {
-        create_shim(&exe, &shim)
-            .with_context(|| format!("creating wrapper shim at {}", shim.display()))?;
+        match create_shim(&exe, &shim) {
+            Ok(()) => {}
+            // A parallel `cargo paralegal-flow` just created an identical
+            // shim between our stat and our create — accept it.
+            Err(e)
+                if e.kind() == std::io::ErrorKind::AlreadyExists && shim_points_at(&shim, &exe) => {
+            }
+            Err(e) => {
+                return Err(e)
+                    .with_context(|| format!("creating wrapper shim at {}", shim.display()));
+            }
+        }
     }
     Ok(shim)
+}
+
+fn shim_points_at(shim: &Path, exe: &Path) -> bool {
+    std::fs::canonicalize(shim)
+        .ok()
+        .zip(std::fs::canonicalize(exe).ok())
+        .is_some_and(|(a, b)| a == b)
 }
 
 #[cfg(unix)]
@@ -356,4 +396,43 @@ fn exec_replace(prog: &std::ffi::OsStr, args: &[OsString]) -> std::io::Error {
         Ok(status) => std::process::exit(status.code().unwrap_or(1)),
         Err(e) => e,
     }
+}
+
+/// Find the `.fgo` produced for a binary compilation unit, given the path
+/// cargo reports as its executable.
+///
+/// Cargo emits the final hardlinked path (`<target>/<profile>/<bin>`) for a
+/// bin's `CompilerArtifact.executable`, but the rustc wrapper drops the
+/// `.fgo` next to the original output in `<target>/<profile>/deps/<bin>-<hash>`.
+/// We rediscover that path by scanning `deps/` for an entry that shares an
+/// inode (i.e. is the same hardlinked file) with the executable, then check
+/// for a sibling `.fgo`.
+///
+/// Returns `None` if the lookup is unsupported on the platform, or if no
+/// matching `.fgo` is found.
+#[cfg(unix)]
+fn locate_bin_fgo(exe: &Path) -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let exe_meta = std::fs::metadata(exe).ok()?;
+    let deps = exe.parent()?.join("deps");
+    for entry in std::fs::read_dir(&deps).ok()? {
+        let entry = entry.ok()?;
+        let meta = entry.metadata().ok()?;
+        if !meta.is_file() {
+            continue;
+        }
+        if meta.ino() == exe_meta.ino() && meta.dev() == exe_meta.dev() {
+            let fgo = entry.path().with_extension(FLOW_GRAPH_EXT);
+            if fgo.exists() {
+                return Some(fgo);
+            }
+            return None;
+        }
+    }
+    None
+}
+
+#[cfg(not(unix))]
+fn locate_bin_fgo(_exe: &Path) -> Option<PathBuf> {
+    None
 }

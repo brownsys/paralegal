@@ -5,6 +5,7 @@ exclude = [
     "crates/plugin/tests",
     "crates/policy/tests",
     "crates/compiler/tests",
+    "crates/cli/tests/fixtures",
     "crates/paralegal-explore",
 ]
 resolver = "2"

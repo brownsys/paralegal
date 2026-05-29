@@ -239,6 +239,7 @@ dependencies = [
  "lazy_static",
  "num-derive",
  "num-traits",
+ "paralegal-pdg",
  "paralegal-utils",
  "serde",
  "serde_json",
