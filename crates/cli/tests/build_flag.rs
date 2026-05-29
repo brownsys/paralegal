@@ -1,3 +1,11 @@
+// Needed to link the test binary: paralegal-pdg's `rustc` feature
+// gets unioned on by `paralegal-flow`'s dep when the workspace
+// builds with `cargo test --no-fail-fast` (no `-p`), so the
+// resulting rlib pulls rustc-private crates. The test binary
+// needs this feature gate to consent to linking them — see
+// `crates/plugin/tests/*.rs` for the same pattern.
+#![feature(rustc_private)]
+
 //! Integration tests for `cargo paralegal-flow`'s `--cargo-subcommand`
 //! flag and the artifact-discovery logic that supports it.
 //!

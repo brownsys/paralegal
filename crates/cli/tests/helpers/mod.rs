@@ -164,7 +164,11 @@ fn cargo_clean(fixture_path: &Path) -> Result<()> {
         .arg("clean")
         .current_dir(fixture_path)
         .status()?;
-    ensure!(status.success(), "cargo clean failed in {}", fixture_path.display());
+    ensure!(
+        status.success(),
+        "cargo clean failed in {}",
+        fixture_path.display()
+    );
     // `cargo clean` only nukes target/; the cli also writes these at the
     // crate root and we want a clean slate so the post-run reads see
     // outputs from this invocation, not the previous one.
