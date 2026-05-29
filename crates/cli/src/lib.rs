@@ -50,8 +50,42 @@ pub struct ClapArgs {
     /// for `cargo` when tools expect `--message-format=json` output.
     #[clap(long)]
     pub forward_json: bool,
+    /// Which cargo subcommand the wrapped cargo invocation should run.
+    ///
+    /// `check` (default) is sufficient to produce the rmeta artifacts the
+    /// analyzer consumes. `build` additionally links binaries, so the
+    /// analyzed crate's `target/paralegal/{debug,release}/<bin>` ends up
+    /// runnable as a side effect of the analysis — useful when the same
+    /// `cargo` graph would otherwise need to be re-traversed by a separate
+    /// `cargo build` to obtain the binary the caller wants to run.
+    ///
+    /// Not part of `hash_config`: PDG output is identical between modes,
+    /// and cargo's incremental layer handles the additional link step on
+    /// its own when switching `check` → `build`.
+    #[clap(long, value_enum, default_value_t = CargoSubcommand::Check)]
+    pub cargo_subcommand: CargoSubcommand,
     #[clap(last = true)]
     pub cargo_args: Vec<String>,
+}
+
+/// Which cargo subcommand `cargo-paralegal-flow` should invoke under the
+/// rustc wrapper. See [`ClapArgs::cargo_subcommand`].
+#[derive(
+    Default, Copy, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize, clap::ValueEnum,
+)]
+pub enum CargoSubcommand {
+    #[default]
+    Check,
+    Build,
+}
+
+impl CargoSubcommand {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CargoSubcommand::Check => "check",
+            CargoSubcommand::Build => "build",
+        }
+    }
 }
 
 impl ClapArgs {
