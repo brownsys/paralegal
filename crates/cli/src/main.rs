@@ -248,6 +248,10 @@ fn cargo_orchestrator_main() -> anyhow::Result<()> {
 /// (`cargo-paralegal-flow`). Self-heals stale symlinks left over from
 /// older builds (or a real `paralegal-flow` binary from a pre-shim build).
 /// Returns the symlink path so callers can use it as `RUSTC_WRAPPER`.
+///
+/// Tolerates concurrent invocations against the same workspace: if a
+/// parallel process wins the create race we accept its symlink as long
+/// as it resolves to the same exe. Test fixtures hit this routinely.
 fn ensure_wrapper_symlink() -> anyhow::Result<PathBuf> {
     let exe = std::env::current_exe().context("locating current executable")?;
     let shim = exe.with_file_name(WRAPPER_SHIM_NAME);
@@ -256,11 +260,7 @@ fn ensure_wrapper_symlink() -> anyhow::Result<PathBuf> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
         Err(e) => return Err(e).context("stat-ing wrapper shim"),
         Ok(meta) if meta.file_type().is_symlink() => {
-            // Verify the symlink resolves to the same canonical path as us.
-            let same = std::fs::canonicalize(&shim)
-                .ok()
-                .zip(std::fs::canonicalize(&exe).ok())
-                .is_some_and(|(a, b)| a == b);
+            let same = shim_points_at(&shim, &exe);
             if !same {
                 std::fs::remove_file(&shim).context("removing stale wrapper symlink")?;
             }
@@ -274,10 +274,27 @@ fn ensure_wrapper_symlink() -> anyhow::Result<PathBuf> {
     };
 
     if needs_create {
-        create_shim(&exe, &shim)
-            .with_context(|| format!("creating wrapper shim at {}", shim.display()))?;
+        match create_shim(&exe, &shim) {
+            Ok(()) => {}
+            // A parallel `cargo paralegal-flow` just created an identical
+            // shim between our stat and our create — accept it.
+            Err(e)
+                if e.kind() == std::io::ErrorKind::AlreadyExists
+                    && shim_points_at(&shim, &exe) => {}
+            Err(e) => {
+                return Err(e)
+                    .with_context(|| format!("creating wrapper shim at {}", shim.display()));
+            }
+        }
     }
     Ok(shim)
+}
+
+fn shim_points_at(shim: &Path, exe: &Path) -> bool {
+    std::fs::canonicalize(shim)
+        .ok()
+        .zip(std::fs::canonicalize(exe).ok())
+        .is_some_and(|(a, b)| a == b)
 }
 
 #[cfg(unix)]
