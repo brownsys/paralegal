@@ -241,7 +241,6 @@ dependencies = [
  "num-traits",
  "paralegal-pdg",
  "paralegal-utils",
- "rand",
  "serde",
  "serde_json",
  "tracing",
