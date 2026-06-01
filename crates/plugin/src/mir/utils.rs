@@ -5,7 +5,7 @@ use rustc_data_structures::fx::FxHashSet as HashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::*,
-    ty::{GenericArgKind, RegionKind, RegionVid, Ty, TyCtxt},
+    ty::{GenericArgKind, GenericArgsRef, RegionKind, RegionVid, Ty, TyCtxt},
 };
 use rustc_span::Spanned;
 
@@ -22,11 +22,12 @@ pub fn arg_mut_ptrs<'tcx>(
     tcx: TyCtxt<'tcx>,
     body: &Body<'tcx>,
     def_id: DefId,
+    generic_args: GenericArgsRef<'tcx>,
 ) -> Vec<(usize, Place<'tcx>)> {
     args.iter()
         .flat_map(|(i, place)| {
             place
-                .interior_pointers(tcx, body, def_id)
+                .interior_pointers(tcx, body, def_id, generic_args)
                 .into_values()
                 .flat_map(|places| {
                     places

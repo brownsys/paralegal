@@ -15,7 +15,7 @@ use rustc_index::{
 };
 use rustc_middle::{
     mir::{visit::Visitor, *},
-    ty::{Region, RegionKind, RegionVid, Ty, TyCtxt, TyKind},
+    ty::{GenericArgsRef, Region, RegionKind, RegionVid, Ty, TyCtxt, TyKind},
 };
 
 use super::FlowistryInput;
@@ -58,12 +58,21 @@ rustc_index::newtype_index! {
 
 impl<'tcx> Aliases<'tcx> {
     /// Runs the alias analysis on a given `body_with_facts`.
+    ///
+    /// `generic_args` is the substitution that monomorphizes `def_id`'s body.
+    /// It is forwarded into `interior_pointers` so the place walk can look
+    /// through associated-type projections that the polymorphic body still
+    /// holds (the borrow-check facts are computed on the polymorphic MIR,
+    /// so `body_with_facts` does too — see the `mono_body` TODO in
+    /// `analysis::pdg::local`). Pass `GenericArgs::identity_for_item(tcx,
+    /// def_id)` when no instantiation is in hand.
     pub fn build<'a>(
         tcx: TyCtxt<'tcx>,
         def_id: DefId,
+        generic_args: GenericArgsRef<'tcx>,
         input: impl FlowistryInput<'tcx, 'a>,
     ) -> Self {
-        let loans = Self::compute_loans(tcx, def_id, input);
+        let loans = Self::compute_loans(tcx, def_id, generic_args, input);
         Aliases {
             tcx,
             body: input.body(),
@@ -74,6 +83,7 @@ impl<'tcx> Aliases<'tcx> {
     fn compute_loans<'a>(
         tcx: TyCtxt<'tcx>,
         def_id: DefId,
+        generic_args: GenericArgsRef<'tcx>,
         input: impl FlowistryInput<'tcx, 'a>,
     ) -> LoanMap<'tcx> {
         let _start = Instant::now();
@@ -83,7 +93,9 @@ impl<'tcx> Aliases<'tcx> {
         let all_pointers = body
             .local_decls()
             .indices()
-            .flat_map(|local| Place::from_local(local, tcx).interior_pointers(tcx, body, def_id))
+            .flat_map(|local| {
+                Place::from_local(local, tcx).interior_pointers(tcx, body, def_id, generic_args)
+            })
             .collect::<Vec<_>>();
         let max_region = all_pointers
             .iter()
@@ -149,7 +161,8 @@ impl<'tcx> Aliases<'tcx> {
 
         // For all args p : &'a ω T where 'a is abstract: contains('a, *p, ω).
         for arg in body.args_iter() {
-            for (region, places) in Place::from_local(arg, tcx).interior_pointers(tcx, body, def_id)
+            for (region, places) in
+                Place::from_local(arg, tcx).interior_pointers(tcx, body, def_id, generic_args)
             {
                 let region_contains = contains.entry(region).or_default();
                 for (place, mutability) in places {
@@ -356,8 +369,9 @@ mod test {
     ) {
         test_utils::compile_body(input, |tcx, body_id, body_with_facts| {
             let body = &body_with_facts.body;
-            let def_id = tcx.hir_body_owner_def_id(body_id);
-            let aliases = Aliases::build(tcx, def_id.to_def_id(), body_with_facts);
+            let def_id = tcx.hir_body_owner_def_id(body_id).to_def_id();
+            let args = rustc_middle::ty::GenericArgs::identity_for_item(tcx, def_id);
+            let aliases = Aliases::build(tcx, def_id, args, body_with_facts);
 
             f(tcx, body, aliases)
         });

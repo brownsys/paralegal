@@ -10,7 +10,10 @@ use paralegal_rustc_utils::{
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::*,
-    ty::{Region, RegionKind, RegionVid, Ty, TyCtxt, TyKind, TypeSuperVisitable, TypeVisitor},
+    ty::{
+        GenericArgsRef, Region, RegionKind, RegionVid, Ty, TyCtxt, TyKind, TypeSuperVisitable,
+        TypeVisitor,
+    },
 };
 
 use super::{FlowistryInput, aliases::Aliases, utils::PlaceSet};
@@ -23,6 +26,13 @@ pub struct PlaceInfo<'tcx> {
     pub body: &'tcx Body<'tcx>,
     /// Id of the function this info refers to
     pub def_id: DefId,
+    /// Substitution that monomorphizes `def_id`'s body. Forwarded into
+    /// `interior_places` so the place walk can see through projections
+    /// rooted at `def_id`'s generic params (see `Aliases::build` for the
+    /// rationale around polymorphic bodies). Use
+    /// `GenericArgs::identity_for_item(tcx, def_id)` when no call-site
+    /// instance is available.
+    pub generic_args: GenericArgsRef<'tcx>,
 
     // Core computed data structure
     aliases: Aliases<'tcx>,
@@ -39,24 +49,27 @@ impl<'tcx> PlaceInfo<'tcx> {
     pub fn build<'a>(
         tcx: TyCtxt<'tcx>,
         def_id: DefId,
+        generic_args: GenericArgsRef<'tcx>,
         input: impl FlowistryInput<'tcx, 'a>,
     ) -> Self {
-        Self::build_from_input_facts(tcx, def_id, input)
+        Self::build_from_input_facts(tcx, def_id, generic_args, input)
     }
     /// Computes all the metadata about places used within the infoflow analysis.
     pub fn build_from_input_facts<'a>(
         tcx: TyCtxt<'tcx>,
         def_id: DefId,
+        generic_args: GenericArgsRef<'tcx>,
         input: impl FlowistryInput<'tcx, 'a>,
     ) -> Self {
         let body = input.body();
-        let aliases = Aliases::build(tcx, def_id, input);
+        let aliases = Aliases::build(tcx, def_id, generic_args, input);
 
         PlaceInfo {
             aliases,
             tcx,
             body,
             def_id,
+            generic_args,
             aliases_cache: Cache::default(),
             normalized_cache: CopyCache::default(),
             conflicts_cache: Cache::default(),
@@ -92,7 +105,12 @@ impl<'tcx> PlaceInfo<'tcx> {
     ///
     /// For example, if `x = (0, 1)` then `children(x) = {x, x.0, x.1}`.
     pub fn children(&self, place: Place<'tcx>) -> PlaceSet<'tcx> {
-        PlaceSet::from_iter(place.interior_places(self.tcx, self.body, self.def_id))
+        PlaceSet::from_iter(place.interior_places(
+            self.tcx,
+            self.body,
+            self.def_id,
+            self.generic_args,
+        ))
     }
 
     /// Returns all places that *directly* conflict with `place`, i.e. that a mutation to `place`
@@ -251,8 +269,9 @@ mod test {
     ) {
         test_utils::compile_body(input, |tcx, body_id, body_with_facts| {
             let body = &body_with_facts.body;
-            let def_id = tcx.hir_body_owner_def_id(body_id);
-            let place_info = PlaceInfo::build(tcx, def_id.to_def_id(), body_with_facts);
+            let def_id = tcx.hir_body_owner_def_id(body_id).to_def_id();
+            let args = rustc_middle::ty::GenericArgs::identity_for_item(tcx, def_id);
+            let place_info = PlaceInfo::build(tcx, def_id, args, body_with_facts);
 
             f(tcx, body, place_info)
         });

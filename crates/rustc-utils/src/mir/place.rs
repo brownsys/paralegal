@@ -12,7 +12,10 @@ use rustc_middle::{
         Body, HasLocalDecls, Local, Location, Mutability, Place, PlaceElem, PlaceRef,
         ProjectionElem, VarDebugInfo, VarDebugInfoContents, RETURN_PLACE,
     },
-    ty::{self, AdtKind, Region, RegionKind, RegionVid, Ty, TyCtxt, TyKind, TypeVisitor},
+    ty::{
+        self, AdtKind, EarlyBinder, GenericArgsRef, Region, RegionKind, RegionVid, Ty, TyCtxt,
+        TyKind, TypeVisitor,
+    },
 };
 
 use crate::AdtDefExt;
@@ -60,28 +63,40 @@ pub trait PlaceExt<'tcx> {
     /// Returns all possible projections of `self` that are references.
     ///
     /// The output data structure groups the resultant places based on the region of the references.
+    ///
+    /// `generic_args` is the substitution to apply when the walk encounters
+    /// `TyKind::Alias` types whose params are in scope of `def_id`. Pass
+    /// `ty::GenericArgs::identity_for_item(tcx, def_id)` for a no-op
+    /// substitution when no instantiation is available.
     fn interior_pointers(
         &self,
         tcx: TyCtxt<'tcx>,
         body: &Body<'tcx>,
         def_id: DefId,
+        generic_args: GenericArgsRef<'tcx>,
     ) -> HashMap<RegionVid, Vec<(Place<'tcx>, Mutability)>>;
 
     /// Returns all possible projections of `self` that do not go through a reference,
     /// i.e. the set of fields directly in the structure referred by `self`.
+    ///
+    /// See [`Self::interior_pointers`] for the meaning of `generic_args`.
     fn interior_places(
         &self,
         tcx: TyCtxt<'tcx>,
         body: &Body<'tcx>,
         def_id: DefId,
+        generic_args: GenericArgsRef<'tcx>,
     ) -> HashSet<Place<'tcx>>;
 
     /// Returns all possible projections of `self`.
+    ///
+    /// See [`Self::interior_pointers`] for the meaning of `generic_args`.
     fn interior_paths(
         &self,
         tcx: TyCtxt<'tcx>,
         body: &Body<'tcx>,
         def_id: DefId,
+        generic_args: GenericArgsRef<'tcx>,
     ) -> HashSet<Place<'tcx>>;
 
     /// Returns a pretty representation of a place that uses debug info when available.
@@ -161,11 +176,13 @@ impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
         tcx: TyCtxt<'tcx>,
         body: &Body<'tcx>,
         def_id: DefId,
+        generic_args: GenericArgsRef<'tcx>,
     ) -> HashMap<RegionVid, Vec<(Place<'tcx>, Mutability)>> {
         let ty = self.ty(body.local_decls(), tcx).ty;
         let mut region_collector = RegionVisitor::<RegionMemberCollector>::new(
             tcx,
             def_id,
+            generic_args,
             *self,
             if
             /*shallow*/
@@ -184,11 +201,13 @@ impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
         tcx: TyCtxt<'tcx>,
         body: &Body<'tcx>,
         def_id: DefId,
+        generic_args: GenericArgsRef<'tcx>,
     ) -> HashSet<Place<'tcx>> {
         let ty = self.ty(body.local_decls(), tcx).ty;
         let mut region_collector = RegionVisitor::<VisitedPlacesCollector>::new(
             tcx,
             def_id,
+            generic_args,
             *self,
             StoppingCondition::BeforeRefs,
         );
@@ -201,11 +220,13 @@ impl<'tcx> PlaceExt<'tcx> for Place<'tcx> {
         tcx: TyCtxt<'tcx>,
         body: &Body<'tcx>,
         def_id: DefId,
+        generic_args: GenericArgsRef<'tcx>,
     ) -> HashSet<Place<'tcx>> {
         let ty = self.ty(body.local_decls(), tcx).ty;
         let mut region_collector = RegionVisitor::<VisitedPlacesCollector>::new(
             tcx,
             def_id,
+            generic_args,
             *self,
             StoppingCondition::None,
         );
@@ -414,6 +435,13 @@ impl<'tcx> RegionVisitorDispatcher<'tcx> for RegionMemberCollector<'tcx> {
 struct RegionVisitor<'tcx, Dispatcher> {
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
+    /// Substitution to apply to `Alias` types whose params are in scope of
+    /// `def_id`. When the walker runs on a pre-monomorphization body (e.g.
+    /// the cached body from rustc's borrow-checker), the local types may
+    /// still contain free generic params; substituting through these args
+    /// lets the `Alias` arm normalize projections like `<__S as Trait>::Ok`
+    /// down to a concrete type. Pass identity args for a no-op.
+    generic_args: GenericArgsRef<'tcx>,
     /// Base local of the place we are collecting regions for.
     local: Local,
     /// List of projections to apply to the base local in order to reach the
@@ -437,12 +465,14 @@ impl<'tcx, Dispatcher: Default> RegionVisitor<'tcx, Dispatcher> {
     fn new(
         tcx: TyCtxt<'tcx>,
         def_id: DefId,
+        generic_args: GenericArgsRef<'tcx>,
         place: Place<'tcx>,
         stop_at: StoppingCondition,
     ) -> Self {
         Self {
             tcx,
             def_id,
+            generic_args,
             local: place.local,
             place_stack: place.projection.to_vec(),
             ty_stack: Vec::new(),
@@ -458,6 +488,86 @@ impl<'tcx, Dispatcher: Default> RegionVisitor<'tcx, Dispatcher> {
 
 /// Used to describe aliases of owned and raw pointers.
 pub const UNKNOWN_REGION: RegionVid = RegionVid::MAX;
+
+impl<'tcx, Dispatcher: RegionVisitorDispatcher<'tcx>> RegionVisitor<'tcx, Dispatcher> {
+    /// Walk an ADT's visible fields (struct) or every variant's fields (enum).
+    /// Pushes the appropriate projection element for each field and recurses.
+    /// Unions are skipped — field reads are `unsafe`.
+    fn visit_adt_fields(&mut self, adt_def: ty::AdtDef<'tcx>, subst: GenericArgsRef<'tcx>) {
+        let tcx = self.tcx;
+        match adt_def.adt_kind() {
+            ty::AdtKind::Struct => {
+                for (field_idx, field) in adt_def.visible_struct_fields(self.def_id, tcx) {
+                    let ty = field.ty(tcx, subst);
+                    self.place_stack.push(ProjectionElem::Field(field_idx, ty));
+                    self.visit_ty(ty);
+                    self.place_stack.pop();
+                }
+            }
+            ty::AdtKind::Union => {
+                // unsafe, so ignore
+            }
+            ty::AdtKind::Enum => {
+                for (i, variant) in adt_def.variants().iter().enumerate() {
+                    let variant_index = VariantIdx::from_usize(i);
+                    let cast = PlaceElem::Downcast(
+                        Some(adt_def.variant(variant_index).ident(tcx).name),
+                        variant_index,
+                    );
+                    self.place_stack.push(cast);
+                    for (j, field) in variant.fields.iter().enumerate() {
+                        let ty = field.ty(tcx, subst);
+                        let field = ProjectionElem::Field(FieldIdx::from_usize(j), ty);
+                        self.place_stack.push(field);
+                        self.visit_ty(ty);
+                        self.place_stack.pop();
+                    }
+                    self.place_stack.pop();
+                }
+            }
+        }
+    }
+
+    /// Try to look through an `Alias` (associated-type projection or `impl
+    /// Trait` / `async fn` return). Returns `Some(t)` if normalization
+    /// resolved the alias to a non-`Alias` type that the walk can descend
+    /// into; returns `None` if normalization failed (caller warns) or the
+    /// result is still an `Alias` (e.g. an Opaque whose hidden type isn't
+    /// revealed in this typing env, or a Projection over a still-free
+    /// param). Types we can't see into are a soundness signal, so the
+    /// caller keeps the warning rather than silently dropping the place.
+    ///
+    /// Uses `try_instantiate_and_normalize_erasing_regions` so the call-site
+    /// `generic_args` substitute through projections whose params are bound
+    /// by `self.def_id` (e.g. `<__S as Serializer>::Ok` in a polymorphic
+    /// derive-`Serialize` body, where `__S` is the method's free type
+    /// param). Plain `try_normalize_erasing_regions` can't make progress
+    /// when those params are still free.
+    ///
+    /// Regions are erased on the way in because `EarlyBinder::bind` rejects
+    /// MIR's inference regions (`RegionKind::ReVar`, which
+    /// `body_with_facts.body()` still carries from the borrow-checker).
+    /// `try_instantiate_..._erasing_regions` would erase them on the way
+    /// out anyway; mirrors the pattern in `Place::normalize` and
+    /// `try_monomorphize`.
+    fn try_normalize_alias(&self, ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
+        let tcx = self.tcx;
+        let typing_env = ty::TypingEnv::post_analysis(tcx, self.def_id);
+        let ty_no_regions = tcx.erase_and_anonymize_regions(ty);
+        let normalized = tcx
+            .try_instantiate_and_normalize_erasing_regions(
+                self.generic_args,
+                typing_env,
+                EarlyBinder::bind(ty_no_regions),
+            )
+            .ok()?;
+        if matches!(normalized.kind(), TyKind::Alias(..)) {
+            None
+        } else {
+            Some(normalized)
+        }
+    }
+}
 
 impl<'tcx, Dispatcher: RegionVisitorDispatcher<'tcx>> TypeVisitor<TyCtxt<'tcx>>
     for RegionVisitor<'tcx, Dispatcher>
@@ -491,37 +601,7 @@ impl<'tcx, Dispatcher: RegionVisitorDispatcher<'tcx>> TypeVisitor<TyCtxt<'tcx>>
                 }
             }
 
-            TyKind::Adt(adt_def, subst) => match adt_def.adt_kind() {
-                ty::AdtKind::Struct => {
-                    for (field_idx, field) in adt_def.visible_struct_fields(self.def_id, tcx) {
-                        let ty = field.ty(tcx, subst);
-                        self.place_stack.push(ProjectionElem::Field(field_idx, ty));
-                        self.visit_ty(ty);
-                        self.place_stack.pop();
-                    }
-                }
-                ty::AdtKind::Union => {
-                    // unsafe, so ignore
-                }
-                ty::AdtKind::Enum => {
-                    for (i, variant) in adt_def.variants().iter().enumerate() {
-                        let variant_index = VariantIdx::from_usize(i);
-                        let cast = PlaceElem::Downcast(
-                            Some(adt_def.variant(variant_index).ident(tcx).name),
-                            variant_index,
-                        );
-                        self.place_stack.push(cast);
-                        for (j, field) in variant.fields.iter().enumerate() {
-                            let ty = field.ty(tcx, subst);
-                            let field = ProjectionElem::Field(FieldIdx::from_usize(j), ty);
-                            self.place_stack.push(field);
-                            self.visit_ty(ty);
-                            self.place_stack.pop();
-                        }
-                        self.place_stack.pop();
-                    }
-                }
-            },
+            TyKind::Adt(adt_def, subst) => self.visit_adt_fields(*adt_def, subst),
 
             TyKind::Array(elem_ty, _) | TyKind::Slice(elem_ty) => {
                 self.place_stack
@@ -578,6 +658,11 @@ impl<'tcx, Dispatcher: RegionVisitorDispatcher<'tcx>> TypeVisitor<TyCtxt<'tcx>>
                 self.visit_ty(inner);
                 self.place_stack.pop();
             }
+
+            TyKind::Alias(..) => match self.try_normalize_alias(ty) {
+                Some(normalized) => self.visit_ty(normalized),
+                None => warn!("unimplemented {ty:?} ({:?})", ty.kind()),
+            },
 
             _ if ty.is_primitive_ty() => {}
 
@@ -662,7 +747,7 @@ mod test {
     use rustc_hir::BodyId;
     use rustc_middle::{
         mir::{Place, PlaceElem},
-        ty::TyCtxt,
+        ty::{self, TyCtxt},
     };
 
     use super::PlaceExt;
@@ -794,13 +879,17 @@ fn main() {
             let y0 = p.local("y").field(0).mk();
             let y1 = p.local("y").field(1).mk();
             let y1_deref = p.local("y").field(1).deref().mk();
-
-            compare_sets(y.interior_paths(tcx, body, def_id), [y, y0, y1, y1_deref]);
-
-            compare_sets(y.interior_places(tcx, body, def_id), [y, y0, y1]);
+            let args = ty::GenericArgs::identity_for_item(tcx, def_id);
 
             compare_sets(
-                y.interior_pointers(tcx, body, def_id)
+                y.interior_paths(tcx, body, def_id, args),
+                [y, y0, y1, y1_deref],
+            );
+
+            compare_sets(y.interior_places(tcx, body, def_id, args), [y, y0, y1]);
+
+            compare_sets(
+                y.interior_pointers(tcx, body, def_id, args)
                     .into_values()
                     .flat_map(|vs| vs.into_iter().map(|(p, _)| p)),
                 [y1],
@@ -848,9 +937,10 @@ mod inner {
             let x = p.local("x").mk();
             let x_a = p.local("x").field(1).mk();
             let x_b = p.local("x").field(2).mk();
+            let args = ty::GenericArgs::identity_for_item(tcx, def_id);
 
-            compare_sets(x.interior_paths(tcx, body, def_id), [x, x_a, x_b]);
-            compare_sets(x.interior_places(tcx, body, def_id), [x, x_a, x_b]);
+            compare_sets(x.interior_paths(tcx, body, def_id, args), [x, x_a, x_b]);
+            compare_sets(x.interior_places(tcx, body, def_id, args), [x, x_a, x_b]);
         }
         test_utils::compile_body(input, callback);
     }
