@@ -19,7 +19,9 @@ use rustc_middle::{
         RETURN_PLACE, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind,
         visit::Visitor,
     },
-    ty::{AdtKind, EarlyBinder, GenericArgsRef, Instance, Ty, TyCtxt, TyKind, TypingEnv, Unnormalized},
+    ty::{
+        AdtKind, EarlyBinder, GenericArgsRef, Instance, Ty, TyCtxt, TyKind, TypingEnv, Unnormalized,
+    },
 };
 use rustc_mir_dataflow::{self as df, Analysis, fmt::DebugWithContext};
 use rustc_span::{DesugaringKind, Span, Spanned};
