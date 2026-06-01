@@ -625,10 +625,18 @@ impl<'tcx, Dispatcher: RegionVisitorDispatcher<'tcx>> TypeVisitor<TyCtxt<'tcx>>
             // can't make progress when those params are still free.
             TyKind::Alias(..) => {
                 let typing_env = ty::TypingEnv::post_analysis(tcx, self.def_id);
+                // `EarlyBinder::bind` rejects MIR's inference regions
+                // (`RegionKind::ReVar`, which `body_with_facts.body()` still
+                // carries from the borrow-checker), so erase regions first.
+                // `try_instantiate_..._erasing_regions` would erase them on
+                // the way out anyway; doing it up front keeps the binder
+                // contract intact. Mirrors the pattern in
+                // `Place::normalize` and `try_monomorphize`.
+                let ty_no_regions = tcx.erase_and_anonymize_regions(ty);
                 match tcx.try_instantiate_and_normalize_erasing_regions(
                     self.generic_args,
                     typing_env,
-                    EarlyBinder::bind(ty),
+                    EarlyBinder::bind(ty_no_regions),
                 ) {
                     Ok(normalized) if !matches!(normalized.kind(), TyKind::Alias(..)) => {
                         self.visit_ty(normalized);
@@ -720,7 +728,7 @@ mod test {
     use rustc_hir::BodyId;
     use rustc_middle::{
         mir::{Place, PlaceElem},
-        ty::TyCtxt,
+        ty::{self, TyCtxt},
     };
 
     use super::PlaceExt;
