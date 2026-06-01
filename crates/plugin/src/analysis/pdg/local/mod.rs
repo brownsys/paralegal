@@ -19,7 +19,7 @@ use rustc_middle::{
         RETURN_PLACE, Rvalue, Statement, Terminator, TerminatorEdges, TerminatorKind,
         visit::Visitor,
     },
-    ty::{AdtKind, EarlyBinder, GenericArgsRef, Instance, Ty, TyCtxt, TyKind, TypingEnv},
+    ty::{AdtKind, EarlyBinder, GenericArgsRef, Instance, Ty, TyCtxt, TyKind, TypingEnv, Unnormalized},
 };
 use rustc_mir_dataflow::{self as df, Analysis, fmt::DebugWithContext};
 use rustc_span::{DesugaringKind, Span, Spanned};
@@ -979,6 +979,24 @@ fn is_split<'tcx>(ty: Ty<'tcx>, context: DefId, tcx: TyCtxt<'tcx>) -> bool {
         | TyKind::Never => false,
 
         TyKind::Pat(inner, _) => is_split(*inner, context, tcx),
+
+        // Look through projections and opaque types when we can, so
+        // `is_split` reflects the actual structure behind associated types
+        // and `impl Trait`. Falls back to warning + `false` if normalization
+        // fails or the result is still an `Alias` (e.g. opaque without
+        // hidden-type reveal in this typing env).
+        TyKind::Alias(..) => {
+            let typing_env = TypingEnv::post_analysis(tcx, context);
+            match tcx.try_normalize_erasing_regions(typing_env, Unnormalized::new_wip(ty)) {
+                Ok(normalized) if !matches!(normalized.kind(), TyKind::Alias(..)) => {
+                    is_split(normalized, context, tcx)
+                }
+                _ => {
+                    tracing::warn!("unimplemented {ty:?} ({:?})", ty.kind());
+                    false
+                }
+            }
+        }
 
         _ if ty.is_primitive_ty() => false,
         _ => {

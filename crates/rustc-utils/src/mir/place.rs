@@ -579,6 +579,23 @@ impl<'tcx, Dispatcher: RegionVisitorDispatcher<'tcx>> TypeVisitor<TyCtxt<'tcx>>
                 self.place_stack.pop();
             }
 
+            // Try to look through associated-type projections and opaque
+            // (`impl Trait` / `async fn` return) types so we can keep
+            // descending. Types we can't see into are a soundness risk for
+            // the region/place walk, so on normalization failure (or a type
+            // that stays an `Alias` after normalization, e.g. an Opaque
+            // whose hidden type isn't revealed in this typing env) we keep
+            // the warning rather than silently dropping the place.
+            TyKind::Alias(..) => {
+                let typing_env = ty::TypingEnv::post_analysis(tcx, self.def_id);
+                match tcx.try_normalize_erasing_regions(typing_env, ty::Unnormalized::new_wip(ty)) {
+                    Ok(normalized) if !matches!(normalized.kind(), TyKind::Alias(..)) => {
+                        self.visit_ty(normalized);
+                    }
+                    _ => warn!("unimplemented {ty:?} ({:?})", ty.kind()),
+                }
+            }
+
             _ if ty.is_primitive_ty() => {}
 
             _ => warn!("unimplemented {ty:?} ({:?})", ty.kind()),
