@@ -14,7 +14,7 @@ use rustc_middle::{
         pretty, BasicBlock, Body, Local, Location, Place, SourceInfo, TerminatorKind,
         VarDebugInfoContents,
     },
-    ty::{Region, Ty, TyCtxt},
+    ty::{GenericArgsRef, Region, Ty, TyCtxt},
 };
 use smallvec::SmallVec;
 
@@ -57,10 +57,13 @@ pub trait BodyExt<'tcx> {
     fn async_context(&self, tcx: TyCtxt<'tcx>, def_id: DefId) -> Option<Ty<'tcx>>;
 
     /// Returns an iterator over all projections of all local variables in the body.
+    ///
+    /// See [`PlaceExt::interior_pointers`] for the meaning of `generic_args`.
     fn all_places(
         &self,
         tcx: TyCtxt<'tcx>,
         def_id: DefId,
+        generic_args: GenericArgsRef<'tcx>,
     ) -> impl Iterator<Item = Place<'tcx>> + '_;
 
     /// Returns an iterator over all the regions that appear in argument types to the body.
@@ -160,10 +163,11 @@ impl<'tcx> BodyExt<'tcx> for Body<'tcx> {
         &self,
         tcx: TyCtxt<'tcx>,
         def_id: DefId,
+        generic_args: GenericArgsRef<'tcx>,
     ) -> impl Iterator<Item = Place<'tcx>> + '_ {
-        self.local_decls
-            .indices()
-            .flat_map(move |local| Place::from_local(local, tcx).interior_paths(tcx, self, def_id))
+        self.local_decls.indices().flat_map(move |local| {
+            Place::from_local(local, tcx).interior_paths(tcx, self, def_id, generic_args)
+        })
     }
 }
 

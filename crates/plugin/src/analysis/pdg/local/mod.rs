@@ -416,7 +416,7 @@ impl<'tcx, 'a, K: Hash + Eq + Clone> LocalAnalysis<'tcx, 'a, K> {
         )
         .unwrap();
 
-        let place_info = PlaceInfo::build(tcx, def_id, body_with_facts);
+        let place_info = PlaceInfo::build(tcx, def_id, root.args, body_with_facts);
         let control_dependencies = body.control_dependencies();
 
         let body_assignments = utils::find_body_assignments(&body);
