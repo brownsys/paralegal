@@ -65,10 +65,36 @@ fn main() -> anyhow::Result<()> {
     cargo_orchestrator_main()
 }
 
+/// Locate the toolchain whose `cargo`/`rustc` we drive.
+///
+/// Resolution order, so that both development/`cargo install` builds and
+/// relocatable prebuilt releases work from the same binary:
+/// 1. `PARALEGAL_SYSROOT` — explicit override (testing, unusual layouts).
+/// 2. `<exe dir>/../toolchain` — the prebuilt-release layout. The installer
+///    drops a `toolchain` symlink next to `bin/`, matching the
+///    `$ORIGIN/../toolchain/lib` rpath baked into `paralegal-flow-impl` (see
+///    `crates/plugin/build.rs`), so the binaries find both `librustc_driver`
+///    and `cargo` relative to themselves.
+/// 3. `SYSROOT_PATH` — the toolchain this binary was built against, baked in at
+///    build time. Valid for source/`cargo install` installs where that path
+///    still exists; meaningless for a relocated prebuilt, hence checked last.
+fn toolchain_root() -> PathBuf {
+    if let Some(p) = std::env::var_os("PARALEGAL_SYSROOT") {
+        return PathBuf::from(p);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(bin_dir) = exe.parent() {
+            let candidate = bin_dir.join("..").join("toolchain");
+            if candidate.join("bin").join("cargo").exists() {
+                return candidate;
+            }
+        }
+    }
+    PathBuf::from(env!("SYSROOT_PATH"))
+}
+
 fn cargo_orchestrator_main() -> anyhow::Result<()> {
-    let cargo = std::path::Path::new(env!("SYSROOT_PATH"))
-        .join("bin")
-        .join("cargo");
+    let cargo = toolchain_root().join("bin").join("cargo");
     let mut args = std::env::args().collect::<Vec<_>>();
     setup_logging()?;
     debug!(?args, "In cargo");

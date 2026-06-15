@@ -54,6 +54,18 @@ realistic web applications.
 
 ## Installation and Usage
 
-To explain installation and usage we provide a [step-by-step
+Install the latest release from source with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/brownsys/paralegal/main/install.sh | sh
+```
+
+This builds Paralegal against the nightly toolchain pinned in `rust-toolchain.toml`
+(provisioned automatically by [rustup](https://rustup.rs)), so the first install
+compiles the analyzer and may take a few minutes. See `install.sh --help` for
+options (specific version, custom install dir, building from a local checkout).
+
+For a full walkthrough of installation and writing your first policy, see the
+[step-by-step
 guide](https://justus-adam.notion.site/Paralegal-Step-by-Step-40541156c25d48f8b6ad79a0e1b09b91)
 in our online documentation.
