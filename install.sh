@@ -186,21 +186,41 @@ install_source() {
         [ -f "$srcdir/rust-toolchain.toml" ] || { echo "paralegal: $srcdir is not a paralegal checkout." >&2; exit 1; }
         echo "paralegal: building from local checkout $srcdir" >&2
     else
-        command -v git >/dev/null 2>&1 || { echo "paralegal: git is required to fetch the source (or pass --source-dir)." >&2; exit 1; }
+        command -v curl >/dev/null 2>&1 || { echo "paralegal: curl is required to fetch the source (or pass --source-dir)." >&2; exit 1; }
         ref="$VERSION"
         if [ "$ref" = "latest" ]; then
-            ref=$(git ls-remote --tags --refs --sort=-v:refname "$REPO_URL" 'v*' 2>/dev/null | sed 's#.*refs/tags/##' | head -n1)
-            if [ -z "$ref" ]; then
-                echo "paralegal: no release tags found yet; installing from 'main'." >&2
-                ref="main"
-            else
-                echo "paralegal: latest release is $ref" >&2
-            fi
+            # Resolve the latest release tag via the releases/latest redirect
+            # (no git, no JSON parsing). The effective URL ends in /tag/<tag>;
+            # with no releases it lands on /releases, so we fall back to main.
+            latest_url=$(curl -fsSL -o /dev/null -w '%{url_effective}' "$REPO_URL/releases/latest" 2>/dev/null || true)
+            case "$latest_url" in
+                */releases/tag/*) ref="${latest_url##*/tag/}"; echo "paralegal: latest release is $ref" >&2 ;;
+                *) echo "paralegal: no release tags found yet; installing from 'main'." >&2; ref="main" ;;
+            esac
         fi
         tmp=$(mktemp -d); cleanup="$tmp"
-        echo "paralegal: cloning $REPO at $ref" >&2
-        git clone --depth 1 --branch "$ref" "$REPO_URL" "$tmp/paralegal"
-        srcdir="$tmp/paralegal"
+        echo "paralegal: downloading source for $ref" >&2
+        # Pull GitHub's source archive — same artifact as a release's "Source
+        # code" asset, no git needed. Try the tag archive, then the branch
+        # archive, so a tag or a branch name both work.
+        if ! curl -fsSL "$REPO_URL/archive/refs/tags/$ref.tar.gz" -o "$tmp/src.tar.gz" 2>/dev/null; then
+            curl -fsSL "$REPO_URL/archive/refs/heads/$ref.tar.gz" -o "$tmp/src.tar.gz" || {
+                echo "paralegal: could not download source for '$ref'." >&2
+                exit 1
+            }
+        fi
+        mkdir -p "$tmp/src"
+        tar xzf "$tmp/src.tar.gz" -C "$tmp/src"
+        # The archive expands to a single top-level dir whose name varies (the
+        # leading `v` is stripped from tags), so glob for it rather than guess.
+        srcdir=""
+        for d in "$tmp/src"/*/; do
+            [ -d "$d" ] && srcdir="${d%/}" && break
+        done
+        { [ -n "$srcdir" ] && [ -f "$srcdir/rust-toolchain.toml" ]; } || {
+            echo "paralegal: extracted source archive doesn't look like a paralegal checkout." >&2
+            exit 1
+        }
     fi
 
     echo "paralegal: building and installing — the first build compiles the rustc driver" >&2
