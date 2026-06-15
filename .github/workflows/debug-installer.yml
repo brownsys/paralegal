@@ -1,9 +1,10 @@
 name: Debug installer (TEMPORARY)
 
-# TEMPORARY: exercises install.sh on clean CI runners to validate the install
-# paths on real machines (rustup provisioning the pinned nightly from scratch,
-# both the --source-dir and clone-from-GitHub flows, across target platforms).
-# Remove this workflow before merging the release-tooling branch.
+# TEMPORARY: exercises install.sh on clean CI runners — both the from-source path
+# and the prebuilt path (build a tarball, then install from it so rustup really
+# provisions the pinned toolchain and the relocated binary runs a real analysis).
+# Also tells us whether the ubuntu-24.04-arm runner is available before we rely on
+# it in release.yml. Remove this workflow before merging the release-tooling branch.
 
 on:
   push:
@@ -14,40 +15,59 @@ permissions:
   contents: read
 
 jobs:
-  install:
-    name: ${{ matrix.os }} / ${{ matrix.mode }}
+  from-source:
+    name: source / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # from-source using the checked-out branch (fast to iterate on)
-          - { os: ubuntu-latest, mode: source-dir }
-          # the real curl|sh flow: resolve version -> git clone -> build
-          - { os: ubuntu-latest, mode: clone }
-          # platform coverage
-          - { os: macos-14, mode: source-dir }
+        os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
-
-      - name: Show toolchain state (pre-install)
-        run: |
-          set -eux
-          rustup --version
-          rustup show
-
-      - name: Run installer (mode=${{ matrix.mode }})
-        run: |
-          set -eux
-          if [ "${{ matrix.mode }}" = "source-dir" ]; then
-            sh install.sh --source-dir "$PWD" --root "$RUNNER_TEMP/pl"
-          else
-            sh install.sh --root "$RUNNER_TEMP/pl"
-          fi
-
-      - name: Smoke test installed binaries
+      - name: Install (from source, local checkout)
+        run: sh install.sh --source-dir "$PWD" --root "$RUNNER_TEMP/pl"
+      - name: Smoke test
         run: |
           set -eux
           "$RUNNER_TEMP/pl/bin/cargo-paralegal-flow" --help
           "$RUNNER_TEMP/pl/bin/paralegal-compiler" --help
-          test -x "$RUNNER_TEMP/pl/bin/paralegal-flow-impl"
+
+  prebuilt:
+    name: prebuilt / ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
+          - { target: aarch64-apple-darwin, os: macos-14 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build binaries
+        run: cargo build --release -p cargo-paralegal-flow -p paralegal-flow -p paralegal-compiler
+
+      - name: Package tarball (mirrors release.yml)
+        run: |
+          set -eux
+          staging=staging
+          mkdir -p "$staging/bin"
+          cp target/release/cargo-paralegal-flow \
+             target/release/paralegal-flow-impl \
+             target/release/paralegal-compiler "$staging/bin/"
+          grep -E '^channel' rust-toolchain.toml | sed -E 's/.*"(.*)".*/\1/' > "$staging/paralegal-toolchain.txt"
+          tar czf "$RUNNER_TEMP/paralegal.tar.gz" -C "$staging" .
+
+      - name: Install from prebuilt tarball
+        run: sh install.sh --prebuilt-tarball "$RUNNER_TEMP/paralegal.tar.gz" --root "$RUNNER_TEMP/pl-pre"
+
+      - name: Smoke test relocated binary (real analysis)
+        # Run the orchestrator on the guide example through the prebuilt prefix.
+        # toolchain/cargo + librustc_driver resolve via the installed <prefix>/toolchain.
+        run: |
+          set -eux
+          test -L "$RUNNER_TEMP/pl-pre/toolchain"
+          "$RUNNER_TEMP/pl-pre/bin/cargo-paralegal-flow" --help
+          cd guide/file-db-example
+          "$RUNNER_TEMP/pl-pre/bin/cargo-paralegal-flow"
