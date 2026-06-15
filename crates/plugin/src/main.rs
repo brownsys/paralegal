@@ -82,12 +82,12 @@ fn rustc_sysroot() -> std::path::PathBuf {
     if let Some(p) = std::env::var_os("PARALEGAL_SYSROOT") {
         return std::path::PathBuf::from(p);
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(bin_dir) = exe.parent() {
-            let candidate = bin_dir.join("..").join("toolchain");
-            if candidate.join("lib").join("rustlib").exists() {
-                return candidate;
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(bin_dir) = exe.parent()
+    {
+        let candidate = bin_dir.join("..").join("toolchain");
+        if candidate.join("lib").join("rustlib").exists() {
+            return candidate;
         }
     }
     std::path::PathBuf::from(env!("SYSROOT_PATH"))
