@@ -1,0 +1,67 @@
+name: Release
+
+# Cut a release by pushing a version tag, e.g. `git tag v0.1.0 && git push origin v0.1.0`.
+# Phase 1 (this file): gate on the CI suite, then publish a GitHub Release with
+# auto-generated notes and the `install.sh` from-source installer attached at a
+# stable URL (.../releases/latest/download/install.sh). GitHub also auto-attaches
+# the source tarball for the tag, which the installer / library consumers can pin.
+# Phase 2 will add a per-platform prebuilt-binary build matrix (see RELEASE_PLAN.md).
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # create the release
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: false
+
+jobs:
+  # Re-run the CI suite against the tagged commit so we never publish a release
+  # that doesn't pass our own checks. Mirrors rust.yml's caching.
+  gate:
+    name: CI gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache Toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.rustup
+          key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('rust-toolchain.toml') }}
+      - name: Cache Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-rust-deps-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+      - name: Install cargo-make
+        run: rustup run stable cargo install --force --debug cargo-make
+      - name: Run CI tests
+        run: cargo make ci-tests
+
+  publish:
+    name: Publish GitHub Release
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # The tag already exists (it triggered this run), so this attaches a
+        # Release object + notes to it and uploads the installer as an asset.
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag \
+            install.sh
