@@ -1,0 +1,53 @@
+name: Debug installer (TEMPORARY)
+
+# TEMPORARY: exercises install.sh on clean CI runners to validate the install
+# paths on real machines (rustup provisioning the pinned nightly from scratch,
+# both the --source-dir and clone-from-GitHub flows, across target platforms).
+# Remove this workflow before merging the release-tooling branch.
+
+on:
+  push:
+    branches: ["release-tooling"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: ${{ matrix.os }} / ${{ matrix.mode }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # from-source using the checked-out branch (fast to iterate on)
+          - { os: ubuntu-latest, mode: source-dir }
+          # the real curl|sh flow: resolve version -> git clone -> build
+          - { os: ubuntu-latest, mode: clone }
+          # platform coverage
+          - { os: macos-14, mode: source-dir }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain state (pre-install)
+        run: |
+          set -eux
+          rustup --version
+          rustup show
+
+      - name: Run installer (mode=${{ matrix.mode }})
+        run: |
+          set -eux
+          if [ "${{ matrix.mode }}" = "source-dir" ]; then
+            sh install.sh --source-dir "$PWD" --root "$RUNNER_TEMP/pl"
+          else
+            sh install.sh --root "$RUNNER_TEMP/pl"
+          fi
+
+      - name: Smoke test installed binaries
+        run: |
+          set -eux
+          "$RUNNER_TEMP/pl/bin/cargo-paralegal-flow" --help
+          "$RUNNER_TEMP/pl/bin/paralegal-compiler" --help
+          test -x "$RUNNER_TEMP/pl/bin/paralegal-flow-impl"
