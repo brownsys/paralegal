@@ -1,11 +1,11 @@
 name: Release
 
 # Cut a release by pushing a version tag, e.g. `git tag v0.1.0 && git push origin v0.1.0`.
-# Phase 1 (this file): gate on the CI suite, then publish a GitHub Release with
-# auto-generated notes and the `install.sh` from-source installer attached at a
-# stable URL (.../releases/latest/download/install.sh). GitHub also auto-attaches
-# the source tarball for the tag, which the installer / library consumers can pin.
-# Phase 2 will add a per-platform prebuilt-binary build matrix (see RELEASE_PLAN.md).
+# Gate on the CI suite, build prebuilt binaries for each target against the pinned
+# nightly, then publish a GitHub Release with auto notes, the `install.sh`
+# installer, and the per-platform tarballs (+ sha256). GitHub also auto-attaches
+# the source tarball for the tag, which the source installer / library consumers
+# can pin. See RELEASE_PLAN.md.
 
 on:
   push:
@@ -47,21 +47,85 @@ jobs:
       - name: Run CI tests
         run: cargo make ci-tests
 
+  # Build the three binaries natively per target (host == target, no cross-compile)
+  # and package a relocatable tarball: bin/ + a manifest naming the toolchain the
+  # binaries are linked against, which install.sh provisions and symlinks as
+  # `<prefix>/toolchain` (resolving the $ORIGIN/../toolchain/lib rpath).
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
+          - { target: aarch64-apple-darwin, os: macos-14 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache Toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.rustup
+          key: ${{ runner.os }}-${{ matrix.target }}-toolchain-${{ hashFiles('rust-toolchain.toml') }}
+      - name: Cache Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-${{ matrix.target }}-build-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+      - name: Build binaries
+        run: cargo build --release -p cargo-paralegal-flow -p paralegal-flow -p paralegal-compiler
+      - name: Package tarball
+        run: |
+          set -eux
+          staging=staging
+          mkdir -p "$staging/bin"
+          cp target/release/cargo-paralegal-flow \
+             target/release/paralegal-flow-impl \
+             target/release/paralegal-compiler "$staging/bin/"
+          # Record the toolchain the binaries link against; install.sh reads this
+          # to provision and symlink the matching nightly.
+          toolchain=$(grep -E '^channel' rust-toolchain.toml | sed -E 's/.*"(.*)".*/\1/')
+          echo "$toolchain" > "$staging/paralegal-toolchain.txt"
+          asset="paralegal-${{ matrix.target }}.tar.gz"
+          tar czf "$asset" -C "$staging" .
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$asset" > "$asset.sha256"
+          else
+            shasum -a 256 "$asset" > "$asset.sha256"
+          fi
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: paralegal-${{ matrix.target }}
+          path: |
+            paralegal-${{ matrix.target }}.tar.gz
+            paralegal-${{ matrix.target }}.tar.gz.sha256
+
   publish:
     name: Publish GitHub Release
-    needs: gate
+    needs: [gate, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-        # The tag already exists (it triggered this run), so this attaches a
-        # Release object + notes to it and uploads the installer as an asset.
+        # The tag already exists (it triggered this run); attach a Release object
+        # with notes, the installer, and every prebuilt tarball + checksum.
         run: |
+          set -eux
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
             --verify-tag \
-            install.sh
+            install.sh $(find dist -type f | sort)
