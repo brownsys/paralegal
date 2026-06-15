@@ -68,6 +68,31 @@ fn unescape_version(s: &str) -> String {
     s.replace("\\n", "\n")
 }
 
+/// The sysroot we hand rustc (so it can find `std`/`core`), resolved at runtime
+/// so prebuilt binaries work on a machine other than the one that built them.
+/// Mirrors `toolchain_root` in the cli (crates/cli/src/main.rs):
+/// 1. `PARALEGAL_SYSROOT` override;
+/// 2. `<exe dir>/../toolchain` — the prebuilt-release layout (installer symlink);
+/// 3. the build-time `SYSROOT_PATH` (valid for source/`cargo install` builds).
+///
+/// Without this, a prebuilt binary would pass its builder's `SYSROOT_PATH` (e.g.
+/// a CI runner's `/home/runner/.rustup/...`), which doesn't exist on the user's
+/// machine, and rustc would fail with `E0463: can't find crate for std`.
+fn rustc_sysroot() -> std::path::PathBuf {
+    if let Some(p) = std::env::var_os("PARALEGAL_SYSROOT") {
+        return std::path::PathBuf::from(p);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(bin_dir) = exe.parent() {
+            let candidate = bin_dir.join("..").join("toolchain");
+            if candidate.join("lib").join("rustlib").exists() {
+                return candidate;
+            }
+        }
+    }
+    std::path::PathBuf::from(env!("SYSROOT_PATH"))
+}
+
 fn main() -> anyhow::Result<()> {
     setup_logging()?;
     let use_real_version = matches!(std::env::var("PARALEGAL_USE_REAL_RUSTC_VERSION"), Ok(v) if v == "1" || v.eq_ignore_ascii_case("true"));
@@ -112,7 +137,10 @@ fn main() -> anyhow::Result<()> {
         args.remove(1);
     }
 
-    args.extend(["--sysroot".into(), env!("SYSROOT_PATH").into()]);
+    args.extend([
+        "--sysroot".into(),
+        rustc_sysroot().to_string_lossy().into_owned(),
+    ]);
 
     let parsed_plugin_args: ClapArgs = serde_json::from_str(&std::env::var(PARALEGAL_ARGS)?)?;
     let plugin_args: paralegal_flow::Args = parsed_plugin_args.try_into()?;
