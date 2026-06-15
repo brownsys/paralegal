@@ -123,9 +123,16 @@ jobs:
         # with notes, the installer, and every prebuilt tarball + checksum.
         run: |
           set -eux
+          # Mark semver pre-release tags (e.g. v1.2.3-rc.1, v0.0.0-test.1) as
+          # prereleases so they don't become the "latest" release.
+          prerelease=""
+          case "$GITHUB_REF_NAME" in
+            *-*) prerelease="--prerelease" ;;
+          esac
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
             --verify-tag \
+            $prerelease \
             install.sh $(find dist -type f | sort)
