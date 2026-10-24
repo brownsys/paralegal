@@ -189,7 +189,7 @@ fn cargo_orchestrator_main() -> anyhow::Result<()> {
                 if let Some(target) = &args.target {
                     if packages
                         .get(&artifact.package_id)
-                        .is_none_or(|p| &p.name != target)
+                        .is_none_or(|p| p.name != target)
                     {
                         continue;
                     }
