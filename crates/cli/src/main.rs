@@ -10,7 +10,7 @@ use anyhow::Context;
 use cargo_metadata::diagnostic::DiagnosticLevel;
 use cargo_metadata::{CompilerMessage, Message};
 use clap::Parser;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, trace, warn};
 
 use cargo_paralegal_flow::{config_hash_for_file, ClapArgs, EXEC_HASH_ARG, PARALEGAL_ARGS};
 use paralegal_utils::{
@@ -256,9 +256,15 @@ fn cargo_orchestrator_main() -> anyhow::Result<()> {
             {
                 println!("{}", message)
             }
-            // Non-JSON lines (e.g. build script stdout) that fail to parse
-            // should be forwarded so callers don't silently lose output.
-            Err(_) if !args.forward_json => println!("{line}"),
+            Err(e) => match serde_json::from_str::<serde_json::Value>(&line) {
+                // A cargo message we cannot parse may be an artifact we need,
+                // so don't drop it silently.
+                Ok(msg) => warn!(reason = %msg["reason"], %e, "Unparseable cargo message"),
+                // Non-JSON lines (e.g. build script stdout) that fail to parse
+                // should be forwarded so callers don't silently lose output.
+                Err(_) if !args.forward_json => println!("{line}"),
+                Err(_) => (),
+            },
             _ => (),
         }
     }
