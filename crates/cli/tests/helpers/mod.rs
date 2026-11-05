@@ -67,6 +67,7 @@ fn fixture_lock(path: &Path) -> MutexGuard<'static, ()> {
 pub struct Test {
     fixture_path: PathBuf,
     cargo_subcommand: Option<&'static str>,
+    envs: Vec<(&'static str, &'static str)>,
     _lock: MutexGuard<'static, ()>,
 }
 
@@ -99,6 +100,7 @@ impl Test {
         Ok(Self {
             fixture_path,
             cargo_subcommand: None,
+            envs: Vec::new(),
             _lock: lock,
         })
     }
@@ -107,6 +109,12 @@ impl Test {
     /// Unset leaves the cli's own default (`check`) in effect.
     pub fn cargo_subcommand(mut self, sub: &'static str) -> Self {
         self.cargo_subcommand = Some(sub);
+        self
+    }
+
+    /// Set an environment variable for the `cargo paralegal-flow` run.
+    pub fn env(mut self, key: &'static str, value: &'static str) -> Self {
+        self.envs.push((key, value));
         self
     }
 
@@ -152,6 +160,7 @@ impl Test {
         if let Some(sub) = self.cargo_subcommand {
             cmd.args(["--cargo-subcommand", sub]);
         }
+        cmd.envs(self.envs.iter().copied());
         cmd.current_dir(&self.fixture_path);
         let status = cmd.status()?;
         ensure!(status.success(), "cargo paralegal-flow failed: {status}");

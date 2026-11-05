@@ -118,3 +118,18 @@ fn rerun_under_build_keeps_artifact_populated() {
     let second = test.analyze().unwrap();
     second.assert_marker("bin_marker");
 }
+
+// --- profile settings ----------------------------------------------------
+
+/// Cargo reports named debuginfo levels such as `line-tables-only` as
+/// strings in the artifact profile. The cli used to fail to parse those
+/// messages and silently drop the artifact.
+#[test]
+fn string_debuginfo_finds_marker() {
+    let analysis = Test::bin_only()
+        .unwrap()
+        .env("CARGO_PROFILE_DEV_DEBUG", "line-tables-only")
+        .analyze()
+        .unwrap();
+    analysis.assert_marker("bin_marker");
+}
