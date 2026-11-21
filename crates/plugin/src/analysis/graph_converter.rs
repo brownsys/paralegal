@@ -77,7 +77,8 @@ pub fn assemble_pdg<'tcx>(
         })
         .body();
     let typing_env = tcx.typing_env_normalized_for_post_analysis(base_body_def_id);
-    let base_body_args = manufacture_substs_for(tcx, base_body_def_id).unwrap();
+    let base_body_args =
+        manufacture_substs_for(tcx, base_body_def_id).unwrap_or_else(|guar| guar.raise_fatal());
     let base_body_instance =
         try_resolve_function(tcx, base_body_def_id, typing_env, base_body_args).unwrap();
 

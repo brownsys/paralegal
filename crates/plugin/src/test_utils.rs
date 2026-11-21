@@ -452,6 +452,9 @@ impl InlineTestBuilder {
         self
     }
 
+    /// Passes only if compilation stops with a reported error. `run` catches
+    /// rustc's fatal-error unwinding, not panics, so an analyzer panic still
+    /// fails the test.
     pub fn expect_fail_compile(&self) {
         let reached = Once::new();
         let res = self.run(|_| reached.call_once(|| ()));
