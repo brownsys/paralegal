@@ -82,7 +82,7 @@ channel = \"1.90\"",
                 .expect("Failed to create Cargo.toml")
                 .write_all(cargo_toml(&name).as_bytes())
                 .expect("Failed to write Cargo.toml");
-            relative_dir_path
+            (relative_dir_path, name)
         })
         .collect::<Vec<_>>();
 
@@ -93,7 +93,7 @@ channel = \"1.90\"",
                 "[workspace]\nmembers = [\n{}\n]\n",
                 paths
                     .iter()
-                    .map(|p| format!("\"{}\"", p.display()))
+                    .map(|(p, _)| format!("\"{}\"", p.display()))
                     .collect::<Vec<_>>()
                     .join(",\n")
             )
@@ -111,5 +111,36 @@ channel = \"1.90\"",
         "Failed to build workspace for example policies"
     );
 
+    // Reuses a binary built above rather than building a policy of its own.
+    let (_, bin_name) = paths.first().expect("no example policies found");
+    skip_pdg_gen_loads_existing_artifact(&output_path, bin_name);
+
     std::fs::remove_dir_all(output_path).expect("Failed to remove output directory");
+}
+
+/// `--skip-pdg-gen` must load the graph named by `dir/paralegal-artifact.json`
+/// instead of running the PDG generator in `dir`. An artifact listing no targets
+/// is rejected only by the loader, so reaching that error shows the generator
+/// was skipped.
+fn skip_pdg_gen_loads_existing_artifact(workspace: &Path, bin_name: &str) {
+    let bin = workspace.join("target").join("debug").join(bin_name);
+    let analyzed = Path::new(CARGO_TMPDIR).join("skip-pdg-gen");
+    let artifact = analyzed.join("paralegal-artifact.json");
+    std::fs::create_dir_all(&analyzed).unwrap();
+    std::fs::write(&artifact, r#"{"targets": []}"#).unwrap();
+
+    let output = Command::new(&bin)
+        .arg("--skip-pdg-gen")
+        .arg(&analyzed)
+        .output()
+        .unwrap_or_else(|e| panic!("Failed to run {}: {e}", bin.display()));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success() && stderr.contains("no matching targets found"),
+        "expected `--skip-pdg-gen` to load {}, got status {} and stderr:\n{stderr}",
+        artifact.display(),
+        output.status,
+    );
+
+    std::fs::remove_dir_all(analyzed).unwrap();
 }
