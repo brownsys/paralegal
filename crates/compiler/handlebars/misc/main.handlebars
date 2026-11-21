@@ -39,8 +39,8 @@ struct Args {
     /// provide it here.
     #[clap(long, short)]
     external_annotations: Option<PathBuf>,
-    /// Do not run the PDG generation, only enforce the policy. Assumes that `dir` 
-    /// contains a `flow-graph.o` output file from a prior PDG generation run.
+    /// Do not run the PDG generation, only enforce the policy. Assumes that `dir`
+    /// contains the `paralegal-artifact.json` written by a prior PDG generation run.
     #[clap(long)]
     skip_pdg_gen: bool,
     /// Additional arguments that should be passed to the PDG generator.
@@ -51,13 +51,18 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
     env_setup();
-    let mut cmd = paralegal_policy::SPDGGenCommand::global();
-    if let Some(mut p) = args.external_annotations.as_ref() {
-        cmd.external_annotations(p);
-    }
-    cmd.get_command()
-        .args(args.flow_args.iter());
-    let result = cmd.run(&args.dir)?.with_context(check)?;
+    let graph = if args.skip_pdg_gen {
+        paralegal_policy::GraphLocation::std(&args.dir)
+    } else {
+        let mut cmd = paralegal_policy::SPDGGenCommand::global();
+        if let Some(p) = args.external_annotations.as_ref() {
+            cmd.external_annotations(p);
+        }
+        cmd.get_command()
+            .args(args.flow_args.iter());
+        cmd.run(&args.dir)?
+    };
+    let result = graph.with_context(check)?;
     if result.success {
         println!("Policy succeeded");
     }
