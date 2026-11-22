@@ -1144,6 +1144,8 @@ pub fn manufacture_substs_for<'tcx>(
     tcx: TyCtxt<'tcx>,
     function: DefId,
 ) -> Result<GenericArgsRef<'tcx>, ErrorGuaranteed> {
+    use rustc_errors::MultiSpan;
+    use rustc_middle::traits::{DynCompatibilityViolation, MethodViolation};
     use rustc_middle::ty::{
         ExistentialPredicate, ExistentialProjection, ExistentialTraitRef, GenericParamDefKind,
         ParamTy, TraitPredicate,
@@ -1161,6 +1163,7 @@ pub fn manufacture_substs_for<'tcx>(
     let lang_items = tcx.lang_items();
     let types = (0..generics.count()).map(|gidx| -> Result<GenericArg<'tcx>, _> {
         let param = generics.param_at(gidx, tcx);
+        let param_err = |msg: String| tcx.dcx().span_err(tcx.def_span(param.def_id), msg);
         if let Some(default_val) = param.default_value(tcx) {
             return Ok(tcx.normalize_erasing_regions(tenv, default_val.instantiate_identity()));
         }
@@ -1173,9 +1176,8 @@ pub fn manufacture_substs_for<'tcx>(
                 )));
             }
             GenericParamDefKind::Const { .. } => {
-                return Err(tcx.dcx().span_err(
-                    tcx.def_span(param.def_id),
-                    "Cannot use constants as generic parameters in controllers",
+                return Err(param_err(
+                    "Cannot use constants as generic parameters in controllers".to_string(),
                 ));
             }
             GenericParamDefKind::Type { .. } => (),
@@ -1189,10 +1191,9 @@ pub fn manufacture_substs_for<'tcx>(
                     return None;
                 };
                 let Some(TraitPredicate { trait_ref, .. }) = trait_ref.no_bound_vars() else {
-                    return Some(Err(tcx.dcx().span_err(
-                        tcx.def_span(param.def_id),
-                        format!("Trait ref had binder {trait_ref:?}"),
-                    )));
+                    return Some(Err(param_err(format!(
+                        "Trait ref had binder {trait_ref:?}"
+                    ))));
                 };
                 if !matches!(trait_ref.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
                     return None;
@@ -1203,16 +1204,49 @@ pub fn manufacture_substs_for<'tcx>(
                     trace!("    bailing because trait is auto trait");
                     return None;
                 }
+                // These violations make monomorphization at the `dyn` type built below
+                // fail without saying why (#207).
+                if let Some(violation) = tcx
+                    .dyn_compatibility_violations(trait_ref.def_id)
+                    .iter()
+                    .find(|v| {
+                        matches!(
+                            v,
+                            DynCompatibilityViolation::Method(
+                                _,
+                                MethodViolation::AsyncFn
+                                    | MethodViolation::ReferencesImplTraitInTrait(_),
+                                _
+                            )
+                        )
+                    })
+                {
+                    return Some(Err(tcx
+                        .dcx()
+                        .struct_span_err(
+                            tcx.def_span(param.def_id),
+                            format!(
+                                "cannot analyze `{}` generically: `{}` is bounded by `{}`, \
+                                 whose {}; analyze a non-generic function that calls it instead",
+                                tcx.def_path_str(function),
+                                param.name,
+                                tcx.def_path_str(trait_ref.def_id),
+                                violation.error_msg(),
+                            ),
+                        )
+                        .with_span_note(
+                            MultiSpan::from_spans(violation.spans().into_vec()),
+                            "declared here",
+                        )
+                        .emit()));
+                }
                 Some(ExistentialPredicate::Trait(
                     ExistentialTraitRef::erase_self_ty(tcx, trait_ref),
                 ))
             } else if let Some(pred) = clause.as_projection_clause() {
                 trace!("    is projection clause");
                 let Some(pred) = pred.no_bound_vars() else {
-                    return Some(Err(tcx.dcx().span_err(
-                        tcx.def_span(param.def_id),
-                        "Predicate has a bound variable",
-                    )));
+                    return Some(Err(param_err("Predicate has a bound variable".to_string())));
                 };
                 if !matches!(pred.self_ty().kind(), TyKind::Param(p) if *p == param_as_ty) {
                     return None;
@@ -1240,13 +1274,10 @@ pub fn manufacture_substs_for<'tcx>(
             ))),
             1 => (),
             _ => {
-                return Err(tcx.dcx().span_err(
-                    tcx.def_span(param.def_id),
-                    format!(
-                        "can only synthesize a trait object for one non-auto trait, got {}",
-                        predicates.len()
-                    ),
-                ));
+                return Err(param_err(format!(
+                    "can only synthesize a trait object for one non-auto trait, got {}",
+                    predicates.len()
+                )));
             }
         };
         let poly_predicate = tcx.mk_poly_existential_predicates_from_iter(predicates.into_iter());

@@ -821,6 +821,71 @@ fn await_with_inner_generic_constrained() {
     .check_ctrl(|_ctrl| {})
 }
 
+/// #207: a generic entrypoint is analyzed with `dyn Trait` substituted for its
+/// type parameters, which fails for a bound with a method returning
+/// `impl Trait`. That must be a reported error, not a panic.
+#[test]
+fn generic_entrypoint_over_async_fn_is_an_error() {
+    InlineTestBuilder::new(stringify!(
+        trait Svc {
+            async fn get(&self) -> u32;
+        }
+
+        async fn main<S: Svc>(s: &S) -> u32 {
+            s.get().await
+        }
+    ))
+    .expect_fail_compile()
+}
+
+#[test]
+fn generic_entrypoint_over_impl_trait_method_is_an_error() {
+    InlineTestBuilder::new(stringify!(
+        trait Svc {
+            fn get(&self) -> impl Iterator<Item = u32>;
+        }
+
+        fn main<S: Svc>(s: &S) -> u32 {
+            s.get().sum()
+        }
+    ))
+    .expect_fail_compile()
+}
+
+#[test]
+fn generic_entrypoint_over_async_fn_in_supertrait_is_an_error() {
+    InlineTestBuilder::new(stringify!(
+        trait Base {
+            async fn get(&self) -> u32;
+        }
+        trait Svc: Base {}
+
+        async fn main<S: Svc>(s: &S) -> u32 {
+            s.get().await
+        }
+    ))
+    .expect_fail_compile()
+}
+
+/// A method that requires `Self: Sized` can't be called on `dyn Trait`, so it
+/// doesn't stop the trait from being analyzed generically.
+#[test]
+fn generic_entrypoint_over_sized_only_impl_trait_method_analyzes() {
+    InlineTestBuilder::new(stringify!(
+        trait Svc {
+            fn get(&self) -> impl std::future::Future<Output = u32>
+            where
+                Self: Sized;
+            fn other(&self) -> u32;
+        }
+
+        fn main<S: Svc>(s: &S) -> u32 {
+            s.other()
+        }
+    ))
+    .check_ctrl(|_ctrl| {})
+}
+
 #[test]
 fn async_through_another_layer() {
     InlineTestBuilder::new(stringify!(
